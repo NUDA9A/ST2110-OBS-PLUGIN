@@ -6,7 +6,7 @@ enum class Error {
     Ok, BufferTooSmall, InvalidValue, Unsupported
 };
 
-const char *to_string(Error error) {
+inline const char *to_string(Error error) {
   switch (error) {
     case Error::BufferTooSmall:
       return "ERROR: Buffer too small!";
