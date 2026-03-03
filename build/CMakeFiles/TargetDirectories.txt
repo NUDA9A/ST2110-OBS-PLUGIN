@@ -1,0 +1,11 @@
+/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build/CMakeFiles/test.dir
+/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build/CMakeFiles/edit_cache.dir
+/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build/CMakeFiles/rebuild_cache.dir
+/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build/libs/st2110core/CMakeFiles/st2110core.dir
+/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build/libs/st2110core/CMakeFiles/test.dir
+/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build/libs/st2110core/CMakeFiles/edit_cache.dir
+/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build/libs/st2110core/CMakeFiles/rebuild_cache.dir
+/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build/apps/st2110_rx_dump/CMakeFiles/st2110_rx_dump.dir
+/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build/apps/st2110_rx_dump/CMakeFiles/test.dir
+/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build/apps/st2110_rx_dump/CMakeFiles/edit_cache.dir
+/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build/apps/st2110_rx_dump/CMakeFiles/rebuild_cache.dir

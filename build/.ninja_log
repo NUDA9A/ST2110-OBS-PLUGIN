@@ -1,0 +1,5 @@
+# ninja log v5
+1	18	1772542742246145238	libs/st2110core/CMakeFiles/st2110core.dir/src/stub.cpp.o	419037fdf9e3e046
+1	302	1772542742529018322	apps/st2110_rx_dump/CMakeFiles/st2110_rx_dump.dir/main.cpp.o	1cf55910afbb4e61
+18	563	1772542742780018383	libs/st2110core/libst2110core.a	a72c727611bec141
+563	758	1772542742987193037	apps/st2110_rx_dump/st2110_rx_dump	28f4de9141c97a1b
