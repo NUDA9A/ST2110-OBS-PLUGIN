@@ -6,4 +6,6 @@
 - Linux first (WSL), OBS позже в VirtualBox
 
 ## Done
-- [ ] 001: Repo skeleton + buildable stub
+- [x] 001: Repo skeleton + buildable stub
+- [x] 002: Fix WSL networking/DNS for git push
+- [ ] 003: CTest smoke test
