@@ -37,7 +37,7 @@
 
 ## A0.1 Backend abstraction (важно для Socket + MTL)
 - [x] 007: Define `RxVideoConfig` (width/height/fps, ip/port, payload_type, format)
-- [ ] 008: Define `VideoFrame`/`FrameView` contract (format, planes, stride, ts_ns)
+- [x] 008: Define `VideoFrame`/`FrameView` contract (format, planes, stride, ts_ns)
 - [ ] 009: Define interfaces:
   - `IFrameSink` (on_frame, on_stats optional)
   - `IRxVideoBackend` (start/stop, backend_name, get_stats optional)
