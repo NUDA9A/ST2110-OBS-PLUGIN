@@ -33,7 +33,7 @@
 ## A0. Базовые утилиты/типы
 - [x] 004: Endian helpers (read_be16/read_be32) + tests
 - [x] 005: Add common error/result type (enum error codes) + tests
-- [ ] 006: Add `ByteSpan` alias (std::span<const uint8_t>) and conventions doc snippet
+- [x] 006: Add `ByteSpan` alias (std::span<const uint8_t>) and conventions doc snippet
 
 ## A0.1 Backend abstraction (важно для Socket + MTL)
 - [ ] 007: Define `RxVideoConfig` (width/height/fps, ip/port, payload_type, format)
