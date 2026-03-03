@@ -36,7 +36,7 @@
 - [x] 006: Add `ByteSpan` alias (std::span<const uint8_t>) and conventions doc snippet
 
 ## A0.1 Backend abstraction (важно для Socket + MTL)
-- [ ] 007: Define `RxVideoConfig` (width/height/fps, ip/port, payload_type, format)
+- [x] 007: Define `RxVideoConfig` (width/height/fps, ip/port, payload_type, format)
 - [ ] 008: Define `VideoFrame`/`FrameView` contract (format, planes, stride, ts_ns)
 - [ ] 009: Define interfaces:
   - `IFrameSink` (on_frame, on_stats optional)

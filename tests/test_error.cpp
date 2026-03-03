@@ -16,7 +16,6 @@ static void test_distinct_strings() {
     const char* c = st2110::to_string(st2110::Error::InvalidValue);
     const char* d = st2110::to_string(st2110::Error::Unsupported);
 
-    // at least ensure not all the same text
     assert(std::strcmp(a, b) != 0);
     assert(std::strcmp(b, c) != 0);
     assert(std::strcmp(c, d) != 0);
