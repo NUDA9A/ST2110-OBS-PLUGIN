@@ -22,10 +22,10 @@ namespace st2110 {
         PixelFormat format;
 
         bool is_valid() const {
-            if (width <= 0 || height <= 0) {
+            if (width == 0 || height == 0) {
                 return false;
             }
-            if (fps_den <= 0 || fps_num <= 0) {
+            if (fps_den == 0 || fps_num == 0) {
                 return false;
             }
             if (udp_port == 0) {
