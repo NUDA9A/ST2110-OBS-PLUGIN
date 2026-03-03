@@ -1,8 +1,8 @@
-add_executable(st2110_tests
-        test_smoke.cpp
-)
+function(add_st2110_test name)
+    add_executable(${name} ${ARGN})
+    target_link_libraries(${name} PRIVATE st2110core)
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
 
-target_link_libraries(st2110_tests PRIVATE st2110core)
-target_compile_features(st2110_tests PRIVATE cxx_std_23)
-
-add_test(NAME st2110_tests COMMAND st2110_tests)
+add_st2110_test(test_smoke test_smoke.cpp)
+add_st2110_test(test_endian test_endian.cpp)

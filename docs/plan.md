@@ -3,19 +3,21 @@
 ## Правила работы
 - 1 задача за раз (маленькая, 15–60 мин).
 - Реализацию пишу я сам; ассистент может:
-    - формулировать задачи;
-    - давать направления/доки/термины;
-    - писать/предлагать тесты (по запросу).
+  - формулировать задачи;
+  - давать направления/доки/термины;
+  - писать/предлагать тесты (по запросу).
 - Сначала делаем **st2110core** + консольные тулзы + юнит-тесты.
 - OBS-интеграция только после того, как `st2110_rx_dump` умеет собирать кадры.
 - MVP: **RX ST2110-20 progressive + GPM**, тесты 720p30 (и опционально 1080p60).
 - Без PTP / без ST2110-21 / без NMOS в MVP.
+- На Linux хотим уметь переключать backend: **Socket** (наш) и **MTL** (опционально).
 
 ## Референсы (куда смотреть)
 - SMPTE ST 2110-20:2022 (у меня есть PDF).
 - RTP: RFC 3550 (структура заголовка, seq/timestamp/marker).
 - Video over RTP: RFC 4175 (концепция packetization по строкам/фрагментам).
 - Wireshark dissector ST2110-20 (для сверки полей SRD/ExtSeq/marker).
+- Intel MTL (Media Transport Library) docs + st_pipeline_api (для MTL backend).
 
 ---
 
@@ -29,9 +31,17 @@
 # Track A — Core library (portable)
 
 ## A0. Базовые утилиты/типы
-- [ ] 004: Endian helpers (read_be16/read_be32) + tests
+- [x] 004: Endian helpers (read_be16/read_be32) + tests
 - [ ] 005: Add common error/result type (enum error codes) + tests
 - [ ] 006: Add `ByteSpan` alias (std::span<const uint8_t>) and conventions doc snippet
+
+## A0.1 Backend abstraction (важно для Socket + MTL)
+- [ ] 007: Define `RxVideoConfig` (width/height/fps, ip/port, payload_type, format)
+- [ ] 008: Define `VideoFrame`/`FrameView` contract (format, planes, stride, ts_ns)
+- [ ] 009: Define interfaces:
+  - `IFrameSink` (on_frame, on_stats optional)
+  - `IRxVideoBackend` (start/stop, backend_name, get_stats optional)
+  - Unit test with FakeBackend -> FakeSink (one frame delivered)
 
 ## A1. RTP (минимум для MVP)
 - [ ] 010: Define RTP header view struct (version, pt, marker, seq16, ts32, ssrc)
@@ -82,19 +92,28 @@
 
 # Track B — Apps (без OBS)
 
-## B0. st2110_rx_dump (synthetic first)
-- [ ] 100: Create app skeleton: args parsing (width,height,fps,format,mode) + help
-- [ ] 101: Implement `--synthetic` mode:
+## B0. st2110_rx_dump (backend-switchable, synthetic first)
+- [ ] 100: Create app skeleton: args parsing (width,height,fps,format,backend) + help
+- [ ] 101: Add backend selector: `--backend=socket|mtl` (mtl optional build)
+- [ ] 102: Implement `--synthetic` mode (через Socket pipeline, без сети):
   - feed depacketizer with synthetic packets
   - produce N frames to files + basic stats
-- [ ] 102: Add frame file writer (UYVY raw) + filename scheme + tests (size check)
+- [ ] 103: Add frame file writer (UYVY raw) + filename scheme + tests (size check)
 
-## B1. UDP receive on Linux (WSL)
-- [ ] 110: Implement UDP socket open/bind (unicast)
-- [ ] 111: Implement multicast join/leave (Linux) (optional if test source multicast)
-- [ ] 112: Add receive loop (recvfrom/recvmmsg) and feed PacketView pipeline
-- [ ] 113: Add periodic stats print (pps, drops, frames/s)
-- [ ] 114: Add graceful stop (SIGINT) and cleanup
+## B1. Socket backend: UDP receive on Linux (WSL)
+- [ ] 110: Implement `SocketRxBackend` (implements IRxVideoBackend) skeleton + smoke test
+- [ ] 111: Implement UDP socket open/bind (unicast)
+- [ ] 112: Implement multicast join/leave (Linux) (optional if test source multicast)
+- [ ] 113: Add receive loop (recvfrom/recvmmsg) and feed PacketView pipeline
+- [ ] 114: Add periodic stats print (pps, drops, frames/s)
+- [ ] 115: Add graceful stop (SIGINT) and cleanup
+
+## B1.1 MTL backend (Linux-only, optional)
+- [ ] 130: CMake option `ST2110_WITH_MTL` + build guard
+- [ ] 131: Implement `MtlRxBackend` skeleton (implements IRxVideoBackend) + smoke test
+- [ ] 132: Implement minimal start/stop using MTL ST20P RX (get_frame/put_frame)
+- [ ] 133: Map MTL frame -> VideoFrame/FrameView and deliver to sink
+- [ ] 134: Basic stats (frames, drops if available)
 
 ## B2. Debug helpers
 - [ ] 120: Add "dump first N packet headers" (seq, ts, marker, srd summary)
@@ -118,11 +137,12 @@
 - [ ] 211: Implement Source "ST2110 Input" that outputs black 720p30 (no backend)
 - [ ] 212: Add properties UI: start/stop + config fields (not wired yet)
 
-## C2. Wire st2110core to OBS source
-- [ ] 220: Add background thread that runs rx_dump pipeline but pushes frames into OBS
-- [ ] 221: Implement frame queue from backend thread to OBS output
-- [ ] 222: Timestamp mapping for OBS (MVP monotonic ns)
-- [ ] 223: Start/Stop stability tests (start/stop 100 times, no crash/leak)
+## C2. Wire backends to OBS source
+- [ ] 220: Add backend selector in UI (socket/mtl if available)
+- [ ] 221: Run backend in background thread, push frames into OBS
+- [ ] 222: Implement frame queue from backend thread to OBS output
+- [ ] 223: Timestamp mapping for OBS (MVP monotonic ns)
+- [ ] 224: Start/Stop stability tests (start/stop 100 times, no crash/leak)
 
 ---
 
