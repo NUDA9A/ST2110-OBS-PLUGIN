@@ -8,3 +8,4 @@ add_subdirectory(libs/st2110core)
 add_subdirectory(apps/st2110_rx_dump)
 
 enable_testing()
+add_subdirectory(tests)
