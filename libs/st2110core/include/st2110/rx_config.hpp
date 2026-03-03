@@ -3,6 +3,7 @@
 
 #include <string>
 #include <cstdint>
+#include "pixel_format.hpp"
 
 namespace st2110 {
     struct RxVideoConfig {
@@ -14,11 +15,6 @@ namespace st2110 {
         uint8_t payload_type;
         std::string local_ip;
         std::string dest_ip;
-
-        enum class PixelFormat {
-            UYVY,
-        };
-
         PixelFormat format;
 
         bool is_valid() const {
