@@ -2,6 +2,7 @@
 #include <string>
 
 #include <st2110/rx_config.hpp>
+#include <st2110/pixel_format.hpp>
 
 int main() {
     st2110::RxVideoConfig cfg{};
@@ -15,7 +16,7 @@ int main() {
     cfg.payload_type = 112;
     cfg.dest_ip = "239.1.1.1";
     cfg.local_ip = "0.0.0.0";
-    cfg.format = st2110::RxVideoConfig::PixelFormat::UYVY;
+    cfg.format = st2110::PixelFormat::UYVY;
 
     assert(cfg.is_valid());
 
