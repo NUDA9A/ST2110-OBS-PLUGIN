@@ -44,8 +44,8 @@
   - Unit test with FakeBackend -> FakeSink (one frame delivered)
 
 ## A1. RTP (минимум для MVP)
-- [ ] 010: Define RTP header view struct (version, pt, marker, seq16, ts32, ssrc)
-- [ ] 011: Implement RTP header parser (validate version=2, min length=12) + tests
+- [x] 010: Define RTP header view struct (version, pt, marker, seq16, ts32, ssrc)
+- [x] 011: Implement RTP header parser (validate version=2, min length=12) + tests
 - [ ] 012: Add helper for seq wrap comparison/distance + tests
 - [ ] 013: Add "extract payload span" (skip CSRC if present; ignore extensions in MVP) + tests
 

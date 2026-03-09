@@ -3,7 +3,7 @@
 
 namespace st2110 {
 enum class Error {
-    Ok, BufferTooSmall, InvalidValue, Unsupported
+    Ok, BufferTooSmall, InvalidValue, Unsupported, ShortPacket, BadRTPVersion
 };
 
 inline const char *to_string(Error error) {
@@ -14,6 +14,10 @@ inline const char *to_string(Error error) {
       return "ERROR: The value is invalid!";
     case Error::Unsupported:
       return "ERROR: Unsupported functionality!";
+    case Error::ShortPacket:
+      return "ERROR: The packet is too small!";
+    case Error::BadRTPVersion:
+      return "ERROR: Invalid RTP Header version!";
     default:
       return "OK";
   }
