@@ -46,8 +46,8 @@
 ## A1. RTP (минимум для MVP)
 - [x] 010: Define RTP header view struct (version, pt, marker, seq16, ts32, ssrc)
 - [x] 011: Implement RTP header parser (validate version=2, min length=12) + tests
-- [ ] 012: Add helper for seq wrap comparison/distance + tests
-- [ ] 013: Add "extract payload span" (skip CSRC if present; ignore extensions in MVP) + tests
+- [x] 012: Add helper for seq wrap comparison/distance + tests
+- [x] 013: Add "extract payload span" (skip CSRC if present; ignore extensions in MVP) + tests
 
 ## A2. ST2110-20 payload header + SRD headers
 - [ ] 020: Define structs for: ExtendedSeqHi16 + SRD header (len,row,offset,F,C)

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <expected>
+#include <algorithm>
 #include "error.hpp"
 #include "bytes.hpp"
 #include "endian.hpp"
@@ -82,6 +83,26 @@ inline std::expected<RtpHeaderView, Error> parse_rtp_header(ByteSpan udp_payload
     };
 }
 
+inline bool seq_less(uint16_t a, uint16_t b) {
+    uint16_t forward_dst = b - a;
+    return forward_dst != 0 && forward_dst < 32768;
+}
+
+inline int32_t seq_distance(uint16_t a, uint16_t b) {
+    if (a == b) {
+        return 0;
+    }
+    uint16_t forward_dst = b - a;
+    int32_t res = static_cast<int32_t>(forward_dst);
+    if (!seq_less(a, b)) {
+        res = static_cast<int32_t>(forward_dst - 65536);
+    }
+    return res;
+}
+
+inline ByteSpan rtp_payload_span(ByteSpan udp_payload, const RtpHeaderView& header) {
+    return udp_payload.subspan(header.payload_offset, header.payload_len);
+}
 }
 
 #endif //ST2110_OBS_PLUGIN_RTP_HPP

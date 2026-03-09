@@ -1,0 +1,49 @@
+#include <cassert>
+#include <cstdint>
+
+#include <st2110/rtp.hpp>
+#include <st2110/bytes.hpp>
+
+static void test_basic_payload_span() {
+    const uint8_t pkt[] = {
+            0x80, 0xF0,
+            0x12, 0x34,
+            0x01, 0x02, 0x03, 0x04,
+            0x0A, 0x0B, 0x0C, 0x0D,
+            0x11, 0x22, 0x33
+    };
+
+    auto res = st2110::parse_rtp_header(st2110::ByteSpan{pkt});
+    assert(res.has_value());
+
+    auto payload = st2110::rtp_payload_span(st2110::ByteSpan{pkt}, res.value());
+    assert(payload.size() == 3);
+    assert(payload[0] == 0x11);
+    assert(payload[1] == 0x22);
+    assert(payload[2] == 0x33);
+}
+
+static void test_payload_span_with_padding() {
+    const uint8_t pkt[] = {
+            0xA0, 0x70,
+            0x00, 0x01,
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x02,
+            0xAA, 0xBB,
+            0x00, 0x02
+    };
+
+    auto res = st2110::parse_rtp_header(st2110::ByteSpan{pkt});
+    assert(res.has_value());
+
+    auto payload = st2110::rtp_payload_span(st2110::ByteSpan{pkt}, res.value());
+    assert(payload.size() == 2);
+    assert(payload[0] == 0xAA);
+    assert(payload[1] == 0xBB);
+}
+
+int main() {
+    test_basic_payload_span();
+    test_payload_span_with_padding();
+    return 0;
+}
