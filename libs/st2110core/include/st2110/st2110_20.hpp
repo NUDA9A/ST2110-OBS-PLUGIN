@@ -72,5 +72,35 @@ namespace st2110 {
         res.header_bytes = offset;
         return res;
     }
+
+    Error validate_st2110_20_payload_header(const St2110PayloadHeaderView& h) {
+        if (h.srd_count == 0 || h.srd_count > 3) {
+            return Error::InvalidValue;
+        }
+        for (std::size_t i = 0; i < h.srd_count; ++i) {
+            if (h.srd[i].length == 0) {
+                return Error::InvalidValue;
+            }
+            if (h.srd[i].field_id) {
+                return Error::Unsupported;
+            }
+            if (!h.srd[i].continuation && i != h.srd_count - 1) {
+                return Error::InvalidValue;
+            }
+            if (h.srd[i].continuation && i == h.srd_count - 1) {
+                return Error::InvalidValue;
+            }
+        }
+
+        if (h.header_bytes != 2 + 6 * static_cast<std::size_t>(h.srd_count)) {
+            return Error::InvalidValue;
+        }
+
+        return Error::Ok;
+    }
+
+    uint32_t combine_extended_seq(const ExtendedSequenceNumber& ext, uint16_t lo16) {
+        return (static_cast<uint32_t>(ext.hi16) << 16) | static_cast<uint32_t>(lo16);
+    }
 }
 #endif //ST2110_OBS_PLUGIN_ST2110_20_HPP

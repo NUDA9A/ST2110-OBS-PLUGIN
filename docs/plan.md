@@ -52,8 +52,8 @@
 ## A2. ST2110-20 payload header + SRD headers
 - [x] 020: Define structs for: ExtendedSeqHi16 + SRD header (len,row,offset,F,C)
 - [x] 021: Implement parser for ExtSeqHi16 + 1..3 SRD headers + tests (synthetic bytes)
-- [ ] 022: Implement validation rules (SRD length > 0, <= MAXUDP, C chaining) + tests
-- [ ] 023: Implement helper: combine 16-bit RTP seq + ExtSeqHi16 => 32-bit ext seq + tests
+- [x] 022: Implement validation rules (SRD length > 0, <= MAXUDP, C chaining) + tests
+- [x] 023: Implement helper: combine 16-bit RTP seq + ExtSeqHi16 => 32-bit ext seq + tests
 
 ## A3. Packet model / storage primitives
 - [ ] 030: Define `PacketView` (rtp header + ext seq32 + srd list + payload bytes)
