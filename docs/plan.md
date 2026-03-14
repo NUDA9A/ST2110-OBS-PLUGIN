@@ -51,7 +51,7 @@
 
 ## A2. ST2110-20 payload header + SRD headers
 - [x] 020: Define structs for: ExtendedSeqHi16 + SRD header (len,row,offset,F,C)
-- [ ] 021: Implement parser for ExtSeqHi16 + 1..3 SRD headers + tests (synthetic bytes)
+- [x] 021: Implement parser for ExtSeqHi16 + 1..3 SRD headers + tests (synthetic bytes)
 - [ ] 022: Implement validation rules (SRD length > 0, <= MAXUDP, C chaining) + tests
 - [ ] 023: Implement helper: combine 16-bit RTP seq + ExtSeqHi16 => 32-bit ext seq + tests
 
