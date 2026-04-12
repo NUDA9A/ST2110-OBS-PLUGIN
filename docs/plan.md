@@ -95,7 +95,7 @@
   - review current naming/API surface
   - keep video-specific contracts where appropriate
   - avoid blocking future audio path
-- [ ] 031: Add common stats structs for parsers / depacketizers / backends
+- [x] 031: Add common stats structs for parsers / depacketizers / backends
 - [ ] 032: Add common config validation helpers and conventions doc for "strict parse, explicit fallback"
 
 ### A1. Video packet model
