@@ -91,7 +91,7 @@
 ## Track A — Core library foundations (shared / portable)
 
 ### A0. Common base abstractions
-- [ ] 030: Generalize media-facing naming where needed so types/interfaces can grow from video-only to media-oriented without rewrite
+- [x] 030: Generalize media-facing naming where needed so types/interfaces can grow from video-only to media-oriented without rewrite
   - review current naming/API surface
   - keep video-specific contracts where appropriate
   - avoid blocking future audio path
