@@ -96,7 +96,7 @@
   - keep video-specific contracts where appropriate
   - avoid blocking future audio path
 - [x] 031: Add common stats structs for parsers / depacketizers / backends
-- [ ] 032: Add common config validation helpers and conventions doc for "strict parse, explicit fallback"
+- [x] 032: Add common config validation helpers and conventions doc for "strict parse, explicit fallback"
 
 ### A1. Video packet model
 - [ ] 040: Define `PacketView` (rtp header + ext seq32 + srd list + payload bytes)
