@@ -7,6 +7,13 @@
 
 namespace st2110 {
 
+    enum class PacketParseStage {
+        RtpHeader,
+        St2110PayloadHeaderParse,
+        St2110PayloadHeaderValidate,
+        SrdPayloadSplit
+    };
+
     struct ParserStats {
         uint64_t packets_total = 0;
         uint64_t packets_ok = 0;
@@ -18,6 +25,15 @@ namespace st2110 {
         uint64_t unsupported = 0;
         uint64_t buffer_too_small = 0;
         uint64_t other_error = 0;
+    };
+
+    struct PacketParseStats {
+        ParserStats parser_stats{};
+
+        uint64_t rtp_header_fail = 0;
+        uint64_t st2110_header_parse_fail = 0;
+        uint64_t bad_srd = 0;
+        uint64_t srd_payload_split_fail = 0;
     };
 
     inline void record_parse_result(ParserStats& stats, Error err) {
@@ -70,6 +86,28 @@ namespace st2110 {
         uint64_t datagrams_dropped = 0;
         uint64_t media_units_delivered = 0;
     };
+
+    inline void record_packet_parse_result(PacketParseStats& stats, Error err, PacketParseStage stage) {
+        record_parse_result(stats.parser_stats, err);
+        if (err == Error::Ok) {
+            return;
+        }
+
+        switch (stage) {
+            case PacketParseStage::RtpHeader:
+                ++stats.rtp_header_fail;
+                break;
+            case PacketParseStage::St2110PayloadHeaderParse:
+                ++stats.st2110_header_parse_fail;
+                break;
+            case PacketParseStage::St2110PayloadHeaderValidate:
+                ++stats.bad_srd;
+                break;
+            case PacketParseStage::SrdPayloadSplit:
+                ++stats.srd_payload_split_fail;
+                break;
+        }
+    }
 
 } // namespace st2110
 
