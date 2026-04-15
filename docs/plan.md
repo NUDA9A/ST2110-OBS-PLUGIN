@@ -99,7 +99,7 @@
 - [x] 032: Add common config validation helpers and conventions doc for "strict parse, explicit fallback"
 
 ### A1. Video packet model
-- [ ] 040: Define `PacketView` (rtp header + ext seq32 + srd list + payload bytes)
+- [x] 040: Define `PacketView` (rtp header + ext seq32 + srd list + payload bytes)
 - [ ] 041: Implement `PacketView::from_udp_datagram()` (parses all layers) + tests
 - [ ] 042: Add packet stats counters (parse_fail, bad_version, short_packet, bad_srd, etc.)
 - [ ] 043: Fix zero-length SRD special-case according to ST 2110-20 + tests :contentReference[oaicite:2]{index=2}
