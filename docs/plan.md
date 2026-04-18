@@ -107,7 +107,7 @@
 ### A2. Video reorder / assemble / depacketize
 - [x] 050: Define interface for `ReorderBuffer` (push(packet), pop_next())
 - [x] 051: Implement fixed window reorder by ext seq32 (size configurable) + tests
-- [ ] 052: Implement drop/late accounting (out_of_window, missing_seq) + tests
+- [x] 052: Implement drop/late accounting (out_of_window, missing_seq) + tests
 - [ ] 053: Add simple timeout/flush policy (optional but localized) + tests
 - [ ] 054: Define `FrameBuffer` for UYVY (width,height,stride,storage) + tests
 - [ ] 055: Define `FrameAssembler` lifecycle: begin(ts_rtp), write_segment(row, byte_off, bytes), end(marker)
