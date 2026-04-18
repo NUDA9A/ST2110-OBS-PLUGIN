@@ -7,17 +7,6 @@
 #include <optional>
 
 namespace st2110 {
-    struct ReorderBufferStats {
-        uint64_t packets_pushed = 0;
-        uint64_t packets_stored = 0;
-        uint64_t packets_popped = 0;
-
-        uint64_t duplicates = 0;
-        uint64_t out_of_window = 0;
-        uint64_t late_packets = 0;
-        uint64_t missing_seq = 0;
-    };
-
     class FixedWindowReorderBuffer final : public IReorderBuffer {
     public:
         explicit FixedWindowReorderBuffer(uint32_t window_size) : window_size_(window_size) {
@@ -82,6 +71,17 @@ namespace st2110 {
 
         [[nodiscard]] const ReorderBufferStats &stats() const {
             return stats_;
+        }
+
+        [[nodiscard]] bool flush_missing_once() {
+            if (!initialized_ || packets_.empty() || packets_.find(next_expected_seq_) != packets_.end()) {
+                return false;
+            }
+
+            ++next_expected_seq_;
+            missing_head_accounted_ = false;
+            ++stats_.missing_seq_flushed;
+            return true;
         }
 
     private:
