@@ -55,6 +55,12 @@ namespace st2110 {
                 sum_length += st2110_20_payload_header.value().srd[i].length;
             }
 
+            if (st2110_20_payload_header.value().srd_count == 1 && st2110_20_payload_header.value().srd[0].length == 0) {
+                if (res.payload_data.size() != 0) {
+                    return std::unexpected(Error::InvalidValue);
+                }
+            }
+
             if (res.payload_data.size() < sum_length) {
                 return std::unexpected(Error::ShortPacket);
             }

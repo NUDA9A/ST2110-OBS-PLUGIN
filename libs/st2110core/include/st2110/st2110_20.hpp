@@ -77,18 +77,27 @@ namespace st2110 {
         if (h.srd_count == 0 || h.srd_count > 3) {
             return Error::InvalidValue;
         }
-        for (std::size_t i = 0; i < h.srd_count; ++i) {
-            if (h.srd[i].length == 0) {
-                return Error::InvalidValue;
-            }
-            if (h.srd[i].field_id) {
+        if (h.srd_count == 1) {
+            if (h.srd[0].field_id) {
                 return Error::Unsupported;
             }
-            if (!h.srd[i].continuation && i != h.srd_count - 1) {
+            if (h.srd[0].continuation) {
                 return Error::InvalidValue;
             }
-            if (h.srd[i].continuation && i == h.srd_count - 1) {
-                return Error::InvalidValue;
+        } else {
+            for (std::size_t i = 0; i < h.srd_count; ++i) {
+                if (h.srd[i].length == 0) {
+                    return Error::InvalidValue;
+                }
+                if (h.srd[i].field_id) {
+                    return Error::Unsupported;
+                }
+                if (!h.srd[i].continuation && i != h.srd_count - 1) {
+                    return Error::InvalidValue;
+                }
+                if (h.srd[i].continuation && i == h.srd_count - 1) {
+                    return Error::InvalidValue;
+                }
             }
         }
 
