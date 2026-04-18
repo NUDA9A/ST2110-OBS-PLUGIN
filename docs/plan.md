@@ -105,7 +105,7 @@
 - [x] 043: Fix zero-length SRD special-case according to ST 2110-20 + tests :contentReference[oaicite:2]{index=2}
 
 ### A2. Video reorder / assemble / depacketize
-- [ ] 050: Define interface for `ReorderBuffer` (push(packet), pop_next())
+- [x] 050: Define interface for `ReorderBuffer` (push(packet), pop_next())
 - [ ] 051: Implement fixed window reorder by ext seq32 (size configurable) + tests
 - [ ] 052: Implement drop/late accounting (out_of_window, missing_seq) + tests
 - [ ] 053: Add simple timeout/flush policy (optional but localized) + tests
