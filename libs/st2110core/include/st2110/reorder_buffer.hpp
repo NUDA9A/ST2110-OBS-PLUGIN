@@ -35,6 +35,17 @@ namespace st2110 {
 
             return pkt;
         }
+
+        StoredPacket() = default;
+
+        explicit StoredPacket(const PacketView& packetView) :
+        rtp(packetView.rtp), extended_seq(packetView.extended_seq), segment_count(packetView.segment_count) {
+            for (std::size_t i = 0; i < segment_count; ++i) {
+                segment_headers[i] = packetView.segments[i].header;
+            }
+            auto src = packetView.payload_data;
+            payload_data.assign(src.begin(), src.end());
+        }
     };
 
     class IReorderBuffer {
