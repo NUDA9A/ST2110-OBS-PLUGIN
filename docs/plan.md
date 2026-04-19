@@ -64,11 +64,11 @@
 - [x] 005: Add common error/result type (enum error codes) + tests
 - [x] 006: Add `ByteSpan` alias (std::span<const uint8_t>) and conventions doc snippet
 - [x] 007: Define `RxVideoConfig` (width/height/fps, ip/port, payload_type, format)
-- [x] 008: Define `VideoFrame`/`FrameView` contract (format, planes, stride, ts_ns)
+- [x] 008: Define `VideoFrame`/`VideoFrameView` contract (format, planes, stride, ts_ns)
 - [x] 009: Define interfaces:
-  - `IFrameSink` (on_frame, on_stats optional)
-  - `IRxVideoBackend` (start/stop, backend_name, get_stats optional)
-  - Unit test with FakeBackend -> FakeSink (one frame delivered)
+  - `IVideoFrameSink` (on_video_frame; stats optional later)
+  - `IRxBackend` / `IRxVideoBackend`
+  - Unit test with FakeBackend -> FakeVideoSink (one frame delivered)
 - [x] 010: Define RTP header view struct (version, pt, marker, seq16, ts32, ssrc)
 - [x] 011: Implement RTP header parser (validate version=2, min length=12) + tests
 - [x] 012: Add helper for seq wrap comparison/distance + tests
@@ -81,7 +81,7 @@
 ---
 
 ## Spec notes / deviations
-- [ ] S001: `validate_st2110_20_payload_header()` currently rejects `SRD Length == 0` unconditionally, but ST 2110-20 allows this special case when there is exactly one SRD header and no sample row data follows. This must be fixed before video RX is considered spec-clean. :contentReference[oaicite:0]{index=0}
+- [x] S001: `validate_st2110_20_payload_header()` currently rejects `SRD Length == 0` unconditionally, but ST 2110-20 allows this special case when there is exactly one SRD header and no sample row data follows. This must be fixed before video RX is considered spec-clean. :contentReference[oaicite:0]{index=0}
 - [ ] S002: While MVP may stay progressive-only, code paths and types should not hardcode assumptions that make future interlace / PsF / audio support invasive. ST 2110-20 explicitly distinguishes progressive, interlaced, and PsF behavior for marker/F/row semantics, so these assumptions must remain localized. :contentReference[oaicite:1]{index=1}
 
 ---
@@ -109,8 +109,13 @@
 - [x] 051: Implement fixed window reorder by ext seq32 (size configurable) + tests
 - [x] 052: Implement drop/late accounting (out_of_window, missing_seq) + tests
 - [x] 053: Add simple timeout/flush policy (optional but localized) + tests
-- [ ] 054: Define `FrameBuffer` for UYVY (width,height,stride,storage) + tests
-- [ ] 055: Define `FrameAssembler` lifecycle: begin(ts_rtp), write_segment(row, byte_off, bytes), end(marker)
+- [x] 054: Extend `VideoFrame` with mutable storage access for UYVY (`width/height/format`, `stride_bytes`, `data`, `row_data`) + tests
+- Note:
+- No separate `FrameBuffer` type for MVP video assembly.
+- `VideoFrame` is the owning assembled-frame storage object.
+- `VideoFrameView` remains the non-owning presentation/view type.
+- `FrameAssembler` should write directly into `VideoFrame`.
+- [x] 055: Define `FrameAssembler` lifecycle over `VideoFrame`: begin(ts_rtp), write_segment(row, byte_off, bytes), end(marker)
 - [ ] 056: Implement bounds checks (row range, offset+len <= stride) + tests
 - [ ] 057: Implement frame completeness rule:
   - marker seen => frame can be emitted
@@ -179,7 +184,7 @@
 - [ ] 130: CMake option `ST2110_WITH_MTL` + build guard
 - [ ] 131: Implement `MtlRxVideoBackend` skeleton + smoke test
 - [ ] 132: Implement minimal start/stop using MTL ST20P RX (get_frame/put_frame)
-- [ ] 133: Map MTL frame -> `VideoFrame`/`FrameView` and deliver to sink
+- [ ] 133: Map MTL frame -> `VideoFrame`/`VideoFrameView` and deliver to sink
 - [ ] 134: Basic stats (frames, drops if available)
 
 ### C4. MTL audio RX

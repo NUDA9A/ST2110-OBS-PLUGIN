@@ -54,8 +54,63 @@ namespace st2110 {
             return res;
         }
 
-        std::size_t size_bytes() const {
+        [[nodiscard]] std::size_t size_bytes() const {
             return frame_data.size();
+        }
+
+        [[nodiscard]] uint32_t width() const {
+            return width_;
+        }
+
+        [[nodiscard]] uint32_t height() const {
+            return height_;
+        }
+
+        [[nodiscard]] PixelFormat format() const {
+            return fmt_;
+        }
+
+        [[nodiscard]] std::size_t stride_bytes(std::size_t plane = 0) const {
+            if (plane >= planes_count_) {
+                throw std::out_of_range("invalid plane value");
+            }
+            return planes_[plane].stride_bytes;
+        }
+
+        [[nodiscard]] uint8_t* data(std::size_t plane = 0) {
+            if (plane >= planes_count_) {
+                throw std::out_of_range("invalid plane value");
+            }
+            return frame_data.data() + planes_[plane].offset_bytes;
+        }
+
+        [[nodiscard]] const uint8_t* data(std::size_t plane = 0) const {
+            if (plane >= planes_count_) {
+                throw std::out_of_range("invalid plane value");
+            }
+            return frame_data.data() + planes_[plane].offset_bytes;
+        }
+
+        [[nodiscard]] uint8_t* row_data(uint32_t row, std::size_t plane = 0) {
+            if (plane >= planes_count_) {
+                throw std::out_of_range("invalid plane value");
+            }
+            if (row >= planes_[plane].height_rows) {
+                throw std::out_of_range("invalid row value");
+            }
+
+            return data(plane) + row * planes_[plane].stride_bytes;
+        }
+
+        [[nodiscard]] const uint8_t* row_data(uint32_t row, std::size_t plane = 0) const {
+            if (plane >= planes_count_) {
+                throw std::out_of_range("invalid plane value");
+            }
+            if (row >= planes_[plane].height_rows) {
+                throw std::out_of_range("invalid row value");
+            }
+
+            return data(plane) + row * planes_[plane].stride_bytes;
         }
 
     private:
