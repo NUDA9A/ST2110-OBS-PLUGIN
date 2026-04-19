@@ -21,7 +21,50 @@ namespace st2110 {
     public:
         explicit Depacketizer(const DepacketizerConfig& cfg) : cfg_(cfg), assembler_(cfg_.width, cfg_.height, cfg_.format, cfg_.partial_frame_policy) {}
 
-        [[nodiscard]] std::vector<AssembledVideoFrame> push(const PacketView& packet);
+        [[nodiscard]] std::vector<AssembledVideoFrame> push(const PacketView& packet) {
+            std::vector<AssembledVideoFrame> res;
+
+            if (!has_current_timestamp_) {
+                assembler_.begin(packet.rtp.timestamp);
+                has_current_timestamp_ = true;
+                current_rtp_timestamp_ = packet.rtp.timestamp;
+                if (packet.rtp.marker) {
+                    auto end_res = assembler_.end(true);
+                    if (end_res.frame.has_value()) {
+                        res.push_back(*end_res.frame);
+                    }
+                    has_current_timestamp_ = false;
+                    current_rtp_timestamp_ = 0;
+                }
+                return res;
+            }
+
+            if (current_rtp_timestamp_ == packet.rtp.timestamp) {
+                if (packet.rtp.marker) {
+                    auto end_res = assembler_.end(true);
+                    if (end_res.frame.has_value()) {
+                        res.push_back(*end_res.frame);
+                    }
+                    has_current_timestamp_ = false;
+                    current_rtp_timestamp_ = 0;
+                }
+                return res;
+            }
+
+            (void)assembler_.end(false);
+            assembler_.begin(packet.rtp.timestamp);
+            has_current_timestamp_ = true;
+            current_rtp_timestamp_ = packet.rtp.timestamp;
+            if (packet.rtp.marker) {
+                auto end_res = assembler_.end(true);
+                if (end_res.frame.has_value()) {
+                    res.push_back(*end_res.frame);
+                }
+                has_current_timestamp_ = false;
+                current_rtp_timestamp_ = 0;
+            }
+            return res;
+        }
 
         void reset() {
             assembler_ = FrameAssembler(cfg_.width, cfg_.height, cfg_.format, cfg_.partial_frame_policy);
@@ -34,8 +77,8 @@ namespace st2110 {
         }
 
         [[nodiscard]] std::optional<uint32_t> current_rtp_timestamp() const {
-            if (assembler_.in_progress()) {
-                return assembler_.current_rtp_timestamp();
+            if (has_current_timestamp_) {
+                return current_rtp_timestamp_;
             }
             return std::nullopt;
         }
