@@ -120,7 +120,7 @@
 - [x] 057: Implement frame completeness rule:
   - marker seen => frame can be emitted
   - partial state must be tracked explicitly
-- [ ] 058: Implement partial frame policy: drop / emit-with-flag (configurable) + tests
+- [x] 058: Implement partial frame policy: drop / emit-with-flag (configurable) + tests
 - [ ] 059: Define `Depacketizer` API (push PacketView, returns 0..N completed frames)
 - [ ] 060: Implement grouping logic by RTP timestamp (new timestamp => new frame) + tests
 - [ ] 061: Implement marker-based end-of-frame + tests

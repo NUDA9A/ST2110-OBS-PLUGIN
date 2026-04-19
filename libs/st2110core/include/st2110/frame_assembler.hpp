@@ -9,8 +9,21 @@
 #include <cstdint>
 #include <utility>
 #include <stdexcept>
+#include <optional>
 
 namespace st2110 {
+    enum class PartialFramePolicy {
+        EmitWithFlag,
+        Drop
+    };
+
+    enum class FrameAssemblerEndStatus {
+        NotEmittable,
+        EmittedComplete,
+        EmittedPartial,
+        DroppedPartial
+    };
+
     struct AssembledVideoFrame {
         VideoFrame frame;
         uint32_t rtp_timestamp = 0;
@@ -23,10 +36,15 @@ namespace st2110 {
         }
     };
 
+    struct FrameAssemblerEndResult {
+        std::optional<AssembledVideoFrame> frame{};
+        FrameAssemblerEndStatus status = FrameAssemblerEndStatus::NotEmittable;
+    };
+
     class FrameAssembler {
     public:
-        FrameAssembler(uint32_t width, uint32_t height, PixelFormat format) : width_(width), height_(height), format_(format),
-                                                                              current_frame_(width_, height_, format_), coverage_(current_frame_) {}
+        FrameAssembler(uint32_t width, uint32_t height, PixelFormat format, PartialFramePolicy partial_policy = PartialFramePolicy::EmitWithFlag) : width_(width), height_(height), format_(format),
+                                                                              current_frame_(width_, height_, format_), coverage_(current_frame_), partial_policy_(partial_policy) {}
 
         void begin(uint32_t rtp_timestamp) {
             if (in_progress_) {
@@ -58,16 +76,28 @@ namespace st2110 {
             coverage_.mark_written(plane, row, byte_offset, bytes.size());
         }
 
-        [[nodiscard]] AssembledVideoFrame end(bool marker) {
+        [[nodiscard]] FrameAssemblerEndResult end(bool marker) {
             if (!in_progress_) {
                 throw std::logic_error("end() was called while Assembler is not in progress");
             }
+            in_progress_ = false;
 
             const bool fully_written = coverage_.is_complete();
+            if (!marker) {
+                current_frame_ = VideoFrame(width_, height_, format_);
+                return {std::nullopt, FrameAssemblerEndStatus::NotEmittable};
+            }
+            if (!fully_written && partial_policy_ == PartialFramePolicy::Drop) {
+                current_frame_ = VideoFrame(width_, height_, format_);
+                return {std::nullopt, FrameAssemblerEndStatus::DroppedPartial};
+            }
             AssembledVideoFrame res{std::move(current_frame_), current_rtp_timestamp_, marker, marker, marker && fully_written};
             current_frame_ = VideoFrame(width_, height_, format_);
-            in_progress_ = false;
-            return res;
+            if (fully_written) {
+                return {std::move(res), FrameAssemblerEndStatus::EmittedComplete};
+            } else {
+                return {std::move(res), FrameAssemblerEndStatus::EmittedPartial};
+            }
         }
 
         [[nodiscard]] bool in_progress() const {
@@ -81,6 +111,10 @@ namespace st2110 {
             return current_rtp_timestamp_;
         }
 
+        [[nodiscard]] PartialFramePolicy partial_frame_policy() const {
+            return partial_policy_;
+        }
+
     private:
         uint32_t width_;
         uint32_t height_;
@@ -90,6 +124,7 @@ namespace st2110 {
         uint32_t current_rtp_timestamp_ = 0;
         VideoFrame current_frame_;
         FrameWriteCoverage coverage_;
+        PartialFramePolicy partial_policy_;
     };
 }
 

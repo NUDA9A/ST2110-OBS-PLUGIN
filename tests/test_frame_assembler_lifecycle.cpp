@@ -20,12 +20,19 @@ static void test_begin_write_end_roundtrip() {
     assembler.write_segment(0, 0, 0, st2110::ByteSpan(seg0, sizeof(seg0)));
     assembler.write_segment(0, 1, 4, st2110::ByteSpan(seg1, sizeof(seg1)));
 
-    st2110::AssembledVideoFrame out = assembler.end(true);
+    st2110::FrameAssemblerEndResult result = assembler.end(true);
+    assert(result.status == st2110::FrameAssemblerEndStatus::EmittedPartial);
+    assert(result.frame.has_value());
 
     assert(!assembler.in_progress());
 
+    const st2110::AssembledVideoFrame& out = *result.frame;
+
     assert(out.rtp_timestamp == 0x11223344u);
     assert(out.marker_seen == true);
+    assert(out.can_emit == true);
+    assert(out.complete == false);
+    assert(out.partial() == true);
 
     assert(out.frame.width() == 8);
     assert(out.frame.height() == 2);
@@ -46,14 +53,14 @@ static void test_begin_write_end_roundtrip() {
     assert(row1[7] == 0x23);
 }
 
-static void test_end_preserves_marker_false() {
+static void test_end_marker_false_is_not_emittable() {
     st2110::FrameAssembler assembler(4, 1, st2110::PixelFormat::UYVY);
 
     assembler.begin(77);
-    st2110::AssembledVideoFrame out = assembler.end(false);
+    st2110::FrameAssemblerEndResult result = assembler.end(false);
 
-    assert(out.rtp_timestamp == 77u);
-    assert(out.marker_seen == false);
+    assert(result.status == st2110::FrameAssemblerEndStatus::NotEmittable);
+    assert(!result.frame.has_value());
 }
 
 static void test_write_before_begin_rejected() {
@@ -115,14 +122,20 @@ static void test_second_begin_after_end_starts_clean_frame() {
 
     assembler.begin(1);
     assembler.write_segment(0, 0, 0, st2110::ByteSpan(seg, sizeof(seg)));
-    st2110::AssembledVideoFrame first = assembler.end(true);
+    st2110::FrameAssemblerEndResult first_result = assembler.end(true);
+    assert(first_result.status == st2110::FrameAssemblerEndStatus::EmittedPartial);
+    assert(first_result.frame.has_value());
 
+    const st2110::AssembledVideoFrame& first = *first_result.frame;
     assert(first.frame.row_data(0)[0] == 0xDE);
     assert(first.frame.row_data(0)[1] == 0xAD);
 
     assembler.begin(2);
-    st2110::AssembledVideoFrame second = assembler.end(false);
+    st2110::FrameAssemblerEndResult second_result = assembler.end(true);
+    assert(second_result.status == st2110::FrameAssemblerEndStatus::EmittedPartial);
+    assert(second_result.frame.has_value());
 
+    const st2110::AssembledVideoFrame& second = *second_result.frame;
     assert(second.rtp_timestamp == 2u);
     assert(second.frame.row_data(0)[0] == 0x00);
     assert(second.frame.row_data(0)[1] == 0x00);
@@ -132,7 +145,7 @@ static void test_second_begin_after_end_starts_clean_frame() {
 
 int main() {
     test_begin_write_end_roundtrip();
-    test_end_preserves_marker_false();
+    test_end_marker_false_is_not_emittable();
     test_write_before_begin_rejected();
     test_end_before_begin_rejected();
     test_current_timestamp_before_begin_rejected();

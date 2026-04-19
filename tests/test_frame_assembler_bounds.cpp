@@ -6,13 +6,17 @@
 
 static void test_write_segment_allows_write_ending_exactly_at_row_boundary() {
     st2110::FrameAssembler assembler(4, 1, st2110::PixelFormat::UYVY);
-    // UYVY stride = 8 bytes for width=4
+    // UYVY active row bytes = 8 for width=4
     const uint8_t seg[] = {0x10, 0x11, 0x12, 0x13};
 
     assembler.begin(1);
     assembler.write_segment(0, 0, 4, st2110::ByteSpan(seg, sizeof(seg)));
-    st2110::AssembledVideoFrame out = assembler.end(true);
 
+    st2110::FrameAssemblerEndResult result = assembler.end(true);
+    assert(result.status == st2110::FrameAssemblerEndStatus::EmittedPartial);
+    assert(result.frame.has_value());
+
+    const st2110::AssembledVideoFrame& out = *result.frame;
     const uint8_t* row0 = out.frame.row_data(0, 0);
     assert(row0[4] == 0x10);
     assert(row0[5] == 0x11);
@@ -28,7 +32,7 @@ static void test_write_segment_rejects_offset_past_stride() {
 
     bool thrown = false;
     try {
-        assembler.write_segment(0, 0, 9, st2110::ByteSpan(seg, sizeof(seg))); // stride is 8
+        assembler.write_segment(0, 0, 9, st2110::ByteSpan(seg, sizeof(seg))); // active row bytes is 8
     } catch (const std::out_of_range&) {
         thrown = true;
     }
@@ -43,7 +47,7 @@ static void test_write_segment_rejects_non_empty_write_at_exact_end_of_row() {
 
     bool thrown = false;
     try {
-        assembler.write_segment(0, 0, 8, st2110::ByteSpan(seg, sizeof(seg))); // stride is 8
+        assembler.write_segment(0, 0, 8, st2110::ByteSpan(seg, sizeof(seg))); // active row bytes is 8
     } catch (const std::out_of_range&) {
         thrown = true;
     }
@@ -55,8 +59,12 @@ static void test_write_segment_allows_zero_length_write_at_exact_end_of_row() {
 
     assembler.begin(1);
     assembler.write_segment(0, 0, 8, st2110::ByteSpan{}); // legal no-op
-    st2110::AssembledVideoFrame out = assembler.end(false);
 
+    st2110::FrameAssemblerEndResult result = assembler.end(true);
+    assert(result.status == st2110::FrameAssemblerEndStatus::EmittedPartial);
+    assert(result.frame.has_value());
+
+    const st2110::AssembledVideoFrame& out = *result.frame;
     assert(out.frame.width() == 4);
     assert(out.frame.height() == 1);
 }
@@ -69,7 +77,7 @@ static void test_write_segment_rejects_write_crossing_row_boundary() {
 
     bool thrown = false;
     try {
-        assembler.write_segment(0, 0, 6, st2110::ByteSpan(seg, sizeof(seg))); // stride 8, needs 9
+        assembler.write_segment(0, 0, 6, st2110::ByteSpan(seg, sizeof(seg))); // active row bytes 8, needs 9
     } catch (const std::out_of_range&) {
         thrown = true;
     }
