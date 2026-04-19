@@ -32,7 +32,13 @@ namespace st2110 {
                 throw std::logic_error("begin() wasn't called before write_segment()");
             }
             auto* start = current_frame_.row_data(row, plane);
-//            if (byte_offset > current_frame_.stride_bytes())
+            auto stride_bytes = current_frame_.stride_bytes(plane);
+            if (byte_offset > stride_bytes) {
+                throw std::out_of_range("byte_offset > stride_bytes");
+            }
+            if (bytes.size() > stride_bytes - byte_offset) {
+                throw std::out_of_range("bytes.size() + byte_offset > stride_bytes");
+            }
             start += byte_offset;
             std::memcpy(start, bytes.data(), bytes.size());
         }
