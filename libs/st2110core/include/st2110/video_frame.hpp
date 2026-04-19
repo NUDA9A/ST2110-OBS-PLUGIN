@@ -113,6 +113,24 @@ namespace st2110 {
             return data(plane) + row * planes_[plane].stride_bytes;
         }
 
+        [[nodiscard]] std::size_t plane_count() const {
+            return planes_count_;
+        }
+
+        [[nodiscard]] std::size_t active_row_bytes(std::size_t plane = 0) const {
+            if (plane >= planes_count_) {
+                throw std::out_of_range("plane value is invalid");
+            }
+            return planes_[plane].active_row_bytes;
+        }
+
+        [[nodiscard]] std::size_t plane_height_rows(std::size_t plane = 0) const {
+            if (plane >= planes_count_) {
+                throw std::out_of_range("plane value is invalid");
+            }
+            return planes_[plane].height_rows;
+        }
+
     private:
         void fill_planes() {
             switch (fmt_) {

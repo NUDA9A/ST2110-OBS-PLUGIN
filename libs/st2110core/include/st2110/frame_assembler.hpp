@@ -3,21 +3,30 @@
 
 #include "video_frame.hpp"
 #include "bytes.hpp"
+#include "frame_write_coverage.hpp"
 
 #include <cstring>
 #include <cstdint>
+#include <utility>
+#include <stdexcept>
 
 namespace st2110 {
     struct AssembledVideoFrame {
         VideoFrame frame;
         uint32_t rtp_timestamp = 0;
         bool marker_seen = false;
+        bool can_emit = false;
+        bool complete = false;
+
+        [[nodiscard]] bool partial() const {
+            return can_emit && !complete;
+        }
     };
 
     class FrameAssembler {
     public:
         FrameAssembler(uint32_t width, uint32_t height, PixelFormat format) : width_(width), height_(height), format_(format),
-                                                                              current_frame_(width_, height_, format_) {}
+                                                                              current_frame_(width_, height_, format_), coverage_(current_frame_) {}
 
         void begin(uint32_t rtp_timestamp) {
             if (in_progress_) {
@@ -25,22 +34,28 @@ namespace st2110 {
             }
             current_rtp_timestamp_ = rtp_timestamp;
             in_progress_ = true;
+            coverage_.reset_from(current_frame_);
         }
 
         void write_segment(std::size_t plane, uint32_t row, std::size_t byte_offset, ByteSpan bytes) {
             if (!in_progress_) {
                 throw std::logic_error("begin() wasn't called before write_segment()");
             }
+
+            const auto active_row_bytes = current_frame_.active_row_bytes(plane);
+
+            if (byte_offset > active_row_bytes) {
+                throw std::out_of_range("byte_offset > active_row_bytes");
+            }
+            if (bytes.size() > active_row_bytes - byte_offset) {
+                throw std::out_of_range("bytes.size() + byte_offset > active_row_bytes");
+            }
+
             auto* start = current_frame_.row_data(row, plane);
-            auto stride_bytes = current_frame_.stride_bytes(plane);
-            if (byte_offset > stride_bytes) {
-                throw std::out_of_range("byte_offset > stride_bytes");
-            }
-            if (bytes.size() > stride_bytes - byte_offset) {
-                throw std::out_of_range("bytes.size() + byte_offset > stride_bytes");
-            }
             start += byte_offset;
             std::memcpy(start, bytes.data(), bytes.size());
+
+            coverage_.mark_written(plane, row, byte_offset, bytes.size());
         }
 
         [[nodiscard]] AssembledVideoFrame end(bool marker) {
@@ -48,9 +63,10 @@ namespace st2110 {
                 throw std::logic_error("end() was called while Assembler is not in progress");
             }
 
-            in_progress_ = false;
-            AssembledVideoFrame res{std::move(current_frame_), current_rtp_timestamp_, marker};
+            const bool fully_written = coverage_.is_complete();
+            AssembledVideoFrame res{std::move(current_frame_), current_rtp_timestamp_, marker, marker, marker && fully_written};
             current_frame_ = VideoFrame(width_, height_, format_);
+            in_progress_ = false;
             return res;
         }
 
@@ -73,6 +89,7 @@ namespace st2110 {
         bool in_progress_ = false;
         uint32_t current_rtp_timestamp_ = 0;
         VideoFrame current_frame_;
+        FrameWriteCoverage coverage_;
     };
 }
 

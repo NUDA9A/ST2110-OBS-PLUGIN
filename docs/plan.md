@@ -117,7 +117,7 @@
 - `FrameAssembler` should write directly into `VideoFrame`.
 - [x] 055: Define `FrameAssembler` lifecycle over `VideoFrame`: begin(ts_rtp), write_segment(row, byte_off, bytes), end(marker)
 - [x] 056: Implement bounds checks (row range, offset+len <= stride) + tests
-- [ ] 057: Implement frame completeness rule:
+- [x] 057: Implement frame completeness rule:
   - marker seen => frame can be emitted
   - partial state must be tracked explicitly
 - [ ] 058: Implement partial frame policy: drop / emit-with-flag (configurable) + tests
