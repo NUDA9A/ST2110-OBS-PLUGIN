@@ -5,6 +5,7 @@
 #include "bytes.hpp"
 
 #include <cstring>
+#include <cstdint>
 
 namespace st2110 {
     struct AssembledVideoFrame {
@@ -26,11 +27,12 @@ namespace st2110 {
             in_progress_ = true;
         }
 
-        void write_segment(uint32_t row, std::size_t byte_offset, ByteSpan bytes) {
+        void write_segment(std::size_t plane, uint32_t row, std::size_t byte_offset, ByteSpan bytes) {
             if (!in_progress_) {
                 throw std::logic_error("begin() wasn't called before write_segment()");
             }
-            auto* start = current_frame_.row_data(row);
+            auto* start = current_frame_.row_data(row, plane);
+//            if (byte_offset > current_frame_.stride_bytes())
             start += byte_offset;
             std::memcpy(start, bytes.data(), bytes.size());
         }

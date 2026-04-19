@@ -17,8 +17,8 @@ static void test_begin_write_end_roundtrip() {
     assert(assembler.in_progress());
     assert(assembler.current_rtp_timestamp() == 0x11223344u);
 
-    assembler.write_segment(0, 0, st2110::ByteSpan(seg0, sizeof(seg0)));
-    assembler.write_segment(1, 4, st2110::ByteSpan(seg1, sizeof(seg1)));
+    assembler.write_segment(0, 0, 0, st2110::ByteSpan(seg0, sizeof(seg0)));
+    assembler.write_segment(0, 1, 4, st2110::ByteSpan(seg1, sizeof(seg1)));
 
     st2110::AssembledVideoFrame out = assembler.end(true);
 
@@ -63,7 +63,7 @@ static void test_write_before_begin_rejected() {
 
     bool thrown = false;
     try {
-        assembler.write_segment(0, 0, st2110::ByteSpan(seg, sizeof(seg)));
+        assembler.write_segment(0, 0, 0, st2110::ByteSpan(seg, sizeof(seg)));
     } catch (const std::logic_error&) {
         thrown = true;
     }
@@ -114,7 +114,7 @@ static void test_second_begin_after_end_starts_clean_frame() {
     const uint8_t seg[] = {0xDE, 0xAD, 0xBE, 0xEF};
 
     assembler.begin(1);
-    assembler.write_segment(0, 0, st2110::ByteSpan(seg, sizeof(seg)));
+    assembler.write_segment(0, 0, 0, st2110::ByteSpan(seg, sizeof(seg)));
     st2110::AssembledVideoFrame first = assembler.end(true);
 
     assert(first.frame.row_data(0)[0] == 0xDE);
