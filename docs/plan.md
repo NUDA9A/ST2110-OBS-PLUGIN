@@ -108,7 +108,7 @@
 - either mark true header-only functions `inline` or move implementations into `.cpp`
 - keep the decision consistent across the library
 - add a multi-translation-unit link test so this does not regress
-- [ ] 034: Fix repo build/test script correctness
+- [x] 034: Fix repo build/test script correctness
   - fix `scripts/build_and_test.sh` strict-mode typo
   - verify the script actually configures, builds, and runs tests from a clean checkout
   - add a minimal CI-oriented smoke check or documented manual verification step
@@ -118,7 +118,7 @@
 - [x] 041: Implement `PacketView::from_udp_datagram()` (parses all layers) + tests
 - [x] 042: Add packet stats counters (parse_fail, bad_version, short_packet, bad_srd, etc.)
 - [x] 043: Fix zero-length SRD special-case according to ST 2110-20 + tests :contentReference[oaicite:2]{index=2}
-- [ ] 044: Add localized format-aware segment constraints helper(s)
+- [x] 044: Add localized format-aware segment constraints helper(s)
   - define helper/API boundary where packet/segment validation can depend on active video format
   - keep generic ST 2110-20 parsing separate from format-specific receive constraints
   - ensure adding a new format later only requires a new `case`/helper/tests

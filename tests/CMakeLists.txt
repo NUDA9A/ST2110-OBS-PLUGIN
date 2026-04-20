@@ -44,3 +44,4 @@ add_st2110_test(test_header_odr_link
         test_header_odr_link_a.cpp
         test_header_odr_link_b.cpp
 )
+add_st2110_test(test_video_segment_constraints test_video_segment_constraints.cpp)
