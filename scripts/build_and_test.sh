@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set euo pipefall
+set -euo pipefail
 
 cmake -S . -B build -G Ninja
 cmake --build build

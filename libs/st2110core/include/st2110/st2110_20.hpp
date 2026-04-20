@@ -27,7 +27,7 @@ namespace st2110 {
         std::size_t header_bytes;
     };
 
-    std::expected<St2110PayloadHeaderView, Error> parse_st2110_20_payload_header(ByteSpan payload) {
+    inline std::expected<St2110PayloadHeaderView, Error> parse_st2110_20_payload_header(ByteSpan payload) {
         if (payload.size() < 8) {
             return std::unexpected(Error::ShortPacket);
         }
@@ -73,7 +73,7 @@ namespace st2110 {
         return res;
     }
 
-    Error validate_st2110_20_payload_header(const St2110PayloadHeaderView& h) {
+    inline Error validate_st2110_20_payload_header(const St2110PayloadHeaderView& h) {
         if (h.srd_count == 0 || h.srd_count > 3) {
             return Error::InvalidValue;
         }
@@ -108,7 +108,7 @@ namespace st2110 {
         return Error::Ok;
     }
 
-    uint32_t combine_extended_seq(const ExtendedSequenceNumber& ext, uint16_t lo16) {
+    inline uint32_t combine_extended_seq(const ExtendedSequenceNumber& ext, uint16_t lo16) {
         return (static_cast<uint32_t>(ext.hi16) << 16) | static_cast<uint32_t>(lo16);
     }
 }

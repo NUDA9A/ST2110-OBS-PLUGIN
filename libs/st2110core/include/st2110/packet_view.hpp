@@ -27,7 +27,7 @@ namespace st2110 {
 
         ByteSpan payload_data{};
 
-        inline static std::expected<PacketView, Error> from_udp_datagram(ByteSpan udp_payload) {
+        static std::expected<PacketView, Error> from_udp_datagram(ByteSpan udp_payload) {
             PacketView res{};
 
             std::expected<RtpHeaderView, Error> rtp_header = parse_rtp_header(udp_payload);

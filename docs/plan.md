@@ -83,6 +83,12 @@
 ## Spec notes / deviations
 - [x] S001: `validate_st2110_20_payload_header()` currently rejects `SRD Length == 0` unconditionally, but ST 2110-20 allows this special case when there is exactly one SRD header and no sample row data follows. This must be fixed before video RX is considered spec-clean. :contentReference[oaicite:0]{index=0}
 - [ ] S002: While MVP may stay progressive-only, code paths and types should not hardcode assumptions that make future interlace / PsF / audio support invasive. ST 2110-20 explicitly distinguishes progressive, interlaced, and PsF behavior for marker/F/row semantics, so these assumptions must remain localized. :contentReference[oaicite:1]{index=1}
+- [ ] S003: `Depacketizer::map_segment_to_frame_write()` currently treats `SRD Offset` as a byte offset, but ST 2110-20 defines it as the horizontal position of the first full-bandwidth sample in the image pixel matrix. For UYVY / 4:2:2 this must be mapped through format-aware logic instead of written directly as bytes. This must be fixed before video RX is considered spec-clean. :contentReference[oaicite:3]{index=3}
+- [ ] S004: Current UYVY receive path does not validate pgroup alignment constraints implied by ST 2110-20 4:2:2 sampling. For 8-bit 4:2:2, packetized data must respect the pgroup structure and `SRD Length` must remain a multiple of pgroup octet size; offset semantics must also remain aligned with full-bandwidth sample positions. Validation must be added in a localized, format-aware way. :contentReference[oaicite:4]{index=4}
+- [ ] S005: Current payload validation does not enforce monotonic ordering rules for `SRD Row Number` / `SRD Offset` within a packet. ST 2110-20 requires sample rows to progress top-to-bottom and offsets within a row to progress left-to-right. This must be validated explicitly. :contentReference[oaicite:5]{index=5}
+- [ ] S006: Task 022 covered only part of payload-header validation. Size/limit checks that depend on packet/payload sizing policy (including the path toward MAXUDP-aware validation) still need an explicit follow-up task so completed work and remaining work are not conflated. :contentReference[oaicite:6]{index=6}
+- [x] S007: Public headers currently contain non-trivial function definitions in a way that risks ODR / multiple-definition problems once the project grows beyond the current “mostly one translation unit per test executable” shape. The linkage model must be made explicit (true header-only with `inline`, or moved implementations) before backend/app growth.
+- [ ] S008: `PacketParseStats` structures exist, but packet parsing does not yet expose a single integrated path that records stage-specific parse results through the real parse flow. This should be fixed so parse observability is not only nominal.
 
 ---
 
@@ -97,12 +103,38 @@
   - avoid blocking future audio path
 - [x] 031: Add common stats structs for parsers / depacketizers / backends
 - [x] 032: Add common config validation helpers and conventions doc for "strict parse, explicit fallback"
+- [x] 033: Make current public-header implementation ODR-safe
+- audit all non-template/non-class function definitions placed in headers
+- either mark true header-only functions `inline` or move implementations into `.cpp`
+- keep the decision consistent across the library
+- add a multi-translation-unit link test so this does not regress
+- [ ] 034: Fix repo build/test script correctness
+  - fix `scripts/build_and_test.sh` strict-mode typo
+  - verify the script actually configures, builds, and runs tests from a clean checkout
+  - add a minimal CI-oriented smoke check or documented manual verification step
 
 ### A1. Video packet model
 - [x] 040: Define `PacketView` (rtp header + ext seq32 + srd list + payload bytes)
 - [x] 041: Implement `PacketView::from_udp_datagram()` (parses all layers) + tests
 - [x] 042: Add packet stats counters (parse_fail, bad_version, short_packet, bad_srd, etc.)
 - [x] 043: Fix zero-length SRD special-case according to ST 2110-20 + tests :contentReference[oaicite:2]{index=2}
+- [ ] 044: Add localized format-aware segment constraints helper(s)
+  - define helper/API boundary where packet/segment validation can depend on active video format
+  - keep generic ST 2110-20 parsing separate from format-specific receive constraints
+  - ensure adding a new format later only requires a new `case`/helper/tests
+- [ ] 045: Validate SRD ordering rules within one RTP packet
+  - `SRD Row Number` must not go backwards
+  - within the same row, `SRD Offset` must not go backwards
+  - keep progressive-only assumptions localized so interlace/PsF support can be added later
+  - add focused tests for valid and invalid 2-SRD / 3-SRD packets
+- [ ] 046: Add explicit follow-up validation for size-limit policy
+  - separate pure wire-format parsing from size-limit/config-policy checks
+  - define where MAXUDP-related constraints will live for MVP
+  - add tests covering oversized payload / inconsistent header+payload sizing behavior
+- [ ] 047: Add integrated packet-parse stats recording path
+  - provide one real parse entry point that records `PacketParseStage` failures/successes
+  - make sure the counters reflect the actual parse pipeline instead of only helper-level unit tests
+  - add tests for per-stage accounting
 
 ### A2. Video reorder / assemble / depacketize
 - [x] 050: Define interface for `ReorderBuffer` (push(packet), pop_next())
@@ -126,6 +158,20 @@
 - [x] 061: Implement marker-based end-of-frame + tests
 - [x] 062: Connect PacketView SRD list => FrameAssembler writes + tests
 - [x] 063: Add stats (frames_ok, frames_partial, frames_dropped, packets_used)
+- [ ] 064: Fix UYVY segment-to-frame mapping so `SRD Offset` is interpreted in full-bandwidth sample units, not raw bytes
+  - introduce a localized mapper for `PixelFormat::UYVY`
+  - convert ST 2110-20 offset semantics to frame write byte offsets explicitly
+  - keep `FrameAssembler` byte-oriented and format-agnostic
+  - add tests proving the write lands at the correct byte position
+- [ ] 065: Enforce UYVY pgroup alignment constraints in the receive path
+  - for current MVP format, validate segment length/alignment rules implied by ST 2110-20 4:2:2 8-bit packetization
+  - reject misaligned segment offsets/lengths explicitly
+  - keep the checks localized so future formats add their own rules rather than branching through generic assembler code
+  - add positive/negative tests
+- [ ] 066: Ensure depacketizer/frame-assembly write path stays extensible
+  - review where format-specific mapping/validation lives after 064/065
+  - confirm that adding a second pixel format later requires localized additions only
+  - add a small architecture-focused test or compile-time check where useful
 
 ### A3. Video timestamp strategy
 - [ ] 070: Define internal timestamp type: `uint64_t ts_ns`

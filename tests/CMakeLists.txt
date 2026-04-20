@@ -39,3 +39,8 @@ add_st2110_test(test_depacketizer_grouping test_depacketizer_grouping.cpp)
 add_st2110_test(test_depacketizer_marker test_depacketizer_marker.cpp)
 add_st2110_test(test_depacketizer_writes test_depacketizer_writes.cpp)
 add_st2110_test(test_depacketizer_stats test_depacketizer_stats.cpp)
+add_st2110_test(test_header_odr_link
+        test_header_odr_link_main.cpp
+        test_header_odr_link_a.cpp
+        test_header_odr_link_b.cpp
+)
