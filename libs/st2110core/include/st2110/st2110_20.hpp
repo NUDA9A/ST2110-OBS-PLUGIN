@@ -73,6 +73,21 @@ namespace st2110 {
         return res;
     }
 
+    [[nodiscard]] inline Error validate_st2110_20_srd_ordering(
+            const St2110PayloadHeaderView& h) {
+        if (h.srd_count > 1) {
+            for (std::size_t i = 0; i < h.srd_count - 1; ++i) {
+                if (h.srd[i].row_number > h.srd[i + 1].row_number) {
+                    return Error::InvalidValue;
+                }
+                if (h.srd[i].row_number == h.srd[i + 1].row_number && h.srd[i].offset >= h.srd[i + 1].offset) {
+                    return Error::InvalidValue;
+                }
+            }
+        }
+        return Error::Ok;
+    }
+
     inline Error validate_st2110_20_payload_header(const St2110PayloadHeaderView& h) {
         if (h.srd_count == 0 || h.srd_count > 3) {
             return Error::InvalidValue;
@@ -99,6 +114,10 @@ namespace st2110 {
                     return Error::InvalidValue;
                 }
             }
+        }
+
+        if (auto err = validate_st2110_20_srd_ordering(h); err != Error::Ok) {
+            return err;
         }
 
         if (h.header_bytes != 2 + 6 * static_cast<std::size_t>(h.srd_count)) {
