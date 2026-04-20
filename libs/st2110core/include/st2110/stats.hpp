@@ -72,12 +72,11 @@ namespace st2110 {
 
     struct DepacketizerStats {
         uint64_t packets_in = 0;
-        uint64_t packets_accepted = 0;
-        uint64_t packets_rejected = 0;
+        uint64_t packets_used = 0;
 
-        uint64_t units_completed = 0;
-        uint64_t units_partial = 0;
-        uint64_t units_dropped = 0;
+        uint64_t frames_ok = 0;
+        uint64_t frames_partial = 0;
+        uint64_t frames_dropped = 0;
     };
 
     struct BackendStats {

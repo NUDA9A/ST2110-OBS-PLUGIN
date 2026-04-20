@@ -124,8 +124,8 @@
 - [x] 059: Define `Depacketizer` API (push PacketView, returns 0..N completed frames)
 - [x] 060: Implement grouping logic by RTP timestamp (new timestamp => new frame) + tests
 - [x] 061: Implement marker-based end-of-frame + tests
-- [ ] 062: Connect PacketView SRD list => FrameAssembler writes + tests
-- [ ] 063: Add stats (frames_ok, frames_partial, frames_dropped, packets_used)
+- [x] 062: Connect PacketView SRD list => FrameAssembler writes + tests
+- [x] 063: Add stats (frames_ok, frames_partial, frames_dropped, packets_used)
 
 ### A3. Video timestamp strategy
 - [ ] 070: Define internal timestamp type: `uint64_t ts_ns`
