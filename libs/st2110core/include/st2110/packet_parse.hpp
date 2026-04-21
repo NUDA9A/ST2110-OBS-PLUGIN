@@ -34,6 +34,25 @@ namespace st2110 {
         return PacketView::from_udp_datagram(udp_payload);
     }
 
+    [[nodiscard]] inline std::expected<PacketView, Error> parse_packet_view(
+            ByteSpan udp_payload,
+            PacketParseStats& stats,
+            const PacketParsePolicy& policy = {}) {
+        if (Error err = validate_packet_parse_policy(udp_payload, policy); err != Error::Ok) {
+            record_packet_parse_result(stats, err, PacketParseStage::PacketPolicy);
+            return std::unexpected(err);
+        }
+
+        auto res = parse_packet_view_staged(udp_payload);
+        if (!res.has_value()) {
+            record_packet_parse_result(stats, res.error().error, res.error().stage);
+            return std::unexpected(res.error().error);
+        }
+
+        record_packet_parse_result(stats, Error::Ok, PacketParseStage::RtpHeader);
+        return *res;
+    }
+
 }
 
 #endif //ST2110_OBS_PLUGIN_PACKET_PARSE_HPP

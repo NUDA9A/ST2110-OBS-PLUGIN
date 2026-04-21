@@ -98,7 +98,7 @@
 - [x] S005: Current payload validation does not enforce monotonic ordering rules for `SRD Row Number` / `SRD Offset` within a packet. ST 2110-20 requires sample rows to progress top-to-bottom and offsets within a row to progress left-to-right. This must be validated explicitly. :contentReference[oaicite:5]{index=5}
 - [x] S006: Task 022 covered only part of payload-header validation. Size/limit checks that depend on packet/payload sizing policy (including the path toward MAXUDP-aware validation) still need an explicit follow-up task so completed work and remaining work are not conflated. :contentReference[oaicite:6]{index=6}
 - [x] S007: Public headers currently contain non-trivial function definitions in a way that risks ODR / multiple-definition problems once the project grows beyond the current “mostly one translation unit per test executable” shape. The linkage model must be made explicit (true header-only with `inline`, or moved implementations) before backend/app growth.
-- [ ] S008: `PacketParseStats` structures exist, but packet parsing does not yet expose a single integrated path that records stage-specific parse results through the real parse flow. This should be fixed so parse observability is not only nominal.
+- [x] S008: `PacketParseStats` structures exist, but packet parsing does not yet expose a single integrated path that records stage-specific parse results through the real parse flow. This should be fixed so parse observability is not only nominal.
 
 ---
 
@@ -141,7 +141,7 @@
   - separate pure wire-format parsing from size-limit/config-policy checks
   - define where MAXUDP-related constraints will live for MVP
   - add tests covering oversized payload / inconsistent header+payload sizing behavior
-- [ ] 047: Add integrated packet-parse stats recording path
+- [x] 047: Add integrated packet-parse stats recording path
   - provide one real parse entry point that records `PacketParseStage` failures/successes
   - make sure the counters reflect the actual parse pipeline instead of only helper-level unit tests
   - add tests for per-stage accounting

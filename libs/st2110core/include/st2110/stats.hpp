@@ -11,7 +11,8 @@ namespace st2110 {
         RtpHeader,
         St2110PayloadHeaderParse,
         St2110PayloadHeaderValidate,
-        SrdPayloadSplit
+        SrdPayloadSplit,
+        PacketPolicy
     };
 
     struct ParserStats {
@@ -34,6 +35,7 @@ namespace st2110 {
         uint64_t st2110_header_parse_fail = 0;
         uint64_t bad_srd = 0;
         uint64_t srd_payload_split_fail = 0;
+        uint64_t packet_policy_fail = 0;
     };
 
     inline void record_parse_result(ParserStats& stats, Error err) {
@@ -104,6 +106,9 @@ namespace st2110 {
                 break;
             case PacketParseStage::SrdPayloadSplit:
                 ++stats.srd_payload_split_fail;
+                break;
+            case PacketParseStage::PacketPolicy:
+                ++stats.packet_policy_fail;
                 break;
         }
     }
