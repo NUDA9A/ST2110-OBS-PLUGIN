@@ -211,6 +211,16 @@
   - confirm that adding `Interlaced` / `PsF` later requires filling mode-aware helpers / mappers, not rewriting `Depacketizer::push()`
   - define and document the boundary where future field / segment pairing and final picture reconstruction will plug in above depacketizer-emitted generic units
   - add a small architecture-focused test or compile-time check where useful
+- [x] 069A: Add explicit video receive pipeline that composes depacketizer with video-unit reconstructor
+  - keep `Depacketizer` and `IVideoUnitReconstructor` as separate layers
+  - define `VideoReceivePipelineConfig` with `DepacketizerConfig` + `VideoUnitReconstructorConfig`
+  - validate config consistency (`format` / `scan_mode`) between depacketizer and reconstructor configs
+  - construct the reconstructor via `make_video_unit_reconstructor(...)`
+  - implement `push(const PacketView&) -> std::vector<ReconstructedVideoFrame>` by feeding depacketizer-emitted units into the reconstructor
+  - implement `reset()` so both depacketizer and reconstructor are reset
+  - keep current MVP behavior implemented only for `Progressive`
+  - keep non-progressive runtime boundary localized at reconstructor creation / factory path
+  - add focused tests for composition, reset, and config mismatch
 
 ### A3. Video timestamp strategy
 - [ ] 070: Define internal timestamp type: `uint64_t ts_ns`
