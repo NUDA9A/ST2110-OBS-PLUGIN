@@ -173,7 +173,7 @@
   - thread it through `RxVideoConfig`, `DepacketizerConfig`, and other relevant internal video config/state types
   - keep current MVP behavior implemented only for `Progressive`
   - add tests proving scan mode is modeled separately from pixel format
-- [ ] 065: Generalize video receive completion semantics so marker/timestamp handling is scan-mode-aware by architecture
+- [x] 065: Generalize video receive completion semantics so marker/timestamp handling is scan-mode-aware by architecture
   - remove hardcoded internal assumption that `marker => end of frame`
   - remove hardcoded internal assumption that one RTP timestamp group always corresponds to a complete frame
   - introduce a localized mode-dependent policy point for end-of-unit / completion decisions

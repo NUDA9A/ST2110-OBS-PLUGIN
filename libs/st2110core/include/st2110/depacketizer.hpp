@@ -5,6 +5,7 @@
 #include "frame_assembler.hpp"
 #include "stats.hpp"
 #include "video_scan_mode.hpp"
+#include "video_receive_semantics.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -35,13 +36,14 @@ namespace st2110 {
 
         [[nodiscard]] std::vector<AssembledVideoFrame> push(const PacketView& packet) {
             ++stats_.packets_in;
+            const auto policy = completion_policy();
             std::vector<AssembledVideoFrame> res;
 
             if (!has_current_timestamp_) {
                 begin_frame(packet.rtp.timestamp);
                 write_packet_segments(packet);
                 ++stats_.packets_used;
-                if (packet.rtp.marker) {
+                if (packet.rtp.marker && policy.marker_terminates_current_unit) {
                     auto end_res = assembler_.end(true);
                     handle_end_result(std::move(end_res), res);
                 }
@@ -51,19 +53,21 @@ namespace st2110 {
             if (current_rtp_timestamp_ == packet.rtp.timestamp) {
                 write_packet_segments(packet);
                 ++stats_.packets_used;
-                if (packet.rtp.marker) {
+                if (packet.rtp.marker && policy.marker_terminates_current_unit) {
                     auto end_res = assembler_.end(true);
                     handle_end_result(std::move(end_res), res);
                 }
                 return res;
             }
 
-            auto end_res = assembler_.end(false);
-            handle_end_result(std::move(end_res), res);
+            if (policy.timestamp_change_terminates_previous_unit) {
+                auto end_res = assembler_.end(false);
+                handle_end_result(std::move(end_res), res);
+            }
             begin_frame(packet.rtp.timestamp);
             write_packet_segments(packet);
             ++stats_.packets_used;
-            if (packet.rtp.marker) {
+            if (packet.rtp.marker && policy.marker_terminates_current_unit) {
                 auto end_res = assembler_.end(true);
                 handle_end_result(std::move(end_res), res);
             }
@@ -97,6 +101,14 @@ namespace st2110 {
         }
 
     private:
+        [[nodiscard]] VideoReceiveCompletionPolicy completion_policy() const {
+            auto policy = video_receive_completion_policy(cfg_.scan_mode);
+            if (!policy.has_value()) {
+                throw std::logic_error("Current scan mode is not implemented in depacketizer yet");
+            }
+            return *policy;
+        }
+
         void begin_frame(uint32_t rtp_timestamp) {
             assembler_.begin(rtp_timestamp);
             has_current_timestamp_ = true;
