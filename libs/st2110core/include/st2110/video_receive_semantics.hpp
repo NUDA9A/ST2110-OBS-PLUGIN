@@ -7,7 +7,6 @@
 #include "video_scan_mode.hpp"
 
 namespace st2110 {
-
     enum class VideoAssemblyUnitKind {
         Frame,
         Field,
@@ -18,6 +17,12 @@ namespace st2110 {
         VideoAssemblyUnitKind unit_kind = VideoAssemblyUnitKind::Frame;
         bool marker_terminates_current_unit = false;
         bool timestamp_change_terminates_previous_unit = false;
+    };
+
+    struct VideoAssemblyKey {
+        VideoAssemblyUnitKind unit_kind = VideoAssemblyUnitKind::Frame;
+        uint32_t rtp_timestamp = 0;
+        uint8_t sub_unit_index = 0;
     };
 
     [[nodiscard]] inline std::expected<VideoAssemblyUnitKind, Error>
@@ -50,6 +55,9 @@ namespace st2110 {
                 return std::unexpected(Error::InvalidValue);
         }
     }
+
+    [[nodiscard]] inline std::expected<VideoAssemblyKey, Error>
+    video_packet_assembly_key(VideoScanMode mode, const PacketView& packet);
 
 } // namespace st2110
 

@@ -92,7 +92,7 @@
 
 ## Spec notes / deviations
 - [x] S001: `validate_st2110_20_payload_header()` currently rejects `SRD Length == 0` unconditionally, but ST 2110-20 allows this special case when there is exactly one SRD header and no sample row data follows. This must be fixed before video RX is considered spec-clean. :contentReference[oaicite:0]{index=0}
-- [ ] S002: While MVP behavior may stay progressive-only, internal configs, state machines, and completion logic must model scan mode separately from pixel format and must not hardcode assumptions such as “timestamp group == frame”, “marker == end of frame”, or “F is always zero” in ways that make future interlace / PsF support invasive. ST 2110-20 explicitly distinguishes progressive, interlaced, and PsF behavior for `F`, marker, row numbering, and signaling, so these assumptions must remain localized.
+- [ ] S002: While MVP behavior may stay progressive-only, internal configs, state machines, packet-to-unit grouping, completion logic, and segment placement must model scan mode separately from pixel format and must not hardcode assumptions such as “timestamp group == frame”, “marker == end of frame”, or “F is always zero” in ways that make future interlace / PsF support invasive. ST 2110-20 explicitly distinguishes progressive, interlaced, and PsF behavior for `F`, marker, row numbering, grouping, placement, and signaling, so these assumptions must remain localized in dedicated mode-aware / format-aware helpers.
 - [ ] S003: `Depacketizer::map_segment_to_frame_write()` currently treats `SRD Offset` as a byte offset, but ST 2110-20 defines it as the horizontal position of the first full-bandwidth sample in the image pixel matrix. For UYVY / 4:2:2 this must be mapped through format-aware logic instead of written directly as bytes. This must be fixed before video RX is considered spec-clean. :contentReference[oaicite:3]{index=3}
 - [ ] S004: Current UYVY receive path does not validate pgroup alignment constraints implied by ST 2110-20 4:2:2 sampling. For 8-bit 4:2:2, packetized data must respect the pgroup structure and `SRD Length` must remain a multiple of pgroup octet size; offset semantics must also remain aligned with full-bandwidth sample positions. Validation must be added in a localized, format-aware way. :contentReference[oaicite:4]{index=4}
 - [x] S005: Current payload validation does not enforce monotonic ordering rules for `SRD Row Number` / `SRD Offset` within a packet. ST 2110-20 requires sample rows to progress top-to-bottom and offsets within a row to progress left-to-right. This must be validated explicitly. :contentReference[oaicite:5]{index=5}
@@ -163,11 +163,11 @@
   - marker seen => frame can be emitted
   - partial state must be tracked explicitly
 - [x] 058: Implement partial frame policy: drop / emit-with-flag (configurable) + tests
-- [x] 059: Define `Depacketizer` API (push PacketView, returns 0..N completed frames)
-- [x] 060: Implement grouping logic by RTP timestamp (new timestamp => new frame) + tests
-- [x] 061: Implement marker-based end-of-frame + tests
+- [x] 059: Define `Depacketizer` API (push PacketView, returns 0..N completed video units)
+- [x] 060: Implement current MVP grouping logic for video units (progressive path) + tests
+- [x] 061: Implement current MVP completion behavior for progressive video units + tests
 - [x] 062: Connect PacketView SRD list => FrameAssembler writes + tests
-- [x] 063: Add stats (frames_ok, frames_partial, frames_dropped, packets_used)
+- [x] 063: Add depacketizer stats (`units_ok`, `units_partial`, `units_dropped`, `packets_used`)
 - [x] 064: Define `VideoScanMode` as a transport / assembly property independent from `PixelFormat`
   - add enum for `Progressive | Interlaced | PsF`
   - thread it through `RxVideoConfig`, `DepacketizerConfig`, and other relevant internal video config/state types
@@ -179,25 +179,37 @@
   - introduce a localized mode-dependent policy point for end-of-unit / completion decisions
   - implement only the `Progressive` policy in MVP; non-progressive branches may stay localized as `Unsupported` / not-yet-implemented
   - add tests proving current progressive behavior is unchanged
-- [ ] 066: Refactor depacketizer / assembly state so future interlace / PsF support can be added by extending policy and state, not rewriting the pipeline
-  - avoid baking “frame-only” semantics into internal state transitions where future field / segment handling will need to plug in
+- [x] 066: Refactor depacketizer / assembly contracts so future interlace / PsF support can be added by filling pre-defined extension points, not by rewriting the pipeline
+  - make depacketizer output/unit model generic (`AssembledVideoUnit`, unit-oriented stats, unit-oriented public API)
+  - avoid baking “frame-only” semantics into depacketizer public contract, state, and counters
   - keep `FrameAssembler` byte-oriented and format-agnostic
-  - keep current public progressive output behavior intact for MVP
-  - document/localize the current non-progressive boundary
+  - keep current public progressive behavior intact for MVP
+  - document/localize the current non-progressive runtime boundary
   - add focused tests for architecture-level behavior and localized rejection of non-progressive modes
-- [ ] 067: Fix UYVY segment-to-frame mapping so `SRD Offset` is interpreted in full-bandwidth sample units, not raw bytes
-  - introduce a localized mapper for `PixelFormat::UYVY`
-  - convert ST 2110-20 offset semantics to frame write byte offsets explicitly
+- [ ] 066A: Introduce `VideoAssemblyKey` and move packet-to-unit grouping decisions out of `Depacketizer::push()`
+  - define a mode-aware `VideoAssemblyKey` type for "which assembly unit this packet belongs to"
+  - add helper(s) that derive assembly key from `PacketView` + `VideoScanMode`
+  - add helper(s) for "same unit / starts new unit" comparison
+  - make `Depacketizer::push()` use assembly-key helpers instead of hardcoding raw RTP timestamp grouping
+  - implement only the `Progressive` case in MVP; keep `Interlaced` / `PsF` branches localized and explicitly unsupported / placeholder
+  - add tests proving future scan modes can extend grouping semantics without changing `push()`
+- [ ] 067: Introduce an explicit video segment placement boundary and fix UYVY mapping so `SRD Offset` is interpreted in full-bandwidth sample units, not raw bytes
+  - define a localized mode-aware + format-aware mapper from packet segment semantics to frame write operations
   - keep `FrameAssembler` byte-oriented and format-agnostic
+  - implement only the current `Progressive + UYVY` case in MVP
+  - keep `Interlaced` / `PsF` placement branches localized as placeholder / unsupported until later implementation
+  - convert ST 2110-20 offset semantics to frame write byte offsets explicitly
   - add tests proving the write lands at the correct byte position
-- [ ] 068: Enforce UYVY pgroup alignment constraints in the receive path
-  - for current MVP format, validate segment length/alignment rules implied by ST 2110-20 4:2:2 8-bit packetization
+- [ ] 068: Enforce pgroup alignment constraints for the current MVP video format through the localized segment-placement / validation boundary
+  - for the current MVP format (`UYVY` / 4:2:2 / 8-bit), validate segment length/alignment rules implied by ST 2110-20 packetization
   - reject misaligned segment offsets/lengths explicitly
-  - keep the checks localized so future formats add their own rules rather than branching through generic assembler code
+  - keep the checks localized so future formats, depths, and scan modes add their own rules rather than branching through generic assembler or depacketizer code
   - add positive/negative tests
-- [ ] 069: Ensure depacketizer/frame-assembly write path stays extensible
-  - review where format-specific mapping/validation lives after 064/065
+- [ ] 069: Ensure depacketizer / frame-assembly / future reconstruction path stays extensible
+  - review where grouping, completion, placement, and validation logic live after 066 / 066A / 067 / 068
   - confirm that adding a second pixel format later requires localized additions only
+  - confirm that adding `Interlaced` / `PsF` later requires filling mode-aware helpers / mappers, not rewriting `Depacketizer::push()`
+  - define and document the boundary where future field / segment pairing and final picture reconstruction will plug in above depacketizer-emitted generic units
   - add a small architecture-focused test or compile-time check where useful
 
 ### A3. Video timestamp strategy
@@ -343,17 +355,20 @@
   - accept and interpret `F` for first/second field
   - implement correct marker semantics for end-of-field
   - implement row numbering semantics per field
-  - keep changes localized to scan-mode-aware policy/state introduced in MVP
+  - fill the pre-defined scan-mode-aware grouping / completion / placement extension points introduced in MVP
+  - keep `Depacketizer::push()` and the generic depacketizer pipeline unchanged
   - add focused tests
 - [ ] 226: Implement PsF video receive semantics
   - accept and interpret `F` as segment indicator for PsF
   - implement correct marker semantics for end-of-segment
   - implement row numbering semantics per segment
-  - keep changes localized to scan-mode-aware policy/state introduced in MVP
+  - fill the pre-defined scan-mode-aware grouping / completion / placement extension points introduced in MVP
+  - keep `Depacketizer::push()` and the generic depacketizer pipeline unchanged
   - add focused tests
 - [ ] 227: Implement field / segment pairing and final picture reconstruction policy
   - define how two fields or two PsF segments are paired into the final output picture
-  - keep pairing logic separate from byte-writing / packet parsing where practical
+  - keep pairing / reconstruction logic separate from depacketizer packet grouping, completion, and byte-writing
+  - make pairing consume generic depacketizer-emitted video units instead of changing depacketizer contracts
   - add tests for ordering, completeness, and partial/loss behavior
 - [ ] 228: Add scan-mode signaling / selection path from stream description and config
   - define where `Progressive | Interlaced | PsF` is selected from SDP/config

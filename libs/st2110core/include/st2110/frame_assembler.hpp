@@ -4,6 +4,7 @@
 #include "video_frame.hpp"
 #include "bytes.hpp"
 #include "frame_write_coverage.hpp"
+#include "video_receive_semantics.hpp"
 
 #include <cstring>
 #include <cstdint>
@@ -24,8 +25,9 @@ namespace st2110 {
         DroppedPartial
     };
 
-    struct AssembledVideoFrame {
+    struct AssembledVideoUnit {
         VideoFrame frame;
+        VideoAssemblyUnitKind unit_kind = VideoAssemblyUnitKind::Frame;
         uint32_t rtp_timestamp = 0;
         bool marker_seen = false;
         bool can_emit = false;
@@ -37,7 +39,7 @@ namespace st2110 {
     };
 
     struct FrameAssemblerEndResult {
-        std::optional<AssembledVideoFrame> frame{};
+        std::optional<AssembledVideoUnit> unit{};
         FrameAssemblerEndStatus status = FrameAssemblerEndStatus::NotEmittable;
     };
 
@@ -91,7 +93,13 @@ namespace st2110 {
                 current_frame_ = VideoFrame(width_, height_, format_);
                 return {std::nullopt, FrameAssemblerEndStatus::DroppedPartial};
             }
-            AssembledVideoFrame res{std::move(current_frame_), current_rtp_timestamp_, marker, marker, marker && fully_written};
+            AssembledVideoUnit res{
+                    .frame = std::move(current_frame_),
+                    .rtp_timestamp = current_rtp_timestamp_,
+                    .marker_seen = marker,
+                    .can_emit = marker,
+                    .complete = marker && fully_written
+            };
             current_frame_ = VideoFrame(width_, height_, format_);
             if (fully_written) {
                 return {std::move(res), FrameAssemblerEndStatus::EmittedComplete};
