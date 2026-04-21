@@ -31,7 +31,7 @@ static void test_single_packet_full_frame_emits_complete() {
     pkt.payload_data = st2110::ByteSpan(row0, sizeof(row0));
     pkt.segments[0].header.length = 8;
     pkt.segments[0].header.row_number = 0;
-    pkt.segments[0].header.offset = 0;
+    pkt.segments[0].header.offset = 0; // sample position 0 -> byte offset 0
     pkt.segments[0].header.field_id = false;
     pkt.segments[0].header.continuation = false;
     pkt.segments[0].data = pkt.payload_data;
@@ -66,7 +66,7 @@ static void test_two_packets_same_timestamp_accumulate_into_one_complete_frame()
     p1.payload_data = st2110::ByteSpan(left, sizeof(left));
     p1.segments[0].header.length = 4;
     p1.segments[0].header.row_number = 0;
-    p1.segments[0].header.offset = 0;
+    p1.segments[0].header.offset = 0; // sample position 0 -> byte offset 0
     p1.segments[0].header.field_id = false;
     p1.segments[0].header.continuation = false;
     p1.segments[0].data = p1.payload_data;
@@ -76,7 +76,7 @@ static void test_two_packets_same_timestamp_accumulate_into_one_complete_frame()
     p2.payload_data = st2110::ByteSpan(right, sizeof(right));
     p2.segments[0].header.length = 4;
     p2.segments[0].header.row_number = 0;
-    p2.segments[0].header.offset = 4;
+    p2.segments[0].header.offset = 2; // sample position 2 -> byte offset 4
     p2.segments[0].header.field_id = false;
     p2.segments[0].header.continuation = false;
     p2.segments[0].data = p2.payload_data;
@@ -114,14 +114,14 @@ static void test_multi_segment_packet_writes_all_segments() {
 
     pkt.segments[0].header.length = 8;
     pkt.segments[0].header.row_number = 0;
-    pkt.segments[0].header.offset = 0;
+    pkt.segments[0].header.offset = 0; // sample position 0 -> byte offset 0
     pkt.segments[0].header.field_id = false;
     pkt.segments[0].header.continuation = true;
     pkt.segments[0].data = pkt.payload_data.subspan(0, 8);
 
     pkt.segments[1].header.length = 8;
     pkt.segments[1].header.row_number = 1;
-    pkt.segments[1].header.offset = 0;
+    pkt.segments[1].header.offset = 0; // sample position 0 -> byte offset 0
     pkt.segments[1].header.field_id = false;
     pkt.segments[1].header.continuation = false;
     pkt.segments[1].data = pkt.payload_data.subspan(8, 8);
@@ -157,7 +157,7 @@ static void test_new_timestamp_discards_old_not_emittable_frame_and_starts_new_o
     p1.payload_data = st2110::ByteSpan(old_partial, sizeof(old_partial));
     p1.segments[0].header.length = 4;
     p1.segments[0].header.row_number = 0;
-    p1.segments[0].header.offset = 0;
+    p1.segments[0].header.offset = 0; // sample position 0 -> byte offset 0
     p1.segments[0].header.field_id = false;
     p1.segments[0].header.continuation = false;
     p1.segments[0].data = p1.payload_data;
@@ -167,7 +167,7 @@ static void test_new_timestamp_discards_old_not_emittable_frame_and_starts_new_o
     p2.payload_data = st2110::ByteSpan(new_full, sizeof(new_full));
     p2.segments[0].header.length = 8;
     p2.segments[0].header.row_number = 0;
-    p2.segments[0].header.offset = 0;
+    p2.segments[0].header.offset = 0; // sample position 0 -> byte offset 0
     p2.segments[0].header.field_id = false;
     p2.segments[0].header.continuation = false;
     p2.segments[0].data = p2.payload_data;

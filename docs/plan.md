@@ -193,7 +193,7 @@
   - make `Depacketizer::push()` use assembly-key helpers instead of hardcoding raw RTP timestamp grouping
   - implement only the `Progressive` case in MVP; keep `Interlaced` / `PsF` branches localized and explicitly unsupported / placeholder
   - add tests proving future scan modes can extend grouping semantics without changing `push()`
-- [ ] 067: Introduce an explicit video segment placement boundary and fix UYVY mapping so `SRD Offset` is interpreted in full-bandwidth sample units, not raw bytes
+- [x] 067: Introduce an explicit video segment placement boundary and fix UYVY mapping so `SRD Offset` is interpreted in full-bandwidth sample units, not raw bytes
   - define a localized mode-aware + format-aware mapper from packet segment semantics to frame write operations
   - keep `FrameAssembler` byte-oriented and format-agnostic
   - implement only the current `Progressive + UYVY` case in MVP

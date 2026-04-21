@@ -6,6 +6,7 @@
 #include "stats.hpp"
 #include "video_scan_mode.hpp"
 #include "video_receive_semantics.hpp"
+#include "video_segment_placement.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -21,13 +22,6 @@ namespace st2110 {
         PixelFormat format = PixelFormat::UYVY;
         PartialFramePolicy partial_frame_policy = PartialFramePolicy::EmitWithFlag;
         VideoScanMode scan_mode = VideoScanMode::Progressive;
-    };
-
-    struct FrameWriteOp {
-        std::size_t plane = 0;
-        uint32_t row = 0;
-        std::size_t byte_offset = 0;
-        ByteSpan bytes{};
     };
 
     struct DepacketizerAssemblyState {
@@ -177,24 +171,12 @@ namespace st2110 {
 
         void write_packet_segments(const PacketView& packet) {
             for (std::size_t i = 0; i < packet.segment_count; ++i) {
-                FrameWriteOp op = map_segment_to_frame_write(cfg_.format, packet.segments[i]);
+                auto expected_op = map_video_segment_to_frame_write(cfg_.format, cfg_.scan_mode, packet.segments[i]);
+                if (!expected_op.has_value()) {
+                    throw std::logic_error("Can not map video segment to frame write");
+                }
+                auto op = *expected_op;
                 assembler_.write_segment(op.plane, op.row, op.byte_offset, op.bytes);
-            }
-        }
-
-        [[nodiscard]] static FrameWriteOp map_segment_to_frame_write(
-                PixelFormat format,
-                const SrdSegmentView& segment) {
-            switch (format) {
-                case PixelFormat::UYVY:
-                    return {
-                        .plane = 0,
-                        .row = segment.header.row_number,
-                        .byte_offset = segment.header.offset,
-                        .bytes = segment.data
-                    };
-                default:
-                    throw std::logic_error("Current format is not supported yet");
             }
         }
 
