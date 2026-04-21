@@ -48,7 +48,7 @@ static void test_progressive_completion_policy_matches_current_mvp_behavior() {
 
     assert(policy->unit_kind == st2110::VideoAssemblyUnitKind::Frame);
     assert(policy->marker_terminates_current_unit);
-    assert(policy->timestamp_change_terminates_previous_unit);
+    assert(policy->key_change_terminates_previous_unit);
 }
 
 static void test_interlaced_completion_policy_is_unsupported_for_now() {

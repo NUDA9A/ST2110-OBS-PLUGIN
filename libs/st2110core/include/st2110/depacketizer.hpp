@@ -31,9 +31,7 @@ namespace st2110 {
     };
 
     struct DepacketizerAssemblyState {
-        bool in_progress = false;
-        uint32_t rtp_timestamp = 0;
-        VideoAssemblyUnitKind unit_kind = VideoAssemblyUnitKind::Frame;
+        std::optional<VideoAssemblyKey> current_key{};
     };
 
     class Depacketizer {
@@ -43,12 +41,23 @@ namespace st2110 {
         [[nodiscard]] std::vector<AssembledVideoUnit> push(const PacketView& packet) {
             ++stats_.packets_in;
             const auto policy = configured_completion_policy();
+            const auto packet_key_expected = video_packet_assembly_key(cfg_.scan_mode, packet);
+            if (!packet_key_expected.has_value()) {
+                throw std::logic_error("Current scan mode packet-to-unit grouping is not implemented yet");
+            }
+            const VideoAssemblyKey& packet_key = *packet_key_expected;
+
+            if (packet_key.unit_kind != policy.unit_kind) {
+                throw std::logic_error("Inconsistent video receive semantics: packet assembly key unit kind does not match completion policy unit kind");
+            }
+
             std::vector<AssembledVideoUnit> res;
 
             if (!has_unit_in_progress()) {
-                begin_unit(packet.rtp.timestamp);
+                begin_unit(packet_key);
                 write_packet_segments(packet);
                 ++stats_.packets_used;
+
                 if (packet.rtp.marker && policy.marker_terminates_current_unit) {
                     auto end_res = assembler_.end(true);
                     handle_end_result(std::move(end_res), res);
@@ -56,9 +65,10 @@ namespace st2110 {
                 return res;
             }
 
-            if (current_unit_rtp_timestamp() == packet.rtp.timestamp) {
+            if (same_video_assembly_key(*assembly_state_.current_key, packet_key)) {
                 write_packet_segments(packet);
                 ++stats_.packets_used;
+
                 if (packet.rtp.marker && policy.marker_terminates_current_unit) {
                     auto end_res = assembler_.end(true);
                     handle_end_result(std::move(end_res), res);
@@ -66,13 +76,19 @@ namespace st2110 {
                 return res;
             }
 
-            if (policy.timestamp_change_terminates_previous_unit) {
+            if (!policy.key_change_terminates_previous_unit) {
+                throw std::logic_error("Current completion policy does not support assembly-key transition yet");
+            }
+
+            {
                 auto end_res = assembler_.end(false);
                 handle_end_result(std::move(end_res), res);
             }
-            begin_unit(packet.rtp.timestamp);
+
+            begin_unit(packet_key);
             write_packet_segments(packet);
             ++stats_.packets_used;
+
             if (packet.rtp.marker && policy.marker_terminates_current_unit) {
                 auto end_res = assembler_.end(true);
                 handle_end_result(std::move(end_res), res);
@@ -95,14 +111,14 @@ namespace st2110 {
         }
 
         [[nodiscard]] bool has_unit_in_progress() const {
-            return assembly_state_.in_progress;
+            return assembly_state_.current_key.has_value();
         }
 
         [[nodiscard]] std::optional<uint32_t> current_unit_rtp_timestamp() const {
-            if (!assembly_state_.in_progress) {
+            if (!has_unit_in_progress()) {
                 return std::nullopt;
             }
-            return assembly_state_.rtp_timestamp;
+            return assembly_state_.current_key->rtp_timestamp;
         }
 
         [[nodiscard]] VideoAssemblyUnitKind assembly_unit_kind() const {
@@ -111,6 +127,10 @@ namespace st2110 {
                 throw std::logic_error("Invalid scan mode for depacketizer assembly unit kind");
             }
             return *kind;
+        }
+
+        [[nodiscard]] std::optional<VideoAssemblyKey> current_unit_key() const {
+            return assembly_state_.current_key;
         }
 
     private:
@@ -125,11 +145,9 @@ namespace st2110 {
             return *policy;
         }
 
-        void begin_unit(uint32_t rtp_timestamp) {
-            assembler_.begin(rtp_timestamp);
-            assembly_state_.in_progress = true;
-            assembly_state_.rtp_timestamp = rtp_timestamp;
-            assembly_state_.unit_kind = assembly_unit_kind();
+        void begin_unit(const VideoAssemblyKey& key) {
+            assembler_.begin(key.rtp_timestamp);
+            assembly_state_.current_key = key;
         }
 
         void handle_end_result(FrameAssemblerEndResult&& end_res,
@@ -148,7 +166,9 @@ namespace st2110 {
             }
 
             if (end_res.unit.has_value()) {
-                end_res.unit->unit_kind = assembly_state_.unit_kind;
+                if (assembly_state_.current_key.has_value()) {
+                    end_res.unit->unit_kind = assembly_state_.current_key->unit_kind;
+                }
                 out.push_back(std::move(*end_res.unit));
             }
 

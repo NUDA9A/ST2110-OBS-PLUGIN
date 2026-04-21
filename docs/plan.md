@@ -186,7 +186,7 @@
   - keep current public progressive behavior intact for MVP
   - document/localize the current non-progressive runtime boundary
   - add focused tests for architecture-level behavior and localized rejection of non-progressive modes
-- [ ] 066A: Introduce `VideoAssemblyKey` and move packet-to-unit grouping decisions out of `Depacketizer::push()`
+- [x] 066A: Introduce `VideoAssemblyKey` and move packet-to-unit grouping decisions out of `Depacketizer::push()`
   - define a mode-aware `VideoAssemblyKey` type for "which assembly unit this packet belongs to"
   - add helper(s) that derive assembly key from `PacketView` + `VideoScanMode`
   - add helper(s) for "same unit / starts new unit" comparison
