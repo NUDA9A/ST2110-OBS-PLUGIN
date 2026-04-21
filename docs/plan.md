@@ -205,7 +205,7 @@
   - reject misaligned segment offsets/lengths explicitly
   - keep the checks localized so future formats, depths, and scan modes add their own rules rather than branching through generic assembler or depacketizer code
   - add positive/negative tests
-- [ ] 069: Ensure depacketizer / frame-assembly / future reconstruction path stays extensible
+- [x] 069: Ensure depacketizer / frame-assembly / future reconstruction path stays extensible
   - review where grouping, completion, placement, and validation logic live after 066 / 066A / 067 / 068
   - confirm that adding a second pixel format later requires localized additions only
   - confirm that adding `Interlaced` / `PsF` later requires filling mode-aware helpers / mappers, not rewriting `Depacketizer::push()`
