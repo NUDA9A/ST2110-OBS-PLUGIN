@@ -15,7 +15,7 @@ static st2110::PacketView make_packet_header(uint32_t rtp_timestamp, uint32_t ex
     return pkt;
 }
 
-static void test_complete_frame_updates_ok_stats() {
+static void test_complete_unit_updates_ok_stats() {
     st2110::DepacketizerConfig cfg{};
     cfg.width = 4;
     cfg.height = 1;
@@ -37,17 +37,19 @@ static void test_complete_frame_updates_ok_stats() {
     pkt.segments[0].data = pkt.payload_data;
 
     auto out = dep.push(pkt);
-    (void)out;
+    assert(out.size() == 1);
+    assert(out[0].unit_kind == st2110::VideoAssemblyUnitKind::Frame);
+    assert(out[0].complete);
 
     const auto& s = dep.stats();
     assert(s.packets_in == 1);
     assert(s.packets_used == 1);
-    assert(s.frames_ok == 1);
-    assert(s.frames_partial == 0);
-    assert(s.frames_dropped == 0);
+    assert(s.units_ok == 1);
+    assert(s.units_partial == 0);
+    assert(s.units_dropped == 0);
 }
 
-static void test_partial_emitted_frame_updates_partial_stats() {
+static void test_partial_emitted_unit_updates_partial_stats() {
     st2110::DepacketizerConfig cfg{};
     cfg.width = 4;
     cfg.height = 1;
@@ -69,14 +71,16 @@ static void test_partial_emitted_frame_updates_partial_stats() {
     pkt.segments[0].data = pkt.payload_data;
 
     auto out = dep.push(pkt);
-    (void)out;
+    assert(out.size() == 1);
+    assert(out[0].unit_kind == st2110::VideoAssemblyUnitKind::Frame);
+    assert(out[0].partial());
 
     const auto& s = dep.stats();
     assert(s.packets_in == 1);
     assert(s.packets_used == 1);
-    assert(s.frames_ok == 0);
-    assert(s.frames_partial == 1);
-    assert(s.frames_dropped == 0);
+    assert(s.units_ok == 0);
+    assert(s.units_partial == 1);
+    assert(s.units_dropped == 0);
 }
 
 static void test_drop_policy_updates_dropped_stats() {
@@ -106,12 +110,12 @@ static void test_drop_policy_updates_dropped_stats() {
     const auto& s = dep.stats();
     assert(s.packets_in == 1);
     assert(s.packets_used == 1);
-    assert(s.frames_ok == 0);
-    assert(s.frames_partial == 0);
-    assert(s.frames_dropped == 1);
+    assert(s.units_ok == 0);
+    assert(s.units_partial == 0);
+    assert(s.units_dropped == 1);
 }
 
-static void test_timestamp_transition_without_marker_counts_as_dropped_frame() {
+static void test_timestamp_transition_without_marker_counts_as_dropped_unit() {
     st2110::DepacketizerConfig cfg{};
     cfg.width = 4;
     cfg.height = 1;
@@ -144,9 +148,9 @@ static void test_timestamp_transition_without_marker_counts_as_dropped_frame() {
     const auto& s = dep.stats();
     assert(s.packets_in == 2);
     assert(s.packets_used == 2);
-    assert(s.frames_ok == 0);
-    assert(s.frames_partial == 0);
-    assert(s.frames_dropped == 1);
+    assert(s.units_ok == 0);
+    assert(s.units_partial == 0);
+    assert(s.units_dropped == 1);
 }
 
 static void test_reset_clears_stats() {
@@ -176,16 +180,16 @@ static void test_reset_clears_stats() {
     const auto& s = dep.stats();
     assert(s.packets_in == 0);
     assert(s.packets_used == 0);
-    assert(s.frames_ok == 0);
-    assert(s.frames_partial == 0);
-    assert(s.frames_dropped == 0);
+    assert(s.units_ok == 0);
+    assert(s.units_partial == 0);
+    assert(s.units_dropped == 0);
 }
 
 int main() {
-    test_complete_frame_updates_ok_stats();
-    test_partial_emitted_frame_updates_partial_stats();
+    test_complete_unit_updates_ok_stats();
+    test_partial_emitted_unit_updates_partial_stats();
     test_drop_policy_updates_dropped_stats();
-    test_timestamp_transition_without_marker_counts_as_dropped_frame();
+    test_timestamp_transition_without_marker_counts_as_dropped_unit();
     test_reset_clears_stats();
     return 0;
 }

@@ -77,8 +77,9 @@ static void test_progressive_depacketizer_marker_behavior_is_unchanged() {
 
     assert(out1.empty());
     assert(out2.size() == 1u);
+    assert(out2[0].unit_kind == st2110::VideoAssemblyUnitKind::Frame);
     assert(out2[0].marker_seen);
-    assert(dep.stats().frames_partial == 1u);
+    assert(dep.stats().units_partial == 1u);
 }
 
 static void test_progressive_depacketizer_timestamp_change_behavior_is_unchanged() {
@@ -96,10 +97,10 @@ static void test_progressive_depacketizer_timestamp_change_behavior_is_unchanged
     assert(out1.empty());
     assert(out2.empty());
 
-    assert(dep.has_frame_in_progress());
-    assert(dep.current_rtp_timestamp().has_value());
-    assert(*dep.current_rtp_timestamp() == 1001u);
-    assert(dep.stats().frames_dropped == 1u);
+    assert(dep.has_unit_in_progress());
+    assert(dep.current_unit_rtp_timestamp().has_value());
+    assert(*dep.current_unit_rtp_timestamp() == 1001u);
+    assert(dep.stats().units_dropped == 1u);
 }
 
 static void test_non_progressive_mode_is_rejected_locally_in_depacketizer() {

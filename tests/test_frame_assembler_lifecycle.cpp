@@ -22,12 +22,13 @@ static void test_begin_write_end_roundtrip() {
 
     st2110::FrameAssemblerEndResult result = assembler.end(true);
     assert(result.status == st2110::FrameAssemblerEndStatus::EmittedPartial);
-    assert(result.frame.has_value());
+    assert(result.unit.has_value());
 
     assert(!assembler.in_progress());
 
-    const st2110::AssembledVideoFrame& out = *result.frame;
+    const st2110::AssembledVideoUnit& out = *result.unit;
 
+    assert(out.unit_kind == st2110::VideoAssemblyUnitKind::Frame);
     assert(out.rtp_timestamp == 0x11223344u);
     assert(out.marker_seen == true);
     assert(out.can_emit == true);
@@ -60,7 +61,7 @@ static void test_end_marker_false_is_not_emittable() {
     st2110::FrameAssemblerEndResult result = assembler.end(false);
 
     assert(result.status == st2110::FrameAssemblerEndStatus::NotEmittable);
-    assert(!result.frame.has_value());
+    assert(!result.unit.has_value());
 }
 
 static void test_write_before_begin_rejected() {
@@ -124,18 +125,20 @@ static void test_second_begin_after_end_starts_clean_frame() {
     assembler.write_segment(0, 0, 0, st2110::ByteSpan(seg, sizeof(seg)));
     st2110::FrameAssemblerEndResult first_result = assembler.end(true);
     assert(first_result.status == st2110::FrameAssemblerEndStatus::EmittedPartial);
-    assert(first_result.frame.has_value());
+    assert(first_result.unit.has_value());
 
-    const st2110::AssembledVideoFrame& first = *first_result.frame;
+    const st2110::AssembledVideoUnit& first = *first_result.unit;
+    assert(first.unit_kind == st2110::VideoAssemblyUnitKind::Frame);
     assert(first.frame.row_data(0)[0] == 0xDE);
     assert(first.frame.row_data(0)[1] == 0xAD);
 
     assembler.begin(2);
     st2110::FrameAssemblerEndResult second_result = assembler.end(true);
     assert(second_result.status == st2110::FrameAssemblerEndStatus::EmittedPartial);
-    assert(second_result.frame.has_value());
+    assert(second_result.unit.has_value());
 
-    const st2110::AssembledVideoFrame& second = *second_result.frame;
+    const st2110::AssembledVideoUnit& second = *second_result.unit;
+    assert(second.unit_kind == st2110::VideoAssemblyUnitKind::Frame);
     assert(second.rtp_timestamp == 2u);
     assert(second.frame.row_data(0)[0] == 0x00);
     assert(second.frame.row_data(0)[1] == 0x00);

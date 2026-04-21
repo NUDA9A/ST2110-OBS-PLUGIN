@@ -17,7 +17,7 @@ static st2110::PacketView make_packet(uint32_t rtp_timestamp, uint32_t ext_seq, 
     return pkt;
 }
 
-static void test_first_packet_without_marker_starts_frame_only() {
+static void test_first_packet_without_marker_starts_unit_only() {
     st2110::DepacketizerConfig cfg{};
     cfg.width = 1920;
     cfg.height = 1080;
@@ -29,9 +29,9 @@ static void test_first_packet_without_marker_starts_frame_only() {
     auto out = dep.push(make_packet(1000, 1, false));
 
     assert(out.empty());
-    assert(dep.has_frame_in_progress());
-    assert(dep.current_rtp_timestamp().has_value());
-    assert(*dep.current_rtp_timestamp() == 1000u);
+    assert(dep.has_unit_in_progress());
+    assert(dep.current_unit_rtp_timestamp().has_value());
+    assert(*dep.current_unit_rtp_timestamp() == 1000u);
 }
 
 static void test_marker_packet_emits_and_clears_state_under_emit_with_flag_policy() {
@@ -46,14 +46,15 @@ static void test_marker_packet_emits_and_clears_state_under_emit_with_flag_polic
     auto out = dep.push(make_packet(1001, 2, true));
 
     assert(out.size() == 1);
-    assert(out[0].marker_seen == true);
-    assert(out[0].can_emit == true);
-    assert(out[0].complete == false);
-    assert(out[0].partial() == true);
+    assert(out[0].unit_kind == st2110::VideoAssemblyUnitKind::Frame);
+    assert(out[0].marker_seen);
+    assert(out[0].can_emit);
+    assert(!out[0].complete);
+    assert(out[0].partial());
     assert(out[0].rtp_timestamp == 1001u);
 
-    assert(!dep.has_frame_in_progress());
-    assert(!dep.current_rtp_timestamp().has_value());
+    assert(!dep.has_unit_in_progress());
+    assert(!dep.current_unit_rtp_timestamp().has_value());
 }
 
 static void test_marker_packet_drops_under_drop_policy_and_clears_state() {
@@ -68,11 +69,11 @@ static void test_marker_packet_drops_under_drop_policy_and_clears_state() {
     auto out = dep.push(make_packet(2000, 10, true));
 
     assert(out.empty());
-    assert(!dep.has_frame_in_progress());
-    assert(!dep.current_rtp_timestamp().has_value());
+    assert(!dep.has_unit_in_progress());
+    assert(!dep.current_unit_rtp_timestamp().has_value());
 }
 
-static void test_same_timestamp_marker_closes_current_frame() {
+static void test_same_timestamp_marker_closes_current_unit() {
     st2110::DepacketizerConfig cfg{};
     cfg.width = 640;
     cfg.height = 480;
@@ -86,14 +87,15 @@ static void test_same_timestamp_marker_closes_current_frame() {
 
     assert(out1.empty());
     assert(out2.size() == 1);
+    assert(out2[0].unit_kind == st2110::VideoAssemblyUnitKind::Frame);
     assert(out2[0].rtp_timestamp == 3000u);
-    assert(out2[0].marker_seen == true);
+    assert(out2[0].marker_seen);
 
-    assert(!dep.has_frame_in_progress());
-    assert(!dep.current_rtp_timestamp().has_value());
+    assert(!dep.has_unit_in_progress());
+    assert(!dep.current_unit_rtp_timestamp().has_value());
 }
 
-static void test_new_timestamp_closes_old_as_not_emittable_and_can_immediately_emit_new_marker_frame() {
+static void test_new_timestamp_closes_old_as_not_emittable_and_can_immediately_emit_new_marker_unit() {
     st2110::DepacketizerConfig cfg{};
     cfg.width = 320;
     cfg.height = 240;
@@ -107,18 +109,19 @@ static void test_new_timestamp_closes_old_as_not_emittable_and_can_immediately_e
 
     assert(out1.empty());
     assert(out2.size() == 1);
+    assert(out2[0].unit_kind == st2110::VideoAssemblyUnitKind::Frame);
     assert(out2[0].rtp_timestamp == 4001u);
-    assert(out2[0].marker_seen == true);
+    assert(out2[0].marker_seen);
 
-    assert(!dep.has_frame_in_progress());
-    assert(!dep.current_rtp_timestamp().has_value());
+    assert(!dep.has_unit_in_progress());
+    assert(!dep.current_unit_rtp_timestamp().has_value());
 }
 
 int main() {
-    test_first_packet_without_marker_starts_frame_only();
+    test_first_packet_without_marker_starts_unit_only();
     test_marker_packet_emits_and_clears_state_under_emit_with_flag_policy();
     test_marker_packet_drops_under_drop_policy_and_clears_state();
-    test_same_timestamp_marker_closes_current_frame();
-    test_new_timestamp_closes_old_as_not_emittable_and_can_immediately_emit_new_marker_frame();
+    test_same_timestamp_marker_closes_current_unit();
+    test_new_timestamp_closes_old_as_not_emittable_and_can_immediately_emit_new_marker_unit();
     return 0;
 }

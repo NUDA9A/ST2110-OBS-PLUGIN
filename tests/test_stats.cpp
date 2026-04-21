@@ -61,9 +61,9 @@ static void test_default_zero_init_depacketizer_stats() {
 
     assert(stats.packets_in == 0);
     assert(stats.packets_used == 0);
-    assert(stats.frames_ok == 0);
-    assert(stats.frames_partial == 0);
-    assert(stats.frames_dropped == 0);
+    assert(stats.units_ok == 0);
+    assert(stats.units_partial == 0);
+    assert(stats.units_dropped == 0);
 }
 
 static void test_default_zero_init_backend_stats() {
@@ -79,15 +79,15 @@ static void test_stats_are_plain_mutable_counters() {
     st2110::DepacketizerStats dep{};
     dep.packets_in += 10;
     dep.packets_used += 8;
-    dep.frames_ok += 3;
-    dep.frames_partial += 1;
-    dep.frames_dropped += 2;
+    dep.units_ok += 3;
+    dep.units_partial += 1;
+    dep.units_dropped += 2;
 
     assert(dep.packets_in == 10);
     assert(dep.packets_used == 8);
-    assert(dep.frames_ok == 3);
-    assert(dep.frames_partial == 1);
-    assert(dep.frames_dropped == 2);
+    assert(dep.units_ok == 3);
+    assert(dep.units_partial == 1);
+    assert(dep.units_dropped == 2);
 
     st2110::BackendStats backend{};
     backend.datagrams_received += 100;

@@ -14,9 +14,9 @@ static void test_write_segment_allows_write_ending_exactly_at_row_boundary() {
 
     st2110::FrameAssemblerEndResult result = assembler.end(true);
     assert(result.status == st2110::FrameAssemblerEndStatus::EmittedPartial);
-    assert(result.frame.has_value());
+    assert(result.unit.has_value());
 
-    const st2110::AssembledVideoFrame& out = *result.frame;
+    const st2110::AssembledVideoUnit& out = *result.unit;
     const uint8_t* row0 = out.frame.row_data(0, 0);
     assert(row0[4] == 0x10);
     assert(row0[5] == 0x11);
@@ -62,9 +62,9 @@ static void test_write_segment_allows_zero_length_write_at_exact_end_of_row() {
 
     st2110::FrameAssemblerEndResult result = assembler.end(true);
     assert(result.status == st2110::FrameAssemblerEndStatus::EmittedPartial);
-    assert(result.frame.has_value());
+    assert(result.unit.has_value());
 
-    const st2110::AssembledVideoFrame& out = *result.frame;
+    const st2110::AssembledVideoUnit& out = *result.unit;
     assert(out.frame.width() == 4);
     assert(out.frame.height() == 1);
 }

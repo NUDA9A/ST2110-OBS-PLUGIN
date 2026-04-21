@@ -3,7 +3,7 @@
 
 #include <st2110/frame_assembler.hpp>
 
-static void test_emit_with_flag_policy_emits_partial_frame() {
+static void test_emit_with_flag_policy_emits_partial_unit() {
     st2110::FrameAssembler assembler(
             4, 1, st2110::PixelFormat::UYVY,
             st2110::PartialFramePolicy::EmitWithFlag);
@@ -16,17 +16,18 @@ static void test_emit_with_flag_policy_emits_partial_frame() {
     st2110::FrameAssemblerEndResult result = assembler.end(true);
 
     assert(result.status == st2110::FrameAssemblerEndStatus::EmittedPartial);
-    assert(result.frame.has_value());
+    assert(result.unit.has_value());
 
-    const st2110::AssembledVideoFrame& out = *result.frame;
-    assert(out.marker_seen == true);
-    assert(out.can_emit == true);
-    assert(out.complete == false);
-    assert(out.partial() == true);
+    const st2110::AssembledVideoUnit& out = *result.unit;
+    assert(out.unit_kind == st2110::VideoAssemblyUnitKind::Frame);
+    assert(out.marker_seen);
+    assert(out.can_emit);
+    assert(!out.complete);
+    assert(out.partial());
     assert(out.rtp_timestamp == 100u);
 }
 
-static void test_drop_policy_drops_partial_frame() {
+static void test_drop_policy_drops_partial_unit() {
     st2110::FrameAssembler assembler(
             4, 1, st2110::PixelFormat::UYVY,
             st2110::PartialFramePolicy::Drop);
@@ -39,11 +40,11 @@ static void test_drop_policy_drops_partial_frame() {
     st2110::FrameAssemblerEndResult result = assembler.end(true);
 
     assert(result.status == st2110::FrameAssemblerEndStatus::DroppedPartial);
-    assert(!result.frame.has_value());
+    assert(!result.unit.has_value());
     assert(!assembler.in_progress());
 }
 
-static void test_drop_policy_still_emits_complete_frame() {
+static void test_drop_policy_still_emits_complete_unit() {
     st2110::FrameAssembler assembler(
             4, 1, st2110::PixelFormat::UYVY,
             st2110::PartialFramePolicy::Drop);
@@ -56,13 +57,14 @@ static void test_drop_policy_still_emits_complete_frame() {
     st2110::FrameAssemblerEndResult result = assembler.end(true);
 
     assert(result.status == st2110::FrameAssemblerEndStatus::EmittedComplete);
-    assert(result.frame.has_value());
+    assert(result.unit.has_value());
 
-    const st2110::AssembledVideoFrame& out = *result.frame;
-    assert(out.marker_seen == true);
-    assert(out.can_emit == true);
-    assert(out.complete == true);
-    assert(out.partial() == false);
+    const st2110::AssembledVideoUnit& out = *result.unit;
+    assert(out.unit_kind == st2110::VideoAssemblyUnitKind::Frame);
+    assert(out.marker_seen);
+    assert(out.can_emit);
+    assert(out.complete);
+    assert(!out.partial());
     assert(out.rtp_timestamp == 102u);
 }
 
@@ -79,11 +81,11 @@ static void test_marker_false_is_not_emittable_in_any_policy() {
     st2110::FrameAssemblerEndResult result = assembler.end(false);
 
     assert(result.status == st2110::FrameAssemblerEndStatus::NotEmittable);
-    assert(!result.frame.has_value());
+    assert(!result.unit.has_value());
     assert(!assembler.in_progress());
 }
 
-static void test_lifecycle_recovers_after_dropped_partial_frame() {
+static void test_lifecycle_recovers_after_dropped_partial_unit() {
     st2110::FrameAssembler assembler(
             4, 1, st2110::PixelFormat::UYVY,
             st2110::PartialFramePolicy::Drop);
@@ -96,22 +98,24 @@ static void test_lifecycle_recovers_after_dropped_partial_frame() {
     st2110::FrameAssemblerEndResult first = assembler.end(true);
 
     assert(first.status == st2110::FrameAssemblerEndStatus::DroppedPartial);
-    assert(!first.frame.has_value());
+    assert(!first.unit.has_value());
 
     assembler.begin(201);
     assembler.write_segment(0, 0, 0, st2110::ByteSpan(full, sizeof(full)));
     st2110::FrameAssemblerEndResult second = assembler.end(true);
 
     assert(second.status == st2110::FrameAssemblerEndStatus::EmittedComplete);
-    assert(second.frame.has_value());
-    assert(second.frame->rtp_timestamp == 201u);
-    assert(second.frame->complete == true);
+    assert(second.unit.has_value());
+    assert(second.unit->rtp_timestamp == 201u);
+    assert(second.unit->complete);
+    assert(second.unit->unit_kind == st2110::VideoAssemblyUnitKind::Frame);
 }
+
 int main() {
-    test_emit_with_flag_policy_emits_partial_frame();
-    test_drop_policy_drops_partial_frame();
-    test_drop_policy_still_emits_complete_frame();
+    test_emit_with_flag_policy_emits_partial_unit();
+    test_drop_policy_drops_partial_unit();
+    test_drop_policy_still_emits_complete_unit();
     test_marker_false_is_not_emittable_in_any_policy();
-    test_lifecycle_recovers_after_dropped_partial_frame();
+    test_lifecycle_recovers_after_dropped_partial_unit();
     return 0;
 }

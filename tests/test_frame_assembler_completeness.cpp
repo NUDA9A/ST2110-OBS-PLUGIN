@@ -16,13 +16,14 @@ static void test_marker_seen_full_coverage_is_complete() {
 
     st2110::FrameAssemblerEndResult result = assembler.end(true);
     assert(result.status == st2110::FrameAssemblerEndStatus::EmittedComplete);
-    assert(result.frame.has_value());
+    assert(result.unit.has_value());
 
-    const st2110::AssembledVideoFrame& out = *result.frame;
-    assert(out.marker_seen == true);
-    assert(out.can_emit == true);
-    assert(out.complete == true);
-    assert(out.partial() == false);
+    const st2110::AssembledVideoUnit& out = *result.unit;
+    assert(out.unit_kind == st2110::VideoAssemblyUnitKind::Frame);
+    assert(out.marker_seen);
+    assert(out.can_emit);
+    assert(out.complete);
+    assert(!out.partial());
     assert(out.rtp_timestamp == 100u);
 }
 
@@ -39,13 +40,14 @@ static void test_marker_seen_hole_inside_row_is_partial() {
 
     st2110::FrameAssemblerEndResult result = assembler.end(true);
     assert(result.status == st2110::FrameAssemblerEndStatus::EmittedPartial);
-    assert(result.frame.has_value());
+    assert(result.unit.has_value());
 
-    const st2110::AssembledVideoFrame& out = *result.frame;
-    assert(out.marker_seen == true);
-    assert(out.can_emit == true);
-    assert(out.complete == false);
-    assert(out.partial() == true);
+    const st2110::AssembledVideoUnit& out = *result.unit;
+    assert(out.unit_kind == st2110::VideoAssemblyUnitKind::Frame);
+    assert(out.marker_seen);
+    assert(out.can_emit);
+    assert(!out.complete);
+    assert(out.partial());
     assert(out.rtp_timestamp == 101u);
 }
 
@@ -62,13 +64,14 @@ static void test_marker_seen_overlap_still_can_be_complete() {
 
     st2110::FrameAssemblerEndResult result = assembler.end(true);
     assert(result.status == st2110::FrameAssemblerEndStatus::EmittedComplete);
-    assert(result.frame.has_value());
+    assert(result.unit.has_value());
 
-    const st2110::AssembledVideoFrame& out = *result.frame;
-    assert(out.marker_seen == true);
-    assert(out.can_emit == true);
-    assert(out.complete == true);
-    assert(out.partial() == false);
+    const st2110::AssembledVideoUnit& out = *result.unit;
+    assert(out.unit_kind == st2110::VideoAssemblyUnitKind::Frame);
+    assert(out.marker_seen);
+    assert(out.can_emit);
+    assert(out.complete);
+    assert(!out.partial());
     assert(out.rtp_timestamp == 102u);
 }
 
@@ -82,7 +85,7 @@ static void test_marker_false_not_emittable_even_if_full() {
 
     st2110::FrameAssemblerEndResult result = assembler.end(false);
     assert(result.status == st2110::FrameAssemblerEndStatus::NotEmittable);
-    assert(!result.frame.has_value());
+    assert(!result.unit.has_value());
 }
 
 static void test_new_begin_resets_exact_coverage_tracking() {
@@ -95,23 +98,25 @@ static void test_new_begin_resets_exact_coverage_tracking() {
     assembler.write_segment(0, 0, 0, st2110::ByteSpan(partial, sizeof(partial)));
     st2110::FrameAssemblerEndResult first_result = assembler.end(true);
     assert(first_result.status == st2110::FrameAssemblerEndStatus::EmittedPartial);
-    assert(first_result.frame.has_value());
+    assert(first_result.unit.has_value());
 
-    const st2110::AssembledVideoFrame& first = *first_result.frame;
-    assert(first.can_emit == true);
-    assert(first.complete == false);
-    assert(first.partial() == true);
+    const st2110::AssembledVideoUnit& first = *first_result.unit;
+    assert(first.unit_kind == st2110::VideoAssemblyUnitKind::Frame);
+    assert(first.can_emit);
+    assert(!first.complete);
+    assert(first.partial());
 
     assembler.begin(2);
     assembler.write_segment(0, 0, 0, st2110::ByteSpan(full, sizeof(full)));
     st2110::FrameAssemblerEndResult second_result = assembler.end(true);
     assert(second_result.status == st2110::FrameAssemblerEndStatus::EmittedComplete);
-    assert(second_result.frame.has_value());
+    assert(second_result.unit.has_value());
 
-    const st2110::AssembledVideoFrame& second = *second_result.frame;
-    assert(second.can_emit == true);
-    assert(second.complete == true);
-    assert(second.partial() == false);
+    const st2110::AssembledVideoUnit& second = *second_result.unit;
+    assert(second.unit_kind == st2110::VideoAssemblyUnitKind::Frame);
+    assert(second.can_emit);
+    assert(second.complete);
+    assert(!second.partial());
     assert(second.rtp_timestamp == 2u);
 }
 

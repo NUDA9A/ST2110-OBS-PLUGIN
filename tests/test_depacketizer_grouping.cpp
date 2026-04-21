@@ -17,7 +17,7 @@ static st2110::PacketView make_packet(uint32_t rtp_timestamp, uint32_t ext_seq) 
     return pkt;
 }
 
-static void test_first_packet_starts_frame_in_progress() {
+static void test_first_packet_starts_unit_in_progress() {
     st2110::DepacketizerConfig cfg{};
     cfg.width = 1920;
     cfg.height = 1080;
@@ -28,12 +28,13 @@ static void test_first_packet_starts_frame_in_progress() {
     auto out = dep.push(make_packet(1000, 1));
 
     assert(out.empty());
-    assert(dep.has_frame_in_progress());
-    assert(dep.current_rtp_timestamp().has_value());
-    assert(*dep.current_rtp_timestamp() == 1000u);
+    assert(dep.has_unit_in_progress());
+    assert(dep.current_unit_rtp_timestamp().has_value());
+    assert(*dep.current_unit_rtp_timestamp() == 1000u);
+    assert(dep.assembly_unit_kind() == st2110::VideoAssemblyUnitKind::Frame);
 }
 
-static void test_same_timestamp_keeps_current_frame() {
+static void test_same_timestamp_keeps_current_unit() {
     st2110::DepacketizerConfig cfg{};
     cfg.width = 1280;
     cfg.height = 720;
@@ -46,12 +47,13 @@ static void test_same_timestamp_keeps_current_frame() {
 
     assert(out1.empty());
     assert(out2.empty());
-    assert(dep.has_frame_in_progress());
-    assert(dep.current_rtp_timestamp().has_value());
-    assert(*dep.current_rtp_timestamp() == 2000u);
+    assert(dep.has_unit_in_progress());
+    assert(dep.current_unit_rtp_timestamp().has_value());
+    assert(*dep.current_unit_rtp_timestamp() == 2000u);
+    assert(dep.assembly_unit_kind() == st2110::VideoAssemblyUnitKind::Frame);
 }
 
-static void test_new_timestamp_closes_previous_and_starts_new_frame() {
+static void test_new_timestamp_closes_previous_and_starts_new_unit() {
     st2110::DepacketizerConfig cfg{};
     cfg.width = 640;
     cfg.height = 480;
@@ -65,9 +67,10 @@ static void test_new_timestamp_closes_previous_and_starts_new_frame() {
     assert(out1.empty());
     assert(out2.empty());
 
-    assert(dep.has_frame_in_progress());
-    assert(dep.current_rtp_timestamp().has_value());
-    assert(*dep.current_rtp_timestamp() == 3001u);
+    assert(dep.has_unit_in_progress());
+    assert(dep.current_unit_rtp_timestamp().has_value());
+    assert(*dep.current_unit_rtp_timestamp() == 3001u);
+    assert(dep.assembly_unit_kind() == st2110::VideoAssemblyUnitKind::Frame);
 }
 
 static void test_multiple_timestamp_transitions_follow_latest_timestamp() {
@@ -83,9 +86,10 @@ static void test_multiple_timestamp_transitions_follow_latest_timestamp() {
     assert(dep.push(make_packet(4001, 3)).empty());
     assert(dep.push(make_packet(4002, 4)).empty());
 
-    assert(dep.has_frame_in_progress());
-    assert(dep.current_rtp_timestamp().has_value());
-    assert(*dep.current_rtp_timestamp() == 4002u);
+    assert(dep.has_unit_in_progress());
+    assert(dep.current_unit_rtp_timestamp().has_value());
+    assert(*dep.current_unit_rtp_timestamp() == 4002u);
+    assert(dep.assembly_unit_kind() == st2110::VideoAssemblyUnitKind::Frame);
 }
 
 static void test_reset_clears_timestamp_grouping_state() {
@@ -97,24 +101,25 @@ static void test_reset_clears_timestamp_grouping_state() {
     st2110::Depacketizer dep(cfg);
 
     assert(dep.push(make_packet(5000, 1)).empty());
-    assert(dep.has_frame_in_progress());
-    assert(dep.current_rtp_timestamp().has_value());
+    assert(dep.has_unit_in_progress());
+    assert(dep.current_unit_rtp_timestamp().has_value());
 
     dep.reset();
 
-    assert(!dep.has_frame_in_progress());
-    assert(!dep.current_rtp_timestamp().has_value());
+    assert(!dep.has_unit_in_progress());
+    assert(!dep.current_unit_rtp_timestamp().has_value());
 
     assert(dep.push(make_packet(6000, 2)).empty());
-    assert(dep.has_frame_in_progress());
-    assert(dep.current_rtp_timestamp().has_value());
-    assert(*dep.current_rtp_timestamp() == 6000u);
+    assert(dep.has_unit_in_progress());
+    assert(dep.current_unit_rtp_timestamp().has_value());
+    assert(*dep.current_unit_rtp_timestamp() == 6000u);
+    assert(dep.assembly_unit_kind() == st2110::VideoAssemblyUnitKind::Frame);
 }
 
 int main() {
-    test_first_packet_starts_frame_in_progress();
-    test_same_timestamp_keeps_current_frame();
-    test_new_timestamp_closes_previous_and_starts_new_frame();
+    test_first_packet_starts_unit_in_progress();
+    test_same_timestamp_keeps_current_unit();
+    test_new_timestamp_closes_previous_and_starts_new_unit();
     test_multiple_timestamp_transitions_follow_latest_timestamp();
     test_reset_clears_timestamp_grouping_state();
     return 0;
