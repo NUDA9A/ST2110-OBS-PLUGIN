@@ -173,7 +173,11 @@ namespace st2110 {
             for (std::size_t i = 0; i < packet.segment_count; ++i) {
                 auto expected_op = map_video_segment_to_frame_write(cfg_.format, cfg_.scan_mode, packet.segments[i]);
                 if (!expected_op.has_value()) {
-                    throw std::logic_error("Can not map video segment to frame write");
+                    Error err = expected_op.error();
+                    if (err == Error::InvalidValue) {
+                        throw std::invalid_argument("Invalid video segment placement for current format/scan mode");
+                    }
+                    throw std::logic_error("Unsupported video segment placement for current format/scan mode");
                 }
                 auto op = *expected_op;
                 assembler_.write_segment(op.plane, op.row, op.byte_offset, op.bytes);

@@ -6,6 +6,7 @@
 #include "pixel_format.hpp"
 #include "video_scan_mode.hpp"
 #include "packet_view.hpp"
+#include "video_segment_constraints.hpp"
 
 #include <expected>
 
@@ -19,6 +20,9 @@ namespace st2110 {
 
     [[nodiscard]] inline std::expected<VideoFrameWriteOp, Error>
     map_progressive_segment_to_frame_write(PixelFormat format, const SrdSegmentView& segment) {
+        if (Error err = validate_video_segment_for_format(format, segment.header, segment.data); err != Error::Ok) {
+            return std::unexpected(err);
+        }
         switch (format) {
             case PixelFormat::UYVY:
                 return VideoFrameWriteOp{
