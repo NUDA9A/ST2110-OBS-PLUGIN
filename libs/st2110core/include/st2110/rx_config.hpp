@@ -5,6 +5,7 @@
 #include <cstdint>
 #include "pixel_format.hpp"
 #include "config_validation.hpp"
+#include "video_scan_mode.hpp"
 
 namespace st2110 {
     struct RxVideoConfig;
@@ -20,6 +21,7 @@ namespace st2110 {
         std::string local_ip;
         std::string dest_ip;
         PixelFormat format;
+        VideoScanMode scan_mode = VideoScanMode::Progressive;
 
         [[nodiscard]] bool is_valid() const {
             return (validate_rx_video_config(*this) == Error::Ok);
@@ -48,6 +50,11 @@ namespace st2110 {
 
         if (!config_validation::is_non_empty(cfg.dest_ip)) {
             return Error::InvalidValue;
+        }
+
+        err = config_validation::validate_video_scan_mode(cfg.scan_mode);
+        if (err != Error::Ok) {
+            return err;
         }
 
         return Error::Ok;

@@ -6,6 +6,7 @@
 
 #include "error.hpp"
 #include "pixel_format.hpp"
+#include "video_scan_mode.hpp"
 
 namespace st2110::config_validation {
 
@@ -52,6 +53,17 @@ namespace st2110::config_validation {
                 return Error::Ok;
             default:
                 return Error::Unsupported;
+        }
+    }
+
+    [[nodiscard]] inline Error validate_video_scan_mode(VideoScanMode mode) {
+        switch (mode) {
+            case VideoScanMode::Progressive:
+            case VideoScanMode::Interlaced:
+            case VideoScanMode::PsF:
+                return Error::Ok;
+            default:
+                return Error::InvalidValue;
         }
     }
 

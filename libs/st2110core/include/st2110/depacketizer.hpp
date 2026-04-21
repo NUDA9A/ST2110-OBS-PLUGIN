@@ -4,6 +4,7 @@
 #include "packet_view.hpp"
 #include "frame_assembler.hpp"
 #include "stats.hpp"
+#include "video_scan_mode.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -18,6 +19,7 @@ namespace st2110 {
         uint32_t height = 0;
         PixelFormat format = PixelFormat::UYVY;
         PartialFramePolicy partial_frame_policy = PartialFramePolicy::EmitWithFlag;
+        VideoScanMode scan_mode = VideoScanMode::Progressive;
     };
 
     struct FrameWriteOp {
@@ -88,6 +90,10 @@ namespace st2110 {
 
         [[nodiscard]] const DepacketizerStats& stats() const {
             return stats_;
+        }
+
+        [[nodiscard]] VideoScanMode scan_mode() const {
+            return cfg_.scan_mode;
         }
 
     private:

@@ -168,7 +168,7 @@
 - [x] 061: Implement marker-based end-of-frame + tests
 - [x] 062: Connect PacketView SRD list => FrameAssembler writes + tests
 - [x] 063: Add stats (frames_ok, frames_partial, frames_dropped, packets_used)
-- [ ] 064: Define `VideoScanMode` as a transport / assembly property independent from `PixelFormat`
+- [x] 064: Define `VideoScanMode` as a transport / assembly property independent from `PixelFormat`
   - add enum for `Progressive | Interlaced | PsF`
   - thread it through `RxVideoConfig`, `DepacketizerConfig`, and other relevant internal video config/state types
   - keep current MVP behavior implemented only for `Progressive`
