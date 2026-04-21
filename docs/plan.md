@@ -13,6 +13,10 @@
   - отсутствие расхождений со стандартом;
   - расширяемость архитектуры;
   - качество тестового покрытия под задачу.
+- При формулировании задачи и при приемке ассистент обязан сверять не только текущую функциональность, но и соответствие целевой архитектуре из плана:
+  - `PixelFormat` и `VideoScanMode` рассматриваются как независимые оси модели;
+  - progressive-only поведение в MVP допустимо только как локализованное ограничение;
+  - новые изменения не должны закреплять assumptions вида `marker == end of frame`, `timestamp group == frame`, `F is always zero` вне специально выделенных policy / mode-aware точек.
 - Пока задача не принята, к следующей не переходим.
 - Сложные детали реализации можно разбирать в отдельном чате, но приемка задачи — только по коду и тестам.
 
@@ -28,6 +32,12 @@
   - только video без возможности добавить audio;
   - только socket backend;
   - только консольный pipeline без дальнейшей OBS-интеграции.
+- Нельзя жестко зашивать video pipeline только под progressive semantics.
+- Архитектурно должны быть разделены:
+  - pixel/storage format;
+  - scan mode (`Progressive | Interlaced | PsF`);
+  - mode-dependent completion semantics (marker/timestamp/end-of-unit logic).
+- Даже если MVP реализует только `Progressive`, код и API должны позволять добавить `Interlaced` и `PsF` через локальное расширение policy/state/config, а не через переписывание depacketizer/assembly pipeline.
 - Ассистент обязан отдельно проверять архитектуру на расширяемость при приемке каждой задачи.
 - Все временные упрощения должны быть:
   - явно зафиксированы в плане;
@@ -82,11 +92,11 @@
 
 ## Spec notes / deviations
 - [x] S001: `validate_st2110_20_payload_header()` currently rejects `SRD Length == 0` unconditionally, but ST 2110-20 allows this special case when there is exactly one SRD header and no sample row data follows. This must be fixed before video RX is considered spec-clean. :contentReference[oaicite:0]{index=0}
-- [ ] S002: While MVP may stay progressive-only, code paths and types should not hardcode assumptions that make future interlace / PsF / audio support invasive. ST 2110-20 explicitly distinguishes progressive, interlaced, and PsF behavior for marker/F/row semantics, so these assumptions must remain localized. :contentReference[oaicite:1]{index=1}
+- [ ] S002: While MVP behavior may stay progressive-only, internal configs, state machines, and completion logic must model scan mode separately from pixel format and must not hardcode assumptions such as “timestamp group == frame”, “marker == end of frame”, or “F is always zero” in ways that make future interlace / PsF support invasive. ST 2110-20 explicitly distinguishes progressive, interlaced, and PsF behavior for `F`, marker, row numbering, and signaling, so these assumptions must remain localized.
 - [ ] S003: `Depacketizer::map_segment_to_frame_write()` currently treats `SRD Offset` as a byte offset, but ST 2110-20 defines it as the horizontal position of the first full-bandwidth sample in the image pixel matrix. For UYVY / 4:2:2 this must be mapped through format-aware logic instead of written directly as bytes. This must be fixed before video RX is considered spec-clean. :contentReference[oaicite:3]{index=3}
 - [ ] S004: Current UYVY receive path does not validate pgroup alignment constraints implied by ST 2110-20 4:2:2 sampling. For 8-bit 4:2:2, packetized data must respect the pgroup structure and `SRD Length` must remain a multiple of pgroup octet size; offset semantics must also remain aligned with full-bandwidth sample positions. Validation must be added in a localized, format-aware way. :contentReference[oaicite:4]{index=4}
 - [x] S005: Current payload validation does not enforce monotonic ordering rules for `SRD Row Number` / `SRD Offset` within a packet. ST 2110-20 requires sample rows to progress top-to-bottom and offsets within a row to progress left-to-right. This must be validated explicitly. :contentReference[oaicite:5]{index=5}
-- [ ] S006: Task 022 covered only part of payload-header validation. Size/limit checks that depend on packet/payload sizing policy (including the path toward MAXUDP-aware validation) still need an explicit follow-up task so completed work and remaining work are not conflated. :contentReference[oaicite:6]{index=6}
+- [x] S006: Task 022 covered only part of payload-header validation. Size/limit checks that depend on packet/payload sizing policy (including the path toward MAXUDP-aware validation) still need an explicit follow-up task so completed work and remaining work are not conflated. :contentReference[oaicite:6]{index=6}
 - [x] S007: Public headers currently contain non-trivial function definitions in a way that risks ODR / multiple-definition problems once the project grows beyond the current “mostly one translation unit per test executable” shape. The linkage model must be made explicit (true header-only with `inline`, or moved implementations) before backend/app growth.
 - [ ] S008: `PacketParseStats` structures exist, but packet parsing does not yet expose a single integrated path that records stage-specific parse results through the real parse flow. This should be fixed so parse observability is not only nominal.
 
@@ -127,7 +137,7 @@
   - within the same row, `SRD Offset` must not go backwards
   - keep progressive-only assumptions localized so interlace/PsF support can be added later
   - add focused tests for valid and invalid 2-SRD / 3-SRD packets
-- [ ] 046: Add explicit follow-up validation for size-limit policy
+- [x] 046: Add explicit follow-up validation for size-limit policy
   - separate pure wire-format parsing from size-limit/config-policy checks
   - define where MAXUDP-related constraints will live for MVP
   - add tests covering oversized payload / inconsistent header+payload sizing behavior
@@ -158,17 +168,34 @@
 - [x] 061: Implement marker-based end-of-frame + tests
 - [x] 062: Connect PacketView SRD list => FrameAssembler writes + tests
 - [x] 063: Add stats (frames_ok, frames_partial, frames_dropped, packets_used)
-- [ ] 064: Fix UYVY segment-to-frame mapping so `SRD Offset` is interpreted in full-bandwidth sample units, not raw bytes
+- [ ] 064: Define `VideoScanMode` as a transport / assembly property independent from `PixelFormat`
+  - add enum for `Progressive | Interlaced | PsF`
+  - thread it through `RxVideoConfig`, `DepacketizerConfig`, and other relevant internal video config/state types
+  - keep current MVP behavior implemented only for `Progressive`
+  - add tests proving scan mode is modeled separately from pixel format
+- [ ] 065: Generalize video receive completion semantics so marker/timestamp handling is scan-mode-aware by architecture
+  - remove hardcoded internal assumption that `marker => end of frame`
+  - remove hardcoded internal assumption that one RTP timestamp group always corresponds to a complete frame
+  - introduce a localized mode-dependent policy point for end-of-unit / completion decisions
+  - implement only the `Progressive` policy in MVP; non-progressive branches may stay localized as `Unsupported` / not-yet-implemented
+  - add tests proving current progressive behavior is unchanged
+- [ ] 066: Refactor depacketizer / assembly state so future interlace / PsF support can be added by extending policy and state, not rewriting the pipeline
+  - avoid baking “frame-only” semantics into internal state transitions where future field / segment handling will need to plug in
+  - keep `FrameAssembler` byte-oriented and format-agnostic
+  - keep current public progressive output behavior intact for MVP
+  - document/localize the current non-progressive boundary
+  - add focused tests for architecture-level behavior and localized rejection of non-progressive modes
+- [ ] 067: Fix UYVY segment-to-frame mapping so `SRD Offset` is interpreted in full-bandwidth sample units, not raw bytes
   - introduce a localized mapper for `PixelFormat::UYVY`
   - convert ST 2110-20 offset semantics to frame write byte offsets explicitly
   - keep `FrameAssembler` byte-oriented and format-agnostic
   - add tests proving the write lands at the correct byte position
-- [ ] 065: Enforce UYVY pgroup alignment constraints in the receive path
+- [ ] 068: Enforce UYVY pgroup alignment constraints in the receive path
   - for current MVP format, validate segment length/alignment rules implied by ST 2110-20 4:2:2 8-bit packetization
   - reject misaligned segment offsets/lengths explicitly
   - keep the checks localized so future formats add their own rules rather than branching through generic assembler code
   - add positive/negative tests
-- [ ] 066: Ensure depacketizer/frame-assembly write path stays extensible
+- [ ] 069: Ensure depacketizer/frame-assembly write path stays extensible
   - review where format-specific mapping/validation lives after 064/065
   - confirm that adding a second pixel format later requires localized additions only
   - add a small architecture-focused test or compile-time check where useful
@@ -312,6 +339,26 @@
 - [ ] 222: Review parser/assembler behavior against spec corner-cases
 - [ ] 223: Add stricter validation for payload sizes, pgroups, offsets, timestamps
 - [ ] 224: Re-check known deviations list and burn it down
+- [ ] 225: Implement interlaced video receive semantics
+  - accept and interpret `F` for first/second field
+  - implement correct marker semantics for end-of-field
+  - implement row numbering semantics per field
+  - keep changes localized to scan-mode-aware policy/state introduced in MVP
+  - add focused tests
+- [ ] 226: Implement PsF video receive semantics
+  - accept and interpret `F` as segment indicator for PsF
+  - implement correct marker semantics for end-of-segment
+  - implement row numbering semantics per segment
+  - keep changes localized to scan-mode-aware policy/state introduced in MVP
+  - add focused tests
+- [ ] 227: Implement field / segment pairing and final picture reconstruction policy
+  - define how two fields or two PsF segments are paired into the final output picture
+  - keep pairing logic separate from byte-writing / packet parsing where practical
+  - add tests for ordering, completeness, and partial/loss behavior
+- [ ] 228: Add scan-mode signaling / selection path from stream description and config
+  - define where `Progressive | Interlaced | PsF` is selected from SDP/config
+  - validate consistency between signaled mode and runtime packet semantics
+  - add tests for signaling/selection and mismatch handling
 
 ## Track I — Operational quality
 - [ ] 230: Better logging and structured stats

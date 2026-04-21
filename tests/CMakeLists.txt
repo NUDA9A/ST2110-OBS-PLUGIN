@@ -46,3 +46,4 @@ add_st2110_test(test_header_odr_link
 )
 add_st2110_test(test_video_segment_constraints test_video_segment_constraints.cpp)
 add_st2110_test(test_st2110_20_ordering test_st2110_20_ordering.cpp)
+add_st2110_test(test_packet_parse_policy test_packet_parse_policy.cpp)
