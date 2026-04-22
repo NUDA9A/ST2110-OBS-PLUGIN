@@ -146,7 +146,7 @@
   - separate pure wire-format parsing from size-limit/config-policy checks
   - define where MAXUDP-related constraints will live for MVP
   - add tests covering oversized payload / inconsistent header+payload sizing behavior
-- [ ] 046A: Align packet size policy with ST 2110-10 UDP datagram size semantics
+- [x] 046A: Align packet size policy with ST 2110-10 UDP datagram size semantics
   - model packet-size policy in terms of UDP datagram size, not only essence payload bytes
   - define Standard UDP Size Limit / Extended UDP Size Limit behavior for MVP
   - define default behavior when `MAXUDP` is absent

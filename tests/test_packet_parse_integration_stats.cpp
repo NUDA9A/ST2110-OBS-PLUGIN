@@ -117,7 +117,7 @@ static void test_policy_failure_is_accounted_separately() {
 
     st2110::PacketParseStats stats{};
     st2110::PacketParsePolicy policy{};
-    policy.max_udp_payload_bytes = bytes.size() - 1;
+    policy.max_udp_datagram_bytes = bytes.size() - 1;
 
     const auto parsed = st2110::parse_packet_view(
             st2110::ByteSpan(bytes.data(), bytes.size()),
@@ -227,6 +227,57 @@ static void test_srd_payload_split_failure_is_accounted() {
     assert(stats.srd_payload_split_fail == 1u);
 }
 
+static void test_default_policy_oversize_is_recorded_as_packet_policy_failure() {
+    std::vector<uint8_t> oversized_payload(1453, 0x00); // 1453 + 8 = 1461 > 1460
+    st2110::PacketParseStats stats{};
+
+    auto result = st2110::parse_packet_view(
+            st2110::ByteSpan(oversized_payload.data(), oversized_payload.size()),
+            stats
+    );
+
+    assert(!result.has_value());
+    assert(result.error() == st2110::Error::InvalidValue);
+
+    assert(stats.parser_stats.packets_total == 1);
+    assert(stats.parser_stats.packets_ok == 0);
+    assert(stats.parser_stats.packets_failed == 1);
+    assert(stats.parser_stats.invalid_value == 1);
+
+    assert(stats.packet_policy_fail == 1);
+    assert(stats.rtp_header_fail == 0);
+    assert(stats.st2110_header_parse_fail == 0);
+    assert(stats.bad_srd == 0);
+    assert(stats.srd_payload_split_fail == 0);
+}
+
+static void test_invalid_policy_config_is_recorded_as_packet_policy_failure() {
+    st2110::PacketParsePolicy policy{};
+    policy.max_udp_datagram_bytes = 1;
+
+    const uint8_t payload[] = {0x00};
+    st2110::PacketParseStats stats{};
+
+    auto result = st2110::parse_packet_view(
+            st2110::ByteSpan(payload, sizeof(payload)),
+            stats,
+            policy);
+
+    assert(!result.has_value());
+    assert(result.error() == st2110::Error::InvalidValue);
+
+    assert(stats.parser_stats.packets_total == 1);
+    assert(stats.parser_stats.packets_ok == 0);
+    assert(stats.parser_stats.packets_failed == 1);
+    assert(stats.parser_stats.invalid_value == 1);
+
+    assert(stats.packet_policy_fail == 1);
+    assert(stats.rtp_header_fail == 0);
+    assert(stats.st2110_header_parse_fail == 0);
+    assert(stats.bad_srd == 0);
+    assert(stats.srd_payload_split_fail == 0);
+}
+
 int main() {
     test_success_updates_ok_counters_once();
     test_policy_failure_is_accounted_separately();
@@ -234,5 +285,7 @@ int main() {
     test_st2110_payload_header_parse_failure_is_accounted();
     test_st2110_payload_header_validation_failure_is_accounted();
     test_srd_payload_split_failure_is_accounted();
+    test_default_policy_oversize_is_recorded_as_packet_policy_failure();
+    test_invalid_policy_config_is_recorded_as_packet_policy_failure();
     return 0;
 }
