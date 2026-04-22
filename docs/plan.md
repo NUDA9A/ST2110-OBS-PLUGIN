@@ -33,6 +33,11 @@
   - добавить описания для новых файлов;
   - обновить описания существующих файлов, если изменились их публичные структуры, классы, методы, связи или архитектурная роль.
 - Если фактический код начинает расходиться с описанием файла в `plan.md`, приоритет у фактического кода; такое расхождение должно быть устранено сразу после приемки текущей задачи обновлением file map.
+- Когда задача требует новые тесты или обновление существующих тестов, ассистент обязан присылать:
+  - точную новую строку `add_st2110_test(...)` для `tests/CMakeLists.txt`, если нужен новый test target;
+  - полный готовый `.cpp` файл каждого нового теста;
+  - полный готовый `.cpp` файл для каждого теста, который нужно заменить целиком.
+- Ассистент не должен ограничиваться описанием тестовой идеи; тестовые файлы должны быть даны в копируемом виде.
 
 ## Правила проектирования
 - Код должен быть написан в **расширяемом виде**.
@@ -551,19 +556,95 @@
 
 ### libs/st2110core/include/st2110/video_signaling.hpp
 - Роль:
-  - будущая standards-aware signaling boundary для video stream description.
-  - относится к задаче `069B`, пока файл черновой/не завершен.
+  - standards-aware signaling/model boundary для video stream description.
+  - задает типизированную модель ключевых video SDP/signaling свойств отдельно от low-level receive/depacketizer config.
 - Связи:
-  - должен связать SDP/signaling model с internal receive pipeline config и packet parse policy.
-- Сущности (planned / draft):
+  - использует `PixelFormat`, `VideoScanMode`, `PacketParsePolicy`, `RxVideoConfig`, общие config validation helper’ы.
+  - связывает signaling model с packet parse policy и manual `RxVideoConfig` path.
+  - должна дальше расширяться в рамках `069B`, а затем состыковаться с receiver timing boundary из `069C`.
+- Сущности:
+  - `VideoPackingMode`
+    - `Gpm`
+    - `Bpm`
   - `MediaClockMode`
+    - `Direct`
+    - `Sender`
   - `TimestampMode`
+    - `Samp`
+    - `New`
+    - `Pres`
   - `ReferenceClockKind`
+    - `LocalMac`
+    - `Ptp`
+    - `Other`
+  - `PtpReferenceClock`
+    - `clock_identity`
+    - `domain_number`
+    - `traceable`
+  - `LocalMacReferenceClock`
+    - `mac`
+  - `ReferenceClock`
+    - `kind`
+    - `ptp`
+    - `local_mac`
+    - `raw_token`
+  - `VideoSenderType`
+    - `Narrow`
+    - `NarrowLinear`
+    - `Wide`
   - `VideoStreamSignaling`
-  - `validate_video_stream_signaling(...)`
-- Статус:
-  - файл не завершен;
-  - нельзя считать текущим стабильным API до выполнения `069B`.
+    - `format`
+    - `scan_mode`
+    - `width`, `height`
+    - `fps_num`, `fps_den`
+    - `packing_mode`
+    - `max_udp_datagram_bytes`
+    - `media_clock_mode`
+    - `timestamp_mode`
+    - `reference_clock`
+    - `ts_delay_sender_ticks`
+    - `sender_type`
+    - `troff_us`
+    - `cmax`
+  - `validate_video_sender_signaling(VideoSenderType, const std::optional<uint32_t>&, const std::optional<uint32_t>&)`
+    - structural validation of ST 2110-21 sender timing fields:
+      - `Narrow` => `troff_us` absent, `cmax` absent
+      - `NarrowLinear` => `troff_us` absent, `cmax` absent
+      - `Wide` => `troff_us` absent, `cmax` present and non-zero
+  - `validate_reference_clock(const ReferenceClock&)`
+    - structural validation of `ReferenceClock` consistency:
+      - `Ptp` => only `ptp`
+      - `LocalMac` => only `local_mac`
+      - `Other` => only non-empty `raw_token`
+  - `validate_media_clock_mode(MediaClockMode)`
+    - validates known `mediaclk` modeling enum values.
+  - `validate_timestamp_mode(TimestampMode)`
+    - validates known `TSMODE` modeling enum values.
+  - `validate_video_timing_signaling(MediaClockMode, TimestampMode, uint32_t)`
+    - localized timing-signaling validation boundary for:
+      - `mediaclk`
+      - `TSMODE`
+      - future `TSDELAY` semantics
+    - current MVP behavior:
+      - validates enum values explicitly
+      - carries `ts_delay_sender_ticks` through the boundary
+      - does not yet impose detailed `TSDELAY` semantics
+  - `validate_video_stream_signaling(const VideoStreamSignaling&)`
+    - базовая structural/config validation signaling model, включая:
+      - timing signaling
+      - sender timing fields
+      - `ReferenceClock`
+  - `packet_parse_policy_from_video_stream_signaling(const VideoStreamSignaling&)`
+    - выводит `PacketParsePolicy` из signaling model.
+  - `validate_video_stream_signaling_against_rx_video_config(const VideoStreamSignaling&, const RxVideoConfig&)`
+    - проверяет согласованность signaling model и manual video config path по ключевым video properties.
+  - `rx_video_config_from_video_stream_signaling(const VideoStreamSignaling&, uint16_t, uint8_t, std::string, std::string)`
+    - explicit adapter from signaling model to runtime/manual `RxVideoConfig`
+    - maps video stream properties from signaling and injects transport/network fields separately
+    - validates signaling first, then validates the projected runtime config
+- Примечание:
+  - текущая реализация уже моделирует signaling-оси отдельно и умеет проецировать signaling model в runtime `RxVideoConfig`, но пока не покрывает полный SDP parsing и еще не интегрирована в runtime receive pipeline.
+  - detailed semantics for `ts_delay_sender_ticks`, `mediaclk`, `TSMODE`, and receiver-timing interpretation remain future work above this validation boundary.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -657,7 +738,7 @@
 - [x] S007: Public headers currently contain non-trivial function definitions in a way that risks ODR / multiple-definition problems once the project grows beyond the current “mostly one translation unit per test executable” shape. The linkage model must be made explicit (true header-only with `inline`, or moved implementations) before backend/app growth.
 - [x] S008: `PacketParseStats` structures exist, but packet parsing does not yet expose a single integrated path that records stage-specific parse results through the real parse flow. This should be fixed so parse observability is not only nominal.
 - [ ] S009: Current packet size policy models a configurable UDP payload-size limit, but ST 2110-10 defines `MAXUDP` and receiver size expectations in terms of UDP datagram size, not only essence payload size. Standard UDP Size Limit and Extended UDP Size Limit handling, default behavior when `MAXUDP` is absent, and the receiver assumption around fragmented IP datagrams must be aligned with ST 2110-10 before packet sizing is considered spec-clean.
-- [ ] S010: Current video receive path is driven by manual config only and does not yet expose a standards-aware SDP/signaling model. ST 2110-10 / -20 / -21 require or define stream interpretation/signaling through SDP attributes such as video sampling/depth/packing/framerate and timing-related attributes including `mediaclk`, `ts-refclk`, `MAXUDP`, `TSMODE`, `TSDELAY`, and sender timing parameters. This signaling path must become a first-class modeled boundary rather than an implicit out-of-band assumption.
+- [ ] S010: The project now has an initial standards-aware video signaling model boundary, structural validation for key signaling fields, and projection paths into runtime/manual config. However, the receive path is still primarily driven by manual config and does not yet have full runtime integration of signaling-derived configuration or SDP ingestion. ST 2110-10 / -20 / -21 require or define stream interpretation/signaling through SDP attributes such as video sampling/depth/packing/framerate and timing-related attributes including `mediaclk`, `ts-refclk`, `MAXUDP`, `TSMODE`, `TSDELAY`, and sender timing parameters. This work must be completed through explicit runtime integration and a separate SDP parsing/ingestion path rather than by expanding ad hoc manual config assumptions.
 - [ ] S011: The current timestamp-strategy plan is still phrased as if internal video timestamps could be derived only from local fps cadence or arrival-time smoothing. For standards-aware ST 2110 receive, internal presentation timestamps must be mapped from RTP timestamp domain and associated clock/signaling model, not from a standalone frame counter alone. The timestamp plan must therefore be reworked around RTP/clock-based mapping.
 - [ ] S012: Receiver timing / conformance assumptions from ST 2110-21 are not yet represented in the architecture. The project currently has reorder/depacketize logic but no explicit model for receiver timing class/capability, dependence on stream timing signaling, or the future boundary where ST 2110-21 conformance-related buffering/tolerance behavior will live.
 - [x] S013: `parse_packet_view_staged()` currently accepts arbitrary trailing octets after the bytes covered by `SRD Length` values. ST 2110-20 allows octets after the last Sample Row Data Segment only as terminal field/frame padding, and GPM/BPM padding octets are zero-valued. This must be validated through a localized packing-mode-aware / mode-aware boundary rather than silently tolerated on any packet.
@@ -796,16 +877,41 @@
   - keep non-progressive runtime boundary localized at reconstructor creation / factory path
   - add focused tests for composition, reset, and config mismatch
 - [ ] 069B: Add a standards-aware video SDP/signaling model boundary
-  - define modeled video stream/signaling config separate from low-level depacketizer config
-  - include the key stream-description attributes needed by ST 2110-10 / -20 / -21 for MVP planning, including video format/framerate/packing-related signaling and timing-related signaling such as `mediaclk`, `ts-refclk`, `MAXUDP`, `TSMODE`, `TSDELAY`
-  - keep the current manual-config path usable for synthetic tests, but make the standards-aware signaling path a first-class architecture boundary
-  - validate consistency between signaled stream properties and internal receive pipeline config
-  - add focused tests for signaling-model validation and mismatch handling
+  - [x] 069B1: Define modeled video stream/signaling types separate from low-level depacketizer/runtime config
+    - include key stream-description properties needed for current MVP architecture:
+      - video packing mode (`GPM` / `BPM`)
+      - timing-related signaling such as `mediaclk`, `ts-refclk`, `MAXUDP`, `TSMODE`, `TSDELAY`
+      - ST 2110-21 sender timing/signaling properties such as sender type (`TP`) and optional `TROFF` / `CMAX`
+    - model reference-clock signaling through an extensible `ReferenceClock` structure rather than a closed enum-only representation
+  - [x] 069B2: Add explicit structural validation boundaries inside signaling model
+    - validate reference clock consistency
+    - validate sender timing signaling consistency
+    - validate media clock / timestamp mode enums
+    - add a localized future timing-related interpretation entry point where `TSDELAY` is carried through even if full semantics are not yet implemented
+  - [x] 069B3: Add explicit adapters/projections from `VideoStreamSignaling`
+    - derive `PacketParsePolicy` from signaling model
+    - derive runtime/manual `RxVideoConfig` from signaling model while injecting transport/network fields separately
+    - validate signaling first, then validate projected runtime config
+  - [ ] 069B4: Add explicit projection from `VideoStreamSignaling` to runtime video receive pipeline config
+    - derive `DepacketizerConfig` from signaling model
+    - derive `VideoUnitReconstructorConfig` from signaling model
+    - derive `VideoReceivePipelineConfig` from signaling model
+    - keep runtime policy inputs that are not signaled (for example `PartialFramePolicy`) as explicit adapter parameters rather than hiding them inside signaling model
+    - ensure future non-progressive modes are projected structurally without baking runtime-support assumptions into the adapter
+  - [ ] 069B5: Define the runtime integration boundary where signaling-derived config becomes the primary receiver bootstrap path
+    - make signaling-derived config a first-class runtime input alongside the current manual/synthetic path
+    - keep current manual-config path usable for tests and scaffolding
+    - do not require full SDP parser yet; only make the receiver-side integration boundary explicit
+    - add focused tests for signaling-driven config composition / mismatch handling
 - [ ] 069C: Define an explicit ST 2110-21 video receiver timing/conformance boundary
   - introduce a receiver timing/capability model boundary instead of burying receiver assumptions inside depacketizer/reorder code
   - define where stream timing parameters and future receiver-class/conformance behavior will plug into the architecture
   - keep current MVP implementation minimal, but make the boundary explicit so later ST 2110-21 work does not require rewriting depacketizer/pipeline internals
   - add architecture-focused tests or compile-time checks where useful
+- [ ] 069D: Add SDP parsing / ingestion path for video signaling model
+  - parse relevant SDP attributes into `VideoStreamSignaling`
+  - keep parsing separate from validation and separate from runtime config projection
+  - add focused tests for valid/invalid SDP field mapping
 
 ### A3. Video timestamp strategy
 - [x] 070: Define internal timestamp type: `uint64_t ts_ns`
