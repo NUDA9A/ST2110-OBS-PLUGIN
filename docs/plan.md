@@ -57,6 +57,23 @@
   - scan mode (`Progressive | Interlaced | PsF`);
   - mode-dependent completion semantics (marker/timestamp/end-of-unit logic).
 - Даже если MVP реализует только `Progressive`, код и API должны позволять добавить `Interlaced` и `PsF` через локальное расширение policy/state/config, а не через переписывание depacketizer/assembly pipeline.
+- **MVP может быть ограничен только в реализации, но не в архитектуре.**
+  - если стандартная ось уже известна в рамках ST 2110 family, она должна быть архитектурно представлена уже в MVP;
+  - для такой оси в MVP должны существовать:
+    - explicit modeled representation;
+    - explicit config/runtime axis или projection boundary;
+    - explicit dispatch / boundary / adapter / mapper / policy point;
+    - локализованные future implementation branches;
+  - допустимо, что часть веток в MVP пока возвращает `Unsupported`, `InvalidValue` через reject-by-policy или работает как placeholder, но только если сама ось и extension points уже существуют явно;
+  - поздние фазы (`Medium` / `Hardening`) должны по возможности сводиться к “заполнить уже существующие ветки реализацией”, а не к “впервые протащить эту ось через архитектуру”.
+- Это правило в частности относится к уже известным стандартным осям и вариантам:
+  - `Progressive | Interlaced | PsF`;
+  - `GPM | BPM`;
+  - signaling / clock / timestamp / timing-related variants;
+  - standards-aware video media-property representation;
+  - standards-aware audio signaling / channel-order / channel-mapping representation;
+  - receiver timing / playout timing / capability boundaries.
+- Реализационные задачи для уже архитектурно заложенных веток **могут оставаться в `Medium`**; это не нарушает MVP-принцип, если сама ось, boundary и dispatch уже заведены в MVP.
 - Ассистент обязан отдельно проверять архитектуру на расширяемость при приемке каждой задачи.
 - Все временные упрощения должны быть:
   - явно зафиксированы в плане;
@@ -99,6 +116,7 @@
 > - фиксируем архитектурную роль, связи и публичные сущности;
 > - не дублируем полную реализацию;
 > - после принятия задачи обновляем этот раздел вместе с кодом.
+
 ### apps/st2110_rx_dump/main.cpp
 - Роль:
   - минимальный CLI entry point для будущего dump/tool-приложения.
@@ -173,6 +191,8 @@
     - валидирует trailing payload padding через `validate_video_packet_trailing_padding(...)` до изменения assembly state;
     - пишет сегменты через `map_video_segment_to_frame_write(...)`;
     - пока runtime-реализация только для `Progressive`, non-progressive локализованно отвергается.
+- Примечание:
+  - packing mode как runtime axis должен быть доведен сюда уже на уровне MVP architecture; если часть packing branches еще не реализована, они должны быть локализованно ограничены, а не отсутствовать в shape/config path.
 
 ### libs/st2110core/include/st2110/endian.hpp
 - Роль:
@@ -320,6 +340,7 @@
     - поэтапно парсит RTP header, ST 2110-20 payload header, split’ит payload по SRD segments и отдельно выделяет trailing padding.
 - Примечание:
   - generic parse слой только выделяет trailing bytes, но не принимает mode-aware решение об их допустимости.
+  - tolerance to RTP header extensions должна оставаться локализованной в RTP/payload extraction path, а не размазываться по `PacketView` consumers.
 
 ### libs/st2110core/include/st2110/pixel_format.hpp
 - Роль:
@@ -369,6 +390,9 @@
   - `seq_less(uint16_t a, uint16_t b)`
   - `seq_distance(uint16_t a, uint16_t b)`
   - `rtp_payload_span(ByteSpan, const RtpHeaderView&)`
+- Примечание:
+  - explicit receiver-side tolerance к RTP header extensions должна жить именно здесь / в связанном payload-span path;
+  - parser path должен быть архитектурно готов к корректному skipping extensions уже в MVP, даже если semantic interpretation extension data не требуется.
 
 ### libs/st2110core/include/st2110/rx_config.hpp
 - Роль:
@@ -479,6 +503,9 @@
     - ctor `(const VideoReceivePipelineConfig&)`
     - `push(const PacketView&) -> std::vector<ReconstructedVideoFrame>`
     - `reset()`
+- Примечание:
+  - signaling-driven bootstrap и receiver-timing interaction должны быть доведены сюда как explicit boundaries уже на уровне MVP architecture;
+  - более поздние фазы должны в основном заполнять behavior в существующих adapters/policies, а не менять shape pipeline.
 
 ### libs/st2110core/include/st2110/video_receive_semantics.hpp
 - Роль:
@@ -507,6 +534,8 @@
   - Текущий runtime status:
     - `Progressive` реализован;
     - `Interlaced` / `PsF` пока локализованно `Unsupported`.
+- Примечание:
+  - эта ось уже должна считаться архитектурно заложенной в MVP; поздние задачи по `Interlaced` / `PsF` должны только заполнять уже существующие extension points.
 
 ### libs/st2110core/include/st2110/video_scan_mode.hpp
 - Роль:
@@ -643,8 +672,10 @@
     - maps video stream properties from signaling and injects transport/network fields separately
     - validates signaling first, then validates the projected runtime config
 - Примечание:
-  - текущая реализация уже моделирует signaling-оси отдельно и умеет проецировать signaling model в runtime `RxVideoConfig`, но пока не покрывает полный SDP parsing и еще не интегрирована в runtime receive pipeline.
-  - detailed semantics for `ts_delay_sender_ticks`, `mediaclk`, `TSMODE`, and receiver-timing interpretation remain future work above this validation boundary.
+  - signaling model уже должна рассматриваться как архитектурная ось MVP, а не как later refactor;
+  - modeled signaled video properties должны оставаться отличимыми от internal runtime/storage concepts;
+  - future expansion of this file under `069B` must add explicit modeled representation for signaled SDP/media properties such as `sampling`, `width`, `height`, `exactframerate`, `depth`, `colorimetry`, `TCS`, `PM`, `SSN`, with `RANGE` allowed as optional / future-expansion coverage, instead of collapsing them prematurely into internal `PixelFormat` / storage-only notions;
+  - packing mode, timing-related signaling и future receiver bootstrap должны быть доведены через explicit adapters/boundaries уже в MVP shape even if some branches remain runtime-limited.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -702,7 +733,8 @@
   - `validate_video_packet_trailing_padding(VideoScanMode, const PacketView&)`
     - scan-mode dispatcher к mode-specific helper’ам.
 - Примечание:
-  - текущая реализация задает MVP validation boundary для progressive receive path и не заменяет будущую полную signaling/packing model.
+  - current padding validation boundary уже должна существовать архитектурно в MVP и позже только заполняться implementation branches;
+  - packing-mode-specific behavior must also be able to plug into this area without reshaping the rest of the receive pipeline.
 
 ## Done
 - [x] 001: Repo skeleton + buildable stub
@@ -720,7 +752,7 @@
 - [x] 010: Define RTP header view struct (version, pt, marker, seq16, ts32, ssrc)
 - [x] 011: Implement RTP header parser (validate version=2, min length=12) + tests
 - [x] 012: Add helper for seq wrap comparison/distance + tests
-- [x] 013: Add "extract payload span" (skip CSRC if present; ignore extensions in MVP) + tests
+- [x] 013: Add "extract payload span" (skip CSRC; explicit RTP header-extension tolerance remains a separate follow-up task) + tests
 - [x] 020: Define structs for: ExtendedSeqHi16 + SRD header (len,row,offset,F,C)
 - [x] 021: Implement parser for ExtSeqHi16 + 1..3 SRD headers + tests (synthetic bytes)
 - [x] 022: Implement validation rules (SRD length > 0, <= MAXUDP, C chaining) + tests
@@ -729,12 +761,12 @@
 ---
 
 ## Spec notes / deviations
-- [x] S001: `validate_st2110_20_payload_header()` currently rejects `SRD Length == 0` unconditionally, but ST 2110-20 allows this special case when there is exactly one SRD header and no sample row data follows. This must be fixed before video RX is considered spec-clean. :contentReference[oaicite:0]{index=0}
+- [x] S001: `validate_st2110_20_payload_header()` currently rejects `SRD Length == 0` unconditionally, but ST 2110-20 allows this special case when there is exactly one SRD header and no sample row data follows. This must be fixed before video RX is considered spec-clean.
 - [ ] S002: While MVP behavior may stay progressive-only, internal configs, state machines, packet-to-unit grouping, completion logic, and segment placement must model scan mode separately from pixel format and must not hardcode assumptions such as “timestamp group == frame”, “marker == end of frame”, or “F is always zero” in ways that make future interlace / PsF support invasive. ST 2110-20 explicitly distinguishes progressive, interlaced, and PsF behavior for `F`, marker, row numbering, grouping, placement, and signaling, so these assumptions must remain localized in dedicated mode-aware / format-aware helpers.
-- [x] S003: `Depacketizer::map_segment_to_frame_write()` currently treats `SRD Offset` as a byte offset, but ST 2110-20 defines it as the horizontal position of the first full-bandwidth sample in the image pixel matrix. For UYVY / 4:2:2 this must be mapped through format-aware logic instead of written directly as bytes. This must be fixed before video RX is considered spec-clean. :contentReference[oaicite:3]{index=3}
-- [x] S004: Current UYVY receive path does not validate pgroup alignment constraints implied by ST 2110-20 4:2:2 sampling. For 8-bit 4:2:2, packetized data must respect the pgroup structure and `SRD Length` must remain a multiple of pgroup octet size; offset semantics must also remain aligned with full-bandwidth sample positions. Validation must be added in a localized, format-aware way. :contentReference[oaicite:4]{index=4}
-- [x] S005: Current payload validation does not enforce monotonic ordering rules for `SRD Row Number` / `SRD Offset` within a packet. ST 2110-20 requires sample rows to progress top-to-bottom and offsets within a row to progress left-to-right. This must be validated explicitly. :contentReference[oaicite:5]{index=5}
-- [x] S006: Task 022 covered only part of payload-header validation. Size/limit checks that depend on packet/payload sizing policy (including the path toward MAXUDP-aware validation) still need an explicit follow-up task so completed work and remaining work are not conflated. :contentReference[oaicite:6]{index=6}
+- [x] S003: `Depacketizer::map_segment_to_frame_write()` currently treats `SRD Offset` as a byte offset, but ST 2110-20 defines it as the horizontal position of the first full-bandwidth sample in the image pixel matrix. For UYVY / 4:2:2 this must be mapped through format-aware logic instead of written directly as bytes. This must be fixed before video RX is considered spec-clean.
+- [x] S004: Current UYVY receive path does not validate pgroup alignment constraints implied by ST 2110-20 4:2:2 sampling. For 8-bit 4:2:2, packetized data must respect the pgroup structure and `SRD Length` must remain a multiple of pgroup octet size; offset semantics must also remain aligned with full-bandwidth sample positions. Validation must be added in a localized, format-aware way.
+- [x] S005: Current payload validation does not enforce monotonic ordering rules for `SRD Row Number` / `SRD Offset` within a packet. ST 2110-20 requires sample rows to progress top-to-bottom and offsets within a row to progress left-to-right. This must be validated explicitly.
+- [x] S006: Task 022 covered only part of payload-header validation. Size/limit checks that depend on packet/payload sizing policy (including the path toward MAXUDP-aware validation) still need an explicit follow-up task so completed work and remaining work are not conflated.
 - [x] S007: Public headers currently contain non-trivial function definitions in a way that risks ODR / multiple-definition problems once the project grows beyond the current “mostly one translation unit per test executable” shape. The linkage model must be made explicit (true header-only with `inline`, or moved implementations) before backend/app growth.
 - [x] S008: `PacketParseStats` structures exist, but packet parsing does not yet expose a single integrated path that records stage-specific parse results through the real parse flow. This should be fixed so parse observability is not only nominal.
 - [ ] S009: Current packet size policy models a configurable UDP payload-size limit, but ST 2110-10 defines `MAXUDP` and receiver size expectations in terms of UDP datagram size, not only essence payload size. Standard UDP Size Limit and Extended UDP Size Limit handling, default behavior when `MAXUDP` is absent, and the receiver assumption around fragmented IP datagrams must be aligned with ST 2110-10 before packet sizing is considered spec-clean.
@@ -742,6 +774,13 @@
 - [ ] S011: The current timestamp-strategy plan is still phrased as if internal video timestamps could be derived only from local fps cadence or arrival-time smoothing. For standards-aware ST 2110 receive, internal presentation timestamps must be mapped from RTP timestamp domain and associated clock/signaling model, not from a standalone frame counter alone. The timestamp plan must therefore be reworked around RTP/clock-based mapping.
 - [ ] S012: Receiver timing / conformance assumptions from ST 2110-21 are not yet represented in the architecture. The project currently has reorder/depacketize logic but no explicit model for receiver timing class/capability, dependence on stream timing signaling, or the future boundary where ST 2110-21 conformance-related buffering/tolerance behavior will live.
 - [x] S013: `parse_packet_view_staged()` currently accepts arbitrary trailing octets after the bytes covered by `SRD Length` values. ST 2110-20 allows octets after the last Sample Row Data Segment only as terminal field/frame padding, and GPM/BPM padding octets are zero-valued. This must be validated through a localized packing-mode-aware / mode-aware boundary rather than silently tolerated on any packet.
+- [ ] S014: Current RTP parsing/payload extraction path does not yet provide explicit receiver-side tolerance to RTP header extensions. For a standards-aware receiver, packets with valid RTP header extensions must still have payload location derived correctly rather than being handled only under an implicit “no extensions” assumption. This must be fixed locally in RTP parsing / payload extraction logic and not spread across the rest of the receive pipeline.
+- [ ] S015: `VideoPackingMode` is currently modeled in video signaling, but it is not yet carried as an explicit runtime receive axis through depacketizer/runtime config/padding validation. The current MVP runtime path must not stay architecturally GPM-only. If BPM remains unsupported in MVP runtime behavior, that limitation must be explicit, localized, and implemented as an already-existing branch/boundary rather than as absence of architecture.
+- [ ] S016: Current standards-aware video signaling representation is still too close to internal runtime/storage concepts and does not yet model enough signaled SDP/media properties separately from internal `PixelFormat` / storage format. This must be expanded so signaled stream description is not collapsed prematurely into runtime-only concepts. In particular, the modeled representation must explicitly account for signaled stream-description properties such as `sampling`, `width`, `height`, `exactframerate`, `depth`, `colorimetry`, `TCS`, `PM`, and `SSN`, with `RANGE` allowed as optional / future-expansion coverage.
+- [ ] S017: Audio path currently has no fully completed first-class ST 2110-30 signaling/model boundary, no explicit structural validation layer for that model, no explicit SDP ingestion path into such a model, and no clear modeled representation for signaled channel order / channel mapping distinct from internal audio buffer layout. The audio MVP target must be made explicit as a **Level A-oriented receiver baseline** (`48 kHz`, `1 ms packet time`, `1..8 channels`), and these axes/boundaries must be architecturally introduced in MVP even if some runtime variants remain later implementation work.
+- [ ] S018: Receiver-side playout / reconstruction timing boundary is not yet explicit. Mapping from RTP timestamp domain to internal `ts_ns`, receiver playout timing policy, and receiver-side offset/delay configuration must live above reorder/depacketize logic rather than collapsing into arrival-time smoothing or local cadence heuristics.
+- [ ] S019: RTP timestamp wraparound and long-running-stream continuity are not yet explicitly covered by timestamp-mapping tasks/tests. This must be handled and tested across reconstruction boundaries so long-lived streams do not silently drift or reset at wraparound.
+
 ---
 
 # Phase 1 — MVP
@@ -756,10 +795,10 @@
 - [x] 031: Add common stats structs for parsers / depacketizers / backends
 - [x] 032: Add common config validation helpers and conventions doc for "strict parse, explicit fallback"
 - [x] 033: Make current public-header implementation ODR-safe
-- audit all non-template/non-class function definitions placed in headers
-- either mark true header-only functions `inline` or move implementations into `.cpp`
-- keep the decision consistent across the library
-- add a multi-translation-unit link test so this does not regress
+  - audit all non-template/non-class function definitions placed in headers
+  - either mark true header-only functions `inline` or move implementations into `.cpp`
+  - keep the decision consistent across the library
+  - add a multi-translation-unit link test so this does not regress
 - [x] 034: Fix repo build/test script correctness
   - fix `scripts/build_and_test.sh` strict-mode typo
   - verify the script actually configures, builds, and runs tests from a clean checkout
@@ -769,7 +808,7 @@
 - [x] 040: Define `PacketView` (rtp header + ext seq32 + srd list + payload bytes)
 - [x] 041: Implement `PacketView::from_udp_datagram()` (parses all layers) + tests
 - [x] 042: Add packet stats counters (parse_fail, bad_version, short_packet, bad_srd, etc.)
-- [x] 043: Fix zero-length SRD special-case according to ST 2110-20 + tests :contentReference[oaicite:2]{index=2}
+- [x] 043: Fix zero-length SRD special-case according to ST 2110-20 + tests
 - [x] 044: Add localized format-aware segment constraints helper(s)
   - define helper/API boundary where packet/segment validation can depend on active video format
   - keep generic ST 2110-20 parsing separate from format-specific receive constraints
@@ -800,6 +839,12 @@
   - provide one real parse entry point that records `PacketParseStage` failures/successes
   - make sure the counters reflect the actual parse pipeline instead of only helper-level unit tests
   - add tests for per-stage accounting
+- [ ] 047A: Add receiver-side RTP header extension tolerance in RTP parsing / payload extraction path
+  - correctly skip RFC 3550 RTP header extension area when extension bit is set
+  - keep extension handling localized in RTP parsing / payload-span logic
+  - payload extraction must remain correct with combinations of CSRC and header extensions
+  - extension contents do not need semantic interpretation in MVP unless required later
+  - add focused positive/negative tests
 
 ### A2. Video reorder / assemble / depacketize
 - [x] 050: Define interface for `ReorderBuffer` (push(packet), pop_next())
@@ -808,10 +853,10 @@
 - [x] 053: Add simple timeout/flush policy (optional but localized) + tests
 - [x] 054: Extend `VideoFrame` with mutable storage access for UYVY (`width/height/format`, `stride_bytes`, `data`, `row_data`) + tests
 - Note:
-- No separate `FrameBuffer` type for MVP video assembly.
-- `VideoFrame` is the owning assembled-frame storage object.
-- `VideoFrameView` remains the non-owning presentation/view type.
-- `FrameAssembler` should write directly into `VideoFrame`.
+  - No separate `FrameBuffer` type for MVP video assembly.
+  - `VideoFrame` is the owning assembled-frame storage object.
+  - `VideoFrameView` remains the non-owning presentation/view type.
+  - `FrameAssembler` should write directly into `VideoFrame`.
 - [x] 055: Define `FrameAssembler` lifecycle over `VideoFrame`: begin(ts_rtp), write_segment(row, byte_off, bytes), end(marker)
 - [x] 056: Implement bounds checks (row range, offset+len <= stride) + tests
 - [x] 057: Implement frame completeness rule:
@@ -877,12 +922,25 @@
   - keep non-progressive runtime boundary localized at reconstructor creation / factory path
   - add focused tests for composition, reset, and config mismatch
 - [ ] 069B: Add a standards-aware video SDP/signaling model boundary
+  - **цель этой группы задач в MVP — заложить полную архитектурную ось signaling model и projection boundaries, даже если часть runtime branches и parsing coverage будет заполняться позже**
   - [x] 069B1: Define modeled video stream/signaling types separate from low-level depacketizer/runtime config
     - include key stream-description properties needed for current MVP architecture:
       - video packing mode (`GPM` / `BPM`)
       - timing-related signaling such as `mediaclk`, `ts-refclk`, `MAXUDP`, `TSMODE`, `TSDELAY`
       - ST 2110-21 sender timing/signaling properties such as sender type (`TP`) and optional `TROFF` / `CMAX`
     - model reference-clock signaling through an extensible `ReferenceClock` structure rather than a closed enum-only representation
+    - предусмотреть modeled video SDP/media properties, которые нельзя сводить только к internal `PixelFormat` / runtime storage format
+    - explicitly cover modeled representation for signaled stream-description properties such as:
+      - `sampling`
+      - `width`
+      - `height`
+      - `exactframerate`
+      - `depth`
+      - `colorimetry`
+      - `TCS`
+      - `PM`
+      - `SSN`
+      - `RANGE` as optional / future-expansion field
   - [x] 069B2: Add explicit structural validation boundaries inside signaling model
     - validate reference clock consistency
     - validate sender timing signaling consistency
@@ -902,39 +960,92 @@
     - make signaling-derived config a first-class runtime input alongside the current manual/synthetic path
     - keep current manual-config path usable for tests and scaffolding
     - do not require full SDP parser yet; only make the receiver-side integration boundary explicit
+    - include composition of signaling-derived packet parse policy and signaling-derived receive pipeline config as one receiver bootstrap path
     - add focused tests for signaling-driven config composition / mismatch handling
 - [ ] 069C: Define an explicit ST 2110-21 video receiver timing/conformance boundary
+  - **цель этой задачи в MVP — заложить capability/timing/tolerance architecture boundary, even if полный standards-aware behavior будет реализовываться позже**
   - introduce a receiver timing/capability model boundary instead of burying receiver assumptions inside depacketizer/reorder code
-  - define where stream timing parameters and future receiver-class/conformance behavior will plug into the architecture
-  - keep current MVP implementation minimal, but make the boundary explicit so later ST 2110-21 work does not require rewriting depacketizer/pipeline internals
+  - define explicit receiver capability / receiver class assumptions and where they are configured
+  - define dependence on signaled timing properties (`mediaclk`, `ts-refclk`, `TSMODE`, `TSDELAY`, sender timing signaling such as `TP` / `TROFF` / `CMAX`)
+  - define where buffering / tolerance policy and future ST 2110-21 conformance-related behavior will live
+  - coordinate this boundary with the receiver playout / reconstruction timing boundary from A3 instead of mixing it into parser/depacketizer logic
+  - keep these behaviors outside reorder/depacketizer internals
   - add architecture-focused tests or compile-time checks where useful
 - [ ] 069D: Add SDP parsing / ingestion path for video signaling model
-  - parse relevant SDP attributes into `VideoStreamSignaling`
+  - parse relevant SDP / media-description attributes into `VideoStreamSignaling`
+  - include signaled video media properties, timing-related signaling, and transport/signaling fields required by current modeled boundary
   - keep parsing separate from validation and separate from runtime config projection
   - add focused tests for valid/invalid SDP field mapping
+- [ ] 069E: Thread `VideoPackingMode` into runtime receive path as an explicit axis
+  - **цель этой задачи в MVP — протащить packing mode как runtime/config/policy axis уже сейчас, even if часть branches пока останется `Unsupported`**
+  - extend runtime receive configs / projections so packing mode reaches depacketizer, packet interpretation, and padding-validation boundaries
+  - localize GPM/BPM-specific receive rules instead of leaving packing behavior implicit
+  - if current MVP runtime remains GPM-only, reject BPM through an explicit localized runtime-support boundary rather than silently ignoring it
+  - ensure later BPM work can be done by filling already-existing branches without changing pipeline shape/contracts
+  - add focused tests for config projection and localized packing-mode behavior / rejection
 
 ### A3. Video timestamp strategy
 - [x] 070: Define internal timestamp type: `uint64_t ts_ns`
 - [ ] 071: Define a standards-aware video timestamp mapping boundary from RTP timestamp domain to internal `ts_ns`
+  - **цель этой задачи в MVP — заложить correct timing architecture boundary, even if fuller standards-aware implementation comes later**
   - keep RTP timestamp domain distinct from internal nanoseconds-domain timestamps
+  - explicitly handle 32-bit RTP timestamp wraparound and long-running streams
   - define where `mediaclk` / `ts-refclk` / `TSMODE` / `TSDELAY`-related interpretation will plug into the receive pipeline
   - allow a localized synthetic/manual timing path for tests and offline tools, but do not make standalone fps cadence the primary standards-facing timing model
   - keep timestamp mapping above depacketizer and separate from segment placement / packet grouping logic
+- [ ] 071A: Define explicit receiver-side playout / reconstruction timing boundary
+  - separate RTP-domain timestamp mapping from receiver playout / reconstruction release policy
+  - define where receiver-side offset/delay configuration (including future Link Offset Delay-like boundary) will live
+  - define how this boundary interacts with reconstructed units / frames without burying policy in parser/reorder/depacketizer code
+  - keep arrival-time smoothing, if any, as a localized optional policy and not the standards-facing timing model
 - [ ] 072: Add tests for video timestamp mapping invariants
   - monotonicity of emitted internal timestamps
+  - correct behavior across 32-bit RTP timestamp wraparound
   - stable mapping behavior across packet grouping / reconstruction boundaries
+  - long-running stream continuity tests
   - focused tests for the synthetic/manual timing path used in MVP scaffolding
 
 ---
 
 ## Track B — Audio foundations (MVP scope)
 
-> Audio MVP should be planned against ST 2110-30 from the start. Current MVP target should assume a narrow standards-aware baseline first (PCM / AES67-compatible receive path, 48 kHz baseline, 1 ms packet time baseline, small channel counts), with broader profile expansion later.
+> Audio MVP should be planned against ST 2110-30 from the start. Current MVP target should assume a narrow but explicit standards-aware baseline first: a **Level A-oriented receiver baseline** with `48 kHz`, `1 ms packet time`, and `1..8 channels`, with broader profile/level expansion later on top of the already-laid architecture.
 
 ### B0. Audio common abstractions
+- [ ] 079: Define a standards-aware audio SDP/signaling model boundary for ST 2110-30
+  - **цель этой группы задач в MVP — заложить audio signaling/model architecture boundary уже сейчас, even if only a narrow baseline is fully implemented**
+  - define modeled audio stream/signaling config separate from low-level `RxAudioConfig`
+  - make the MVP target explicit as a **Level A-oriented receiver baseline** rather than a generic PCM placeholder
+  - capture at least the signaled media properties needed for the initial baseline (`48 kHz`, `1 ms packet time`, `1..8 channels`, AES67-compatible receive assumptions where applicable)
+  - keep signaled audio/media properties separate from internal audio buffer layout/runtime config
+- [ ] 079A: Add explicit structural validation boundary inside audio signaling model
+  - validate structural consistency of modeled audio signaling
+  - validate MVP baseline / conformance assumptions for the initial Level A-oriented receiver baseline
+  - validate sample rate / packet-time / channel-count consistency within the chosen baseline
+  - validate signaled channel-order / channel-mapping consistency where applicable
+  - keep this validation boundary separate from SDP parsing and separate from runtime config projection
+- [ ] 079B: Add explicit projection/adapters from audio signaling model to runtime config
+  - derive `RxAudioConfig` and later runtime audio receive config from modeled signaling
+  - keep transport/network fields and local receiver policy inputs explicit rather than hiding them inside signaling model
+  - add focused tests for signaling-to-runtime projection and mismatch handling
+- [ ] 079C: Add SDP parsing / ingestion path for audio signaling model
+  - parse relevant ST 2110-30 / SDP attributes into modeled audio signaling structures
+  - keep parsing separate from validation and separate from runtime config projection
+  - add focused tests for valid/invalid SDP field mapping
+- [ ] 079D: Add channel-order / channel-mapping modeled boundary and validation
+  - represent signaled channel order / channel mapping separately from internal audio buffer layout
+  - define where future reordering/adaptation will live
+  - add focused tests
+- [ ] 079E: Define the runtime integration boundary where signaling-derived audio config becomes the primary receiver bootstrap path
+  - make signaling-derived audio config a first-class runtime input alongside the current manual/synthetic path
+  - keep current manual-config path usable for tests and scaffolding
+  - do not require full SDP parser yet; only make the receiver-side integration boundary explicit
+  - ensure future channel-order / channel-mapping implementations plug into already-existing modeled/projection boundaries rather than reshaping runtime contracts
+  - add focused tests for signaling-driven audio config composition / mismatch handling
 - [ ] 080: Define `RxAudioConfig` (sample_rate, channels, packet_time / samples_per_packet, payload_type, ip/port, format)
   - make the initial MVP target a narrow ST 2110-30 baseline rather than a format-free placeholder
-  - capture at least the parameters needed for a 48 kHz / 1 ms PCM receive path
+  - make that baseline explicit as a **Level A-oriented receiver baseline** with `48 kHz`, `1 ms packet time`, and `1..8 channels`
+  - capture at least the parameters needed for that initial receive path
 - [ ] 081: Define `AudioBuffer` / `AudioFrameView` contract
 - [ ] 082: Define audio sink/backend-facing interfaces or extend shared interfaces so audio can be supported without ломки video API
 - [ ] 083: Add FakeAudioBackend -> FakeAudioSink test
@@ -948,8 +1059,13 @@
 - [ ] 094: Add audio stats (packets_ok, packets_lost, blocks_ok, blocks_partial/dropped)
 
 ### B2. Audio timestamp strategy
-- [ ] 095: Define audio timestamp mapping to internal `ts_ns`
+- [ ] 095: Define audio timestamp mapping / playout timing boundary to internal `ts_ns`
+  - keep RTP timestamp domain distinct from internal timestamps
+  - handle RTP timestamp wraparound / long-running streams explicitly
+  - keep standards-aware timing interpretation separate from local cadence heuristics
+  - separate RTP-domain mapping from receiver-side playout / block-release policy
 - [ ] 096: Add monotonicity / cadence tests for audio path
+  - include wraparound and long-running continuity cases where applicable
 
 ---
 
@@ -961,15 +1077,16 @@
 
 ### C1. Socket video RX
 - [ ] 110: Implement `SocketRxVideoBackend` skeleton + smoke test
-- [ ] 111: Implement UDP socket open/bind (unicast)
-- [ ] 112: Implement multicast join/leave (Linux) if needed
+- [ ] 111: Implement UDP socket open/bind (unicast base path)
+- [ ] 112: Implement multicast join/leave (Linux) for socket video receive path
 - [ ] 113: Add receive loop (recvfrom/recvmmsg later) and feed PacketView pipeline
 - [ ] 114: Add periodic stats print (pps, drops, frames/s)
 - [ ] 115: Add graceful stop (SIGINT) and cleanup
 
 ### C2. Socket audio RX
 - [ ] 120: Implement `SocketRxAudioBackend` skeleton + smoke test
-- [ ] 121: Implement UDP receive path for audio
+- [ ] 121: Implement UDP socket open/bind for audio
+- [ ] 121A: Implement multicast join/leave (Linux) for socket audio receive path
 - [ ] 122: Connect audio parser/reorder/assembler pipeline
 - [ ] 123: Add periodic stats print (pps, drops, audio blocks/s)
 - [ ] 124: Add graceful stop and cleanup reuse
@@ -1043,6 +1160,8 @@
 - [ ] 200: End-to-end OBS demo with selectable backend and basic UI
 - [ ] 201: Document manual test procedure for MVP
 - [ ] 202: Document known limitations still allowed at MVP exit
+  - if some runtime branches remain intentionally `Unsupported` behind already-modeled standard axes, document them explicitly as localized MVP limitations
+  - if signaling-driven bootstrap is still partial, document the remaining manual-config scaffolding explicitly
 
 ---
 
@@ -1053,6 +1172,12 @@
 - [ ] 211: Audit format-specific code paths so new formats require localized additions only
 - [ ] 212: Add additional audio format/profile support if needed
 - [ ] 213: Add shared format capability description/query API
+- [ ] 214: Expand standards-aware video signaling / media-property coverage through the already-modeled video signaling representation
+  - add support for additional signaled video/media-property variants without changing the core signaling/runtime contracts introduced in MVP
+  - keep parsing, validation, and projection extensions localized to existing model/adapter boundaries
+- [ ] 215: Expand audio signaling / channel-order / channel-mapping support through the already-modeled audio signaling boundary
+  - add implementation for additional channel-order / channel-mapping cases without changing the core audio signaling/runtime contracts introduced in MVP
+  - keep reordering/adaptation localized to the pre-defined boundaries
 
 ## Track H — Correctness improvements
 - [ ] 220: Improve loss handling policies for video (freeze/black/emit partial/drop)
@@ -1083,6 +1208,14 @@
   - define where `Progressive | Interlaced | PsF` is selected from SDP/config
   - validate consistency between signaled mode and runtime packet semantics
   - add tests for signaling/selection and mismatch handling
+- [ ] 229: Implement BPM runtime receive behavior through the already-modeled packing-mode branches
+  - fill BPM-specific depacketize / padding / validation / runtime-policy logic through existing packing-mode dispatch/boundaries
+  - keep signaling model, runtime config shape, and pipeline contracts unchanged
+  - add focused tests
+- [ ] 229A: Implement fuller ST 2110-21 receiver timing / tolerance behavior through the already-defined timing/capability/playout boundaries
+  - fill buffering / tolerance / release behavior inside the boundaries introduced in MVP
+  - keep parser/reorder/depacketizer contracts unchanged
+  - add focused tests
 
 ## Track I — Operational quality
 - [ ] 230: Better logging and structured stats
