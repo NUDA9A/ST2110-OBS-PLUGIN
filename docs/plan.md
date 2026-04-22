@@ -599,8 +599,8 @@
   - standards-aware signaling/model boundary для video stream description.
   - задает типизированную модель ключевых video SDP/signaling свойств отдельно от low-level receive/depacketizer config и отдельно от internal runtime/storage `PixelFormat`.
 - Связи:
-  - использует `PixelFormat`, `VideoScanMode`, `PacketParsePolicy`, `RxVideoConfig`, общие config validation helper’ы.
-  - связывает signaling model с packet parse policy и manual `RxVideoConfig` path.
+  - использует `PixelFormat`, `VideoScanMode`, `PacketParsePolicy`, `RxVideoConfig`, `DepacketizerConfig`, `VideoUnitReconstructorConfig`, `VideoReceivePipelineConfig`, общие config validation helper’ы.
+  - связывает signaling model с packet parse policy, manual `RxVideoConfig` path и runtime video receive pipeline config path.
   - должна дальше расширяться в рамках `069B`, а затем состыковаться с receiver timing boundary из `069C`.
 - Сущности:
   - `VideoPackingMode`
@@ -747,6 +747,17 @@
       - other structurally valid combinations may currently return `Unsupported`
   - `packet_parse_policy_from_video_stream_signaling(const VideoStreamSignaling&)`
     - выводит `PacketParsePolicy` из signaling model.
+  - `depacketizer_config_from_video_stream_signaling(const VideoStreamSignaling&, PartialFramePolicy) -> std::expected<DepacketizerConfig, Error>`
+    - explicit signaling -> runtime depacketizer config projection
+    - keeps `PartialFramePolicy` as explicit non-signaled runtime input
+    - projects `scan_mode` structurally and uses signaling->pixel-format projection boundary
+  - `video_unit_reconstructor_config_from_video_stream_signaling(const VideoStreamSignaling&) -> std::expected<VideoUnitReconstructorConfig, Error>`
+    - explicit signaling -> runtime reconstructor config projection
+    - projects `scan_mode` structurally and uses signaling->pixel-format projection boundary
+  - `video_receive_pipeline_config_from_video_stream_signaling(const VideoStreamSignaling&, PartialFramePolicy) -> std::expected<VideoReceivePipelineConfig, Error>`
+    - explicit signaling -> runtime receive pipeline config projection
+    - composes depacketizer + reconstructor configs without creating runtime objects
+    - keeps non-signaled runtime policy inputs explicit
   - `validate_video_stream_signaling_against_rx_video_config(const VideoStreamSignaling&, const RxVideoConfig&)`
     - проверяет согласованность signaling model и manual video config path по ключевым runtime video properties, используя explicit signaling->pixel-format projection.
   - `rx_video_config_from_video_stream_signaling(const VideoStreamSignaling&, uint16_t, uint8_t, std::string, std::string)`
@@ -756,7 +767,7 @@
 - Примечание:
   - signaling model уже выделяет standards-aware media-description representation отдельно от internal runtime/storage format.
   - текущая runtime-реализация projection boundary пока локализованно поддерживает только ограниченный набор signaling combinations; это допустимое MVP-ограничение, пока расширение идет через уже существующий `pixel_format_from_video_stream_signaling(...)`, а не через переделку model shape.
-  - detailed SDP parsing, signaling-driven receiver bootstrap и receiver timing integration остаются дальнейшими задачами `069B4`, `069B5`, `069C`, `069D`.
+  - signaling-driven projection в `DepacketizerConfig`, `VideoUnitReconstructorConfig` и `VideoReceivePipelineConfig` теперь существует как отдельная архитектурная boundary; detailed SDP parsing, primary receiver bootstrap и receiver timing integration остаются дальнейшими задачами `069B5`, `069C`, `069D`.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -1031,7 +1042,7 @@
     - derive `PacketParsePolicy` from signaling model
     - derive runtime/manual `RxVideoConfig` from signaling model while injecting transport/network fields separately
     - validate signaling first, then validate projected runtime config
-  - [ ] 069B4: Add explicit projection from `VideoStreamSignaling` to runtime video receive pipeline config
+  - [x] 069B4: Add explicit projection from `VideoStreamSignaling` to runtime video receive pipeline config
     - derive `DepacketizerConfig` from signaling model
     - derive `VideoUnitReconstructorConfig` from signaling model
     - derive `VideoReceivePipelineConfig` from signaling model

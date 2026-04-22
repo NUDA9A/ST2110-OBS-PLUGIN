@@ -7,6 +7,9 @@
 #include "config_validation.hpp"
 #include "packet_parse.hpp"
 #include "rx_config.hpp"
+#include "depacketizer.hpp"
+#include "video_unit_reconstructor.hpp"
+#include "video_receive_pipeline.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -47,11 +50,11 @@ namespace st2110 {
     struct ReferenceClock {
         ReferenceClockKind kind = ReferenceClockKind::Ptp;
 
-        std::optional<PtpReferenceClock> ptp{};
-        std::optional<LocalMacReferenceClock> local_mac{};
+        std::optional <PtpReferenceClock> ptp{};
+        std::optional <LocalMacReferenceClock> local_mac{};
 
         // preserve future extensibility / unknown RFC forms
-        std::optional<std::string> raw_token{};
+        std::optional <std::string> raw_token{};
     };
 
     enum class VideoSenderType {
@@ -70,7 +73,7 @@ namespace st2110 {
         };
 
         Known known = Known::YCbCr422;
-        std::optional<std::string> raw_token{};
+        std::optional <std::string> raw_token{};
     };
 
     struct VideoBitDepth {
@@ -89,7 +92,7 @@ namespace st2110 {
         };
 
         Known known = Known::Bt709;
-        std::optional<std::string> raw_token{};
+        std::optional <std::string> raw_token{};
     };
 
     struct VideoTransferCharacteristicSystem {
@@ -102,7 +105,7 @@ namespace st2110 {
         };
 
         Known known = Known::SDR;
-        std::optional<std::string> raw_token{};
+        std::optional <std::string> raw_token{};
     };
 
     struct VideoSignalStandard {
@@ -113,7 +116,7 @@ namespace st2110 {
         };
 
         Known known = Known::St2110_20_2022;
-        std::optional<std::string> raw_token{};
+        std::optional <std::string> raw_token{};
     };
 
     struct VideoRange {
@@ -124,7 +127,7 @@ namespace st2110 {
         };
 
         Known known = Known::Narrow;
-        std::optional<std::string> raw_token{};
+        std::optional <std::string> raw_token{};
     };
 
     struct VideoMediaDescription {
@@ -135,16 +138,16 @@ namespace st2110 {
         uint32_t fps_den = 1;
         VideoBitDepth depth{};
         VideoColorimetry colorimetry{};
-        std::optional<VideoTransferCharacteristicSystem> transfer_characteristic_system{};
-        std::optional<VideoSignalStandard> signal_standard{};
-        std::optional<VideoRange> range{};
+        std::optional <VideoTransferCharacteristicSystem> transfer_characteristic_system{};
+        std::optional <VideoSignalStandard> signal_standard{};
+        std::optional <VideoRange> range{};
     };
 
     struct VideoStreamSignaling {
         VideoMediaDescription media{};
         VideoScanMode scan_mode = VideoScanMode::Progressive;
         VideoPackingMode packing_mode = VideoPackingMode::Gpm;
-        std::optional<std::size_t> max_udp_datagram_bytes{};
+        std::optional <std::size_t> max_udp_datagram_bytes{};
 
         MediaClockMode media_clock_mode = MediaClockMode::Direct;
         TimestampMode timestamp_mode = TimestampMode::New;
@@ -153,14 +156,14 @@ namespace st2110 {
         uint32_t ts_delay_sender_ticks = 0;
 
         VideoSenderType sender_type = VideoSenderType::Narrow;
-        std::optional<uint32_t> troff_us{};
-        std::optional<uint32_t> cmax{};
+        std::optional <uint32_t> troff_us{};
+        std::optional <uint32_t> cmax{};
     };
 
     inline Error validate_video_sender_signaling(
             VideoSenderType sender_type,
-            const std::optional<uint32_t>& troff_us,
-            const std::optional<uint32_t>& cmax) {
+            const std::optional <uint32_t> &troff_us,
+            const std::optional <uint32_t> &cmax) {
         switch (sender_type) {
             case VideoSenderType::Narrow:
                 if (troff_us != std::nullopt || cmax != std::nullopt) {
@@ -182,7 +185,7 @@ namespace st2110 {
         }
     }
 
-    inline Error validate_reference_clock(const ReferenceClock& clock) {
+    inline Error validate_reference_clock(const ReferenceClock &clock) {
         switch (clock.kind) {
             case ReferenceClockKind::Ptp: {
                 if (!clock.ptp.has_value() || clock.local_mac.has_value() || clock.raw_token.has_value()) {
@@ -239,11 +242,11 @@ namespace st2110 {
         if (Error err = validate_timestamp_mode(timestamp_mode); err != Error::Ok) {
             return err;
         }
-        (void)ts_delay_sender_ticks;
+        (void) ts_delay_sender_ticks;
         return Error::Ok;
     }
 
-    inline Error validate_video_sampling(const VideoSampling& sampling) {
+    inline Error validate_video_sampling(const VideoSampling &sampling) {
         if (sampling.known == VideoSampling::Known::Other) {
             if (!sampling.raw_token.has_value() || sampling.raw_token->empty()) {
                 return Error::InvalidValue;
@@ -256,7 +259,7 @@ namespace st2110 {
         return Error::Ok;
     }
 
-    inline Error validate_video_colorimetry(const VideoColorimetry& colorimetry) {
+    inline Error validate_video_colorimetry(const VideoColorimetry &colorimetry) {
         if (colorimetry.known == VideoColorimetry::Known::Other) {
             if (!colorimetry.raw_token.has_value() || colorimetry.raw_token->empty()) {
                 return Error::InvalidValue;
@@ -269,7 +272,7 @@ namespace st2110 {
         return Error::Ok;
     }
 
-    inline Error validate_video_transfer_characteristic_system(const VideoTransferCharacteristicSystem& tcs) {
+    inline Error validate_video_transfer_characteristic_system(const VideoTransferCharacteristicSystem &tcs) {
         if (tcs.known == VideoTransferCharacteristicSystem::Known::Other) {
             if (!tcs.raw_token.has_value() || tcs.raw_token->empty()) {
                 return Error::InvalidValue;
@@ -282,7 +285,7 @@ namespace st2110 {
         return Error::Ok;
     }
 
-    inline Error validate_video_signal_standard(const VideoSignalStandard& ssn) {
+    inline Error validate_video_signal_standard(const VideoSignalStandard &ssn) {
         if (ssn.known == VideoSignalStandard::Known::Other) {
             if (!ssn.raw_token.has_value() || ssn.raw_token->empty()) {
                 return Error::InvalidValue;
@@ -295,7 +298,7 @@ namespace st2110 {
         return Error::Ok;
     }
 
-    inline Error validate_video_range(const VideoRange& range) {
+    inline Error validate_video_range(const VideoRange &range) {
         if (range.known == VideoRange::Known::Other) {
             if (!range.raw_token.has_value() || range.raw_token->empty()) {
                 return Error::InvalidValue;
@@ -308,7 +311,7 @@ namespace st2110 {
         return Error::Ok;
     }
 
-    inline Error validate_video_bit_depth(const VideoBitDepth& depth) {
+    inline Error validate_video_bit_depth(const VideoBitDepth &depth) {
         if (depth.floating_point) {
             if (depth.bits != 16) {
                 return Error::InvalidValue;
@@ -321,7 +324,8 @@ namespace st2110 {
         return Error::Ok;
     }
 
-    inline std::expected<PixelFormat, Error> pixel_format_from_video_stream_signaling(const VideoStreamSignaling& signaling) {
+    inline std::expected <PixelFormat, Error>
+    pixel_format_from_video_stream_signaling(const VideoStreamSignaling &signaling) {
         if (Error err = validate_video_sampling(signaling.media.sampling); err != Error::Ok) {
             return std::unexpected(err);
         }
@@ -346,7 +350,7 @@ namespace st2110 {
         }
     }
 
-    inline Error validate_video_media_description(const VideoMediaDescription& media) {
+    inline Error validate_video_media_description(const VideoMediaDescription &media) {
         if (Error err = validate_video_sampling(media.sampling); err != Error::Ok) {
             return err;
         }
@@ -381,7 +385,7 @@ namespace st2110 {
         return Error::Ok;
     }
 
-    inline Error validate_video_stream_signaling(const VideoStreamSignaling& signaling) {
+    inline Error validate_video_stream_signaling(const VideoStreamSignaling &signaling) {
         if (Error err = validate_video_media_description(signaling.media); err != Error::Ok) {
             return err;
         }
@@ -413,13 +417,13 @@ namespace st2110 {
     }
 
     inline PacketParsePolicy packet_parse_policy_from_video_stream_signaling(
-            const VideoStreamSignaling& signaling) {
+            const VideoStreamSignaling &signaling) {
         return PacketParsePolicy{signaling.max_udp_datagram_bytes};
     }
 
     inline Error validate_video_stream_signaling_against_rx_video_config(
-            const VideoStreamSignaling& signaling,
-            const RxVideoConfig& cfg) {
+            const VideoStreamSignaling &signaling,
+            const RxVideoConfig &cfg) {
         if (Error err = validate_video_stream_signaling(signaling); err != Error::Ok) {
             return err;
         }
@@ -454,8 +458,69 @@ namespace st2110 {
         return Error::Ok;
     }
 
-    inline std::expected<RxVideoConfig, Error> rx_video_config_from_video_stream_signaling(
-            const VideoStreamSignaling& signaling,
+    inline std::expected <DepacketizerConfig, Error>
+    depacketizer_config_from_video_stream_signaling(const VideoStreamSignaling &signaling, PartialFramePolicy policy) {
+        if (Error err = validate_video_stream_signaling(signaling); err != Error::Ok) {
+            return std::unexpected(err);
+        }
+        auto expected_format = pixel_format_from_video_stream_signaling(signaling);
+        if (!expected_format.has_value()) {
+            return std::unexpected(std::move(expected_format.error()));
+        }
+        PixelFormat format = *expected_format;
+        return DepacketizerConfig{
+                .width = signaling.media.width,
+                .height = signaling.media.height,
+                .format = format,
+                .partial_frame_policy = policy,
+                .scan_mode = signaling.scan_mode
+        };
+    }
+
+    inline std::expected <VideoUnitReconstructorConfig, Error>
+    video_unit_reconstructor_config_from_video_stream_signaling(const VideoStreamSignaling &signaling) {
+        if (Error err = validate_video_stream_signaling(signaling); err != Error::Ok) {
+            return std::unexpected(err);
+        }
+        auto expected_format = pixel_format_from_video_stream_signaling(signaling);
+        if (!expected_format.has_value()) {
+            return std::unexpected(std::move(expected_format.error()));
+        }
+        PixelFormat format = *expected_format;
+        return VideoUnitReconstructorConfig{
+                .format = format,
+                .scan_mode = signaling.scan_mode
+        };
+    }
+
+    inline std::expected <VideoReceivePipelineConfig, Error>
+    video_receive_pipeline_config_from_video_stream_signaling(const VideoStreamSignaling &signaling,
+                                                              PartialFramePolicy policy) {
+        if (Error err = validate_video_stream_signaling(signaling); err != Error::Ok) {
+            return std::unexpected(err);
+        }
+        auto expected_format = pixel_format_from_video_stream_signaling(signaling);
+        if (!expected_format.has_value()) {
+            return std::unexpected(std::move(expected_format.error()));
+        }
+        PixelFormat format = *expected_format;
+        return VideoReceivePipelineConfig{
+                .depacketizer = DepacketizerConfig{
+                        .width = signaling.media.width,
+                        .height = signaling.media.height,
+                        .format = format,
+                        .partial_frame_policy = policy,
+                        .scan_mode = signaling.scan_mode
+                },
+                .reconstructor = VideoUnitReconstructorConfig{
+                        .format = format,
+                        .scan_mode = signaling.scan_mode
+                }
+        };
+    }
+
+    inline std::expected <RxVideoConfig, Error> rx_video_config_from_video_stream_signaling(
+            const VideoStreamSignaling &signaling,
             uint16_t udp_port,
             uint8_t payload_type,
             std::string local_ip,
