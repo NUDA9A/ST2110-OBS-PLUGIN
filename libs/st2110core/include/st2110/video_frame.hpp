@@ -2,6 +2,7 @@
 #define ST2110_OBS_PLUGIN_VIDEO_FRAME_HPP
 
 #include "pixel_format.hpp"
+#include "timestamp.hpp"
 #include <cstdint>
 #include <vector>
 #include <algorithm>
@@ -14,7 +15,7 @@ namespace st2110 {
         uint32_t height;
         const uint8_t *data[4];
         std::size_t stride[4];
-        uint64_t timestamp_ns;
+        TimestampNs timestamp_ns;
     };
 
     struct Plane {
@@ -37,7 +38,7 @@ namespace st2110 {
             frame_data.resize(total_size);
         }
 
-        VideoFrameView view(uint64_t timestamp_ns = 0) const {
+        VideoFrameView view(TimestampNs timestamp_ns = 0) const {
             VideoFrameView res{
                     .format = fmt_,
                     .width = width_,

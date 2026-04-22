@@ -223,7 +223,7 @@
   - add focused tests for composition, reset, and config mismatch
 
 ### A3. Video timestamp strategy
-- [ ] 070: Define internal timestamp type: `uint64_t ts_ns`
+- [x] 070: Define internal timestamp type: `uint64_t ts_ns`
 - [ ] 071: Decide mapping for MVP:
   - output cadence from fps (constant step) OR
   - local arrival time smoothed
