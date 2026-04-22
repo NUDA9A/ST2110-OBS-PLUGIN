@@ -57,13 +57,15 @@
 - **Windows**: опциональный перенос только собственного socket backend, без MTL.
 
 ## Референсы (куда смотреть)
-- SMPTE ST 2110-20:2022 (video, у меня есть PDF).
+- SMPTE ST 2110-10:2022 (system timing, definitions, common RTP/SDP/clock signaling requirements).
+- SMPTE ST 2110-20:2022 (uncompressed video).
+- SMPTE ST 2110-21:2022 (traffic shaping and delivery timing for video).
+- SMPTE ST 2110-30:2025 (PCM digital audio).
+- SMPTE RP 2110-25:2023 (measurement practices).
 - RTP: RFC 3550 (структура заголовка, seq/timestamp/marker).
 - Video over RTP: RFC 4175 (концепция packetization по строкам/фрагментам).
 - Wireshark dissector ST2110-20 (для сверки полей SRD/ExtSeq/marker).
 - Intel MTL (Media Transport Library) docs + st_pipeline_api (для MTL backend).
-- Для audio-задач потребуется также ориентироваться на соответствующие документы семейства ST 2110 для аудио и связанные RTP/AES-спецификации (уточним отдельным списком, когда дойдем до них).
-
 ---
 
 ## Done
@@ -99,7 +101,10 @@
 - [x] S006: Task 022 covered only part of payload-header validation. Size/limit checks that depend on packet/payload sizing policy (including the path toward MAXUDP-aware validation) still need an explicit follow-up task so completed work and remaining work are not conflated. :contentReference[oaicite:6]{index=6}
 - [x] S007: Public headers currently contain non-trivial function definitions in a way that risks ODR / multiple-definition problems once the project grows beyond the current “mostly one translation unit per test executable” shape. The linkage model must be made explicit (true header-only with `inline`, or moved implementations) before backend/app growth.
 - [x] S008: `PacketParseStats` structures exist, but packet parsing does not yet expose a single integrated path that records stage-specific parse results through the real parse flow. This should be fixed so parse observability is not only nominal.
-
+- [ ] S009: Current packet size policy models a configurable UDP payload-size limit, but ST 2110-10 defines `MAXUDP` and receiver size expectations in terms of UDP datagram size, not only essence payload size. Standard UDP Size Limit and Extended UDP Size Limit handling, default behavior when `MAXUDP` is absent, and the receiver assumption around fragmented IP datagrams must be aligned with ST 2110-10 before packet sizing is considered spec-clean.
+- [ ] S010: Current video receive path is driven by manual config only and does not yet expose a standards-aware SDP/signaling model. ST 2110-10 / -20 / -21 require or define stream interpretation/signaling through SDP attributes such as video sampling/depth/packing/framerate and timing-related attributes including `mediaclk`, `ts-refclk`, `MAXUDP`, `TSMODE`, `TSDELAY`, and sender timing parameters. This signaling path must become a first-class modeled boundary rather than an implicit out-of-band assumption.
+- [ ] S011: The current timestamp-strategy plan is still phrased as if internal video timestamps could be derived only from local fps cadence or arrival-time smoothing. For standards-aware ST 2110 receive, internal presentation timestamps must be mapped from RTP timestamp domain and associated clock/signaling model, not from a standalone frame counter alone. The timestamp plan must therefore be reworked around RTP/clock-based mapping.
+- [ ] S012: Receiver timing / conformance assumptions from ST 2110-21 are not yet represented in the architecture. The project currently has reorder/depacketize logic but no explicit model for receiver timing class/capability, dependence on stream timing signaling, or the future boundary where ST 2110-21 conformance-related buffering/tolerance behavior will live.
 ---
 
 # Phase 1 — MVP
@@ -141,6 +146,13 @@
   - separate pure wire-format parsing from size-limit/config-policy checks
   - define where MAXUDP-related constraints will live for MVP
   - add tests covering oversized payload / inconsistent header+payload sizing behavior
+- [ ] 046A: Align packet size policy with ST 2110-10 UDP datagram size semantics
+  - model packet-size policy in terms of UDP datagram size, not only essence payload bytes
+  - define Standard UDP Size Limit / Extended UDP Size Limit behavior for MVP
+  - define default behavior when `MAXUDP` is absent
+  - keep pure wire-format parsing separate from SDP/signaling-derived sizing policy
+  - document/localize the current stance on fragmented IP datagrams
+  - add focused positive/negative tests
 - [x] 047: Add integrated packet-parse stats recording path
   - provide one real parse entry point that records `PacketParseStage` failures/successes
   - make sure the counters reflect the actual parse pipeline instead of only helper-level unit tests
@@ -221,28 +233,47 @@
   - keep current MVP behavior implemented only for `Progressive`
   - keep non-progressive runtime boundary localized at reconstructor creation / factory path
   - add focused tests for composition, reset, and config mismatch
+- [ ] 069B: Add a standards-aware video SDP/signaling model boundary
+  - define modeled video stream/signaling config separate from low-level depacketizer config
+  - include the key stream-description attributes needed by ST 2110-10 / -20 / -21 for MVP planning, including video format/framerate/packing-related signaling and timing-related signaling such as `mediaclk`, `ts-refclk`, `MAXUDP`, `TSMODE`, `TSDELAY`
+  - keep the current manual-config path usable for synthetic tests, but make the standards-aware signaling path a first-class architecture boundary
+  - validate consistency between signaled stream properties and internal receive pipeline config
+  - add focused tests for signaling-model validation and mismatch handling
+- [ ] 069C: Define an explicit ST 2110-21 video receiver timing/conformance boundary
+  - introduce a receiver timing/capability model boundary instead of burying receiver assumptions inside depacketizer/reorder code
+  - define where stream timing parameters and future receiver-class/conformance behavior will plug into the architecture
+  - keep current MVP implementation minimal, but make the boundary explicit so later ST 2110-21 work does not require rewriting depacketizer/pipeline internals
+  - add architecture-focused tests or compile-time checks where useful
 
 ### A3. Video timestamp strategy
 - [x] 070: Define internal timestamp type: `uint64_t ts_ns`
-- [ ] 071: Decide mapping for MVP:
-  - output cadence from fps (constant step) OR
-  - local arrival time smoothed
-- [ ] 072: Unit test timestamp monotonicity + step consistency
+- [ ] 071: Define a standards-aware video timestamp mapping boundary from RTP timestamp domain to internal `ts_ns`
+  - keep RTP timestamp domain distinct from internal nanoseconds-domain timestamps
+  - define where `mediaclk` / `ts-refclk` / `TSMODE` / `TSDELAY`-related interpretation will plug into the receive pipeline
+  - allow a localized synthetic/manual timing path for tests and offline tools, but do not make standalone fps cadence the primary standards-facing timing model
+  - keep timestamp mapping above depacketizer and separate from segment placement / packet grouping logic
+- [ ] 072: Add tests for video timestamp mapping invariants
+  - monotonicity of emitted internal timestamps
+  - stable mapping behavior across packet grouping / reconstruction boundaries
+  - focused tests for the synthetic/manual timing path used in MVP scaffolding
 
 ---
 
 ## Track B — Audio foundations (MVP scope)
 
-> Конкретные нормы аудио будут уточняться по профильному стандарту, но архитектурно audio нужно заложить уже в MVP.
+> Audio MVP should be planned against ST 2110-30 from the start. Current MVP target should assume a narrow standards-aware baseline first (PCM / AES67-compatible receive path, 48 kHz baseline, 1 ms packet time baseline, small channel counts), with broader profile expansion later.
 
 ### B0. Audio common abstractions
 - [ ] 080: Define `RxAudioConfig` (sample_rate, channels, packet_time / samples_per_packet, payload_type, ip/port, format)
+  - make the initial MVP target a narrow ST 2110-30 baseline rather than a format-free placeholder
+  - capture at least the parameters needed for a 48 kHz / 1 ms PCM receive path
 - [ ] 081: Define `AudioBuffer` / `AudioFrameView` contract
 - [ ] 082: Define audio sink/backend-facing interfaces or extend shared interfaces so audio can be supported without ломки video API
 - [ ] 083: Add FakeAudioBackend -> FakeAudioSink test
 
 ### B1. Audio packet/depacketize MVP
 - [ ] 090: Define audio RTP packet model needed by MVP
+  - align the MVP audio packet model with the initial ST 2110-30 baseline rather than a generic future audio placeholder
 - [ ] 091: Implement minimal audio RTP parser integration + tests
 - [ ] 092: Implement audio reorder/jitter handling MVP + tests
 - [ ] 093: Implement audio frame/block assembly MVP + tests
