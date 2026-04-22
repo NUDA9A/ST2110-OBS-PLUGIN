@@ -33,6 +33,7 @@ namespace st2110 {
         uint8_t segment_count = 0;
 
         ByteSpan payload_data{};
+        ByteSpan trailing_padding{};
 
         static std::expected<PacketView, Error> from_udp_datagram(ByteSpan udp_payload);
     };
@@ -76,6 +77,8 @@ namespace st2110 {
         if (res.payload_data.size() < sum_length) {
             return std::unexpected(PacketViewParseFailure{Error::ShortPacket, PacketParseStage::SrdPayloadSplit});
         }
+
+        res.trailing_padding = res.payload_data.subspan(sum_length);
 
         std::size_t segment_size = 0;
 

@@ -44,6 +44,8 @@ namespace st2110 {
                 offset += segment_headers[i].length;
             }
 
+            pkt.trailing_padding = pkt.payload_data.subspan(offset);
+
             return pkt;
         }
 

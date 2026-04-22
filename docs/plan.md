@@ -142,9 +142,9 @@
 ### libs/st2110core/include/st2110/depacketizer.hpp
 - Роль:
   - packet-to-video-unit assembly layer.
-  - собирает `PacketView` в `AssembledVideoUnit`, используя mode-aware grouping/completion и format-aware placement.
+  - собирает `PacketView` в `AssembledVideoUnit`, используя mode-aware grouping/completion, format-aware placement и mode-aware packet padding validation.
 - Связи:
-  - зависит от `PacketView`, `FrameAssembler`, `VideoReceiveSemantics`, `VideoSegmentPlacement`, `Stats`.
+  - зависит от `PacketView`, `FrameAssembler`, `VideoReceiveSemantics`, `VideoSegmentPlacement`, `VideoPacketPadding`, `Stats`.
   - выше него находится `VideoReceivePipeline`, ниже — packet parsing.
 - Сущности:
   - `DepacketizerConfig`
@@ -165,6 +165,7 @@
   - Внутренние responsibilities:
     - берет completion policy через `video_receive_completion_policy(...)`;
     - берет assembly key через `video_packet_assembly_key(...)`;
+    - валидирует trailing payload padding через `validate_video_packet_trailing_padding(...)` до изменения assembly state;
     - пишет сегменты через `map_video_segment_to_frame_write(...)`;
     - пока runtime-реализация только для `Progressive`, non-progressive локализованно отвергается.
 
@@ -292,7 +293,7 @@
 - Роль:
   - нормализованное представление уже распарсенного video RTP/ST2110-20 packet.
 - Связи:
-  - объединяет `RtpHeaderView`, extended seq, SRD segment headers и payload spans.
+  - объединяет `RtpHeaderView`, extended seq, SRD segment headers, segment payload spans и trailing payload bytes.
   - основной вход для reorder/depacketizer pipeline.
 - Сущности:
   - `maxPacketSrdSegments = 3`
@@ -307,10 +308,13 @@
     - `extended_seq`
     - `segments[3]`
     - `segment_count`
-    - `payload_data`
+    - `payload_data` — весь RTP payload после ST 2110-20 payload header
+    - `trailing_padding` — trailing bytes после байтов, покрытых суммой `SRD Length`
     - `static from_udp_datagram(ByteSpan)`
   - `parse_packet_view_staged(ByteSpan)`
-    - поэтапно парсит RTP header, ST 2110-20 payload header и split’ит payload по SRD segments.
+    - поэтапно парсит RTP header, ST 2110-20 payload header, split’ит payload по SRD segments и отдельно выделяет trailing padding.
+- Примечание:
+  - generic parse слой только выделяет trailing bytes, но не принимает mode-aware решение об их допустимости.
 
 ### libs/st2110core/include/st2110/pixel_format.hpp
 - Роль:
@@ -331,7 +335,8 @@
   - `ReorderBufferStats`
   - `StoredPacket`
     - owning-копия packet content;
-    - `view() -> PacketView` — восстанавливает non-owning `PacketView` поверх внутреннего буфера.
+    - хранит полный packet payload;
+    - `view() -> PacketView` — восстанавливает non-owning `PacketView` поверх внутреннего буфера, включая `segments[i].data` и `trailing_padding`.
   - `IReorderBuffer`
     - `push(const PacketView&)`
     - `pop_next()`
@@ -595,6 +600,29 @@
 - Сущности:
   - `stub()`
 
+### libs/st2110core/include/st2110/video_packet_padding.hpp
+- Роль:
+  - локализованная mode-aware boundary для валидации trailing payload padding после Sample Row Data segments.
+- Связи:
+  - использует `PacketView`, `VideoScanMode`, `Error`;
+  - вызывается из `Depacketizer`;
+  - отделяет generic packet parsing от mode-aware решения о допустимости trailing bytes.
+- Сущности:
+  - `validate_progressive_video_packet_trailing_padding(const PacketView&)`
+    - для MVP progressive path:
+      - `trailing_padding.empty()` => `Ok`
+      - trailing padding в non-marker packet => `InvalidValue`
+      - non-zero trailing padding bytes => `InvalidValue`
+      - zero trailing padding in marker packet => `Ok`
+  - `validate_interlaced_video_packet_trailing_padding(const PacketView&)`
+    - пока `Unsupported`
+  - `validate_psf_video_packet_trailing_padding(const PacketView&)`
+    - пока `Unsupported`
+  - `validate_video_packet_trailing_padding(VideoScanMode, const PacketView&)`
+    - scan-mode dispatcher к mode-specific helper’ам.
+- Примечание:
+  - текущая реализация задает MVP validation boundary для progressive receive path и не заменяет будущую полную signaling/packing model.
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -632,7 +660,7 @@
 - [ ] S010: Current video receive path is driven by manual config only and does not yet expose a standards-aware SDP/signaling model. ST 2110-10 / -20 / -21 require or define stream interpretation/signaling through SDP attributes such as video sampling/depth/packing/framerate and timing-related attributes including `mediaclk`, `ts-refclk`, `MAXUDP`, `TSMODE`, `TSDELAY`, and sender timing parameters. This signaling path must become a first-class modeled boundary rather than an implicit out-of-band assumption.
 - [ ] S011: The current timestamp-strategy plan is still phrased as if internal video timestamps could be derived only from local fps cadence or arrival-time smoothing. For standards-aware ST 2110 receive, internal presentation timestamps must be mapped from RTP timestamp domain and associated clock/signaling model, not from a standalone frame counter alone. The timestamp plan must therefore be reworked around RTP/clock-based mapping.
 - [ ] S012: Receiver timing / conformance assumptions from ST 2110-21 are not yet represented in the architecture. The project currently has reorder/depacketize logic but no explicit model for receiver timing class/capability, dependence on stream timing signaling, or the future boundary where ST 2110-21 conformance-related buffering/tolerance behavior will live.
-- [ ] S013: `parse_packet_view_staged()` currently accepts arbitrary trailing octets after the bytes covered by `SRD Length` values. ST 2110-20 allows octets after the last Sample Row Data Segment only as terminal field/frame padding, and GPM/BPM padding octets are zero-valued. This must be validated through a localized packing-mode-aware / mode-aware boundary rather than silently tolerated on any packet.
+- [x] S013: `parse_packet_view_staged()` currently accepts arbitrary trailing octets after the bytes covered by `SRD Length` values. ST 2110-20 allows octets after the last Sample Row Data Segment only as terminal field/frame padding, and GPM/BPM padding octets are zero-valued. This must be validated through a localized packing-mode-aware / mode-aware boundary rather than silently tolerated on any packet.
 ---
 
 # Phase 1 — MVP
@@ -681,7 +709,7 @@
   - keep pure wire-format parsing separate from SDP/signaling-derived sizing policy
   - document/localize the current stance on fragmented IP datagrams
   - add focused positive/negative tests
-- [ ] 046B: Add localized validation for trailing payload padding semantics
+- [x] 046B: Add localized validation for trailing payload padding semantics
   - distinguish bytes covered by SRD segments from optional trailing payload padding
   - for current MVP progressive path, allow trailing padding only where current completion / packing policy permits terminal-packet padding
   - validate that accepted padding octets are zero-valued

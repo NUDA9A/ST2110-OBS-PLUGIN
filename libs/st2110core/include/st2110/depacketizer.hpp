@@ -7,6 +7,7 @@
 #include "video_scan_mode.hpp"
 #include "video_receive_semantics.hpp"
 #include "video_segment_placement.hpp"
+#include "video_packet_padding.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -48,6 +49,7 @@ namespace st2110 {
             std::vector<AssembledVideoUnit> res;
 
             if (!has_unit_in_progress()) {
+                validate_padding(packet);
                 begin_unit(packet_key);
                 write_packet_segments(packet);
                 ++stats_.packets_used;
@@ -60,6 +62,7 @@ namespace st2110 {
             }
 
             if (same_video_assembly_key(*assembly_state_.current_key, packet_key)) {
+                validate_padding(packet);
                 write_packet_segments(packet);
                 ++stats_.packets_used;
 
@@ -73,6 +76,8 @@ namespace st2110 {
             if (!policy.key_change_terminates_previous_unit) {
                 throw std::logic_error("Current completion policy does not support assembly-key transition yet");
             }
+
+            validate_padding(packet);
 
             {
                 auto end_res = assembler_.end(false);
@@ -128,6 +133,16 @@ namespace st2110 {
         }
 
     private:
+        void validate_padding(const PacketView& packet) {
+            Error err = validate_video_packet_trailing_padding(cfg_.scan_mode, packet);
+            if (err == Error::InvalidValue) {
+                throw std::invalid_argument("Invalid trailing payload padding for current video scan mode");
+            }
+            if (err == Error::Unsupported) {
+                throw std::logic_error("Trailing payload padding validation is not implemented for current video scan mode");
+            }
+        }
+
         [[nodiscard]] VideoReceiveCompletionPolicy configured_completion_policy() const {
             // MVP runtime currently implements only Progressive completion behavior.
             // Interlaced and PsF are modeled through VideoScanMode / VideoAssemblyUnitKind
