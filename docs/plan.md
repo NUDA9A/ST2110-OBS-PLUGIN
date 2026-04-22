@@ -38,6 +38,17 @@
   - полный готовый `.cpp` файл каждого нового теста;
   - полный готовый `.cpp` файл для каждого теста, который нужно заменить целиком.
 - Ассистент не должен ограничиваться описанием тестовой идеи; тестовые файлы должны быть даны в копируемом виде.
+- Если пользователь не сообщил об изменениях в этих тестах, для дальнейшей приемки считается, что они были скопированы без изменений.
+- Для приемки задачи пользователь не обязан пересылать файлы из `tests/`, если они были ранее даны ассистентом целиком и скопированы без изменений.
+- По умолчанию считается, что:
+  - все тестовые `.cpp` файлы, которые ассистент прислал в полном виде;
+  - и соответствующие строки `add_st2110_test(...)`, которые ассистент дал для `tests/CMakeLists.txt`,
+    были пользователем добавлены без изменений, если пользователь явно не сообщил обратное.
+- Поэтому при приемке задачи ассистент не должен повторно запрашивать содержимое файлов из `tests/`, кроме случаев, когда:
+  - пользователь сам изменил тесты;
+  - пользователь сообщает о падении/адаптации тестов;
+  - для приемки нужно проверить расхождение между ранее выданным тестом и фактическим состоянием репозитория.
+- Ассистент не должен ограничиваться описанием тестовой идеи; тестовые файлы должны быть даны в копируемом виде.
 
 ## Правила проектирования
 - Код должен быть написан в **расширяемом виде**.
@@ -586,7 +597,7 @@
 ### libs/st2110core/include/st2110/video_signaling.hpp
 - Роль:
   - standards-aware signaling/model boundary для video stream description.
-  - задает типизированную модель ключевых video SDP/signaling свойств отдельно от low-level receive/depacketizer config.
+  - задает типизированную модель ключевых video SDP/signaling свойств отдельно от low-level receive/depacketizer config и отдельно от internal runtime/storage `PixelFormat`.
 - Связи:
   - использует `PixelFormat`, `VideoScanMode`, `PacketParsePolicy`, `RxVideoConfig`, общие config validation helper’ы.
   - связывает signaling model с packet parse policy и manual `RxVideoConfig` path.
@@ -621,11 +632,67 @@
     - `Narrow`
     - `NarrowLinear`
     - `Wide`
-  - `VideoStreamSignaling`
-    - `format`
-    - `scan_mode`
+  - `VideoSampling`
+    - modeled representation for signaled `sampling`
+    - `Known`
+      - `YCbCr422`
+      - `YCbCr444`
+      - `YCbCr420`
+      - `RGB`
+      - `XYZ`
+      - `Key`
+      - `Other`
+    - `raw_token`
+  - `VideoBitDepth`
+    - modeled representation for signaled `depth`
+    - `bits`
+    - `floating_point`
+  - `VideoColorimetry`
+    - modeled representation for signaled `colorimetry`
+    - `Known`
+      - `Bt601`
+      - `Bt709`
+      - `Bt2020`
+      - `Bt2100`
+      - `St2065_1`
+      - `Other`
+    - `raw_token`
+  - `VideoTransferCharacteristicSystem`
+    - modeled representation for signaled `TCS`
+    - `Known`
+      - `SDR`
+      - `PQ`
+      - `HLG`
+      - `Linear`
+      - `Other`
+    - `raw_token`
+  - `VideoSignalStandard`
+    - modeled representation for signaled `SSN`
+    - `Known`
+      - `St2110_20_2017`
+      - `St2110_20_2022`
+      - `Other`
+    - `raw_token`
+  - `VideoRange`
+    - modeled representation for optional signaled `RANGE`
+    - `Known`
+      - `Narrow`
+      - `Full`
+      - `Other`
+    - `raw_token`
+  - `VideoMediaDescription`
+    - standards-aware modeled media-description subset, separate from runtime/storage concepts
+    - `sampling`
     - `width`, `height`
-    - `fps_num`, `fps_den`
+    - `fps_num`, `fps_den` — modeled representation of signaled `exactframerate`
+    - `depth`
+    - `colorimetry`
+    - `transfer_characteristic_system`
+    - `signal_standard`
+    - `range`
+  - `VideoStreamSignaling`
+    - `media`
+    - `scan_mode`
     - `packing_mode`
     - `max_udp_datagram_bytes`
     - `media_clock_mode`
@@ -658,24 +725,38 @@
       - validates enum values explicitly
       - carries `ts_delay_sender_ticks` through the boundary
       - does not yet impose detailed `TSDELAY` semantics
+  - `validate_video_sampling(const VideoSampling&)`
+  - `validate_video_bit_depth(const VideoBitDepth&)`
+  - `validate_video_colorimetry(const VideoColorimetry&)`
+  - `validate_video_transfer_characteristic_system(const VideoTransferCharacteristicSystem&)`
+  - `validate_video_signal_standard(const VideoSignalStandard&)`
+  - `validate_video_range(const VideoRange&)`
+    - structural validation helpers for modeled signaled media-description fields.
+  - `validate_video_media_description(const VideoMediaDescription&)`
+    - validates modeled signaled media-description independently from runtime storage projection.
   - `validate_video_stream_signaling(const VideoStreamSignaling&)`
     - базовая structural/config validation signaling model, включая:
+      - media description
       - timing signaling
       - sender timing fields
       - `ReferenceClock`
+  - `pixel_format_from_video_stream_signaling(const VideoStreamSignaling&) -> std::expected<PixelFormat, Error>`
+    - localized projection boundary from standards-aware signaled media description to current internal runtime/storage `PixelFormat`
+    - current MVP runtime support:
+      - `YCbCr422 + 8-bit integer -> UYVY`
+      - other structurally valid combinations may currently return `Unsupported`
   - `packet_parse_policy_from_video_stream_signaling(const VideoStreamSignaling&)`
     - выводит `PacketParsePolicy` из signaling model.
   - `validate_video_stream_signaling_against_rx_video_config(const VideoStreamSignaling&, const RxVideoConfig&)`
-    - проверяет согласованность signaling model и manual video config path по ключевым video properties.
+    - проверяет согласованность signaling model и manual video config path по ключевым runtime video properties, используя explicit signaling->pixel-format projection.
   - `rx_video_config_from_video_stream_signaling(const VideoStreamSignaling&, uint16_t, uint8_t, std::string, std::string)`
     - explicit adapter from signaling model to runtime/manual `RxVideoConfig`
-    - maps video stream properties from signaling and injects transport/network fields separately
-    - validates signaling first, then validates the projected runtime config
+    - maps runtime properties from signaling model plus transport/network inputs
+    - validates signaling first, then validates signaling->pixel-format projection, then validates the projected runtime config
 - Примечание:
-  - signaling model уже должна рассматриваться как архитектурная ось MVP, а не как later refactor;
-  - modeled signaled video properties должны оставаться отличимыми от internal runtime/storage concepts;
-  - future expansion of this file under `069B` must add explicit modeled representation for signaled SDP/media properties such as `sampling`, `width`, `height`, `exactframerate`, `depth`, `colorimetry`, `TCS`, `PM`, `SSN`, with `RANGE` allowed as optional / future-expansion coverage, instead of collapsing them prematurely into internal `PixelFormat` / storage-only notions;
-  - packing mode, timing-related signaling и future receiver bootstrap должны быть доведены через explicit adapters/boundaries уже в MVP shape even if some branches remain runtime-limited.
+  - signaling model уже выделяет standards-aware media-description representation отдельно от internal runtime/storage format.
+  - текущая runtime-реализация projection boundary пока локализованно поддерживает только ограниченный набор signaling combinations; это допустимое MVP-ограничение, пока расширение идет через уже существующий `pixel_format_from_video_stream_signaling(...)`, а не через переделку model shape.
+  - detailed SDP parsing, signaling-driven receiver bootstrap и receiver timing integration остаются дальнейшими задачами `069B4`, `069B5`, `069C`, `069D`.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -776,7 +857,7 @@
 - [x] S013: `parse_packet_view_staged()` currently accepts arbitrary trailing octets after the bytes covered by `SRD Length` values. ST 2110-20 allows octets after the last Sample Row Data Segment only as terminal field/frame padding, and GPM/BPM padding octets are zero-valued. This must be validated through a localized packing-mode-aware / mode-aware boundary rather than silently tolerated on any packet.
 - [ ] S014: Current RTP parsing/payload extraction path does not yet provide explicit receiver-side tolerance to RTP header extensions. For a standards-aware receiver, packets with valid RTP header extensions must still have payload location derived correctly rather than being handled only under an implicit “no extensions” assumption. This must be fixed locally in RTP parsing / payload extraction logic and not spread across the rest of the receive pipeline.
 - [ ] S015: `VideoPackingMode` is currently modeled in video signaling, but it is not yet carried as an explicit runtime receive axis through depacketizer/runtime config/padding validation. The current MVP runtime path must not stay architecturally GPM-only. If BPM remains unsupported in MVP runtime behavior, that limitation must be explicit, localized, and implemented as an already-existing branch/boundary rather than as absence of architecture.
-- [ ] S016: Current standards-aware video signaling representation is still too close to internal runtime/storage concepts and does not yet model enough signaled SDP/media properties separately from internal `PixelFormat` / storage format. This must be expanded so signaled stream description is not collapsed prematurely into runtime-only concepts. In particular, the modeled representation must explicitly account for signaled stream-description properties such as `sampling`, `width`, `height`, `exactframerate`, `depth`, `colorimetry`, `TCS`, `PM`, and `SSN`, with `RANGE` allowed as optional / future-expansion coverage.
+- [x] S016: Current standards-aware video signaling representation is still too close to internal runtime/storage concepts and does not yet model enough signaled SDP/media properties separately from internal `PixelFormat` / storage format. This must be expanded so signaled stream description is not collapsed prematurely into runtime-only concepts. In particular, the modeled representation must explicitly account for signaled stream-description properties such as `sampling`, `width`, `height`, `exactframerate`, `depth`, `colorimetry`, `TCS`, `PM`, and `SSN`, with `RANGE` allowed as optional / future-expansion coverage.
 - [ ] S017: Audio path currently has no fully completed first-class ST 2110-30 signaling/model boundary, no explicit structural validation layer for that model, no explicit SDP ingestion path into such a model, and no clear modeled representation for signaled channel order / channel mapping distinct from internal audio buffer layout. The audio MVP target must be made explicit as a **Level A-oriented receiver baseline** (`48 kHz`, `1 ms packet time`, `1..8 channels`), and these axes/boundaries must be architecturally introduced in MVP even if some runtime variants remain later implementation work.
 - [ ] S018: Receiver-side playout / reconstruction timing boundary is not yet explicit. Mapping from RTP timestamp domain to internal `ts_ns`, receiver playout timing policy, and receiver-side offset/delay configuration must live above reorder/depacketize logic rather than collapsing into arrival-time smoothing or local cadence heuristics.
 - [ ] S019: RTP timestamp wraparound and long-running-stream continuity are not yet explicitly covered by timestamp-mapping tasks/tests. This must be handled and tested across reconstruction boundaries so long-lived streams do not silently drift or reset at wraparound.

@@ -6,13 +6,20 @@
 
 static st2110::VideoStreamSignaling make_signaling() {
     st2110::VideoStreamSignaling s{};
-    s.format = st2110::PixelFormat::UYVY;
-    s.scan_mode = st2110::VideoScanMode::Progressive;
-    s.width = 1920;
-    s.height = 1080;
-    s.fps_num = 30000;
-    s.fps_den = 1001;
 
+    s.media.sampling = st2110::VideoSampling{
+            st2110::VideoSampling::Known::YCbCr422,
+            std::nullopt};
+    s.media.width = 1920;
+    s.media.height = 1080;
+    s.media.fps_num = 30000;
+    s.media.fps_den = 1001;
+    s.media.depth = st2110::VideoBitDepth{8, false};
+    s.media.colorimetry = st2110::VideoColorimetry{
+            st2110::VideoColorimetry::Known::Bt709,
+            std::nullopt};
+
+    s.scan_mode = st2110::VideoScanMode::Progressive;
     s.packing_mode = st2110::VideoPackingMode::Gpm;
     s.media_clock_mode = st2110::MediaClockMode::Direct;
     s.timestamp_mode = st2110::TimestampMode::New;
