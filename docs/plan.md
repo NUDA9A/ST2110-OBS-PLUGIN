@@ -19,6 +19,20 @@
   - новые изменения не должны закреплять assumptions вида `marker == end of frame`, `timestamp group == frame`, `F is always zero` вне специально выделенных policy / mode-aware точек.
 - Пока задача не принята, к следующей не переходим.
 - Сложные детали реализации можно разбирать в отдельном чате, но приемка задачи — только по коду и тестам.
+- `plan.md` является не только списком задач, но и краткой картой текущей архитектуры/кода.
+- В `plan.md` должен поддерживаться раздел с описанием актуальных файлов реализации (`file map` / `code map`).
+- Для каждого значимого файла реализации (прежде всего public headers) в этом разделе должны быть указаны:
+  - архитектурная роль файла;
+  - основные зависимости / связи с другими файлами;
+  - перечисление ключевых enum / struct / class / function / method с кратким назначением.
+- Описание должно быть достаточно подробным, чтобы ассистент мог восстановить архитектурный контекст без повторной пересылки всего кода, но без копирования полной реализации в `plan.md`.
+- Перед началом очередной задачи ассистент может запросить у пользователя только те файлы (обычно header’ы и при необходимости связанные `.cpp` / тесты), которые относятся к текущей задаче или приемке.
+- Если для формулирования задачи или приемки достаточно информации из `plan.md` и актуального file map, ассистент не должен запрашивать лишние файлы.
+- После завершения каждой принятой задачи нужно:
+  - обновить `plan.md`;
+  - добавить описания для новых файлов;
+  - обновить описания существующих файлов, если изменились их публичные структуры, классы, методы, связи или архитектурная роль.
+- Если фактический код начинает расходиться с описанием файла в `plan.md`, приоритет у фактического кода; такое расхождение должно быть устранено сразу после приемки текущей задачи обновлением file map.
 
 ## Правила проектирования
 - Код должен быть написан в **расширяемом виде**.
@@ -68,6 +82,519 @@
 - Intel MTL (Media Transport Library) docs + st_pipeline_api (для MTL backend).
 ---
 
+## Текущая структура кода (file map)
+
+> Назначение раздела:
+> - держать краткую карту текущей реализации;
+> - уменьшать необходимость пересылать весь код в чат;
+> - помогать ассистенту формулировать задачи и делать приемку в контексте реальной архитектуры.
+>
+> Правила ведения:
+> - описываем прежде всего public headers и значимые entry points;
+> - фиксируем архитектурную роль, связи и публичные сущности;
+> - не дублируем полную реализацию;
+> - после принятия задачи обновляем этот раздел вместе с кодом.
+### apps/st2110_rx_dump/main.cpp
+- Роль:
+  - минимальный CLI entry point для будущего dump/tool-приложения.
+  - пока выполняет роль buildable stub.
+- Связи:
+  - собирается в `st2110_rx_dump`;
+  - линкуется со `st2110core`, но пока фактически core API не использует.
+- Сущности:
+  - `main()` — временная заглушка, печатает имя приложения.
+
+### libs/st2110core/include/st2110/backend.hpp
+- Роль:
+  - базовые backend/sink интерфейсы для video receive path.
+  - текущая точка расширения для socket/MTL video backend’ов.
+- Связи:
+  - использует `VideoFrameView` и `RxVideoConfig`;
+  - должна остаться совместимой с будущим audio/generalized backend layer.
+- Сущности:
+  - `IVideoFrameSink::on_video_frame(const VideoFrameView&)` — прием готового video frame/view.
+  - `IRxBackend` — общий интерфейс backend’а (`backend_name()`, `stop()`).
+  - `IRxVideoBackend` — video-специализация backend’а, `start(const RxVideoConfig&, IVideoFrameSink&)`.
+
+### libs/st2110core/include/st2110/bytes.hpp
+- Роль:
+  - общая базовая alias-конвенция для неизменяемых байтовых диапазонов.
+- Связи:
+  - используется в RTP/ST2110 parsing, assembler/depacketizer и других low-level helper’ах.
+- Сущности:
+  - `ByteSpan = std::span<const uint8_t>`.
+
+### libs/st2110core/include/st2110/config_validation.hpp
+- Роль:
+  - общие helper’ы для явной валидации конфигов и значений.
+  - отражает правило “strict parse, explicit fallback”.
+- Связи:
+  - используется `RxVideoConfig` и будущими signaling/config model.
+- Сущности:
+  - `is_non_empty(std::string_view)`
+  - `is_dynamic_rtp_payload_type(uint8_t)`
+  - `validate_frame_rate(uint32_t num, uint32_t den)`
+  - `validate_udp_port(uint16_t)`
+  - `validate_video_dimensions(uint32_t width, uint32_t height)`
+  - `validate_video_format_constraints(PixelFormat, width, height)` — формат-специфичная валидация размеров.
+  - `validate_video_scan_mode(VideoScanMode)`
+
+### libs/st2110core/include/st2110/depacketizer.hpp
+- Роль:
+  - packet-to-video-unit assembly layer.
+  - собирает `PacketView` в `AssembledVideoUnit`, используя mode-aware grouping/completion и format-aware placement.
+- Связи:
+  - зависит от `PacketView`, `FrameAssembler`, `VideoReceiveSemantics`, `VideoSegmentPlacement`, `Stats`.
+  - выше него находится `VideoReceivePipeline`, ниже — packet parsing.
+- Сущности:
+  - `DepacketizerConfig`
+    - `width`, `height`, `format`
+    - `partial_frame_policy`
+    - `scan_mode`
+  - `DepacketizerAssemblyState`
+    - `current_key` — текущий `VideoAssemblyKey` в сборке.
+  - `Depacketizer`
+    - `push(const PacketView&) -> std::vector<AssembledVideoUnit>` — основной API depacketizer’а.
+    - `reset()`
+    - `stats()`
+    - `scan_mode()`
+    - `has_unit_in_progress()`
+    - `current_unit_rtp_timestamp()`
+    - `assembly_unit_kind()`
+    - `current_unit_key()`
+  - Внутренние responsibilities:
+    - берет completion policy через `video_receive_completion_policy(...)`;
+    - берет assembly key через `video_packet_assembly_key(...)`;
+    - пишет сегменты через `map_video_segment_to_frame_write(...)`;
+    - пока runtime-реализация только для `Progressive`, non-progressive локализованно отвергается.
+
+### libs/st2110core/include/st2110/endian.hpp
+- Роль:
+  - простые big-endian helpers для чтения multibyte полей из wire data.
+- Связи:
+  - используются RTP/ST2110 payload parser’ами.
+- Сущности:
+  - `read_be16(std::span<const uint8_t>)`
+  - `read_be32(std::span<const uint8_t>)`
+
+### libs/st2110core/include/st2110/error.hpp
+- Роль:
+  - общий enum ошибок проекта на текущем этапе.
+- Связи:
+  - используется в parse/validation/reconstructor/signaling layers.
+- Сущности:
+  - `enum class Error`
+    - `Ok`
+    - `BufferTooSmall`
+    - `InvalidValue`
+    - `Unsupported`
+    - `ShortPacket`
+    - `BadRTPVersion`
+  - `to_string(Error)` — строковое представление ошибки.
+
+### libs/st2110core/include/st2110/fixed_reorder_buffer.hpp
+- Роль:
+  - MVP-реализация reorder buffer’а с фиксированным окном по `extended_seq`.
+- Связи:
+  - реализует `IReorderBuffer`;
+  - использует `StoredPacket`/`PacketView`.
+- Сущности:
+  - `FixedWindowReorderBuffer`
+    - `push(const PacketView&)`
+    - `pop_next() -> std::optional<StoredPacket>`
+    - `reset()`
+    - `stats()`
+    - `flush_missing_once()`
+  - Поведение:
+    - хранит пакеты в `std::map<uint32_t, StoredPacket>`;
+    - учитывает duplicates / out_of_window / late / missing_seq / missing_seq_flushed.
+
+### libs/st2110core/include/st2110/frame_assembler.hpp
+- Роль:
+  - byte-oriented сборка одного текущего assembled video unit в owning `VideoFrame`.
+  - не содержит format-aware packet semantics; получает уже рассчитанные row/byte offsets.
+- Связи:
+  - использует `VideoFrame`, `FrameWriteCoverage`, `VideoReceiveSemantics`.
+  - вызывается из `Depacketizer`.
+- Сущности:
+  - `PartialFramePolicy`
+    - `EmitWithFlag`
+    - `Drop`
+  - `FrameAssemblerEndStatus`
+    - `NotEmittable`
+    - `EmittedComplete`
+    - `EmittedPartial`
+    - `DroppedPartial`
+  - `AssembledVideoUnit`
+    - `frame`
+    - `unit_kind`
+    - `rtp_timestamp`
+    - `marker_seen`
+    - `can_emit`
+    - `complete`
+    - `partial()`
+  - `FrameAssemblerEndResult`
+    - `unit`
+    - `status`
+  - `FrameAssembler`
+    - `begin(uint32_t rtp_timestamp)`
+    - `write_segment(std::size_t plane, uint32_t row, std::size_t byte_offset, ByteSpan bytes)`
+    - `end(bool marker) -> FrameAssemblerEndResult`
+    - `in_progress()`
+    - `current_rtp_timestamp()`
+    - `partial_frame_policy()`
+
+### libs/st2110core/include/st2110/frame_write_coverage.hpp
+- Роль:
+  - helper для отслеживания, какие байты кадра уже были записаны, и определения completeness.
+- Связи:
+  - используется `FrameAssembler`.
+- Сущности:
+  - `PlaneWriteCoverage`
+    - `active_row_bytes`
+    - `height_rows`
+    - `expected_bytes`
+    - `written_unique_bytes`
+    - `written`
+  - `FrameWriteCoverage`
+    - `reset_from(const VideoFrame&)`
+    - `mark_written(plane, row, byte_offset, length)`
+    - `is_complete()`
+    - `total_expected_bytes()`
+    - `total_written_unique_bytes()`
+    - `plane_count()`
+    - `plane_expected_bytes(plane)`
+    - `plane_written_unique_bytes(plane)`
+
+### libs/st2110core/include/st2110/packet_parse.hpp
+- Роль:
+  - интегрированный entry point для packet parsing с optional packet-size policy и stats recording.
+- Связи:
+  - опирается на `PacketView::from_udp_datagram()` / `parse_packet_view_staged()`;
+  - использует `PacketParseStats`.
+- Сущности:
+  - константы:
+    - `udpHeaderBytes`
+    - `standardUdpDatagramSizeLimitBytes`
+    - `extendedUdpDatagramSizeLimitBytes`
+    - `minRtpHeaderBytes`
+    - `minParsableUdpDatagramBytes`
+  - `PacketParsePolicy`
+    - `max_udp_datagram_bytes`
+  - `udp_datagram_size_bytes(ByteSpan)`
+  - `effective_max_udp_datagram_bytes(const PacketParsePolicy&)`
+  - `validate_packet_parse_policy_config(const PacketParsePolicy&)`
+  - `validate_packet_parse_policy(ByteSpan, const PacketParsePolicy&)`
+  - `parse_packet_view(ByteSpan, const PacketParsePolicy& = {})`
+  - `parse_packet_view(ByteSpan, PacketParseStats&, const PacketParsePolicy& = {})`
+
+### libs/st2110core/include/st2110/packet_view.hpp
+- Роль:
+  - нормализованное представление уже распарсенного video RTP/ST2110-20 packet.
+- Связи:
+  - объединяет `RtpHeaderView`, extended seq, SRD segment headers и payload spans.
+  - основной вход для reorder/depacketizer pipeline.
+- Сущности:
+  - `maxPacketSrdSegments = 3`
+  - `SrdSegmentView`
+    - `header`
+    - `data`
+  - `PacketViewParseFailure`
+    - `error`
+    - `stage`
+  - `PacketView`
+    - `rtp`
+    - `extended_seq`
+    - `segments[3]`
+    - `segment_count`
+    - `payload_data`
+    - `static from_udp_datagram(ByteSpan)`
+  - `parse_packet_view_staged(ByteSpan)`
+    - поэтапно парсит RTP header, ST 2110-20 payload header и split’ит payload по SRD segments.
+
+### libs/st2110core/include/st2110/pixel_format.hpp
+- Роль:
+  - enum текущих поддерживаемых pixel/storage format’ов video pipeline.
+- Связи:
+  - используется в frame storage, config, depacketizer, segment constraints/placement, reconstructor.
+- Сущности:
+  - `enum class PixelFormat`
+    - `UYVY`
+
+### libs/st2110core/include/st2110/reorder_buffer.hpp
+- Роль:
+  - абстракция reorder layer и owning stored-packet representation.
+- Связи:
+  - используется `FixedWindowReorderBuffer`;
+  - отделяет packet ownership от `PacketView` с non-owning spans.
+- Сущности:
+  - `ReorderBufferStats`
+  - `StoredPacket`
+    - owning-копия packet content;
+    - `view() -> PacketView` — восстанавливает non-owning `PacketView` поверх внутреннего буфера.
+  - `IReorderBuffer`
+    - `push(const PacketView&)`
+    - `pop_next()`
+    - `reset()`
+
+### libs/st2110core/include/st2110/rtp.hpp
+- Роль:
+  - RTP header parsing и seq helper’ы.
+- Связи:
+  - используется `PacketView` parsing.
+- Сущности:
+  - `RtpHeaderView`
+    - `version`
+    - `padding_flag`
+    - `extension_flag`
+    - `csrc_count`
+    - `marker`
+    - `payload_type`
+    - `seq_number`
+    - `timestamp`
+    - `ssrc`
+    - `payload_offset`
+    - `payload_len`
+  - `parse_rtp_header(ByteSpan)`
+  - `seq_less(uint16_t a, uint16_t b)`
+  - `seq_distance(uint16_t a, uint16_t b)`
+  - `rtp_payload_span(ByteSpan, const RtpHeaderView&)`
+
+### libs/st2110core/include/st2110/rx_config.hpp
+- Роль:
+  - manual video RX config model для текущего MVP-path.
+- Связи:
+  - используется backend/video pipeline слоями;
+  - в будущем должен сосуществовать со standards-aware signaling model, а не заменять его.
+- Сущности:
+  - `RxVideoConfig`
+    - `width`, `height`
+    - `fps_num`, `fps_den`
+    - `udp_port`
+    - `payload_type`
+    - `local_ip`, `dest_ip`
+    - `format`
+    - `scan_mode`
+    - `is_valid()`
+  - `validate_rx_video_config(const RxVideoConfig&)`
+
+### libs/st2110core/include/st2110/st2110_20.hpp
+- Роль:
+  - low-level parsing/validation helpers для ST 2110-20 payload header.
+- Связи:
+  - используется `PacketView` parser’ом и format-aware validation слоями.
+- Сущности:
+  - `ExtendedSequenceNumber`
+  - `SrdHeader`
+    - `length`
+    - `row_number`
+    - `offset`
+    - `field_id`
+    - `continuation`
+  - `St2110PayloadHeaderView`
+    - `ext_seq`
+    - `srd[3]`
+    - `srd_count`
+    - `header_bytes`
+  - `parse_st2110_20_payload_header(ByteSpan)`
+  - `validate_st2110_20_srd_ordering(const St2110PayloadHeaderView&)`
+  - `validate_st2110_20_payload_header(const St2110PayloadHeaderView&)`
+  - `combine_extended_seq(const ExtendedSequenceNumber&, uint16_t lo16)`
+
+### libs/st2110core/include/st2110/stats.hpp
+- Роль:
+  - общие stats/counters для parser/depacketizer/backend слоев.
+- Связи:
+  - используется packet parsing, depacketizer и будущими backend’ами.
+- Сущности:
+  - `PacketParseStage`
+  - `ParserStats`
+  - `PacketParseStats`
+  - `DepacketizerStats`
+  - `BackendStats`
+  - `record_parse_result(ParserStats&, Error)`
+  - `record_packet_parse_result(PacketParseStats&, Error, PacketParseStage)`
+
+### libs/st2110core/include/st2110/timestamp.hpp
+- Роль:
+  - базовый внутренний тип времени для media timestamps.
+- Связи:
+  - используется `VideoFrameView`;
+  - future timestamp mapping boundary должна переводить RTP-domain в этот тип.
+- Сущности:
+  - `using TimestampNs = std::uint64_t`
+
+### libs/st2110core/include/st2110/video_frame.hpp
+- Роль:
+  - owning storage object для assembled video frame/unit и соответствующий non-owning view.
+- Связи:
+  - используется assembler/reconstructor/backend sink path.
+- Сущности:
+  - `VideoFrameView`
+    - `format`
+    - `width`, `height`
+    - `data[4]`
+    - `stride[4]`
+    - `timestamp_ns`
+  - `Plane`
+    - `offset_bytes`
+    - `stride_bytes`
+    - `active_row_bytes`
+    - `height_rows`
+  - `VideoFrame`
+    - ctor `(width, height, format)`
+    - `view(TimestampNs = 0)`
+    - `size_bytes()`
+    - `width()`, `height()`, `format()`
+    - `stride_bytes(plane)`
+    - `data(plane)`
+    - `row_data(row, plane)`
+    - `plane_count()`
+    - `active_row_bytes(plane)`
+    - `plane_height_rows(plane)`
+  - Текущий MVP format:
+    - `UYVY`, single-plane, `active_row_bytes = width * 2`.
+
+### libs/st2110core/include/st2110/video_receive_pipeline.hpp
+- Роль:
+  - composition layer: depacketizer + video unit reconstructor.
+  - текущий public receive pipeline для video.
+- Связи:
+  - использует `Depacketizer` и `IVideoUnitReconstructor`.
+- Сущности:
+  - `VideoReceivePipelineConfig`
+    - `depacketizer`
+    - `reconstructor`
+  - `VideoReceivePipeline`
+    - ctor `(const VideoReceivePipelineConfig&)`
+    - `push(const PacketView&) -> std::vector<ReconstructedVideoFrame>`
+    - `reset()`
+
+### libs/st2110core/include/st2110/video_receive_semantics.hpp
+- Роль:
+  - mode-aware abstraction для unit kind, completion policy и packet grouping key.
+  - ключевая точка локализации различий между `Progressive | Interlaced | PsF`.
+- Связи:
+  - используется `Depacketizer`, `FrameAssembler`, future non-progressive support.
+- Сущности:
+  - `VideoAssemblyUnitKind`
+    - `Frame`
+    - `Field`
+    - `Segment`
+  - `VideoReceiveCompletionPolicy`
+    - `unit_kind`
+    - `marker_terminates_current_unit`
+    - `key_change_terminates_previous_unit`
+  - `VideoAssemblyKey`
+    - `unit_kind`
+    - `rtp_timestamp`
+    - `sub_unit_index`
+    - `operator==`
+  - `video_assembly_unit_kind(VideoScanMode)`
+  - `video_receive_completion_policy(VideoScanMode)`
+  - `video_packet_assembly_key(VideoScanMode, const PacketView&)`
+  - `same_video_assembly_key(const VideoAssemblyKey&, const VideoAssemblyKey&)`
+  - Текущий runtime status:
+    - `Progressive` реализован;
+    - `Interlaced` / `PsF` пока локализованно `Unsupported`.
+
+### libs/st2110core/include/st2110/video_scan_mode.hpp
+- Роль:
+  - enum transport/assembly scan mode, независимый от `PixelFormat`.
+- Связи:
+  - используется в config, semantics, depacketizer, placement, reconstructor и future signaling.
+- Сущности:
+  - `enum class VideoScanMode`
+    - `Progressive`
+    - `Interlaced`
+    - `PsF`
+
+### libs/st2110core/include/st2110/video_segment_constraints.hpp
+- Роль:
+  - формат-специфичная валидация packet segment constraints.
+- Связи:
+  - используется segment placement layer;
+  - отделяет generic ST2110-20 parsing от format-specific receive constraints.
+- Сущности:
+  - `VideoSegmentConstraints`
+    - `pgroup_bytes`
+    - `offset_alignment_samples`
+  - `video_segment_constraints(PixelFormat)`
+  - `validate_video_segment_for_format(PixelFormat, const SrdHeader&, ByteSpan)`
+  - Текущий MVP format:
+    - `UYVY`: `pgroup_bytes = 4`, `offset_alignment_samples = 2`.
+
+### libs/st2110core/include/st2110/video_segment_placement.hpp
+- Роль:
+  - mode-aware + format-aware mapping от semantics packet segment’а к byte-oriented frame write operation.
+- Связи:
+  - используется `Depacketizer`;
+  - держит локализованную связь между `SrdHeader` semantics и `FrameAssembler::write_segment(...)`.
+- Сущности:
+  - `VideoFrameWriteOp`
+    - `plane`
+    - `row`
+    - `byte_offset`
+    - `bytes`
+  - `map_progressive_segment_to_frame_write(PixelFormat, const SrdSegmentView&)`
+  - `map_interlaced_segment_to_frame_write(...)`
+  - `map_psf_segment_to_frame_write(...)`
+  - `map_video_segment_to_frame_write(PixelFormat, VideoScanMode, const SrdSegmentView&)`
+  - Текущий runtime status:
+    - реализован `Progressive + UYVY`;
+    - `Interlaced` / `PsF` пока локализованно `Unsupported`.
+
+### libs/st2110core/include/st2110/video_signaling.hpp
+- Роль:
+  - будущая standards-aware signaling boundary для video stream description.
+  - относится к задаче `069B`, пока файл черновой/не завершен.
+- Связи:
+  - должен связать SDP/signaling model с internal receive pipeline config и packet parse policy.
+- Сущности (planned / draft):
+  - `MediaClockMode`
+  - `TimestampMode`
+  - `ReferenceClockKind`
+  - `VideoStreamSignaling`
+  - `validate_video_stream_signaling(...)`
+- Статус:
+  - файл не завершен;
+  - нельзя считать текущим стабильным API до выполнения `069B`.
+
+### libs/st2110core/include/st2110/video_unit_reconstruction.hpp
+- Роль:
+  - слой реконструкции final output frame из generic assembled video units.
+  - отделяет depacketizer unit semantics от final frame reconstruction policy.
+- Связи:
+  - используется `VideoReceivePipeline`;
+  - в будущем здесь должны жить field/segment pairing policies для interlaced/PsF.
+- Сущности:
+  - `ReconstructedVideoFrame`
+    - `frame`
+    - `rtp_timestamp`
+    - `complete`
+    - `partial()`
+  - `VideoUnitReconstructorConfig`
+    - `format`
+    - `scan_mode`
+  - `IVideoUnitReconstructor`
+    - `push(AssembledVideoUnit)`
+    - `reset()`
+  - `ProgressiveVideoUnitReconstructor`
+    - MVP-реализация для assembled frame -> reconstructed frame.
+  - `make_video_unit_reconstructor(const VideoUnitReconstructorConfig&)`
+  - Текущий runtime status:
+    - `Progressive` реализован;
+    - `Interlaced` / `PsF` пока локализованно `Unsupported`.
+
+### libs/st2110core/src/stub.cpp
+- Роль:
+  - временная `.cpp` единица для сборки статической библиотеки `st2110core`.
+- Связи:
+  - архитектурного значения не имеет;
+  - может быть удалена/заменена по мере появления реальных `.cpp` файлов.
+- Сущности:
+  - `stub()`
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -105,6 +632,7 @@
 - [ ] S010: Current video receive path is driven by manual config only and does not yet expose a standards-aware SDP/signaling model. ST 2110-10 / -20 / -21 require or define stream interpretation/signaling through SDP attributes such as video sampling/depth/packing/framerate and timing-related attributes including `mediaclk`, `ts-refclk`, `MAXUDP`, `TSMODE`, `TSDELAY`, and sender timing parameters. This signaling path must become a first-class modeled boundary rather than an implicit out-of-band assumption.
 - [ ] S011: The current timestamp-strategy plan is still phrased as if internal video timestamps could be derived only from local fps cadence or arrival-time smoothing. For standards-aware ST 2110 receive, internal presentation timestamps must be mapped from RTP timestamp domain and associated clock/signaling model, not from a standalone frame counter alone. The timestamp plan must therefore be reworked around RTP/clock-based mapping.
 - [ ] S012: Receiver timing / conformance assumptions from ST 2110-21 are not yet represented in the architecture. The project currently has reorder/depacketize logic but no explicit model for receiver timing class/capability, dependence on stream timing signaling, or the future boundary where ST 2110-21 conformance-related buffering/tolerance behavior will live.
+- [ ] S013: `parse_packet_view_staged()` currently accepts arbitrary trailing octets after the bytes covered by `SRD Length` values. ST 2110-20 allows octets after the last Sample Row Data Segment only as terminal field/frame padding, and GPM/BPM padding octets are zero-valued. This must be validated through a localized packing-mode-aware / mode-aware boundary rather than silently tolerated on any packet.
 ---
 
 # Phase 1 — MVP
@@ -152,6 +680,12 @@
   - define default behavior when `MAXUDP` is absent
   - keep pure wire-format parsing separate from SDP/signaling-derived sizing policy
   - document/localize the current stance on fragmented IP datagrams
+  - add focused positive/negative tests
+- [ ] 046B: Add localized validation for trailing payload padding semantics
+  - distinguish bytes covered by SRD segments from optional trailing payload padding
+  - for current MVP progressive path, allow trailing padding only where current completion / packing policy permits terminal-packet padding
+  - validate that accepted padding octets are zero-valued
+  - keep generic `PacketView` parsing separate from packing-mode / scan-mode-specific padding policy
   - add focused positive/negative tests
 - [x] 047: Add integrated packet-parse stats recording path
   - provide one real parse entry point that records `PacketParseStage` failures/successes
