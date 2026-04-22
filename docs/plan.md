@@ -702,6 +702,11 @@
     - `sender_type`
     - `troff_us`
     - `cmax`
+  - `VideoReceiverBootstrapConfig`
+    - bundle for signaling-driven receiver bootstrap
+    - `packet_parse_policy`
+    - `rx_config`
+    - `receive_pipeline_config`
   - `validate_video_sender_signaling(VideoSenderType, const std::optional<uint32_t>&, const std::optional<uint32_t>&)`
     - structural validation of ST 2110-21 sender timing fields:
       - `Narrow` => `troff_us` absent, `cmax` absent
@@ -764,10 +769,17 @@
     - explicit adapter from signaling model to runtime/manual `RxVideoConfig`
     - maps runtime properties from signaling model plus transport/network inputs
     - validates signaling first, then validates signaling->pixel-format projection, then validates the projected runtime config
+  - `video_receiver_bootstrap_config_from_video_stream_signaling(const VideoStreamSignaling&, uint16_t, uint8_t, std::string, std::string, PartialFramePolicy) -> std::expected<VideoReceiverBootstrapConfig, Error>`
+    - explicit signaling-driven receiver bootstrap composition boundary
+    - composes packet parse policy, manual/backend-facing `RxVideoConfig`, and runtime `VideoReceivePipelineConfig`
+    - does not instantiate runtime objects
+    - keeps transport/network fields and `PartialFramePolicy` as explicit non-signaled inputs
 - Примечание:
   - signaling model уже выделяет standards-aware media-description representation отдельно от internal runtime/storage format.
   - текущая runtime-реализация projection boundary пока локализованно поддерживает только ограниченный набор signaling combinations; это допустимое MVP-ограничение, пока расширение идет через уже существующий `pixel_format_from_video_stream_signaling(...)`, а не через переделку model shape.
-  - signaling-driven projection в `DepacketizerConfig`, `VideoUnitReconstructorConfig` и `VideoReceivePipelineConfig` теперь существует как отдельная архитектурная boundary; detailed SDP parsing, primary receiver bootstrap и receiver timing integration остаются дальнейшими задачами `069B5`, `069C`, `069D`.
+  - signaling-driven projection в `DepacketizerConfig`, `VideoUnitReconstructorConfig` и `VideoReceivePipelineConfig` теперь существует как отдельная архитектурная boundary.
+  - signaling-driven receiver bootstrap теперь также существует как отдельная composition boundary через `VideoReceiverBootstrapConfig` и `video_receiver_bootstrap_config_from_video_stream_signaling(...)`, при этом manual/synthetic path сохраняется параллельно.
+  - detailed SDP parsing и receiver timing integration остаются дальнейшими задачами `069C`, `069D`, `069E`.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -1048,7 +1060,7 @@
     - derive `VideoReceivePipelineConfig` from signaling model
     - keep runtime policy inputs that are not signaled (for example `PartialFramePolicy`) as explicit adapter parameters rather than hiding them inside signaling model
     - ensure future non-progressive modes are projected structurally without baking runtime-support assumptions into the adapter
-  - [ ] 069B5: Define the runtime integration boundary where signaling-derived config becomes the primary receiver bootstrap path
+  - [x] 069B5: Define the runtime integration boundary where signaling-derived config becomes the primary receiver bootstrap path
     - make signaling-derived config a first-class runtime input alongside the current manual/synthetic path
     - keep current manual-config path usable for tests and scaffolding
     - do not require full SDP parser yet; only make the receiver-side integration boundary explicit

@@ -160,6 +160,12 @@ namespace st2110 {
         std::optional <uint32_t> cmax{};
     };
 
+    struct VideoReceiverBootstrapConfig {
+        PacketParsePolicy packet_parse_policy{};
+        RxVideoConfig rx_config{};
+        VideoReceivePipelineConfig receive_pipeline_config{};
+    };
+
     inline Error validate_video_sender_signaling(
             VideoSenderType sender_type,
             const std::optional <uint32_t> &troff_us,
@@ -551,6 +557,41 @@ namespace st2110 {
             return std::unexpected(err);
         }
         return res;
+    }
+
+    inline std::expected <VideoReceiverBootstrapConfig, Error>
+    video_receiver_bootstrap_config_from_video_stream_signaling(
+            const VideoStreamSignaling &signaling,
+            uint16_t udp_port,
+            uint8_t payload_type,
+            std::string local_ip,
+            std::string dest_ip,
+            PartialFramePolicy partial_frame_policy) {
+        if (Error err = validate_video_stream_signaling(signaling); err != Error::Ok) {
+            return std::unexpected(err);
+        }
+
+        auto policy = packet_parse_policy_from_video_stream_signaling(signaling);
+
+        auto expected_rx_config = rx_video_config_from_video_stream_signaling(signaling, udp_port, payload_type,
+                                                                              std::move(local_ip), std::move(dest_ip));
+        if (!expected_rx_config.has_value()) {
+            return std::unexpected(std::move(expected_rx_config.error()));
+        }
+        auto rx_config = *expected_rx_config;
+
+        auto expected_receive_pipeline = video_receive_pipeline_config_from_video_stream_signaling(signaling,
+                                                                                                   partial_frame_policy);
+        if (!expected_receive_pipeline.has_value()) {
+            return std::unexpected(std::move(expected_receive_pipeline.error()));
+        }
+        auto receive_pipeline = *expected_receive_pipeline;
+
+        return VideoReceiverBootstrapConfig{
+                .packet_parse_policy = policy,
+                .rx_config = rx_config,
+                .receive_pipeline_config = receive_pipeline
+        };
     }
 }
 
