@@ -560,7 +560,7 @@
   - файл не завершен;
   - нельзя считать текущим стабильным API до выполнения `069B`.
 
-### libs/st2110core/include/st2110/video_unit_reconstruction.hpp
+### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
   - слой реконструкции final output frame из generic assembled video units.
   - отделяет depacketizer unit semantics от final frame reconstruction policy.
