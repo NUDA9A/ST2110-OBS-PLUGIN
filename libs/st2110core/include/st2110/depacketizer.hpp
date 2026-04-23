@@ -8,6 +8,7 @@
 #include "video_receive_semantics.hpp"
 #include "video_segment_placement.hpp"
 #include "video_packet_padding.hpp"
+#include "video_packing_mode.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -23,6 +24,7 @@ namespace st2110 {
         PixelFormat format = PixelFormat::UYVY;
         PartialFramePolicy partial_frame_policy = PartialFramePolicy::EmitWithFlag;
         VideoScanMode scan_mode = VideoScanMode::Progressive;
+        VideoPackingMode packing_mode = VideoPackingMode::Gpm;
     };
 
     struct DepacketizerAssemblyState {
@@ -134,7 +136,7 @@ namespace st2110 {
 
     private:
         void validate_padding(const PacketView& packet) {
-            Error err = validate_video_packet_trailing_padding(cfg_.scan_mode, packet);
+            Error err = validate_video_packet_trailing_padding(cfg_.packing_mode, cfg_.scan_mode, packet);
             if (err == Error::InvalidValue) {
                 throw std::invalid_argument("Invalid trailing payload padding for current video scan mode");
             }
@@ -186,7 +188,7 @@ namespace st2110 {
 
         void write_packet_segments(const PacketView& packet) {
             for (std::size_t i = 0; i < packet.segment_count; ++i) {
-                auto expected_op = map_video_segment_to_frame_write(cfg_.format, cfg_.scan_mode, packet.segments[i]);
+                auto expected_op = map_video_segment_to_frame_write(cfg_.packing_mode, cfg_.format, cfg_.scan_mode, packet.segments[i]);
                 if (!expected_op.has_value()) {
                     Error err = expected_op.error();
                     if (err == Error::InvalidValue) {

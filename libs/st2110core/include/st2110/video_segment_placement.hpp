@@ -7,6 +7,7 @@
 #include "video_scan_mode.hpp"
 #include "packet_view.hpp"
 #include "video_segment_constraints.hpp"
+#include "video_packing_mode.hpp"
 
 #include <expected>
 
@@ -48,9 +49,13 @@ namespace st2110 {
 
     [[nodiscard]] inline std::expected<VideoFrameWriteOp, Error>
     map_video_segment_to_frame_write(
+            VideoPackingMode packing_mode,
             PixelFormat format,
             VideoScanMode scan_mode,
             const SrdSegmentView& segment) {
+        if (Error err = validate_runtime_video_packing_mode_support(packing_mode); err != Error::Ok) {
+            return std::unexpected(err);
+        }
         switch (scan_mode) {
             case VideoScanMode::Progressive:
                 return map_progressive_segment_to_frame_write(format, segment);

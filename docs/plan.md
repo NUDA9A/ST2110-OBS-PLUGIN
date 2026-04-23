@@ -176,15 +176,16 @@
 ### libs/st2110core/include/st2110/depacketizer.hpp
 - Роль:
   - packet-to-video-unit assembly layer.
-  - собирает `PacketView` в `AssembledVideoUnit`, используя mode-aware grouping/completion, format-aware placement и mode-aware packet padding validation.
+  - собирает `PacketView` в `AssembledVideoUnit`, используя mode-aware grouping/completion, packing-aware + format-aware placement и packing-aware + mode-aware packet padding validation.
 - Связи:
-  - зависит от `PacketView`, `FrameAssembler`, `VideoReceiveSemantics`, `VideoSegmentPlacement`, `VideoPacketPadding`, `Stats`.
+  - зависит от `PacketView`, `FrameAssembler`, `VideoReceiveSemantics`, `VideoSegmentPlacement`, `VideoPacketPadding`, `VideoPackingMode`, `Stats`.
   - выше него находится `VideoReceivePipeline`, ниже — packet parsing.
 - Сущности:
   - `DepacketizerConfig`
     - `width`, `height`, `format`
     - `partial_frame_policy`
     - `scan_mode`
+    - `packing_mode`
   - `DepacketizerAssemblyState`
     - `current_key` — текущий `VideoAssemblyKey` в сборке.
   - `Depacketizer`
@@ -199,11 +200,12 @@
   - Внутренние responsibilities:
     - берет completion policy через `video_receive_completion_policy(...)`;
     - берет assembly key через `video_packet_assembly_key(...)`;
-    - валидирует trailing payload padding через `validate_video_packet_trailing_padding(...)` до изменения assembly state;
-    - пишет сегменты через `map_video_segment_to_frame_write(...)`;
-    - пока runtime-реализация только для `Progressive`, non-progressive локализованно отвергается.
+    - валидирует trailing payload padding через `validate_video_packet_trailing_padding(cfg_.packing_mode, cfg_.scan_mode, ...)` до изменения assembly state;
+    - пишет сегменты через `map_video_segment_to_frame_write(cfg_.packing_mode, cfg_.format, cfg_.scan_mode, ...)`;
+    - пока runtime-реализация только для `Progressive + GPM`, non-progressive и `BPM` локализованно отвергаются через уже существующие boundaries.
 - Примечание:
-  - packing mode как runtime axis должен быть доведен сюда уже на уровне MVP architecture; если часть packing branches еще не реализована, они должны быть локализованно ограничены, а не отсутствовать в shape/config path.
+  - packing mode теперь реально доведен до runtime config и runtime dispatch points;
+  - дальнейшая реализация BPM должна заполнять уже существующие packing-aware branches, а не менять shape depacketizer API.
 
 ### libs/st2110core/include/st2110/endian.hpp
 - Роль:
@@ -576,10 +578,11 @@
 
 ### libs/st2110core/include/st2110/video_segment_placement.hpp
 - Роль:
-  - mode-aware + format-aware mapping от semantics packet segment’а к byte-oriented frame write operation.
+  - packing-aware + mode-aware + format-aware mapping от semantics packet segment’а к byte-oriented frame write operation.
 - Связи:
   - используется `Depacketizer`;
   - держит локализованную связь между `SrdHeader` semantics и `FrameAssembler::write_segment(...)`.
+  - использует `VideoPackingMode` как explicit runtime axis.
 - Сущности:
   - `VideoFrameWriteOp`
     - `plane`
@@ -589,197 +592,53 @@
   - `map_progressive_segment_to_frame_write(PixelFormat, const SrdSegmentView&)`
   - `map_interlaced_segment_to_frame_write(...)`
   - `map_psf_segment_to_frame_write(...)`
-  - `map_video_segment_to_frame_write(PixelFormat, VideoScanMode, const SrdSegmentView&)`
-  - Текущий runtime status:
-    - реализован `Progressive + UYVY`;
-    - `Interlaced` / `PsF` пока локализованно `Unsupported`.
+  - `map_video_segment_to_frame_write(VideoPackingMode, PixelFormat, VideoScanMode, const SrdSegmentView&)`
+    - packing-aware dispatcher boundary перед mode/format-specific mapping.
+- Текущий runtime status:
+  - реализован `GPM + Progressive + UYVY`;
+  - `BPM` пока локализованно `Unsupported` через explicit runtime-support boundary;
+  - `Interlaced` / `PsF` пока локализованно `Unsupported`.
 
 ### libs/st2110core/include/st2110/video_signaling.hpp
 - Роль:
-  - standards-aware signaling/model boundary для video stream description.
-  - задает типизированную модель ключевых video SDP/signaling свойств отдельно от low-level receive/depacketizer config и отдельно от internal runtime/storage `PixelFormat`.
+  - standards-aware signaling validation/projection boundary для video stream description.
+  - содержит validation helper’ы и explicit adapters/projections от signaling model к runtime/manual config и signaling-driven receiver bootstrap.
 - Связи:
-  - использует `PixelFormat`, `VideoScanMode`, `PacketParsePolicy`, `RxVideoConfig`, `DepacketizerConfig`, `VideoUnitReconstructorConfig`, `VideoReceivePipelineConfig`, общие config validation helper’ы.
-  - связывает signaling model с packet parse policy, manual `RxVideoConfig` path и runtime video receive pipeline config path.
-  - должна дальше расширяться в рамках `069B`, а затем состыковаться с receiver timing boundary из `069C`.
+  - использует signaling model declarations из `signaling_structs.hpp`;
+  - использует `PixelFormat`, `VideoScanMode`, `VideoPackingMode`, `PacketParsePolicy`, `RxVideoConfig`, `DepacketizerConfig`, `VideoUnitReconstructorConfig`, `VideoReceivePipelineConfig`, общие config validation helper’ы.
+  - связывает signaling model с packet parse policy, manual `RxVideoConfig` path, runtime video receive pipeline config path и signaling-driven bootstrap composition path.
 - Сущности:
-  - `VideoPackingMode`
-    - `Gpm`
-    - `Bpm`
-  - `MediaClockMode`
-    - `Direct`
-    - `Sender`
-  - `TimestampMode`
-    - `Samp`
-    - `New`
-    - `Pres`
-  - `ReferenceClockKind`
-    - `LocalMac`
-    - `Ptp`
-    - `Other`
-  - `PtpReferenceClock`
-    - `clock_identity`
-    - `domain_number`
-    - `traceable`
-  - `LocalMacReferenceClock`
-    - `mac`
-  - `ReferenceClock`
-    - `kind`
-    - `ptp`
-    - `local_mac`
-    - `raw_token`
-  - `VideoSenderType`
-    - `Narrow`
-    - `NarrowLinear`
-    - `Wide`
-  - `VideoSampling`
-    - modeled representation for signaled `sampling`
-    - `Known`
-      - `YCbCr422`
-      - `YCbCr444`
-      - `YCbCr420`
-      - `RGB`
-      - `XYZ`
-      - `Key`
-      - `Other`
-    - `raw_token`
-  - `VideoBitDepth`
-    - modeled representation for signaled `depth`
-    - `bits`
-    - `floating_point`
-  - `VideoColorimetry`
-    - modeled representation for signaled `colorimetry`
-    - `Known`
-      - `Bt601`
-      - `Bt709`
-      - `Bt2020`
-      - `Bt2100`
-      - `St2065_1`
-      - `Other`
-    - `raw_token`
-  - `VideoTransferCharacteristicSystem`
-    - modeled representation for signaled `TCS`
-    - `Known`
-      - `SDR`
-      - `PQ`
-      - `HLG`
-      - `Linear`
-      - `Other`
-    - `raw_token`
-  - `VideoSignalStandard`
-    - modeled representation for signaled `SSN`
-    - `Known`
-      - `St2110_20_2017`
-      - `St2110_20_2022`
-      - `Other`
-    - `raw_token`
-  - `VideoRange`
-    - modeled representation for optional signaled `RANGE`
-    - `Known`
-      - `Narrow`
-      - `Full`
-      - `Other`
-    - `raw_token`
-  - `VideoMediaDescription`
-    - standards-aware modeled media-description subset, separate from runtime/storage concepts
-    - `sampling`
-    - `width`, `height`
-    - `fps_num`, `fps_den` — modeled representation of signaled `exactframerate`
-    - `depth`
-    - `colorimetry`
-    - `transfer_characteristic_system`
-    - `signal_standard`
-    - `range`
-  - `VideoStreamSignaling`
-    - `media`
-    - `scan_mode`
-    - `packing_mode`
-    - `max_udp_datagram_bytes`
-    - `media_clock_mode`
-    - `timestamp_mode`
-    - `reference_clock`
-    - `ts_delay_sender_ticks`
-    - `sender_type`
-    - `troff_us`
-    - `cmax`
-  - `VideoReceiverBootstrapConfig`
-    - bundle for signaling-driven receiver bootstrap
-    - `packet_parse_policy`
-    - `rx_config`
-    - `receive_pipeline_config`
-  - `validate_video_sender_signaling(VideoSenderType, const std::optional<uint32_t>&, const std::optional<uint32_t>&)`
-    - structural validation of ST 2110-21 sender timing fields:
-      - `Narrow` => `troff_us` absent, `cmax` absent
-      - `NarrowLinear` => `troff_us` absent, `cmax` absent
-      - `Wide` => `troff_us` absent, `cmax` present and non-zero
-  - `validate_reference_clock(const ReferenceClock&)`
-    - structural validation of `ReferenceClock` consistency:
-      - `Ptp` => only `ptp`
-      - `LocalMac` => only `local_mac`
-      - `Other` => only non-empty `raw_token`
-  - `validate_media_clock_mode(MediaClockMode)`
-    - validates known `mediaclk` modeling enum values.
-  - `validate_timestamp_mode(TimestampMode)`
-    - validates known `TSMODE` modeling enum values.
-  - `validate_video_timing_signaling(MediaClockMode, TimestampMode, uint32_t)`
-    - localized timing-signaling validation boundary for:
-      - `mediaclk`
-      - `TSMODE`
-      - future `TSDELAY` semantics
-    - current MVP behavior:
-      - validates enum values explicitly
-      - carries `ts_delay_sender_ticks` through the boundary
-      - does not yet impose detailed `TSDELAY` semantics
-  - `validate_video_sampling(const VideoSampling&)`
-  - `validate_video_bit_depth(const VideoBitDepth&)`
-  - `validate_video_colorimetry(const VideoColorimetry&)`
-  - `validate_video_transfer_characteristic_system(const VideoTransferCharacteristicSystem&)`
-  - `validate_video_signal_standard(const VideoSignalStandard&)`
-  - `validate_video_range(const VideoRange&)`
-    - structural validation helpers for modeled signaled media-description fields.
-  - `validate_video_media_description(const VideoMediaDescription&)`
-    - validates modeled signaled media-description independently from runtime storage projection.
-  - `validate_video_stream_signaling(const VideoStreamSignaling&)`
-    - базовая structural/config validation signaling model, включая:
-      - media description
-      - timing signaling
-      - sender timing fields
-      - `ReferenceClock`
-  - `pixel_format_from_video_stream_signaling(const VideoStreamSignaling&) -> std::expected<PixelFormat, Error>`
-    - localized projection boundary from standards-aware signaled media description to current internal runtime/storage `PixelFormat`
-    - current MVP runtime support:
-      - `YCbCr422 + 8-bit integer -> UYVY`
-      - other structurally valid combinations may currently return `Unsupported`
-  - `packet_parse_policy_from_video_stream_signaling(const VideoStreamSignaling&)`
-    - выводит `PacketParsePolicy` из signaling model.
-  - `depacketizer_config_from_video_stream_signaling(const VideoStreamSignaling&, PartialFramePolicy) -> std::expected<DepacketizerConfig, Error>`
-    - explicit signaling -> runtime depacketizer config projection
-    - keeps `PartialFramePolicy` as explicit non-signaled runtime input
-    - projects `scan_mode` structurally and uses signaling->pixel-format projection boundary
-  - `video_unit_reconstructor_config_from_video_stream_signaling(const VideoStreamSignaling&) -> std::expected<VideoUnitReconstructorConfig, Error>`
-    - explicit signaling -> runtime reconstructor config projection
-    - projects `scan_mode` structurally and uses signaling->pixel-format projection boundary
-  - `video_receive_pipeline_config_from_video_stream_signaling(const VideoStreamSignaling&, PartialFramePolicy) -> std::expected<VideoReceivePipelineConfig, Error>`
-    - explicit signaling -> runtime receive pipeline config projection
-    - composes depacketizer + reconstructor configs without creating runtime objects
-    - keeps non-signaled runtime policy inputs explicit
-  - `validate_video_stream_signaling_against_rx_video_config(const VideoStreamSignaling&, const RxVideoConfig&)`
-    - проверяет согласованность signaling model и manual video config path по ключевым runtime video properties, используя explicit signaling->pixel-format projection.
-  - `rx_video_config_from_video_stream_signaling(const VideoStreamSignaling&, uint16_t, uint8_t, std::string, std::string)`
-    - explicit adapter from signaling model to runtime/manual `RxVideoConfig`
-    - maps runtime properties from signaling model plus transport/network inputs
-    - validates signaling first, then validates signaling->pixel-format projection, then validates the projected runtime config
-  - `video_receiver_bootstrap_config_from_video_stream_signaling(const VideoStreamSignaling&, uint16_t, uint8_t, std::string, std::string, PartialFramePolicy) -> std::expected<VideoReceiverBootstrapConfig, Error>`
-    - explicit signaling-driven receiver bootstrap composition boundary
-    - composes packet parse policy, manual/backend-facing `RxVideoConfig`, and runtime `VideoReceivePipelineConfig`
-    - does not instantiate runtime objects
-    - keeps transport/network fields and `PartialFramePolicy` as explicit non-signaled inputs
+  - structural validation:
+    - `validate_video_sender_signaling(...)`
+    - `validate_reference_clock(...)`
+    - `validate_media_clock_mode(...)`
+    - `validate_timestamp_mode(...)`
+    - `validate_video_timing_signaling(...)`
+    - `validate_video_sampling(...)`
+    - `validate_video_bit_depth(...)`
+    - `validate_video_colorimetry(...)`
+    - `validate_video_transfer_characteristic_system(...)`
+    - `validate_video_signal_standard(...)`
+    - `validate_video_range(...)`
+    - `validate_video_media_description(...)`
+    - `validate_video_stream_signaling(...)`
+  - projection boundary:
+    - `pixel_format_from_video_stream_signaling(...) -> std::expected<PixelFormat, Error>`
+  - signaling -> runtime/manual adapters:
+    - `packet_parse_policy_from_video_stream_signaling(...)`
+    - `depacketizer_config_from_video_stream_signaling(...)`
+    - `video_unit_reconstructor_config_from_video_stream_signaling(...)`
+    - `video_receive_pipeline_config_from_video_stream_signaling(...)`
+    - `rx_video_config_from_video_stream_signaling(...)`
+    - `validate_video_stream_signaling_against_rx_video_config(...)`
+    - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
+  - packing-mode handling:
+    - runtime projections to depacketizer / pipeline / bootstrap explicitly validate packing-mode support through `validate_runtime_video_packing_mode_support(...)`
+    - structural signaling validation itself does **not** reject `BPM`
 - Примечание:
-  - signaling model уже выделяет standards-aware media-description representation отдельно от internal runtime/storage format.
-  - текущая runtime-реализация projection boundary пока локализованно поддерживает только ограниченный набор signaling combinations; это допустимое MVP-ограничение, пока расширение идет через уже существующий `pixel_format_from_video_stream_signaling(...)`, а не через переделку model shape.
-  - signaling-driven projection в `DepacketizerConfig`, `VideoUnitReconstructorConfig` и `VideoReceivePipelineConfig` теперь существует как отдельная архитектурная boundary.
-  - signaling-driven receiver bootstrap теперь также существует как отдельная composition boundary через `VideoReceiverBootstrapConfig` и `video_receiver_bootstrap_config_from_video_stream_signaling(...)`, при этом manual/synthetic path сохраняется параллельно.
-  - detailed SDP parsing и receiver timing integration остаются дальнейшими задачами `069C`, `069D`, `069E`.
+  - signaling model остается structurally broader than current runtime support;
+  - `BPM` now remains valid inside signaling model but is rejected at explicit runtime-support boundaries for depacketizer/pipeline/bootstrap projections;
+  - detailed SDP parsing и receiver timing integration остаются дальнейшими задачами `069C` и `069D`; fuller BPM runtime behavior остается задачей `229`.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -818,11 +677,11 @@
 
 ### libs/st2110core/include/st2110/video_packet_padding.hpp
 - Роль:
-  - локализованная mode-aware boundary для валидации trailing payload padding после Sample Row Data segments.
+  - локализованная packing-aware + mode-aware boundary для валидации trailing payload padding после Sample Row Data segments.
 - Связи:
-  - использует `PacketView`, `VideoScanMode`, `Error`;
+  - использует `PacketView`, `VideoPackingMode`, `VideoScanMode`, `Error`;
   - вызывается из `Depacketizer`;
-  - отделяет generic packet parsing от mode-aware решения о допустимости trailing bytes.
+  - отделяет generic packet parsing от packing/mode-aware решения о допустимости trailing bytes.
 - Сущности:
   - `validate_progressive_video_packet_trailing_padding(const PacketView&)`
     - для MVP progressive path:
@@ -834,11 +693,74 @@
     - пока `Unsupported`
   - `validate_psf_video_packet_trailing_padding(const PacketView&)`
     - пока `Unsupported`
-  - `validate_video_packet_trailing_padding(VideoScanMode, const PacketView&)`
-    - scan-mode dispatcher к mode-specific helper’ам.
+  - `validate_video_packet_trailing_padding(VideoPackingMode, VideoScanMode, const PacketView&)`
+    - сначала проходит через packing-mode runtime-support boundary;
+    - затем dispatch к mode-specific helper’ам.
 - Примечание:
-  - current padding validation boundary уже должна существовать архитектурно в MVP и позже только заполняться implementation branches;
-  - packing-mode-specific behavior must also be able to plug into this area without reshaping the rest of the receive pipeline.
+  - current padding validation boundary уже учитывает packing mode как explicit runtime axis;
+  - поздняя BPM-реализация должна расширять именно этот boundary, а не менять остальной receive pipeline.
+
+### libs/st2110core/include/st2110/video_packing_mode.hpp
+- Роль:
+  - отдельная runtime/signaling axis для video packing mode.
+  - фиксирует packing mode как самостоятельную ось модели, не сводимую к `PixelFormat` или `VideoScanMode`.
+- Связи:
+  - используется signaling model (`VideoStreamSignaling`), runtime config (`DepacketizerConfig`), packet padding validation и segment placement.
+  - является локализованной точкой будущего расширения для `GPM | BPM`-specific runtime behavior.
+- Сущности:
+  - `enum class VideoPackingMode`
+    - `Gpm`
+    - `Bpm`
+  - `validate_runtime_video_packing_mode_support(VideoPackingMode)`
+    - текущая localized runtime-support boundary:
+      - `Gpm` => `Ok`
+      - `Bpm` => `Unsupported`
+      - invalid enum => `InvalidValue`
+- Примечание:
+  - в MVP этот файл уже заводит packing mode как explicit runtime axis;
+  - текущая реализация поведения остается только для `GPM`, но `BPM` теперь отвергается в локализованной boundary, а не игнорируется архитектурно.
+
+### libs/st2110core/include/st2110/signaling_structs.hpp
+- Роль:
+  - выделенный header для standards-aware signaling model structs/enums.
+  - отделяет shape signaling model от validation/projection logic из `video_signaling.hpp`.
+- Связи:
+  - использует `VideoScanMode`, `VideoPackingMode`, `PacketParsePolicy`, `RxVideoConfig`, `VideoReceivePipelineConfig`.
+  - включается из `video_signaling.hpp` и используется как общая декларативная основа signaling/runtime bootstrap boundary.
+- Сущности:
+  - `MediaClockMode`
+  - `TimestampMode`
+  - `ReferenceClockKind`
+  - `PtpReferenceClock`
+  - `LocalMacReferenceClock`
+  - `ReferenceClock`
+  - `VideoSenderType`
+  - `VideoSampling`
+  - `VideoBitDepth`
+  - `VideoColorimetry`
+  - `VideoTransferCharacteristicSystem`
+  - `VideoSignalStandard`
+  - `VideoRange`
+  - `VideoMediaDescription`
+  - `VideoStreamSignaling`
+    - `media`
+    - `scan_mode`
+    - `packing_mode`
+    - `max_udp_datagram_bytes`
+    - `media_clock_mode`
+    - `timestamp_mode`
+    - `reference_clock`
+    - `ts_delay_sender_ticks`
+    - `sender_type`
+    - `troff_us`
+    - `cmax`
+  - `VideoReceiverBootstrapConfig`
+    - `packet_parse_policy`
+    - `rx_config`
+    - `receive_pipeline_config`
+- Примечание:
+  - signaling model shape теперь вынесен отдельно от validation/projection helper’ов;
+  - это упрощает дальнейшее расширение SDP parsing/ingestion path без смешивания model declarations и adapter logic.
 
 ## Done
 - [x] 001: Repo skeleton + buildable stub
@@ -879,7 +801,7 @@
 - [ ] S012: Receiver timing / conformance assumptions from ST 2110-21 are not yet represented in the architecture. The project currently has reorder/depacketize logic but no explicit model for receiver timing class/capability, dependence on stream timing signaling, or the future boundary where ST 2110-21 conformance-related buffering/tolerance behavior will live.
 - [x] S013: `parse_packet_view_staged()` currently accepts arbitrary trailing octets after the bytes covered by `SRD Length` values. ST 2110-20 allows octets after the last Sample Row Data Segment only as terminal field/frame padding, and GPM/BPM padding octets are zero-valued. This must be validated through a localized packing-mode-aware / mode-aware boundary rather than silently tolerated on any packet.
 - [ ] S014: Current RTP parsing/payload extraction path does not yet provide explicit receiver-side tolerance to RTP header extensions. For a standards-aware receiver, packets with valid RTP header extensions must still have payload location derived correctly rather than being handled only under an implicit “no extensions” assumption. This must be fixed locally in RTP parsing / payload extraction logic and not spread across the rest of the receive pipeline.
-- [ ] S015: `VideoPackingMode` is currently modeled in video signaling, but it is not yet carried as an explicit runtime receive axis through depacketizer/runtime config/padding validation. The current MVP runtime path must not stay architecturally GPM-only. If BPM remains unsupported in MVP runtime behavior, that limitation must be explicit, localized, and implemented as an already-existing branch/boundary rather than as absence of architecture.
+- [x] S015: `VideoPackingMode` is currently modeled in video signaling, but it is not yet carried as an explicit runtime receive axis through depacketizer/runtime config/padding validation. The current MVP runtime path must not stay architecturally GPM-only. If BPM remains unsupported in MVP runtime behavior, that limitation must be explicit, localized, and implemented as an already-existing branch/boundary rather than as absence of architecture.
 - [x] S016: Current standards-aware video signaling representation is still too close to internal runtime/storage concepts and does not yet model enough signaled SDP/media properties separately from internal `PixelFormat` / storage format. This must be expanded so signaled stream description is not collapsed prematurely into runtime-only concepts. In particular, the modeled representation must explicitly account for signaled stream-description properties such as `sampling`, `width`, `height`, `exactframerate`, `depth`, `colorimetry`, `TCS`, `PM`, and `SSN`, with `RANGE` allowed as optional / future-expansion coverage.
 - [ ] S017: Audio path currently has no fully completed first-class ST 2110-30 signaling/model boundary, no explicit structural validation layer for that model, no explicit SDP ingestion path into such a model, and no clear modeled representation for signaled channel order / channel mapping distinct from internal audio buffer layout. The audio MVP target must be made explicit as a **Level A-oriented receiver baseline** (`48 kHz`, `1 ms packet time`, `1..8 channels`), and these axes/boundaries must be architecturally introduced in MVP even if some runtime variants remain later implementation work.
 - [ ] S018: Receiver-side playout / reconstruction timing boundary is not yet explicit. Mapping from RTP timestamp domain to internal `ts_ns`, receiver playout timing policy, and receiver-side offset/delay configuration must live above reorder/depacketize logic rather than collapsing into arrival-time smoothing or local cadence heuristics.
@@ -1080,7 +1002,7 @@
   - include signaled video media properties, timing-related signaling, and transport/signaling fields required by current modeled boundary
   - keep parsing separate from validation and separate from runtime config projection
   - add focused tests for valid/invalid SDP field mapping
-- [ ] 069E: Thread `VideoPackingMode` into runtime receive path as an explicit axis
+- [x] 069E: Thread `VideoPackingMode` into runtime receive path as an explicit axis
   - **цель этой задачи в MVP — протащить packing mode как runtime/config/policy axis уже сейчас, even if часть branches пока останется `Unsupported`**
   - extend runtime receive configs / projections so packing mode reaches depacketizer, packet interpretation, and padding-validation boundaries
   - localize GPM/BPM-specific receive rules instead of leaving packing behavior implicit

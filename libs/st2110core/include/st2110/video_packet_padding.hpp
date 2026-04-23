@@ -4,6 +4,7 @@
 #include "video_scan_mode.hpp"
 #include "packet_view.hpp"
 #include "error.hpp"
+#include "video_packing_mode.hpp"
 
 namespace st2110 {
     inline Error validate_psf_video_packet_trailing_padding(const PacketView& pkt_view) {
@@ -32,7 +33,10 @@ namespace st2110 {
         return Error::Ok;
     }
 
-    inline Error validate_video_packet_trailing_padding(VideoScanMode scan_mode, const PacketView& pkt_view) {
+    inline Error validate_video_packet_trailing_padding(VideoPackingMode packing_mode, VideoScanMode scan_mode, const PacketView& pkt_view) {
+        if (Error err = validate_runtime_video_packing_mode_support(packing_mode); err != Error::Ok) {
+            return err;
+        }
         switch (scan_mode) {
             case VideoScanMode::Progressive:
                 return validate_progressive_video_packet_trailing_padding(pkt_view);
