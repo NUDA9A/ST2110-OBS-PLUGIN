@@ -97,6 +97,69 @@ static void test_extension_offset() {
     assert(h.payload_len == 1);
 }
 
+static void test_csrc_and_extension_offset() {
+    // CC=2 => 8 bytes CSRC
+    // X=1, len_words=2 => +4 bytes ext header +8 bytes ext data
+    // total header size = 12 + 8 + 4 + 8 = 32
+    const uint8_t pkt[] = {
+            0x92, 0x60,
+            0x00, 0x05,
+            0x00, 0x00, 0x00, 0x10,
+            0x00, 0x00, 0x00, 0x20,
+
+            0xAA, 0xBB, 0xCC, 0xDD,
+            0x11, 0x22, 0x33, 0x44,
+
+            0x10, 0x00,
+            0x00, 0x02,
+            0x01, 0x02, 0x03, 0x04,
+            0x05, 0x06, 0x07, 0x08,
+
+            0x99, 0x88
+    };
+
+    auto res = st2110::parse_rtp_header(st2110::ByteSpan{pkt});
+    assert(res.has_value());
+
+    const auto& h = res.value();
+    assert(h.extension_flag == true);
+    assert(h.csrc_count == 2);
+    assert(h.payload_offset == 32);
+    assert(h.payload_len == 2);
+}
+
+static void test_truncated_extension_header_is_short_packet() {
+    // X=1, but only 2 bytes remain after fixed RTP header
+    const uint8_t pkt[] = {
+            0x90, 0x70,
+            0x00, 0x01,
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x02,
+            0xBE, 0xDE
+    };
+
+    auto res = st2110::parse_rtp_header(st2110::ByteSpan{pkt});
+    assert(!res.has_value());
+    assert(res.error() == st2110::Error::ShortPacket);
+}
+
+static void test_truncated_extension_data_is_short_packet() {
+    // X=1, len_words=2 => need 8 bytes ext data, provide only 4
+    const uint8_t pkt[] = {
+            0x90, 0x70,
+            0x00, 0x01,
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x02,
+            0xBE, 0xDE,
+            0x00, 0x02,
+            0xDE, 0xAD, 0xBE, 0xEF
+    };
+
+    auto res = st2110::parse_rtp_header(st2110::ByteSpan{pkt});
+    assert(!res.has_value());
+    assert(res.error() == st2110::Error::ShortPacket);
+}
+
 static void test_padding() {
     // P=1, last byte says padding size = 4
     std::vector<uint8_t> pkt = {
@@ -114,6 +177,38 @@ static void test_padding() {
     const auto& h = res.value();
     assert(h.padding_flag == true);
     assert(h.payload_offset == 12);
+    assert(h.payload_len == 3);
+}
+
+static void test_padding_with_extension_and_csrc() {
+    // P=1, X=1, CC=1
+    // header = 12 + 4 + 4 + 4 = 24
+    // payload = 3 bytes
+    // padding = 2 bytes, last byte == 2
+    const uint8_t pkt[] = {
+            0xB1, 0x70,
+            0x00, 0x09,
+            0x00, 0x00, 0x00, 0x11,
+            0x00, 0x00, 0x00, 0x22,
+
+            0xCA, 0xFE, 0xBA, 0xBE,
+
+            0xBE, 0xDE,
+            0x00, 0x01,
+            0x10, 0x20, 0x30, 0x40,
+
+            0xAA, 0xBB, 0xCC,
+            0x00, 0x02
+    };
+
+    auto res = st2110::parse_rtp_header(st2110::ByteSpan{pkt});
+    assert(res.has_value());
+
+    const auto& h = res.value();
+    assert(h.padding_flag == true);
+    assert(h.extension_flag == true);
+    assert(h.csrc_count == 1);
+    assert(h.payload_offset == 24);
     assert(h.payload_len == 3);
 }
 
@@ -139,7 +234,11 @@ int main() {
     test_short_packet();
     test_csrc_offset();
     test_extension_offset();
+    test_csrc_and_extension_offset();
+    test_truncated_extension_header_is_short_packet();
+    test_truncated_extension_data_is_short_packet();
     test_padding();
+    test_padding_with_extension_and_csrc();
     test_invalid_padding();
     return 0;
 }

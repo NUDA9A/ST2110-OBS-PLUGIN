@@ -404,8 +404,9 @@
   - `seq_distance(uint16_t a, uint16_t b)`
   - `rtp_payload_span(ByteSpan, const RtpHeaderView&)`
 - Примечание:
-  - explicit receiver-side tolerance к RTP header extensions должна жить именно здесь / в связанном payload-span path;
-  - parser path должен быть архитектурно готов к корректному skipping extensions уже в MVP, даже если semantic interpretation extension data не требуется.
+  - receiver-side tolerance к RTP header extensions теперь локализована в `parse_rtp_header(...)`;
+  - `payload_offset` учитывает fixed RTP header, CSRC list и RFC 3550 header extension area;
+  - semantic interpretation extension data пока не выполняется, что допустимо для MVP.
 
 ### libs/st2110core/include/st2110/rx_config.hpp
 - Роль:
@@ -800,7 +801,7 @@
 - [ ] S011: The current timestamp-strategy plan is still phrased as if internal video timestamps could be derived only from local fps cadence or arrival-time smoothing. For standards-aware ST 2110 receive, internal presentation timestamps must be mapped from RTP timestamp domain and associated clock/signaling model, not from a standalone frame counter alone. The timestamp plan must therefore be reworked around RTP/clock-based mapping.
 - [ ] S012: Receiver timing / conformance assumptions from ST 2110-21 are not yet represented in the architecture. The project currently has reorder/depacketize logic but no explicit model for receiver timing class/capability, dependence on stream timing signaling, or the future boundary where ST 2110-21 conformance-related buffering/tolerance behavior will live.
 - [x] S013: `parse_packet_view_staged()` currently accepts arbitrary trailing octets after the bytes covered by `SRD Length` values. ST 2110-20 allows octets after the last Sample Row Data Segment only as terminal field/frame padding, and GPM/BPM padding octets are zero-valued. This must be validated through a localized packing-mode-aware / mode-aware boundary rather than silently tolerated on any packet.
-- [ ] S014: Current RTP parsing/payload extraction path does not yet provide explicit receiver-side tolerance to RTP header extensions. For a standards-aware receiver, packets with valid RTP header extensions must still have payload location derived correctly rather than being handled only under an implicit “no extensions” assumption. This must be fixed locally in RTP parsing / payload extraction logic and not spread across the rest of the receive pipeline.
+- [x] S014: Current RTP parsing/payload extraction path does not yet provide explicit receiver-side tolerance to RTP header extensions. For a standards-aware receiver, packets with valid RTP header extensions must still have payload location derived correctly rather than being handled only under an implicit “no extensions” assumption. This must be fixed locally in RTP parsing / payload extraction logic and not spread across the rest of the receive pipeline.
 - [x] S015: `VideoPackingMode` is currently modeled in video signaling, but it is not yet carried as an explicit runtime receive axis through depacketizer/runtime config/padding validation. The current MVP runtime path must not stay architecturally GPM-only. If BPM remains unsupported in MVP runtime behavior, that limitation must be explicit, localized, and implemented as an already-existing branch/boundary rather than as absence of architecture.
 - [x] S016: Current standards-aware video signaling representation is still too close to internal runtime/storage concepts and does not yet model enough signaled SDP/media properties separately from internal `PixelFormat` / storage format. This must be expanded so signaled stream description is not collapsed prematurely into runtime-only concepts. In particular, the modeled representation must explicitly account for signaled stream-description properties such as `sampling`, `width`, `height`, `exactframerate`, `depth`, `colorimetry`, `TCS`, `PM`, and `SSN`, with `RANGE` allowed as optional / future-expansion coverage.
 - [ ] S017: Audio path currently has no fully completed first-class ST 2110-30 signaling/model boundary, no explicit structural validation layer for that model, no explicit SDP ingestion path into such a model, and no clear modeled representation for signaled channel order / channel mapping distinct from internal audio buffer layout. The audio MVP target must be made explicit as a **Level A-oriented receiver baseline** (`48 kHz`, `1 ms packet time`, `1..8 channels`), and these axes/boundaries must be architecturally introduced in MVP even if some runtime variants remain later implementation work.
@@ -865,7 +866,7 @@
   - provide one real parse entry point that records `PacketParseStage` failures/successes
   - make sure the counters reflect the actual parse pipeline instead of only helper-level unit tests
   - add tests for per-stage accounting
-- [ ] 047A: Add receiver-side RTP header extension tolerance in RTP parsing / payload extraction path
+- [x] 047A: Add receiver-side RTP header extension tolerance in RTP parsing / payload extraction path
   - correctly skip RFC 3550 RTP header extension area when extension bit is set
   - keep extension handling localized in RTP parsing / payload-span logic
   - payload extraction must remain correct with combinations of CSRC and header extensions
