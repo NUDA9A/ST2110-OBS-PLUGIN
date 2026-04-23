@@ -802,12 +802,12 @@
 - [ ] S012: Receiver timing / conformance assumptions from ST 2110-21 are not yet represented in the architecture. The project currently has reorder/depacketize logic but no explicit model for receiver timing class/capability, dependence on stream timing signaling, or the future boundary where ST 2110-21 conformance-related buffering/tolerance behavior will live.
 - [x] S013: `parse_packet_view_staged()` currently accepts arbitrary trailing octets after the bytes covered by `SRD Length` values. ST 2110-20 allows octets after the last Sample Row Data Segment only as terminal field/frame padding, and GPM/BPM padding octets are zero-valued. This must be validated through a localized packing-mode-aware / mode-aware boundary rather than silently tolerated on any packet.
 - [x] S014: Current RTP parsing/payload extraction path does not yet provide explicit receiver-side tolerance to RTP header extensions. For a standards-aware receiver, packets with valid RTP header extensions must still have payload location derived correctly rather than being handled only under an implicit “no extensions” assumption. This must be fixed locally in RTP parsing / payload extraction logic and not spread across the rest of the receive pipeline.
-- [x] S015: `VideoPackingMode` is currently modeled in video signaling, but it is not yet carried as an explicit runtime receive axis through depacketizer/runtime config/padding validation. The current MVP runtime path must not stay architecturally GPM-only. If BPM remains unsupported in MVP runtime behavior, that limitation must be explicit, localized, and implemented as an already-existing branch/boundary rather than as absence of architecture.
+- [x] S015: `VideoPackingMode` was initially modeled only in video signaling and not carried as an explicit runtime receive axis through depacketizer/runtime config/padding validation. This gap is now closed at the architecture/config level. If `BPM` remains unsupported in current MVP runtime behavior, that limitation must stay explicit, localized, and implemented through already-existing runtime branches/boundaries rather than by absence of architecture.
 - [x] S016: Current standards-aware video signaling representation is still too close to internal runtime/storage concepts and does not yet model enough signaled SDP/media properties separately from internal `PixelFormat` / storage format. This must be expanded so signaled stream description is not collapsed prematurely into runtime-only concepts. In particular, the modeled representation must explicitly account for signaled stream-description properties such as `sampling`, `width`, `height`, `exactframerate`, `depth`, `colorimetry`, `TCS`, `PM`, and `SSN`, with `RANGE` allowed as optional / future-expansion coverage.
 - [ ] S017: Audio path currently has no fully completed first-class ST 2110-30 signaling/model boundary, no explicit structural validation layer for that model, no explicit SDP ingestion path into such a model, and no clear modeled representation for signaled channel order / channel mapping distinct from internal audio buffer layout. The audio MVP target must be made explicit as a **Level A-oriented receiver baseline** (`48 kHz`, `1 ms packet time`, `1..8 channels`), and these axes/boundaries must be architecturally introduced in MVP even if some runtime variants remain later implementation work.
 - [ ] S018: Receiver-side playout / reconstruction timing boundary is not yet explicit. Mapping from RTP timestamp domain to internal `ts_ns`, receiver playout timing policy, and receiver-side offset/delay configuration must live above reorder/depacketize logic rather than collapsing into arrival-time smoothing or local cadence heuristics.
 - [ ] S019: RTP timestamp wraparound and long-running-stream continuity are not yet explicitly covered by timestamp-mapping tasks/tests. This must be handled and tested across reconstruction boundaries so long-lived streams do not silently drift or reset at wraparound.
-
+- [ ] S020: Generic ST 2110-20 payload-header validation currently rejects non-zero `F` / `field_id` too early. This progressive-only restriction must not live in the low-level structural payload-header layer. Generic parsing/structural validation should accept packets for all already-modeled scan-mode variants, while mode-specific acceptance/rejection of `F` must remain localized in explicit mode-aware runtime boundaries so future `Interlaced` / `PsF` work can be implemented by filling existing branches rather than rewriting the parser/validator layer.
 ---
 
 # Phase 1 — MVP
@@ -845,6 +845,13 @@
   - within the same row, `SRD Offset` must not go backwards
   - keep progressive-only assumptions localized so interlace/PsF support can be added later
   - add focused tests for valid and invalid 2-SRD / 3-SRD packets
+- [ ] 045A: Move `F` / `field_id` handling out of generic ST 2110-20 payload-header validation
+  - keep `parse_st2110_20_payload_header(...)` and generic payload-header validation structural rather than progressive-only
+  - generic low-level validation may validate wire-format structure, ordering, and non-mode-specific constraints, but must not reject non-zero `F` merely because current runtime MVP behavior is progressive-only
+  - move scan-mode-specific acceptance/rejection of `F` to explicit mode-aware/runtime-support boundaries above the low-level payload-header layer
+  - add focused tests proving that:
+    - generic payload-header parsing/validation accepts structurally valid packets with `F != 0`
+    - current progressive runtime path still rejects such packets only through an explicit localized mode-aware boundary
 - [x] 046: Add explicit follow-up validation for size-limit policy
   - separate pure wire-format parsing from size-limit/config-policy checks
   - define where MAXUDP-related constraints will live for MVP
@@ -1010,6 +1017,14 @@
   - if current MVP runtime remains GPM-only, reject BPM through an explicit localized runtime-support boundary rather than silently ignoring it
   - ensure later BPM work can be done by filling already-existing branches without changing pipeline shape/contracts
   - add focused tests for config projection and localized packing-mode behavior / rejection
+- [ ] 069E1: Materialize explicit packing-mode branches inside placement and padding boundaries
+  - keep `VideoPackingMode` not only as a runtime config/support axis, but also as an explicit behavior-dispatch dimension inside packet-to-frame placement and trailing-padding validation
+  - introduce explicit packing-mode branch structure in these boundaries (for example `GPM` branch and `BPM` branch) instead of only "validate support, then dispatch by scan mode"
+  - it is acceptable that the `BPM` branch still returns localized `Unsupported` in MVP
+  - ensure future BPM work (`229`) can be implemented by filling already-existing `BPM` branches/helpers without reshaping public/runtime boundary signatures
+  - add focused tests proving that:
+    - placement and padding logic pass through explicit packing-mode dispatch points
+    - `BPM` reaches a localized explicit branch/boundary rather than being absent from the behavior shape
 
 ### A3. Video timestamp strategy
 - [x] 070: Define internal timestamp type: `uint64_t ts_ns`
@@ -1100,6 +1115,11 @@
 
 ### C0. Socket backend common
 - [ ] 100: Refactor backend layer so socket/mtl can expose both video and audio capabilities without duplication explosion
+- [ ] 100A: Align manual/backend-facing runtime video config contracts with already-modeled runtime axes
+  - ensure the manual/backend-facing video runtime path is able to carry already-modeled standard runtime axes, not only the signaling-driven path
+  - at minimum, thread `VideoPackingMode` through the backend-facing runtime config contract instead of leaving it signaling-only for manual/backend bootstrap
+  - keep runtime limitations localized as explicit support boundaries rather than by omitting axes from config/API shape
+  - add focused tests for config validation / projection / backend-facing contract shape where applicable
 - [ ] 101: Add backend factory / selector design (`socket|mtl`) in extendable form
 
 ### C1. Socket video RX
