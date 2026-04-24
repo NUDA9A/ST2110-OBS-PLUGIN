@@ -780,6 +780,40 @@
   - signaling model shape теперь вынесен отдельно от validation/projection helper’ов;
   - это упрощает дальнейшее расширение SDP parsing/ingestion path без смешивания model declarations и adapter logic.
 
+### libs/st2110core/include/st2110/video_receiver_timing.hpp
+- Роль:
+  - explicit receiver-side timing/capability boundary для video receive path.
+  - отделяет receiver timing assumptions/capabilities от `Depacketizer`/`ReorderBuffer`/packet parsing.
+- Связи:
+  - на текущем шаге зависит только от `Error`;
+  - дальше должен быть связан с `VideoStreamSignaling` и signaling-driven bootstrap path;
+  - является архитектурной точкой, куда позже будет добавляться ST 2110-21-related consistency/tolerance/buffering policy.
+- Сущности:
+  - `VideoReceiverTimingCapability`
+    - receiver-declared support for sender classes:
+      - `supports_type_n`
+      - `supports_type_nl`
+      - `supports_type_w`
+  - `VideoReceiverTimingRequirements`
+    - declares which timing/signaling inputs receiver expects/consumes:
+      - `require_reference_clock`
+      - `require_media_clock`
+      - `require_timestamp_mode`
+      - `consume_ts_delay`
+      - `consume_sender_troff`
+      - `consume_sender_cmax`
+  - `VideoReceiverTimingConfig`
+    - aggregates `capability` + `requirements`
+  - `has_any_supported_video_sender_type(...)`
+    - helper: receiver must support at least one sender type
+  - `validate_video_receiver_timing_capability(...)`
+    - structural validation of receiver timing capability
+  - `validate_video_receiver_timing_config(...)`
+    - structural validation entry point for receiver timing config
+- Примечание:
+  - файл пока задает только modeled boundary и базовую structural validation;
+  - consistency-check against signaled timing properties and bootstrap composition will be added in follow-up substeps of `069C`.
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -1015,13 +1049,25 @@
     - add focused tests for signaling-driven config composition / mismatch handling
 - [ ] 069C: Define an explicit ST 2110-21 video receiver timing/conformance boundary
   - **цель этой задачи в MVP — заложить capability/timing/tolerance architecture boundary, even if полный standards-aware behavior будет реализовываться позже**
-  - introduce a receiver timing/capability model boundary instead of burying receiver assumptions inside depacketizer/reorder code
-  - define explicit receiver capability / receiver class assumptions and where they are configured
-  - define dependence on signaled timing properties (`mediaclk`, `ts-refclk`, `TSMODE`, `TSDELAY`, sender timing signaling such as `TP` / `TROFF` / `CMAX`)
-  - define where buffering / tolerance policy and future ST 2110-21 conformance-related behavior will live
-  - coordinate this boundary with the receiver playout / reconstruction timing boundary from A3 instead of mixing it into parser/depacketizer logic
-  - keep these behaviors outside reorder/depacketizer internals
-  - add architecture-focused tests or compile-time checks where useful
+  - [x] 069C1: Define modeled receiver timing/capability boundary
+    - add explicit receiver timing capability model separate from depacketizer/reorder internals
+    - add explicit receiver timing requirements model for which signaled timing inputs are required/consumed
+    - add structural validation for receiver timing config
+    - keep this layer independent from packet parsing and unit assembly internals
+    - add focused tests
+  - [ ] 069C2: Add explicit consistency validation between receiver timing boundary and video signaling model
+    - validate receiver capability against signaled sender timing type
+    - validate required timing/signaling inputs against `VideoStreamSignaling`
+    - keep this consistency check separate from depacketizer/pipeline logic
+    - add focused positive/negative tests
+  - [ ] 069C3: Add signaling-driven bootstrap/composition boundary for receiver timing config
+    - thread receiver timing config into signaling-driven receiver bootstrap path as an explicit input
+    - keep manual/test scaffolding path explicit
+    - do not yet implement full buffering/playout behavior
+    - add focused composition tests
+  - [ ] 069C4: Add architecture-focused regression tests for receiver timing boundary placement
+    - prove receiver timing assumptions remain outside parser/reorder/depacketizer internals
+    - prove later ST 2110-21 behavior can be filled into the existing boundary without reshaping public contracts
 - [ ] 069D: Add SDP parsing / ingestion path for video signaling model
   - parse relevant SDP / media-description attributes into `VideoStreamSignaling`
   - include signaled video media properties, timing-related signaling, and transport/signaling fields required by current modeled boundary
