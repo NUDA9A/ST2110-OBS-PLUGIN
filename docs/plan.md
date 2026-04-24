@@ -915,6 +915,51 @@
   - это именно raw SDP boundary, а не signaling model и не validation layer;
   - later tasks should map this raw representation into `VideoStreamSignaling` through explicit adapters instead of mixing SDP parsing directly into signaling/runtime code.
 
+### libs/st2110core/include/st2110/video_sdp_fmtp.hpp
+- Роль:
+  - pure SDP `a=fmtp` parsing layer для video payload type.
+  - отделяет parsing одного `a=fmtp` attribute payload от raw media-section selection, `VideoStreamSignaling` mapping, structural validation и runtime/bootstrap projection.
+- Связи:
+  - использует `Error` и raw SDP helper’ы из `video_sdp_media_section.hpp`;
+  - должен использоваться следующими шагами `069D2` и `069D5`;
+  - не зависит от `VideoStreamSignaling`, depacketizer, reorder buffer и receive pipeline internals.
+- Сущности:
+  - `RawVideoSdpExactFrameRate`
+    - raw parsed representation of `exactframerate` (`numerator`, `denominator`).
+  - `RawVideoSdpFmtpUnknownParameter`
+    - preserved unknown fmtp parameter (`name`, optional `value`).
+  - `RawVideoSdpFmtpParameters`
+    - required raw parsed fields:
+      - `sampling`
+      - `width`
+      - `height`
+      - `exactframerate`
+      - `depth`
+      - `colorimetry`
+      - `packing_mode`
+      - `signal_standard`
+    - optional raw parsed fields:
+      - `transfer_characteristic_system`
+      - `range`
+    - flag fields:
+      - `interlace`
+      - `segmented`
+    - `unknown_parameters`
+  - helper functions:
+    - `split_part_to_string_view(...)`
+    - `trim_ascii_ws(...)`
+    - `parse_fmtp_attribute_payload_for_pt(...)`
+  - main parsing entry points:
+    - `parse_video_sdp_fmtp_payload(...)`
+      - parses one raw fmtp payload string into `RawVideoSdpFmtpParameters`
+    - `parse_video_sdp_fmtp_attribute(...)`
+      - parses one full `a=fmtp:<pt> ...` line for the selected payload type
+      - returns `nullopt` on payload-type mismatch
+- Примечание:
+  - это raw SDP/fmtp parsing layer, а не signaling validation и не mapping layer;
+  - unknown parameters/flags now remain preserved for later SDP coverage expansion;
+  - current parser treats duplicate known keys/flags and malformed numeric fields as `InvalidValue`.
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -1192,7 +1237,7 @@
       - missing required raw attribute association
       - duplicate relevant attributes
       - preservation of unknown `a=` attributes in the raw media-section model
-  - [ ] 069D1: Add pure SDP `a=fmtp` parsing layer for video media description
+    - [x] 069D1: Add pure SDP `a=fmtp` parsing layer for video media description
     - parse one ST 2110 video `a=fmtp` attribute payload into a dedicated raw parsed structure
     - keep parsing separate from `VideoStreamSignaling` mapping, validation, and runtime config projection
     - parse current core media-description fields needed by the modeled boundary:
