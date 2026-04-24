@@ -853,6 +853,21 @@
   - файл держит receiver-vs-signaling checks и timing-aware bootstrap composition отдельно от generic signaling validation и отдельно от receive pipeline internals;
   - это позволяет позже наращивать ST 2110-21-related receiver logic локально, не меняя shape parser/reorder/depacketizer APIs и не дублируя generic bootstrap assembly.
 
+### tests/video_receiver_timing_architecture_test.cpp
+- Роль:
+  - architecture-focused regression test for receiver timing boundary placement.
+  - фиксирует, что timing-aware bootstrap layer остается overlay над generic signaling/bootstrap path.
+- Связи:
+  - использует `video_signaling.hpp` и `video_receiver_timing_signaling.hpp`;
+  - проверяет separation between generic signaling bootstrap and timing-aware receiver bootstrap.
+- Сущности:
+  - compile-time checks:
+    - generic bootstrap result type и timing-aware bootstrap result type совпадают
+  - runtime checks:
+    - timing-aware bootstrap reuses the same parse/rx/pipeline projection as generic bootstrap
+    - sender-type rejection может происходить локально в timing boundary при валидном generic bootstrap
+    - `ts_delay` rejection может происходить локально в timing boundary при валидном generic bootstrap
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -889,7 +904,7 @@
 - [ ] S009: Current packet size policy models a configurable UDP payload-size limit, but ST 2110-10 defines `MAXUDP` and receiver size expectations in terms of UDP datagram size, not only essence payload size. Standard UDP Size Limit and Extended UDP Size Limit handling, default behavior when `MAXUDP` is absent, and the receiver assumption around fragmented IP datagrams must be aligned with ST 2110-10 before packet sizing is considered spec-clean.
 - [ ] S010: The project now has an initial standards-aware video signaling model boundary, structural validation for key signaling fields, and projection paths into runtime/manual config. However, the receive path is still primarily driven by manual config and does not yet have full runtime integration of signaling-derived configuration or SDP ingestion. ST 2110-10 / -20 / -21 require or define stream interpretation/signaling through SDP attributes such as video sampling/depth/packing/framerate and timing-related attributes including `mediaclk`, `ts-refclk`, `MAXUDP`, `TSMODE`, `TSDELAY`, and sender timing parameters. This work must be completed through explicit runtime integration and a separate SDP parsing/ingestion path rather than by expanding ad hoc manual config assumptions.
 - [ ] S011: The current timestamp-strategy plan is still phrased as if internal video timestamps could be derived only from local fps cadence or arrival-time smoothing. For standards-aware ST 2110 receive, internal presentation timestamps must be mapped from RTP timestamp domain and associated clock/signaling model, not from a standalone frame counter alone. The timestamp plan must therefore be reworked around RTP/clock-based mapping.
-- [ ] S012: Receiver timing / conformance assumptions from ST 2110-21 are not yet represented in the architecture. The project currently has reorder/depacketize logic but no explicit model for receiver timing class/capability, dependence on stream timing signaling, or the future boundary where ST 2110-21 conformance-related buffering/tolerance behavior will live.
+- [ ] S012: Receiver timing / conformance boundary for ST 2110-21 is now explicitly modeled through `video_receiver_timing.hpp` and `video_receiver_timing_signaling.hpp`, including receiver capability/requirements, receiver-vs-signaling consistency checks, and timing-aware bootstrap composition. However, fuller ST 2110-21 receiver behavior (buffering/tolerance/release policy and conformance-related runtime behavior) is not yet implemented and must continue to be added through this existing boundary rather than being pushed into parser/reorder/depacketizer internals.
 - [x] S013: `parse_packet_view_staged()` currently accepts arbitrary trailing octets after the bytes covered by `SRD Length` values. ST 2110-20 allows octets after the last Sample Row Data Segment only as terminal field/frame padding, and GPM/BPM padding octets are zero-valued. This must be validated through a localized packing-mode-aware / mode-aware boundary rather than silently tolerated on any packet.
 - [x] S014: Current RTP parsing/payload extraction path does not yet provide explicit receiver-side tolerance to RTP header extensions. For a standards-aware receiver, packets with valid RTP header extensions must still have payload location derived correctly rather than being handled only under an implicit “no extensions” assumption. This must be fixed locally in RTP parsing / payload extraction logic and not spread across the rest of the receive pipeline.
 - [x] S015: `VideoPackingMode` was initially modeled only in video signaling and not carried as an explicit runtime receive axis through depacketizer/runtime config/padding validation. This gap is now closed at the architecture/config level. If `BPM` remains unsupported in current MVP runtime behavior, that limitation must stay explicit, localized, and implemented through already-existing runtime branches/boundaries rather than by absence of architecture.
@@ -1086,7 +1101,7 @@
     - do not require full SDP parser yet; only make the receiver-side integration boundary explicit
     - include composition of signaling-derived packet parse policy and signaling-derived receive pipeline config as one receiver bootstrap path
     - add focused tests for signaling-driven config composition / mismatch handling
-- [ ] 069C: Define an explicit ST 2110-21 video receiver timing/conformance boundary
+- [x] 069C: Define an explicit ST 2110-21 video receiver timing/conformance boundary
   - **цель этой задачи в MVP — заложить capability/timing/tolerance architecture boundary, even if полный standards-aware behavior будет реализовываться позже**
   - [x] 069C1: Define modeled receiver timing/capability boundary
     - add explicit receiver timing capability model separate from depacketizer/reorder internals
@@ -1104,7 +1119,7 @@
     - keep manual/test scaffolding path explicit
     - do not yet implement full buffering/playout behavior
     - add focused composition tests
-  - [ ] 069C4: Add architecture-focused regression tests for receiver timing boundary placement
+  - [x] 069C4: Add architecture-focused regression tests for receiver timing boundary placement
     - prove receiver timing assumptions remain outside parser/reorder/depacketizer internals
     - prove later ST 2110-21 behavior can be filled into the existing boundary without reshaping public contracts
 - [ ] 069D: Add SDP parsing / ingestion path for video signaling model
