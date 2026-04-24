@@ -868,6 +868,53 @@
     - sender-type rejection может происходить локально в timing boundary при валидном generic bootstrap
     - `ts_delay` rejection может происходить локально в timing boundary при валидном generic bootstrap
 
+### libs/st2110core/include/st2110/video_sdp_media_section.hpp
+- Роль:
+  - raw SDP video media-section parsing boundary для выбранного video payload type.
+  - отделяет raw SDP/media-section ingestion от `VideoStreamSignaling`, structural signaling validation и runtime/bootstrap projection.
+- Связи:
+  - зависит только от `Error` и стандартных utility types;
+  - должен использоваться будущими SDP ingestion adapters/tasks `069D1`–`069D5`;
+  - не зависит от depacketizer / reorder / pipeline internals.
+- Сущности:
+  - `RawSdpAttribute`
+    - raw preserved unknown SDP attribute (`name`, `value`).
+  - `RawVideoSdpMediaSection`
+    - `media_line`
+    - `payload_type`
+    - `media_payload_types`
+    - `rtpmap`
+    - `fmtp`
+    - optional raw timing/reference/sender-related attributes:
+      - `ts_refclk`
+      - `mediaclk`
+      - `tsmode`
+      - `tsdelay`
+      - `tp`
+      - `troff`
+      - `cmax`
+    - `unknown_attributes`
+  - helper functions:
+    - `strip_cr(...)`
+    - `split_ws(...)`
+    - `parse_payload_type(...)`
+    - `parse_video_m_line_payload_types(...)`
+    - `contains_payload_type(...)`
+    - `parse_payload_bound_attribute_value(...)`
+    - `parse_attribute_value(...)`
+    - `trim_left_ws(...)`
+    - `parse_unknown_sdp_attribute(...)`
+  - main entry point:
+    - `select_raw_video_sdp_media_section(...)`
+      - selects the matching `m=video` section for the requested payload type
+      - binds payload-type-specific `a=rtpmap` / `a=fmtp`
+      - captures raw timing/reference/sender-related attributes
+      - preserves unhandled `a=` attributes
+      - rejects duplicates / missing required bindings / invalid payload association
+- Примечание:
+  - это именно raw SDP boundary, а не signaling model и не validation layer;
+  - later tasks should map this raw representation into `VideoStreamSignaling` through explicit adapters instead of mixing SDP parsing directly into signaling/runtime code.
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -1123,10 +1170,69 @@
     - prove receiver timing assumptions remain outside parser/reorder/depacketizer internals
     - prove later ST 2110-21 behavior can be filled into the existing boundary without reshaping public contracts
 - [ ] 069D: Add SDP parsing / ingestion path for video signaling model
-  - parse relevant SDP / media-description attributes into `VideoStreamSignaling`
-  - include signaled video media properties, timing-related signaling, and transport/signaling fields required by current modeled boundary
-  - keep parsing separate from validation and separate from runtime config projection
-  - add focused tests for valid/invalid SDP field mapping
+  - **цель этой группы задач в MVP — заложить полную SDP/media-section ingestion architecture уже сейчас, even if coverage of many specific `a=` attributes will be expanded later**
+  - [x] 069D0: Define raw SDP video media-section model / parsing boundary
+    - define a dedicated raw parsed representation for one SDP video media section before mapping to `VideoStreamSignaling`
+    - keep this raw layer separate from:
+      - `VideoStreamSignaling` modeled representation
+      - structural signaling validation
+      - runtime/manual config projection
+      - receiver bootstrap composition
+    - the raw media-section boundary must explicitly model at least:
+      - `m=` media line information relevant to the selected video payload type
+      - payload-type binding for the selected video stream
+      - raw `a=rtpmap` data for the selected payload type
+      - raw `a=fmtp` payload for the selected payload type
+      - timing/reference/sender-related `a=` attributes relevant to the current modeled boundary
+      - preservation of currently unhandled/unknown `a=` attributes so future SDP coverage extends locally
+    - make payload-type-specific matching explicit so later SDP support extends by filling existing per-attribute/per-PT branches rather than reshaping the ingestion pipeline
+    - add focused tests for:
+      - selecting the correct video media section / payload type
+      - payload-type mismatch
+      - missing required raw attribute association
+      - duplicate relevant attributes
+      - preservation of unknown `a=` attributes in the raw media-section model
+  - [ ] 069D1: Add pure SDP `a=fmtp` parsing layer for video media description
+    - parse one ST 2110 video `a=fmtp` attribute payload into a dedicated raw parsed structure
+    - keep parsing separate from `VideoStreamSignaling` mapping, validation, and runtime config projection
+    - parse current core media-description fields needed by the modeled boundary:
+      - `sampling`
+      - `width`
+      - `height`
+      - `exactframerate`
+      - `depth`
+      - `colorimetry`
+      - `PM`
+      - `SSN`
+      - optional `TCS`
+      - optional `RANGE`
+      - flag parameters such as `interlace` / `segmented`
+    - preserve unknown parameters/flags instead of rejecting them, so future SDP coverage extends locally
+    - add focused tests for valid parsing, payload-type mismatch, malformed numeric values, duplicate keys, and unknown-token preservation
+  - [ ] 069D2: Map parsed SDP video media-description attributes to `VideoStreamSignaling`
+    - convert parsed raw fmtp values to modeled enums/fields in `VideoStreamSignaling`
+    - derive `scan_mode` from parsed SDP flags in a localized adapter
+    - derive `packing_mode` and signaled media-description properties without mixing runtime-support assumptions into the parser
+    - keep structural signaling validation in existing validation helpers
+    - add focused tests
+  - [ ] 069D3: Add parsing for timing/reference-clock/sender-timing SDP attributes
+    - parse `ts-refclk`
+    - parse `mediaclk`
+    - parse `TSMODE`
+    - parse `TSDELAY`
+    - parse sender-timing-related properties such as `TP`, `TROFF`, `CMAX`
+    - keep these parsers separate from signaling validation and separate from runtime projection
+    - add focused tests
+  - [ ] 069D4: Add pure SDP `a=rtpmap` parsing/binding for the selected video payload type
+    - parse and bind `a=rtpmap` for the selected payload type inside the raw SDP media-section boundary
+    - keep `a=rtpmap` parsing separate from `a=fmtp` parsing and separate from signaling validation
+    - ensure the binding between payload type, media section, `a=rtpmap`, and `a=fmtp` remains explicit and localized
+    - add focused tests for valid/invalid `a=rtpmap` syntax, payload-type mismatch, and missing/broken bindings
+  - [ ] 069D5: Add final SDP-to-`VideoStreamSignaling` ingestion entry point
+    - parse a video SDP/media section into `VideoStreamSignaling`
+    - compose raw media-section parsing, fmtp/media-description parsing, `a=rtpmap` binding, and timing/reference-clock parsing
+    - keep transport/network/bootstrap projection separate from SDP parsing
+    - add focused end-to-end ingestion tests for valid/invalid SDP field mapping
 - [x] 069E: Thread `VideoPackingMode` into runtime receive path as an explicit axis
   - **цель этой задачи в MVP — протащить packing mode как runtime/config/policy axis уже сейчас, even if часть branches пока останется `Unsupported`**
   - extend runtime receive configs / projections so packing mode reaches depacketizer, packet interpretation, and padding-validation boundaries
@@ -1339,6 +1445,15 @@
 - [ ] 214: Expand standards-aware video signaling / media-property coverage through the already-modeled video signaling representation
   - add support for additional signaled video/media-property variants without changing the core signaling/runtime contracts introduced in MVP
   - keep parsing, validation, and projection extensions localized to existing model/adapter boundaries
+  - coordinate such extensions with the raw SDP media-section / `a=`-attribute ingestion architecture introduced in `069D`, so new signaling coverage is added by filling existing parsing and mapping branches rather than reshaping the ingestion pipeline
+- [ ] 214A: Expand video SDP `a=` attribute coverage through the already-modeled raw SDP media-section boundary
+  - add support for additional video-relevant `a=` attributes by filling existing per-attribute/per-PT parsing branches inside the raw SDP/media-section ingestion architecture introduced in MVP
+  - do not reshape `VideoStreamSignaling`, raw SDP media-section model, or the final ingestion pipeline only to add new `a=` attribute coverage
+  - keep new attribute parsing localized as:
+    - new raw parsed fields where needed
+    - new per-attribute parser branches
+    - new mapping/validation branches where applicable
+  - add focused tests for each newly supported `a=` attribute and for coexistence with already-supported attributes
 - [ ] 215: Expand audio signaling / channel-order / channel-mapping support through the already-modeled audio signaling boundary
   - add implementation for additional channel-order / channel-mapping cases without changing the core audio signaling/runtime contracts introduced in MVP
   - keep reordering/adaptation localized to the pre-defined boundaries
@@ -1427,6 +1542,11 @@
 - [ ] 265: Harden thread lifecycle and shutdown ordering
 - [ ] 266: Harden long-run stability and leak checks
 - [ ] 267: Final audit of spec compliance and removal of temporary limitations
+- - [ ] 267A: Harden SDP ingestion interoperability and corner-case handling through the existing raw media-section / per-attribute parsing architecture
+- harden handling of duplicate `a=` attributes, attribute ordering variations, unknown-attribute coexistence, partial/legacy SDP variants, and malformed-but-recoverable SDP forms where policy allows
+- keep robustness improvements localized to existing raw media-section, per-attribute parser, and mapping/validation branches
+- avoid reshaping signaling model or bootstrap contracts for interoperability fixes
+- add regression tests for real-world SDP edge cases and captured samples
 
 ---
 
