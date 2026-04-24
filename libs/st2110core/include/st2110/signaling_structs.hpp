@@ -11,6 +11,7 @@
 #include "rx_config.hpp"
 #include "video_receive_pipeline.hpp"
 #include "video_packing_mode.hpp"
+#include "video_receiver_timing.hpp"
 
 namespace st2110 {
     enum class MediaClockMode {
@@ -154,6 +155,7 @@ namespace st2110 {
         PacketParsePolicy packet_parse_policy{};
         RxVideoConfig rx_config{};
         VideoReceivePipelineConfig receive_pipeline_config{};
+        VideoReceiverTimingConfig timing_config{};
     };
 }
 

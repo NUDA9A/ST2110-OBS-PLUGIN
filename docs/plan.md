@@ -616,11 +616,12 @@
 ### libs/st2110core/include/st2110/video_signaling.hpp
 - Роль:
   - standards-aware signaling validation/projection boundary для video stream description.
-  - содержит validation helper’ы и explicit adapters/projections от signaling model к runtime/manual config и signaling-driven receiver bootstrap.
+  - содержит validation helper’ы и explicit adapters/projections от signaling model к runtime/manual config и generic signaling-driven receiver bootstrap.
 - Связи:
   - использует signaling model declarations из `signaling_structs.hpp`;
   - использует `PixelFormat`, `VideoScanMode`, `VideoPackingMode`, `PacketParsePolicy`, `RxVideoConfig`, `DepacketizerConfig`, `VideoUnitReconstructorConfig`, `VideoReceivePipelineConfig`, общие config validation helper’ы.
-  - связывает signaling model с packet parse policy, manual `RxVideoConfig` path, runtime video receive pipeline config path и signaling-driven bootstrap composition path.
+  - связывает signaling model с packet parse policy, manual `RxVideoConfig` path, runtime video receive pipeline config path и generic signaling-driven bootstrap composition path.
+  - timing-aware receiver bootstrap overlay lives separately in `video_receiver_timing_signaling.hpp`.
 - Сущности:
   - structural validation:
     - `validate_video_sender_signaling(...)`
@@ -646,13 +647,16 @@
     - `rx_video_config_from_video_stream_signaling(...)`
     - `validate_video_stream_signaling_against_rx_video_config(...)`
     - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
+      - generic signaling-driven bootstrap projection for parse policy + rx config + receive pipeline config
+      - does not itself apply receiver timing capability/requirement checks
   - packing-mode handling:
     - runtime projections to depacketizer / pipeline / bootstrap explicitly validate packing-mode support through `validate_runtime_video_packing_mode_support(...)`
     - structural signaling validation itself does **not** reject `BPM`
 - Примечание:
   - signaling model остается structurally broader than current runtime support;
   - `BPM` now remains valid inside signaling model but is rejected at explicit runtime-support boundaries for depacketizer/pipeline/bootstrap projections;
-  - detailed SDP parsing и receiver timing integration остаются дальнейшими задачами `069C` и `069D`; fuller BPM runtime behavior остается задачей `229`.
+  - generic bootstrap path intentionally remains timing-agnostic; receiver timing validation/composition is layered on top through `video_receiver_timing_signaling.hpp`;
+  - detailed SDP parsing и fuller receiver timing integration остаются дальнейшими задачами `069C4` / `069D` / `229A`.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -741,10 +745,10 @@
 ### libs/st2110core/include/st2110/signaling_structs.hpp
 - Роль:
   - выделенный header для standards-aware signaling model structs/enums.
-  - отделяет shape signaling model от validation/projection logic из `video_signaling.hpp`.
+  - отделяет shape signaling model от validation/projection logic из `video_signaling.hpp` и timing-aware bootstrap composition из `video_receiver_timing_signaling.hpp`.
 - Связи:
-  - использует `VideoScanMode`, `VideoPackingMode`, `PacketParsePolicy`, `RxVideoConfig`, `VideoReceivePipelineConfig`.
-  - включается из `video_signaling.hpp` и используется как общая декларативная основа signaling/runtime bootstrap boundary.
+  - использует `VideoScanMode`, `VideoPackingMode`, `PacketParsePolicy`, `RxVideoConfig`, `VideoReceivePipelineConfig`, `VideoReceiverTimingConfig`.
+  - включается из `video_signaling.hpp` и `video_receiver_timing_signaling.hpp` и используется как общая декларативная основа signaling/runtime bootstrap boundary.
 - Сущности:
   - `MediaClockMode`
   - `TimestampMode`
@@ -776,9 +780,11 @@
     - `packet_parse_policy`
     - `rx_config`
     - `receive_pipeline_config`
+    - `timing_config`
 - Примечание:
   - signaling model shape теперь вынесен отдельно от validation/projection helper’ов;
-  - это упрощает дальнейшее расширение SDP parsing/ingestion path без смешивания model declarations и adapter logic.
+  - bootstrap config теперь несет не только parse/runtime pipeline projection, но и explicit receiver timing config as a first-class bootstrap input;
+  - это упрощает дальнейшее расширение SDP parsing/ingestion path и ST 2110-21 timing composition без смешивания model declarations и adapter logic.
 
 ### libs/st2110core/include/st2110/video_receiver_timing.hpp
 - Роль:
@@ -811,16 +817,20 @@
   - `validate_video_receiver_timing_config(...)`
     - structural validation entry point for receiver timing config
 - Примечание:
-  - файл пока задает только modeled boundary и базовую structural validation;
-  - consistency-check against signaled timing properties and bootstrap composition will be added in follow-up substeps of `069C`.
+  - файл задает modeled receiver timing boundary и базовую structural validation;
+  - consistency-check against signaled timing properties now lives in `video_receiver_timing_signaling.hpp`;
+  - timing-aware bootstrap composition also lives in `video_receiver_timing_signaling.hpp`;
+  - future buffering/playout/tolerance behavior for fuller ST 2110-21 support should continue to extend this boundary rather than move into parser/reorder/depacketizer internals.
 
 ### libs/st2110core/include/st2110/video_receiver_timing_signaling.hpp
 - Роль:
   - bridge/boundary между receiver timing model и standards-aware video signaling model.
   - локализует consistency validation receiver-side timing assumptions against signaled sender/timing properties.
+  - добавляет timing-aware bootstrap composition как overlay над generic signaling bootstrap path.
 - Связи:
   - использует `video_receiver_timing.hpp`, `video_signaling.hpp`, `signaling_structs.hpp`, `error.hpp`;
   - не зависит от `Depacketizer`, `ReorderBuffer` и packet parsing internals;
+  - опирается на generic signaling/bootstrap adapters из `video_signaling.hpp`, а не дублирует их;
   - является точкой дальнейшего расширения для ST 2110-21 receiver-side timing/conformance checks.
 - Сущности:
   - `video_receiver_supports_sender_type(const VideoReceiverTimingCapability&, VideoSenderType)`
@@ -833,9 +843,15 @@
       - required `reference_clock` / `media_clock_mode` / `timestamp_mode`;
       - совместимость receiver capability с signaled sender type;
       - допустимость наличия `ts_delay_sender_ticks`, `troff_us`, `cmax` с точки зрения receiver requirements.
+  - `video_receiver_bootstrap_config_from_video_stream_signaling(const VideoStreamSignaling&, const VideoReceiverTimingConfig&, uint16_t, uint8_t, std::string, std::string, PartialFramePolicy)`
+    - timing-aware signaling-driven bootstrap wrapper;
+    - сначала выполняет receiver timing vs signaling validation;
+    - затем вызывает generic `video_receiver_bootstrap_config_from_video_stream_signaling(...)` из `video_signaling.hpp`;
+    - затем добавляет `timing_config` в `VideoReceiverBootstrapConfig`;
+    - intentionally reuses existing generic bootstrap assembly instead of duplicating parse/rx/pipeline projection logic.
 - Примечание:
-  - файл держит receiver-vs-signaling checks отдельно от generic signaling validation и отдельно от receive pipeline internals;
-  - это позволяет позже наращивать ST 2110-21-related receiver logic локально, не меняя shape parser/reorder/depacketizer APIs.
+  - файл держит receiver-vs-signaling checks и timing-aware bootstrap composition отдельно от generic signaling validation и отдельно от receive pipeline internals;
+  - это позволяет позже наращивать ST 2110-21-related receiver logic локально, не меняя shape parser/reorder/depacketizer APIs и не дублируя generic bootstrap assembly.
 
 ## Done
 - [x] 001: Repo skeleton + buildable stub
@@ -1083,7 +1099,7 @@
     - validate required timing/signaling inputs against `VideoStreamSignaling`
     - keep this consistency check separate from depacketizer/pipeline logic
     - add focused positive/negative tests
-  - [ ] 069C3: Add signaling-driven bootstrap/composition boundary for receiver timing config
+  - [x] 069C3: Add signaling-driven bootstrap/composition boundary for receiver timing config
     - thread receiver timing config into signaling-driven receiver bootstrap path as an explicit input
     - keep manual/test scaffolding path explicit
     - do not yet implement full buffering/playout behavior
