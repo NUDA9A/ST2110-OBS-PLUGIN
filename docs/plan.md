@@ -814,6 +814,29 @@
   - файл пока задает только modeled boundary и базовую structural validation;
   - consistency-check against signaled timing properties and bootstrap composition will be added in follow-up substeps of `069C`.
 
+### libs/st2110core/include/st2110/video_receiver_timing_signaling.hpp
+- Роль:
+  - bridge/boundary между receiver timing model и standards-aware video signaling model.
+  - локализует consistency validation receiver-side timing assumptions against signaled sender/timing properties.
+- Связи:
+  - использует `video_receiver_timing.hpp`, `video_signaling.hpp`, `signaling_structs.hpp`, `error.hpp`;
+  - не зависит от `Depacketizer`, `ReorderBuffer` и packet parsing internals;
+  - является точкой дальнейшего расширения для ST 2110-21 receiver-side timing/conformance checks.
+- Сущности:
+  - `video_receiver_supports_sender_type(const VideoReceiverTimingCapability&, VideoSenderType)`
+    - helper для проверки, поддерживает ли receiver signaled sender type (`Narrow | NarrowLinear | Wide`).
+  - `validate_video_receiver_timing_against_video_stream_signaling(const VideoReceiverTimingConfig&, const VideoStreamSignaling&)`
+    - explicit consistency validation entry point между receiver timing config и signaling model;
+    - валидирует:
+      - receiver timing config;
+      - sender timing signaling;
+      - required `reference_clock` / `media_clock_mode` / `timestamp_mode`;
+      - совместимость receiver capability с signaled sender type;
+      - допустимость наличия `ts_delay_sender_ticks`, `troff_us`, `cmax` с точки зрения receiver requirements.
+- Примечание:
+  - файл держит receiver-vs-signaling checks отдельно от generic signaling validation и отдельно от receive pipeline internals;
+  - это позволяет позже наращивать ST 2110-21-related receiver logic локально, не меняя shape parser/reorder/depacketizer APIs.
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -1055,7 +1078,7 @@
     - add structural validation for receiver timing config
     - keep this layer independent from packet parsing and unit assembly internals
     - add focused tests
-  - [ ] 069C2: Add explicit consistency validation between receiver timing boundary and video signaling model
+  - [x] 069C2: Add explicit consistency validation between receiver timing boundary and video signaling model
     - validate receiver capability against signaled sender timing type
     - validate required timing/signaling inputs against `VideoStreamSignaling`
     - keep this consistency check separate from depacketizer/pipeline logic
