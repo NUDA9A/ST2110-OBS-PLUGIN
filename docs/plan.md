@@ -198,6 +198,7 @@
     - `assembly_unit_kind()`
     - `current_unit_key()`
   - Внутренние responsibilities:
+    - сначала валидирует mode-aware packet semantics через `validate_video_packet_scan_mode_semantics(cfg_.scan_mode, ...)`;
     - берет completion policy через `video_receive_completion_policy(...)`;
     - берет assembly key через `video_packet_assembly_key(...)`;
     - валидирует trailing payload padding через `validate_video_packet_trailing_padding(cfg_.packing_mode, cfg_.scan_mode, ...)` до изменения assembly state;
@@ -448,6 +449,9 @@
   - `validate_st2110_20_srd_ordering(const St2110PayloadHeaderView&)`
   - `validate_st2110_20_payload_header(const St2110PayloadHeaderView&)`
   - `combine_extended_seq(const ExtendedSequenceNumber&, uint16_t lo16)`
+- Примечание:
+  - generic ST 2110-20 payload-header validation теперь остается structural и не содержит progressive-only запрета на `field_id`;
+  - mode-specific acceptance/rejection `F` должна жить выше, в explicit scan-mode-aware runtime boundaries.
 
 ### libs/st2110core/include/st2110/stats.hpp
 - Роль:
@@ -523,7 +527,7 @@
 
 ### libs/st2110core/include/st2110/video_receive_semantics.hpp
 - Роль:
-  - mode-aware abstraction для unit kind, completion policy и packet grouping key.
+  - mode-aware abstraction для unit kind, completion policy, packet grouping key и scan-mode-specific packet semantic acceptance.
   - ключевая точка локализации различий между `Progressive | Interlaced | PsF`.
 - Связи:
   - используется `Depacketizer`, `FrameAssembler`, future non-progressive support.
@@ -545,11 +549,14 @@
   - `video_receive_completion_policy(VideoScanMode)`
   - `video_packet_assembly_key(VideoScanMode, const PacketView&)`
   - `same_video_assembly_key(const VideoAssemblyKey&, const VideoAssemblyKey&)`
-  - Текущий runtime status:
-    - `Progressive` реализован;
-    - `Interlaced` / `PsF` пока локализованно `Unsupported`.
+  - `validate_video_packet_scan_mode_semantics(VideoScanMode, const PacketView&)`
+    - explicit mode-aware boundary for acceptance/rejection of packet semantics such as `field_id`
+- Текущий runtime status:
+  - `Progressive` реализован;
+  - `Interlaced` / `PsF` пока локализованно `Unsupported`.
 - Примечание:
-  - эта ось уже должна считаться архитектурно заложенной в MVP; поздние задачи по `Interlaced` / `PsF` должны только заполнять уже существующие extension points.
+  - эта ось уже должна считаться архитектурно заложенной в MVP;
+  - mode-specific rejection of `F`/`field_id` now belongs here rather than in generic low-level ST 2110-20 payload-header validation.
 
 ### libs/st2110core/include/st2110/video_scan_mode.hpp
 - Роль:
@@ -807,7 +814,7 @@
 - [ ] S017: Audio path currently has no fully completed first-class ST 2110-30 signaling/model boundary, no explicit structural validation layer for that model, no explicit SDP ingestion path into such a model, and no clear modeled representation for signaled channel order / channel mapping distinct from internal audio buffer layout. The audio MVP target must be made explicit as a **Level A-oriented receiver baseline** (`48 kHz`, `1 ms packet time`, `1..8 channels`), and these axes/boundaries must be architecturally introduced in MVP even if some runtime variants remain later implementation work.
 - [ ] S018: Receiver-side playout / reconstruction timing boundary is not yet explicit. Mapping from RTP timestamp domain to internal `ts_ns`, receiver playout timing policy, and receiver-side offset/delay configuration must live above reorder/depacketize logic rather than collapsing into arrival-time smoothing or local cadence heuristics.
 - [ ] S019: RTP timestamp wraparound and long-running-stream continuity are not yet explicitly covered by timestamp-mapping tasks/tests. This must be handled and tested across reconstruction boundaries so long-lived streams do not silently drift or reset at wraparound.
-- [ ] S020: Generic ST 2110-20 payload-header validation currently rejects non-zero `F` / `field_id` too early. This progressive-only restriction must not live in the low-level structural payload-header layer. Generic parsing/structural validation should accept packets for all already-modeled scan-mode variants, while mode-specific acceptance/rejection of `F` must remain localized in explicit mode-aware runtime boundaries so future `Interlaced` / `PsF` work can be implemented by filling existing branches rather than rewriting the parser/validator layer.
+- [x] S020: Generic ST 2110-20 payload-header validation currently rejects non-zero `F` / `field_id` too early. This progressive-only restriction must not live in the low-level structural payload-header layer. Generic parsing/structural validation should accept packets for all already-modeled scan-mode variants, while mode-specific acceptance/rejection of `F` must remain localized in explicit mode-aware runtime boundaries so future `Interlaced` / `PsF` work can be implemented by filling existing branches rather than rewriting the parser/validator layer.
 ---
 
 # Phase 1 — MVP
@@ -845,7 +852,7 @@
   - within the same row, `SRD Offset` must not go backwards
   - keep progressive-only assumptions localized so interlace/PsF support can be added later
   - add focused tests for valid and invalid 2-SRD / 3-SRD packets
-- [ ] 045A: Move `F` / `field_id` handling out of generic ST 2110-20 payload-header validation
+- [x] 045A: Move `F` / `field_id` handling out of generic ST 2110-20 payload-header validation
   - keep `parse_st2110_20_payload_header(...)` and generic payload-header validation structural rather than progressive-only
   - generic low-level validation may validate wire-format structure, ordering, and non-mode-specific constraints, but must not reject non-zero `F` merely because current runtime MVP behavior is progressive-only
   - move scan-mode-specific acceptance/rejection of `F` to explicit mode-aware/runtime-support boundaries above the low-level payload-header layer
@@ -955,7 +962,7 @@
   - keep current MVP behavior implemented only for `Progressive`
   - keep non-progressive runtime boundary localized at reconstructor creation / factory path
   - add focused tests for composition, reset, and config mismatch
-- [ ] 069B: Add a standards-aware video SDP/signaling model boundary
+- [x] 069B: Add a standards-aware video SDP/signaling model boundary
   - **цель этой группы задач в MVP — заложить полную архитектурную ось signaling model и projection boundaries, даже если часть runtime branches и parsing coverage будет заполняться позже**
   - [x] 069B1: Define modeled video stream/signaling types separate from low-level depacketizer/runtime config
     - include key stream-description properties needed for current MVP architecture:

@@ -54,10 +54,10 @@ static void test_bad_continuation_chain() {
     assert(st2110::validate_st2110_20_payload_header(h) == st2110::Error::InvalidValue);
 }
 
-static void test_field_id_not_supported_in_mvp() {
+static void test_field_id_is_structurally_valid_in_generic_validation() {
     auto h = make_valid_header();
     h.srd[1].field_id = true;
-    assert(st2110::validate_st2110_20_payload_header(h) == st2110::Error::Unsupported);
+    assert(st2110::validate_st2110_20_payload_header(h) == st2110::Error::Ok);
 }
 
 int main() {
@@ -66,6 +66,6 @@ int main() {
     test_bad_header_bytes();
     test_zero_length();
     test_bad_continuation_chain();
-    test_field_id_not_supported_in_mvp();
+    test_field_id_is_structurally_valid_in_generic_validation();
     return 0;
 }

@@ -37,6 +37,10 @@ namespace st2110 {
 
         [[nodiscard]] std::vector<AssembledVideoUnit> push(const PacketView& packet) {
             ++stats_.packets_in;
+            if (Error err = validate_video_packet_scan_mode_semantics(cfg_.scan_mode, packet); err != Error::Ok) {
+                throw std::invalid_argument("Invalid packet scan-mode semantics for current video scan mode");
+            }
+
             const auto policy = configured_completion_policy();
             const auto packet_key_expected = video_packet_assembly_key(cfg_.scan_mode, packet);
             if (!packet_key_expected.has_value()) {

@@ -82,6 +82,24 @@ namespace st2110 {
         return a == b;
     }
 
+    [[nodiscard]] inline Error validate_video_packet_scan_mode_semantics(
+            VideoScanMode scan_mode,
+            const PacketView& packet) {
+        switch (scan_mode) {
+            case VideoScanMode::Progressive:
+                for (std::size_t i = 0; i < packet.segment_count; ++i) {
+                    if (packet.segments[i].header.field_id) {
+                        return Error::InvalidValue;
+                    }
+                }
+                return Error::Ok;
+            case VideoScanMode::Interlaced:
+            case VideoScanMode::PsF:
+                return Error::Ok;
+            default:
+                return Error::InvalidValue;
+        }
+    }
 } // namespace st2110
 
 #endif // ST2110_OBS_PLUGIN_VIDEO_RECEIVE_SEMANTICS_HPP

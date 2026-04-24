@@ -94,13 +94,13 @@ static void test_three_srd_progression_is_valid() {
     assert(st2110::validate_st2110_20_payload_header(h) == st2110::Error::Ok);
 }
 
-static void test_field_id_remains_unsupported_in_ordering_path() {
+static void test_field_id_does_not_affect_generic_ordering_validation() {
     const auto h = make_payload_header({
                                                make_srd(4, 0, 0, false),
                                                make_srd(4, 1, 0, true)
                                        });
 
-    assert(st2110::validate_st2110_20_payload_header(h) == st2110::Error::Unsupported);
+    assert(st2110::validate_st2110_20_payload_header(h) == st2110::Error::Ok);
 }
 
 int main() {
@@ -111,6 +111,6 @@ int main() {
     test_same_row_offset_going_backwards_is_invalid();
     test_same_row_equal_offset_is_invalid();
     test_three_srd_progression_is_valid();
-    test_field_id_remains_unsupported_in_ordering_path();
+    test_field_id_does_not_affect_generic_ordering_validation();
     return 0;
 }

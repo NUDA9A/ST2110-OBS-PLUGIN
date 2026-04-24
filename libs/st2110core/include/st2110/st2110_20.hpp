@@ -93,9 +93,6 @@ namespace st2110 {
             return Error::InvalidValue;
         }
         if (h.srd_count == 1) {
-            if (h.srd[0].field_id) {
-                return Error::Unsupported;
-            }
             if (h.srd[0].continuation) {
                 return Error::InvalidValue;
             }
@@ -103,9 +100,6 @@ namespace st2110 {
             for (std::size_t i = 0; i < h.srd_count; ++i) {
                 if (h.srd[i].length == 0) {
                     return Error::InvalidValue;
-                }
-                if (h.srd[i].field_id) {
-                    return Error::Unsupported;
                 }
                 if (!h.srd[i].continuation && i != h.srd_count - 1) {
                     return Error::InvalidValue;
