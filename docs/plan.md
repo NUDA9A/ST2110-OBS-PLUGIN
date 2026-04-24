@@ -960,6 +960,35 @@
   - unknown parameters/flags now remain preserved for later SDP coverage expansion;
   - current parser treats duplicate known keys/flags and malformed numeric fields as `InvalidValue`.
 
+### libs/st2110core/include/st2110/video_sdp_signaling_adapter.hpp
+- Роль:
+  - explicit adapter layer от raw parsed SDP/fmtp video description к modeled `VideoStreamSignaling`.
+  - отделяет raw SDP parsing от signaling model mapping.
+- Связи:
+  - использует `video_sdp_fmtp.hpp`, `signaling_structs.hpp`, `video_scan_mode.hpp`, `video_packing_mode.hpp`, `video_signaling.hpp`, `error.hpp`;
+  - должен использоваться последующими ingestion/composition шагами `069D5`;
+  - не зависит от depacketizer / reorder / receive pipeline internals.
+- Сущности:
+  - `video_scan_mode_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters&)`
+    - локально выводит `Progressive | Interlaced | PsF` из SDP flags `interlace` / `segmented`.
+  - `video_packing_mode_from_raw_video_sdp_fmtp(std::string_view)`
+    - маппит raw `PM` token в `VideoPackingMode` (`2110GPM` / `2110BPM`).
+  - `video_media_description_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters&)`
+    - маппит raw fmtp media-description fields в `VideoMediaDescription`;
+    - конвертирует known tokens в modeled enums;
+    - unknown/open-ended tokens сохраняет как `Known::Other + raw_token`;
+    - валидирует границы signaling-model представления там, где это относится к media description.
+  - `video_stream_signaling_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters&)`
+    - собирает partial `VideoStreamSignaling` из raw fmtp mapping:
+      - `media`
+      - `scan_mode`
+      - `packing_mode`
+    - на текущем шаге не наполняет timing/reference-clock/sender-related signaling fields;
+    - therefore validates mapped `media` through media-description boundary instead of requiring full `VideoStreamSignaling` completeness.
+- Примечание:
+  - это mapping/adapter layer, а не raw SDP parser и не full signaling-ingestion entry point;
+  - later tasks should compose it with raw media-section selection, `a=rtpmap`, and timing/reference-clock parsing instead of expanding ad hoc mapping directly in runtime/bootstrap code.
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -1254,7 +1283,7 @@
       - flag parameters such as `interlace` / `segmented`
     - preserve unknown parameters/flags instead of rejecting them, so future SDP coverage extends locally
     - add focused tests for valid parsing, payload-type mismatch, malformed numeric values, duplicate keys, and unknown-token preservation
-  - [ ] 069D2: Map parsed SDP video media-description attributes to `VideoStreamSignaling`
+  - [x] 069D2: Map parsed SDP video media-description attributes to `VideoStreamSignaling`
     - convert parsed raw fmtp values to modeled enums/fields in `VideoStreamSignaling`
     - derive `scan_mode` from parsed SDP flags in a localized adapter
     - derive `packing_mode` and signaled media-description properties without mixing runtime-support assumptions into the parser
