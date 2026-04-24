@@ -4,6 +4,9 @@
 
 #include <st2110/packet_view.hpp>
 #include <st2110/video_packet_padding.hpp>
+#include <st2110/video_packing_mode.hpp>
+#include <st2110/video_scan_mode.hpp>
+#include <st2110/error.hpp>
 
 static std::vector<uint8_t> make_packet(bool marker,
                                         const std::vector<uint8_t>& segment_bytes,
@@ -36,7 +39,7 @@ static st2110::PacketView parse_packet(bool marker,
     return *parsed;
 }
 
-static void test_progressive_gpm_packet_without_trailing_padding_is_ok() {
+static void test_gpm_progressive_packet_without_trailing_padding_is_ok() {
     const st2110::PacketView pkt = parse_packet(true, {1, 2, 3, 4}, {});
     assert(st2110::validate_video_packet_trailing_padding(
             st2110::VideoPackingMode::Gpm,
@@ -44,7 +47,7 @@ static void test_progressive_gpm_packet_without_trailing_padding_is_ok() {
             pkt) == st2110::Error::Ok);
 }
 
-static void test_progressive_gpm_marker_packet_with_zero_trailing_padding_is_ok() {
+static void test_gpm_progressive_marker_packet_with_zero_trailing_padding_is_ok() {
     const st2110::PacketView pkt = parse_packet(true, {1, 2, 3, 4}, {0, 0, 0});
     assert(st2110::validate_video_packet_trailing_padding(
             st2110::VideoPackingMode::Gpm,
@@ -52,7 +55,7 @@ static void test_progressive_gpm_marker_packet_with_zero_trailing_padding_is_ok(
             pkt) == st2110::Error::Ok);
 }
 
-static void test_progressive_gpm_non_marker_packet_with_trailing_padding_is_invalid() {
+static void test_gpm_progressive_non_marker_packet_with_trailing_padding_is_invalid() {
     const st2110::PacketView pkt = parse_packet(false, {1, 2, 3, 4}, {0, 0});
     assert(st2110::validate_video_packet_trailing_padding(
             st2110::VideoPackingMode::Gpm,
@@ -60,7 +63,7 @@ static void test_progressive_gpm_non_marker_packet_with_trailing_padding_is_inva
             pkt) == st2110::Error::InvalidValue);
 }
 
-static void test_progressive_gpm_marker_packet_with_non_zero_trailing_padding_is_invalid() {
+static void test_gpm_progressive_marker_packet_with_non_zero_trailing_padding_is_invalid() {
     const st2110::PacketView pkt = parse_packet(true, {1, 2, 3, 4}, {0, 7});
     assert(st2110::validate_video_packet_trailing_padding(
             st2110::VideoPackingMode::Gpm,
@@ -68,7 +71,7 @@ static void test_progressive_gpm_marker_packet_with_non_zero_trailing_padding_is
             pkt) == st2110::Error::InvalidValue);
 }
 
-static void test_progressive_bpm_padding_validation_is_runtime_unsupported() {
+static void test_bpm_progressive_padding_validation_is_explicitly_unsupported() {
     const st2110::PacketView pkt = parse_packet(true, {1, 2, 3, 4}, {});
     assert(st2110::validate_video_packet_trailing_padding(
             st2110::VideoPackingMode::Bpm,
@@ -77,10 +80,10 @@ static void test_progressive_bpm_padding_validation_is_runtime_unsupported() {
 }
 
 int main() {
-    test_progressive_gpm_packet_without_trailing_padding_is_ok();
-    test_progressive_gpm_marker_packet_with_zero_trailing_padding_is_ok();
-    test_progressive_gpm_non_marker_packet_with_trailing_padding_is_invalid();
-    test_progressive_gpm_marker_packet_with_non_zero_trailing_padding_is_invalid();
-    test_progressive_bpm_padding_validation_is_runtime_unsupported();
+    test_gpm_progressive_packet_without_trailing_padding_is_ok();
+    test_gpm_progressive_marker_packet_with_zero_trailing_padding_is_ok();
+    test_gpm_progressive_non_marker_packet_with_trailing_padding_is_invalid();
+    test_gpm_progressive_marker_packet_with_non_zero_trailing_padding_is_invalid();
+    test_bpm_progressive_padding_validation_is_explicitly_unsupported();
     return 0;
 }

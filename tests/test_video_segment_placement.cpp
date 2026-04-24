@@ -3,8 +3,9 @@
 
 #include <st2110/video_segment_placement.hpp>
 #include <st2110/video_scan_mode.hpp>
-#include <st2110/pixel_format.hpp>
 #include <st2110/video_packing_mode.hpp>
+#include <st2110/pixel_format.hpp>
+#include <st2110/error.hpp>
 
 static st2110::SrdSegmentView make_segment(
         uint16_t row,
@@ -22,7 +23,7 @@ static st2110::SrdSegmentView make_segment(
     return seg;
 }
 
-static void test_progressive_gpm_uyvy_aligned_segment_maps_successfully() {
+static void test_gpm_progressive_uyvy_aligned_segment_maps_successfully() {
     static const uint8_t bytes[] = {0x10, 0x11, 0x12, 0x13};
 
     auto seg = make_segment(2, 2, 4, bytes, sizeof(bytes));
@@ -40,7 +41,7 @@ static void test_progressive_gpm_uyvy_aligned_segment_maps_successfully() {
     assert(op->bytes.data() == bytes);
 }
 
-static void test_progressive_gpm_uyvy_rejects_odd_sample_offset() {
+static void test_gpm_progressive_uyvy_rejects_odd_sample_offset() {
     static const uint8_t bytes[] = {0x20, 0x21, 0x22, 0x23};
 
     auto seg = make_segment(0, 1, 4, bytes, sizeof(bytes));
@@ -54,7 +55,7 @@ static void test_progressive_gpm_uyvy_rejects_odd_sample_offset() {
     assert(op.error() == st2110::Error::InvalidValue);
 }
 
-static void test_progressive_gpm_uyvy_rejects_length_not_multiple_of_pgroup() {
+static void test_gpm_progressive_uyvy_rejects_length_not_multiple_of_pgroup() {
     static const uint8_t bytes[] = {0x30, 0x31};
 
     auto seg = make_segment(0, 0, 2, bytes, sizeof(bytes));
@@ -68,7 +69,7 @@ static void test_progressive_gpm_uyvy_rejects_length_not_multiple_of_pgroup() {
     assert(op.error() == st2110::Error::InvalidValue);
 }
 
-static void test_progressive_gpm_uyvy_rejects_header_length_payload_size_mismatch() {
+static void test_gpm_progressive_uyvy_rejects_header_length_payload_size_mismatch() {
     static const uint8_t bytes[] = {0x40, 0x41, 0x42, 0x43};
 
     auto seg = make_segment(0, 0, 8, bytes, sizeof(bytes));
@@ -82,7 +83,7 @@ static void test_progressive_gpm_uyvy_rejects_header_length_payload_size_mismatc
     assert(op.error() == st2110::Error::InvalidValue);
 }
 
-static void test_interlaced_gpm_mapping_is_still_unsupported() {
+static void test_gpm_interlaced_mapping_is_still_unsupported() {
     static const uint8_t bytes[] = {0x50, 0x51, 0x52, 0x53};
 
     auto seg = make_segment(0, 0, 4, bytes, sizeof(bytes));
@@ -96,7 +97,7 @@ static void test_interlaced_gpm_mapping_is_still_unsupported() {
     assert(op.error() == st2110::Error::Unsupported);
 }
 
-static void test_psf_gpm_mapping_is_still_unsupported() {
+static void test_gpm_psf_mapping_is_still_unsupported() {
     static const uint8_t bytes[] = {0x60, 0x61, 0x62, 0x63};
 
     auto seg = make_segment(0, 0, 4, bytes, sizeof(bytes));
@@ -110,7 +111,7 @@ static void test_psf_gpm_mapping_is_still_unsupported() {
     assert(op.error() == st2110::Error::Unsupported);
 }
 
-static void test_progressive_bpm_mapping_is_runtime_unsupported() {
+static void test_bpm_progressive_mapping_is_explicitly_unsupported() {
     static const uint8_t bytes[] = {0x70, 0x71, 0x72, 0x73};
 
     auto seg = make_segment(0, 0, 4, bytes, sizeof(bytes));
@@ -125,12 +126,12 @@ static void test_progressive_bpm_mapping_is_runtime_unsupported() {
 }
 
 int main() {
-    test_progressive_gpm_uyvy_aligned_segment_maps_successfully();
-    test_progressive_gpm_uyvy_rejects_odd_sample_offset();
-    test_progressive_gpm_uyvy_rejects_length_not_multiple_of_pgroup();
-    test_progressive_gpm_uyvy_rejects_header_length_payload_size_mismatch();
-    test_interlaced_gpm_mapping_is_still_unsupported();
-    test_psf_gpm_mapping_is_still_unsupported();
-    test_progressive_bpm_mapping_is_runtime_unsupported();
+    test_gpm_progressive_uyvy_aligned_segment_maps_successfully();
+    test_gpm_progressive_uyvy_rejects_odd_sample_offset();
+    test_gpm_progressive_uyvy_rejects_length_not_multiple_of_pgroup();
+    test_gpm_progressive_uyvy_rejects_header_length_payload_size_mismatch();
+    test_gpm_interlaced_mapping_is_still_unsupported();
+    test_gpm_psf_mapping_is_still_unsupported();
+    test_bpm_progressive_mapping_is_explicitly_unsupported();
     return 0;
 }

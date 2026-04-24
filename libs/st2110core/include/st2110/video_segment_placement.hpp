@@ -47,15 +47,11 @@ namespace st2110 {
         return std::unexpected(Error::Unsupported);
     }
 
-    [[nodiscard]] inline std::expected<VideoFrameWriteOp, Error>
-    map_video_segment_to_frame_write(
-            VideoPackingMode packing_mode,
+    inline std::expected<VideoFrameWriteOp, Error>
+    map_gpm_video_segment_to_frame_write(
             PixelFormat format,
             VideoScanMode scan_mode,
             const SrdSegmentView& segment) {
-        if (Error err = validate_runtime_video_packing_mode_support(packing_mode); err != Error::Ok) {
-            return std::unexpected(err);
-        }
         switch (scan_mode) {
             case VideoScanMode::Progressive:
                 return map_progressive_segment_to_frame_write(format, segment);
@@ -63,6 +59,33 @@ namespace st2110 {
                 return map_interlaced_segment_to_frame_write(format, segment);
             case VideoScanMode::PsF:
                 return map_psf_segment_to_frame_write(format, segment);
+            default:
+                return std::unexpected(Error::InvalidValue);
+        }
+    }
+
+    inline std::expected<VideoFrameWriteOp, Error>
+    map_bpm_video_segment_to_frame_write(
+            PixelFormat format,
+            VideoScanMode scan_mode,
+            const SrdSegmentView& segment) {
+        (void)format;
+        (void)scan_mode;
+        (void)segment;
+        return std::unexpected(Error::Unsupported);
+    }
+
+    inline std::expected<VideoFrameWriteOp, Error>
+    map_video_segment_to_frame_write(
+            VideoPackingMode packing_mode,
+            PixelFormat format,
+            VideoScanMode scan_mode,
+            const SrdSegmentView& segment) {
+        switch (packing_mode) {
+            case VideoPackingMode::Gpm:
+                return map_gpm_video_segment_to_frame_write(format, scan_mode, segment);
+            case VideoPackingMode::Bpm:
+                return map_bpm_video_segment_to_frame_write(format, scan_mode, segment);
             default:
                 return std::unexpected(Error::InvalidValue);
         }

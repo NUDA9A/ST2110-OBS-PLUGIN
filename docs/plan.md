@@ -602,10 +602,16 @@
   - `map_psf_segment_to_frame_write(...)`
   - `map_video_segment_to_frame_write(VideoPackingMode, PixelFormat, VideoScanMode, const SrdSegmentView&)`
     - packing-aware dispatcher boundary перед mode/format-specific mapping.
+  - `map_gpm_video_segment_to_frame_write(PixelFormat, VideoScanMode, const SrdSegmentView&)`
+    - explicit GPM behavior branch; внутри dispatch по scan mode
+  - `map_bpm_video_segment_to_frame_write(PixelFormat, VideoScanMode, const SrdSegmentView&)`
+    - explicit BPM behavior branch; пока локализованно `Unsupported`
 - Текущий runtime status:
-  - реализован `GPM + Progressive + UYVY`;
-  - `BPM` пока локализованно `Unsupported` через explicit runtime-support boundary;
-  - `Interlaced` / `PsF` пока локализованно `Unsupported`.
+  - explicit packing-mode dispatch materialized:
+    - `GPM` branch dispatches further by scan mode
+    - `BPM` branch exists explicitly and currently returns localized `Unsupported`
+  - реализован `GPM + Progressive + UYVY`
+  - `Interlaced` / `PsF` пока локализованно `Unsupported`
 
 ### libs/st2110core/include/st2110/video_signaling.hpp
 - Роль:
@@ -704,9 +710,13 @@
   - `validate_video_packet_trailing_padding(VideoPackingMode, VideoScanMode, const PacketView&)`
     - сначала проходит через packing-mode runtime-support boundary;
     - затем dispatch к mode-specific helper’ам.
+  - `validate_gpm_video_packet_trailing_padding(VideoScanMode, const PacketView&)`
+    - explicit GPM behavior branch; внутри dispatch по scan mode
+  - `validate_bpm_video_packet_trailing_padding(VideoScanMode, const PacketView&)`
+    - explicit BPM behavior branch; пока локализованно `Unsupported`
 - Примечание:
-  - current padding validation boundary уже учитывает packing mode как explicit runtime axis;
-  - поздняя BPM-реализация должна расширять именно этот boundary, а не менять остальной receive pipeline.
+  - current padding validation boundary теперь materializes explicit packing-mode branches, а не только support-check;
+  - поздняя BPM-реализация должна расширять `validate_bpm_video_packet_trailing_padding(...)`, не меняя shape остального receive pipeline.
 
 ### libs/st2110core/include/st2110/video_packing_mode.hpp
 - Роль:
@@ -1024,7 +1034,7 @@
   - if current MVP runtime remains GPM-only, reject BPM through an explicit localized runtime-support boundary rather than silently ignoring it
   - ensure later BPM work can be done by filling already-existing branches without changing pipeline shape/contracts
   - add focused tests for config projection and localized packing-mode behavior / rejection
-- [ ] 069E1: Materialize explicit packing-mode branches inside placement and padding boundaries
+- [x] 069E1: Materialize explicit packing-mode branches inside placement and padding boundaries
   - keep `VideoPackingMode` not only as a runtime config/support axis, but also as an explicit behavior-dispatch dimension inside packet-to-frame placement and trailing-padding validation
   - introduce explicit packing-mode branch structure in these boundaries (for example `GPM` branch and `BPM` branch) instead of only "validate support, then dispatch by scan mode"
   - it is acceptable that the `BPM` branch still returns localized `Unsupported` in MVP

@@ -33,10 +33,9 @@ namespace st2110 {
         return Error::Ok;
     }
 
-    inline Error validate_video_packet_trailing_padding(VideoPackingMode packing_mode, VideoScanMode scan_mode, const PacketView& pkt_view) {
-        if (Error err = validate_runtime_video_packing_mode_support(packing_mode); err != Error::Ok) {
-            return err;
-        }
+    inline Error validate_gpm_video_packet_trailing_padding(
+            VideoScanMode scan_mode,
+            const PacketView& pkt_view) {
         switch (scan_mode) {
             case VideoScanMode::Progressive:
                 return validate_progressive_video_packet_trailing_padding(pkt_view);
@@ -44,6 +43,28 @@ namespace st2110 {
                 return validate_interlaced_video_packet_trailing_padding(pkt_view);
             case VideoScanMode::PsF:
                 return validate_psf_video_packet_trailing_padding(pkt_view);
+            default:
+                return Error::InvalidValue;
+        }
+    }
+
+    inline Error validate_bpm_video_packet_trailing_padding(
+            VideoScanMode scan_mode,
+            const PacketView& pkt_view) {
+        (void)scan_mode;
+        (void)pkt_view;
+        return Error::Unsupported;
+    }
+
+    inline Error validate_video_packet_trailing_padding(
+            VideoPackingMode packing_mode,
+            VideoScanMode scan_mode,
+            const PacketView& pkt_view) {
+        switch (packing_mode) {
+            case VideoPackingMode::Gpm:
+                return validate_gpm_video_packet_trailing_padding(scan_mode, pkt_view);
+            case VideoPackingMode::Bpm:
+                return validate_bpm_video_packet_trailing_padding(scan_mode, pkt_view);
             default:
                 return Error::InvalidValue;
         }
