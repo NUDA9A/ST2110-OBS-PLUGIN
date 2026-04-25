@@ -989,6 +989,57 @@
   - это mapping/adapter layer, а не raw SDP parser и не full signaling-ingestion entry point;
   - later tasks should compose it with raw media-section selection, `a=rtpmap`, and timing/reference-clock parsing instead of expanding ad hoc mapping directly in runtime/bootstrap code.
 
+### libs/st2110core/include/st2110/video_sdp_timing_attributes.hpp
+- Роль:
+  - pure SDP parsing layer для timing/reference-clock/sender-timing video attributes.
+  - отделяет raw parsing timing-related `a=` values от signaling validation, signaling-model mapping и runtime/bootstrap projection.
+- Связи:
+  - использует `Error` и `RawVideoSdpMediaSection` из `video_sdp_media_section.hpp`;
+  - должен использоваться следующими шагами SDP ingestion/composition, прежде всего `069D5`;
+  - не зависит от `VideoStreamSignaling`, depacketizer, reorder buffer и receive pipeline internals.
+- Сущности:
+  - `RawVideoSdpPtpReferenceClock`
+    - raw parsed PTP clock form (`version`, `gmid`, optional `domain`).
+  - `RawVideoSdpReferenceClock`
+    - raw parsed reference clock with `Kind`:
+      - `Ptp`
+      - `LocalMac`
+      - `Other`
+    - stores `raw_value`, optional parsed `ptp`, optional `local_mac`.
+  - `RawVideoSdpMediaClock`
+    - raw parsed media clock with `Kind`:
+      - `Direct`
+      - `Sender`
+      - `Other`
+    - stores `raw_value`, optional `direct_offset`.
+  - `RawVideoSdpTimestampModeValue`
+    - preserved raw `TSMODE` token.
+  - `RawVideoSdpSenderTypeValue`
+    - preserved raw `TP` token.
+  - `RawVideoSdpTimingAttributes`
+    - aggregates optional parsed timing-related attributes:
+      - `reference_clock`
+      - `media_clock`
+      - `timestamp_mode`
+      - `ts_delay_sender_ticks`
+      - `sender_type`
+      - `troff_us`
+      - `cmax`
+  - helper / parsing entry points:
+    - `trim(...)`
+    - `parse_video_sdp_reference_clock(...)`
+    - `parse_video_sdp_media_clock(...)`
+    - `parse_video_sdp_timestamp_mode(...)`
+    - `parse_video_sdp_sender_type(...)`
+    - `parse_video_sdp_ts_delay(...)`
+    - `parse_video_sdp_troff(...)`
+    - `parse_video_sdp_cmax(...)`
+    - `parse_video_sdp_timing_attributes(...)`
+- Примечание:
+  - файл выполняет только raw timing-attribute parsing;
+  - semantic interpretation и mapping в modeled signaling должны добавляться поверх этого слоя, а не внутрь него;
+  - unknown/open-ended reference/media clock forms сохраняются как `Other` с `raw_value` для дальнейшего локального расширения.
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -1289,7 +1340,7 @@
     - derive `packing_mode` and signaled media-description properties without mixing runtime-support assumptions into the parser
     - keep structural signaling validation in existing validation helpers
     - add focused tests
-  - [ ] 069D3: Add parsing for timing/reference-clock/sender-timing SDP attributes
+  - [x] 069D3: Add parsing for timing/reference-clock/sender-timing SDP attributes
     - parse `ts-refclk`
     - parse `mediaclk`
     - parse `TSMODE`
