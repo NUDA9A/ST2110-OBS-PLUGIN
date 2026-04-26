@@ -1040,6 +1040,37 @@
   - semantic interpretation и mapping в modeled signaling должны добавляться поверх этого слоя, а не внутрь него;
   - unknown/open-ended reference/media clock forms сохраняются как `Other` с `raw_value` для дальнейшего локального расширения.
 
+### libs/st2110core/include/st2110/video_sdp_rtpmap.hpp
+- Роль:
+  - pure SDP `a=rtpmap` parsing/binding layer для video payload type.
+  - отделяет raw parsing/binding `a=rtpmap` от `a=fmtp` parsing, signaling validation, signaling-model mapping и runtime/bootstrap projection.
+- Связи:
+  - использует `Error` и raw SDP helper’ы / raw media-section model из `video_sdp_media_section.hpp`;
+  - должен использоваться последующими ingestion/composition шагами, прежде всего `069D5`;
+  - не зависит от `VideoStreamSignaling`, depacketizer, reorder buffer и receive pipeline internals.
+- Сущности:
+  - `RawVideoSdpRtpMap`
+    - raw parsed `a=rtpmap` representation:
+      - `encoding_name`
+      - `clock_rate`
+      - optional `encoding_parameters`
+  - helper functions:
+    - `trim_rtpmap_ascii_ws(...)`
+    - `parse_rtpmap_attribute_payload_for_pt(...)`
+  - main parsing/binding entry points:
+    - `parse_video_sdp_rtpmap_payload(...)`
+      - parses raw `encoding-name/clock-rate[/encoding-parameters]` payload
+    - `parse_video_sdp_rtpmap_attribute(...)`
+      - parses one full `a=rtpmap:<pt> ...` line for the selected payload type
+      - returns `nullopt` on payload-type mismatch
+    - `parse_video_sdp_rtpmap_from_media_section(...)`
+      - parses already bound `raw.rtpmap` from `RawVideoSdpMediaSection`
+      - explicitly checks that selected `payload_type` belongs to `media_payload_types`
+- Примечание:
+  - это raw SDP `rtpmap` parsing/binding layer, а не signaling mapping layer;
+  - semantic interpretation of `encoding_name` and `clock_rate` should remain above this boundary;
+  - later SDP ingestion should compose this file with raw media-section selection, fmtp parsing/mapping and timing-attribute parsing rather than merging logic ad hoc.
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -1348,7 +1379,7 @@
     - parse sender-timing-related properties such as `TP`, `TROFF`, `CMAX`
     - keep these parsers separate from signaling validation and separate from runtime projection
     - add focused tests
-  - [ ] 069D4: Add pure SDP `a=rtpmap` parsing/binding for the selected video payload type
+  - [x] 069D4: Add pure SDP `a=rtpmap` parsing/binding for the selected video payload type
     - parse and bind `a=rtpmap` for the selected payload type inside the raw SDP media-section boundary
     - keep `a=rtpmap` parsing separate from `a=fmtp` parsing and separate from signaling validation
     - ensure the binding between payload type, media section, `a=rtpmap`, and `a=fmtp` remains explicit and localized

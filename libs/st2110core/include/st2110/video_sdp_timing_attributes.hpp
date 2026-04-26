@@ -10,7 +10,7 @@
 #include <string_view>
 #include <expected>
 #include <charconv>
-#inclue <utility>
+#include <utility>
 
 
 namespace st2110 {
