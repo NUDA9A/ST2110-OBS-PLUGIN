@@ -67,6 +67,7 @@ namespace st2110 {
             return std::unexpected(Error::InvalidValue);
         }
         depth.bits = static_cast<uint8_t>(raw.depth);
+        depth.floating_point = raw.depth_floating_point;
         res.depth = depth;
 
         VideoColorimetry colorimetry{};
@@ -153,6 +154,10 @@ namespace st2110 {
             return std::unexpected(expected_packing_mode.error());
         }
         res.packing_mode = *expected_packing_mode;
+
+        if (raw.max_udp_datagram_bytes.has_value()) {
+            res.max_udp_datagram_bytes = *raw.max_udp_datagram_bytes;
+        }
 
         if (Error err = validate_video_media_description(res.media); err != Error::Ok) {
             return std::unexpected(err);

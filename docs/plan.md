@@ -938,12 +938,14 @@
       - `height`
       - `exactframerate`
       - `depth`
+      - `depth_floating_point`
       - `colorimetry`
       - `packing_mode`
       - `signal_standard`
-    - optional raw parsed media-description fields:
+    - optional raw parsed fields:
       - `transfer_characteristic_system`
       - `range`
+      - `max_udp_datagram_bytes`
     - flag fields:
       - `interlace`
       - `segmented`
@@ -953,18 +955,23 @@
       - `sender_type`
       - `troff_us`
       - `cmax`
-    - `unknown_parameters`
+      - `unknown_parameters`
   - helper functions:
     - `split_part_to_string_view(...)`
     - `trim_ascii_ws(...)`
     - `parse_fmtp_uint64(...)`
     - `parse_fmtp_uint32(...)`
     - `parse_fmtp_attribute_payload_for_pt(...)`
+    - `RawVideoSdpFmtpDepthValue`
+    - `parse_fmtp_depth(...)`
+      - parses integer depths and standard `16f`;
+      - rejects malformed depth tokens and non-16 floating-point depths.
   - main parsing entry points:
     - `parse_video_sdp_fmtp_payload(...)`
       - parses one raw fmtp payload string into `RawVideoSdpFmtpParameters`;
       - recognizes known media-description fields and known timing/sender parameters;
       - preserves truly unknown parameters.
+      - recognizes `MAXUDP` as a known packet-size / UDP-datagram-size parameter;
     - `parse_video_sdp_fmtp_attribute(...)`
       - parses one full `a=fmtp:<pt> ...` line for the selected payload type;
       - returns `nullopt` on payload-type mismatch.
@@ -991,16 +998,20 @@
     - конвертирует known tokens в modeled enums;
     - unknown/open-ended tokens сохраняет как `Known::Other + raw_token`;
     - валидирует границы signaling-model представления там, где это относится к media description.
+    - maps raw `depth_floating_point` into `VideoBitDepth::floating_point`;
+    - `depth=16f` is represented as `VideoBitDepth{bits=16, floating_point=true}`.
   - `video_stream_signaling_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters&)`
     - собирает partial `VideoStreamSignaling` из raw fmtp mapping:
       - `media`
       - `scan_mode`
       - `packing_mode`
+      - optional `max_udp_datagram_bytes`
     - на текущем шаге не наполняет timing/reference-clock/sender-related signaling fields;
     - therefore validates mapped `media` through media-description boundary instead of requiring full `VideoStreamSignaling` completeness.
 - Примечание:
   - это mapping/adapter layer, а не raw SDP parser и не full signaling-ingestion entry point;
   - later tasks should compose it with raw media-section selection, `a=rtpmap`, and timing/reference-clock parsing instead of expanding ad hoc mapping directly in runtime/bootstrap code.
+  - `MAXUDP` is mapped from raw fmtp parameters into `VideoStreamSignaling::max_udp_datagram_bytes`; packet-size policy derivation remains in the existing signaling projection helpers.
 
 ### libs/st2110core/include/st2110/video_sdp_timing_attributes.hpp
 - Роль:
@@ -1152,7 +1163,6 @@
 - [x] 021: Implement parser for ExtSeqHi16 + 1..3 SRD headers + tests (synthetic bytes)
 - [x] 022: Implement validation rules (SRD length > 0, <= MAXUDP, C chaining) + tests
 - [x] 023: Implement helper: combine 16-bit RTP seq + ExtSeqHi16 => 32-bit ext seq + tests
-
 ---
 
 ## Spec notes / deviations
@@ -1176,7 +1186,12 @@
 - [ ] S018: Receiver-side playout / reconstruction timing boundary is not yet explicit. Mapping from RTP timestamp domain to internal `ts_ns`, receiver playout timing policy, and receiver-side offset/delay configuration must live above reorder/depacketize logic rather than collapsing into arrival-time smoothing or local cadence heuristics.
 - [ ] S019: RTP timestamp wraparound and long-running-stream continuity are not yet explicitly covered by timestamp-mapping tasks/tests. This must be handled and tested across reconstruction boundaries so long-lived streams do not silently drift or reset at wraparound.
 - [x] S020: Generic ST 2110-20 payload-header validation currently rejects non-zero `F` / `field_id` too early. This progressive-only restriction must not live in the low-level structural payload-header layer. Generic parsing/structural validation should accept packets for all already-modeled scan-mode variants, while mode-specific acceptance/rejection of `F` must remain localized in explicit mode-aware runtime boundaries so future `Interlaced` / `PsF` work can be implemented by filling existing branches rather than rewriting the parser/validator layer.
-- [x] S021: SDP ingestion path no longer treats ST 2110 timing/sender fields such as `TP`, `TROFF`, `CMAX`, `TSMODE`, and `TSDELAY` only as standalone `a=` attributes. Known ST 2110 timing/sender media type parameters are now parsed from `a=fmtp` into explicit raw fields, mapped into `VideoStreamSignaling`, and checked for conflicts with standalone compatibility attributes instead of remaining only in `unknown_parameters` and being silently ignored.---
+- [x] S021: SDP ingestion path no longer treats ST 2110 timing/sender fields such as `TP`, `TROFF`, `CMAX`, `TSMODE`, and `TSDELAY` only as standalone `a=` attributes. Known ST 2110 timing/sender media type parameters are now parsed from `a=fmtp` into explicit raw fields, mapped into `VideoStreamSignaling`, and checked for conflicts with standalone compatibility attributes instead of remaining only in `unknown_parameters` and being silently ignored.
+- [x] S022: SDP ingestion now parses `MAXUDP` from video `a=fmtp` through the existing raw fmtp parsing / SDP-to-signaling adapter path. Parsed `MAXUDP` is mapped to `VideoStreamSignaling::max_udp_datagram_bytes` and then reaches `PacketParsePolicy` through the existing signaling projection path, without introducing a parallel runtime config mechanism.
+- [x] S023: SDP `depth=16f` is now accepted in the video SDP fmtp parsing path and mapped to the existing `VideoBitDepth{bits=16, floating_point=true}` signaling representation. Runtime pixel-format/depacketizer support remains unchanged and rejects unsupported floating-point formats through existing projection/support boundaries.
+- [ ] S024: The standards-aware video SDP media-property model still does not explicitly enumerate all known ST 2110-20 media-description variants. Known standard values such as additional `sampling`, `colorimetry`, and `TCS` values should be represented explicitly in signaling enums / mapping helpers, while `Other` remains only for forward compatibility or truly unknown future values. Runtime support may still reject unsupported combinations through existing projection/support boundaries.
+- [ ] S025: Receiver-side signaling validation currently risks treating optional ST 2110-21 sender timing parameters, especially `CMAX` for `TP=2110TPW`, as mandatory for SDP ingestion. Structural receiver-side SDP ingestion should accept standard-valid SDP when optional parameters are absent, while any stricter sender/conformance policy must be a separate localized validation mode.
+- [ ] S026: Current video SDP ingestion is primarily media-section / selected-attribute oriented and does not yet have an explicit raw boundary for session/media transport and redundancy-related SDP constructs such as `c=`, `a=source-filter`, `a=mid`, and `a=group:DUP`. These constructs should be architecturally represented in the SDP parsing layer so later runtime/backend integration can be implemented by filling existing adapters/branches rather than reshaping SDP ingestion.
 ---
 
 # Phase 1 — MVP
@@ -1386,7 +1401,7 @@
   - [x] 069C4: Add architecture-focused regression tests for receiver timing boundary placement
     - prove receiver timing assumptions remain outside parser/reorder/depacketizer internals
     - prove later ST 2110-21 behavior can be filled into the existing boundary without reshaping public contracts
-- [x] 069D: Add SDP parsing / ingestion path for video signaling model
+- [ ] 069D: Add SDP parsing / ingestion path for video signaling model
   - **цель этой группы задач в MVP — заложить полную SDP/media-section ingestion architecture уже сейчас, even if coverage of many specific `a=` attributes will be expanded later**
   - [x] 069D0: Define raw SDP video media-section model / parsing boundary
     - define a dedicated raw parsed representation for one SDP video media section before mapping to `VideoStreamSignaling`
@@ -1409,7 +1424,7 @@
       - missing required raw attribute association
       - duplicate relevant attributes
       - preservation of unknown `a=` attributes in the raw media-section model
-    - [x] 069D1: Add pure SDP `a=fmtp` parsing layer for video media description
+  - [x] 069D1: Add pure SDP `a=fmtp` parsing layer for video media description
     - parse one ST 2110 video `a=fmtp` attribute payload into a dedicated raw parsed structure
     - keep parsing separate from `VideoStreamSignaling` mapping, validation, and runtime config projection
     - parse current core media-description fields needed by the modeled boundary:
@@ -1432,7 +1447,7 @@
     - derive `packing_mode` and signaled media-description properties without mixing runtime-support assumptions into the parser
     - keep structural signaling validation in existing validation helpers
     - add focused tests
-    - [x] 069D3: Add parsing for timing/reference-clock/sender-timing SDP attributes and media type parameters
+  - [x] 069D3: Add parsing for timing/reference-clock/sender-timing SDP attributes and media type parameters
     - parse standalone SDP attributes such as `ts-refclk` and `mediaclk`
     - parse ST 2110 timing/sender media type parameters from `a=fmtp` where they are signaled as media type parameters:
       - `TP`
@@ -1476,6 +1491,117 @@
     - compose raw media-section parsing, fmtp/media-description parsing, `a=rtpmap` binding, and timing/reference-clock parsing
     - keep transport/network/bootstrap projection separate from SDP parsing
     - add focused end-to-end ingestion tests for valid/invalid SDP field mapping
+  - [x] 069D6: Parse and map `MAXUDP` from video SDP `a=fmtp`
+    - extend the existing raw `a=fmtp` parsing structure with `MAXUDP`
+    - parse `MAXUDP` through the existing numeric parsing conventions
+    - map parsed `MAXUDP` into `VideoStreamSignaling::max_udp_datagram_bytes`
+    - keep packet-size policy derivation in the existing `packet_parse_policy_from_video_stream_signaling(...)` path
+    - when `MAXUDP` is absent, preserve the existing default Standard UDP Size Limit behavior
+    - prefer minimal changes to existing `.hpp` files:
+      - `video_sdp_fmtp.hpp`
+      - `video_sdp_signaling_adapter.hpp`
+      - `video_signaling.hpp` only if validation/projection needs a tiny adjustment
+      - related tests only
+    - do not introduce a parallel runtime config path for `MAXUDP`
+    - add focused tests for:
+      - valid `MAXUDP`
+      - absent `MAXUDP`
+      - malformed `MAXUDP`
+      - propagation into `VideoStreamSignaling`
+      - propagation into packet parse policy
+  - [x] 069D7: Support SDP `depth=16f` in video media-description parsing
+    - keep `depth` as a signaling/media-description property, not as a runtime `PixelFormat`
+    - accept standard `depth=16f` and map it to the existing floating-point depth representation
+    - keep integer depths working unchanged
+    - runtime projection may still reject unsupported floating-point formats through existing `PixelFormat` / support boundaries
+    - prefer minimal changes to existing `.hpp` files:
+      - `video_sdp_fmtp.hpp`
+      - `video_sdp_signaling_adapter.hpp`
+      - `signaling_structs.hpp` only if the current raw representation cannot carry `16f` cleanly
+      - `video_signaling.hpp` only for local validation acceptance
+      - related tests only
+    - do not expand actual frame storage / depacketizer runtime pixel-format support in this task
+    - add focused tests for:
+      - `depth=8`
+      - `depth=10`
+      - `depth=12`
+      - `depth=16`
+      - `depth=16f`
+      - malformed depth tokens
+  - [ ] 069D8: Complete explicit known ST 2110-20 video SDP media-property enum coverage
+    - add explicit modeled values for known standard SDP media-description variants currently falling into `Other`
+    - cover at least:
+      - sampling variants:
+        - `CLYCbCr-4:4:4`
+        - `CLYCbCr-4:2:2`
+        - `CLYCbCr-4:2:0`
+        - `ICtCp-4:4:4`
+        - `ICtCp-4:2:2`
+        - `ICtCp-4:2:0`
+      - colorimetry variants:
+        - `ST2065-3`
+        - `UNSPECIFIED`
+        - `XYZ`
+        - `ALPHA`
+      - transfer characteristic system variants:
+        - `LINEAR`
+        - `BT2100LINPQ`
+        - `BT2100LINHLG`
+        - `ST2065-1`
+        - `ST428-1`
+        - `DENSITY`
+        - `ST2115LOGS3`
+        - `UNSPECIFIED`
+    - keep `Other` for forward compatibility and truly unknown future values
+    - update only the existing signaling enum / mapping / validation boundaries where possible
+    - runtime support may continue to reject combinations that cannot be projected to current `PixelFormat`
+    - prefer minimal changes to existing `.hpp` files:
+      - `signaling_structs.hpp`
+      - `video_sdp_signaling_adapter.hpp`
+      - `video_signaling.hpp`
+      - related tests only
+    - do not implement new pixel formats or frame storage layouts in this task
+    - add focused tests proving:
+      - known standard tokens map to explicit enum values
+      - unknown future tokens are preserved through `Other`
+      - runtime projection remains localized and does not silently accept unsupported formats
+  - [ ] 069D9: Relax receiver-side optional sender-timing validation for SDP ingestion
+    - ensure structural receiver-side signaling validation accepts absent optional sender timing parameters when the standard permits them
+    - specifically, `TP=2110TPW` must not require explicit `CMAX` merely for receiver-side SDP ingestion
+    - keep stricter sender/conformance validation, if needed, as a separate localized helper or future policy mode
+    - prefer minimal changes to existing `.hpp` files:
+      - `video_signaling.hpp`
+      - `video_receiver_timing_signaling.hpp` only if receiver-timing consistency currently depends on stricter semantics
+      - related tests only
+    - avoid renaming existing public helpers unless necessary
+    - add focused tests for:
+      - `TP=2110TPW` with `CMAX`
+      - `TP=2110TPW` without `CMAX`
+      - malformed `CMAX`
+      - receiver capability rejection still happening in the receiver timing boundary rather than generic SDP validation
+  - [ ] 069D10: Add raw SDP session/media transport and redundancy boundary for video ingestion
+    - introduce or extend a raw SDP parsing structure that can preserve transport/redundancy-related SDP constructs separately from `VideoStreamSignaling`
+    - cover at least:
+      - media-level or session-level `c=` connection data relevant to the selected video media section
+      - `a=source-filter`
+      - `a=mid`
+      - `a=group:DUP`
+      - unknown session/media attributes needed for future extension
+    - this task is architectural: it does not need to implement full backend/runtime redundant-stream behavior
+    - keep transport/network/backend projection separate from pure SDP parsing
+    - prefer minimal changes to existing `.hpp` files where practical:
+      - `video_sdp_media_section.hpp`
+      - `video_sdp_ingestion.hpp`
+      - possibly `signaling_structs.hpp` only if a small raw/bootstrap carrier is needed
+      - related tests only
+    - do not reshape existing `VideoStreamSignaling` unless a field is truly part of the modeled stream essence/timing description
+    - add focused tests proving:
+      - `c=` is parsed/preserved
+      - `a=source-filter` is parsed/preserved
+      - `a=mid` is parsed/preserved
+      - `a=group:DUP` is parsed/preserved
+      - unknown attributes are preserved rather than rejected
+      - existing single-media-section ingestion behavior remains unchanged
 - [x] 069E: Thread `VideoPackingMode` into runtime receive path as an explicit axis
   - **цель этой задачи в MVP — протащить packing mode как runtime/config/policy axis уже сейчас, even if часть branches пока останется `Unsupported`**
   - extend runtime receive configs / projections so packing mode reaches depacketizer, packet interpretation, and padding-validation boundaries
@@ -1686,9 +1812,9 @@
 - [ ] 212: Add additional audio format/profile support if needed
 - [ ] 213: Add shared format capability description/query API
 - [ ] 214: Expand standards-aware video signaling / media-property coverage through the already-modeled video signaling representation
-  - add support for additional signaled video/media-property variants without changing the core signaling/runtime contracts introduced in MVP
+  - continue expanding support for signaled video/media-property variants without changing the core signaling/runtime contracts introduced in MVP
   - keep parsing, validation, and projection extensions localized to existing model/adapter boundaries
-  - coordinate such extensions with the raw SDP media-section / `a=`-attribute ingestion architecture introduced in `069D`, so new signaling coverage is added by filling existing parsing and mapping branches rather than reshaping the ingestion pipeline
+  - after `069D7`, future work should mostly add implementation behavior for already-explicit enum branches rather than routing unknown standard values through `Other`
 - [ ] 214A: Expand video SDP `a=` attribute coverage through the already-modeled raw SDP media-section boundary
   - add support for additional video-relevant `a=` attributes by filling existing per-attribute/per-PT parsing branches inside the raw SDP/media-section ingestion architecture introduced in MVP
   - do not reshape `VideoStreamSignaling`, raw SDP media-section model, or the final ingestion pipeline only to add new `a=` attribute coverage
@@ -1706,6 +1832,19 @@
     - mapping branch
     - structural validation branch, where applicable
   - add focused tests for each newly supported SDP field and for coexistence with already-supported fields
+- [ ] 214C: Integrate parsed SDP transport/redundancy metadata into receiver bootstrap boundaries
+  - consume the raw SDP session/media transport boundary introduced in `069D10`
+  - derive backend-facing transport hints from parsed SDP where appropriate
+  - keep manual/local transport fields explicit and overrideable for tests/scaffolding
+  - keep pure SDP parsing separate from backend/runtime socket or MTL implementation
+  - future implementation should fill existing raw-SDP / bootstrap adapter branches rather than changing SDP parser shape
+  - add focused tests for `c=`, `source-filter`, `mid`, and single-stream bootstrap behavior
+- [ ] 214D: Add redundant RTP stream modeling and selection policy through existing SDP redundancy boundary
+  - model `a=group:DUP` / duplicate RTP stream relationships using the raw SDP structures introduced in `069D10`
+  - define where primary/secondary stream selection and future seamless/redundant receive behavior will live
+  - do not implement full SMPTE ST 2022-7 switching in this task unless explicitly chosen later
+  - keep backend and receive-pipeline public contracts stable
+  - add focused architecture tests proving redundant-stream support plugs into existing SDP/bootstrap boundaries
 - [ ] 215: Expand audio signaling / channel-order / channel-mapping support through the already-modeled audio signaling boundary
   - add implementation for additional channel-order / channel-mapping cases without changing the core audio signaling/runtime contracts introduced in MVP
   - keep reordering/adaptation localized to the pre-defined boundaries
@@ -1747,6 +1886,15 @@
   - fill buffering / tolerance / release behavior inside the boundaries introduced in MVP
   - keep parser/reorder/depacketizer contracts unchanged
   - add focused tests
+- [ ] 229B: Add stricter optional SDP sender/conformance validation policy as a separate mode
+  - keep normal receiver-side SDP ingestion permissive for optional standard parameters
+  - add a localized stricter validation helper/policy only for conformance checking or sender-profile validation
+  - do not make strict conformance policy the default receiver ingestion behavior
+  - avoid changing existing SDP parser shape
+  - add focused tests proving:
+    - normal receiver ingestion accepts absent optional parameters
+    - strict policy can reject missing optional-but-required-by-local-policy parameters
+    - receiver timing capability checks remain in `video_receiver_timing_signaling.hpp`
 
 ## Track I — Operational quality
 - [ ] 230: Better logging and structured stats
@@ -1794,11 +1942,11 @@
 - [ ] 265: Harden thread lifecycle and shutdown ordering
 - [ ] 266: Harden long-run stability and leak checks
 - [ ] 267: Final audit of spec compliance and removal of temporary limitations
-- - [ ] 267A: Harden SDP ingestion interoperability and corner-case handling through the existing raw media-section / per-attribute parsing architecture
-- harden handling of duplicate `a=` attributes, attribute ordering variations, unknown-attribute coexistence, partial/legacy SDP variants, and malformed-but-recoverable SDP forms where policy allows
-- keep robustness improvements localized to existing raw media-section, per-attribute parser, and mapping/validation branches
-- avoid reshaping signaling model or bootstrap contracts for interoperability fixes
-- add regression tests for real-world SDP edge cases and captured samples
+- [ ] 267A: Harden SDP ingestion interoperability and corner-case handling through the existing raw media-section / per-attribute parsing architecture
+  - harden handling of duplicate `a=` attributes, attribute ordering variations, unknown-attribute coexistence, partial/legacy SDP variants, and malformed-but-recoverable SDP forms where policy allows
+  - keep robustness improvements localized to existing raw media-section, per-attribute parser, and mapping/validation branches
+  - avoid reshaping signaling model or bootstrap contracts for interoperability fixes
+  - add regression tests for real-world SDP edge cases and captured samples
 
 ---
 

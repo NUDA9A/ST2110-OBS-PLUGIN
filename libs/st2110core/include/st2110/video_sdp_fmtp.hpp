@@ -20,6 +20,7 @@
 #include <limits>
 #include <system_error>
 #include <utility>
+#include <cstddef>
 
 namespace st2110 {
     struct RawVideoSdpExactFrameRate {
@@ -38,6 +39,7 @@ namespace st2110 {
         uint32_t height = 0;
         RawVideoSdpExactFrameRate exactframerate{};
         uint16_t depth = 0;
+        bool depth_floating_point = false;
         std::string colorimetry{};
         std::string packing_mode{};
         std::string signal_standard{};
@@ -51,6 +53,7 @@ namespace st2110 {
         std::optional<std::string> sender_type{};
         std::optional<uint32_t> troff_us{};
         std::optional<uint32_t> cmax{};
+        std::optional<std::size_t> max_udp_datagram_bytes{};
 
         std::vector<RawVideoSdpFmtpUnknownParameter> unknown_parameters{};
     };
@@ -116,6 +119,55 @@ namespace st2110 {
         return static_cast<uint32_t>(*parsed);
     }
 
+    struct RawVideoSdpFmtpDepthValue {
+        uint16_t bits = 0;
+        bool floating_point = false;
+    };
+
+    [[nodiscard]] inline std::expected<RawVideoSdpFmtpDepthValue, Error>
+    parse_fmtp_depth(std::string_view value) {
+        value = trim_ascii_ws(value);
+
+        if (value.empty()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        bool floating_point = false;
+
+        if (value.back() == 'f') {
+            floating_point = true;
+            value.remove_suffix(1);
+
+            if (value.empty()) {
+                return std::unexpected(Error::InvalidValue);
+            }
+        }
+
+        uint64_t bits = 0;
+        const char* first = value.data();
+        const char* last = value.data() + value.size();
+
+        const auto [ptr, ec] = std::from_chars(first, last, bits);
+
+        if (ec != std::errc{} ||
+            ptr != last ||
+            bits == 0 ||
+            bits > std::numeric_limits<uint16_t>::max()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        // ST 2110-20 SDP uses 16f for 16-bit floating-point samples.
+        // Do not accidentally accept non-standard tokens such as 8f / 10f / 12f.
+        if (floating_point && bits != 16) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        return RawVideoSdpFmtpDepthValue{
+                .bits = static_cast<uint16_t>(bits),
+                .floating_point = floating_point
+        };
+    }
+
     [[nodiscard]] inline std::expected<std::optional<std::string_view>, Error>
     parse_fmtp_attribute_payload_for_pt(std::string_view line, uint8_t expected_payload_type) {
         line = strip_cr(line);
@@ -168,6 +220,7 @@ namespace st2110 {
         std::optional<uint32_t> height;
         std::optional<RawVideoSdpExactFrameRate> exact_framerate;
         std::optional<uint16_t> depth;
+        bool depth_floating_point = false;
         std::optional<std::string> colorimetry;
         std::optional<std::string> packing_mode;
         std::optional<std::string> signal_standard;
@@ -178,6 +231,7 @@ namespace st2110 {
         std::optional<std::string> sender_type;
         std::optional<uint32_t> troff_us;
         std::optional<uint32_t> cmax;
+        std::optional<std::size_t> max_udp_datagram_bytes;
         bool interlace = false;
         bool segmented = false;
 
@@ -287,22 +341,14 @@ namespace st2110 {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                unsigned value = 0;
+                auto parsed_depth = parse_fmtp_depth(key_val_pair.substr(6));
 
-                const char* first = key_val_pair.data() + 6;
-                const char* last = key_val_pair.data() + key_val_pair.size();
-
-                const auto [ptr, ec] = std::from_chars(first, last, value);
-
-                if (ec != std::errc{} || ptr != last || value == 0) {
-                    return std::unexpected(Error::InvalidValue);
+                if (!parsed_depth.has_value()) {
+                    return std::unexpected(parsed_depth.error());
                 }
 
-                if (value > std::numeric_limits<uint16_t>::max()) {
-                    return std::unexpected(Error::InvalidValue);
-                }
-
-                depth = static_cast<uint16_t>(value);
+                depth = parsed_depth->bits;
+                depth_floating_point = parsed_depth->floating_point;
                 continue;
             }
             if (key_val_pair.starts_with("colorimetry=")) {
@@ -450,6 +496,23 @@ namespace st2110 {
                 segmented = true;
                 continue;
             }
+            if (key_val_pair.starts_with("MAXUDP=")) {
+                if (max_udp_datagram_bytes.has_value()) {
+                    return std::unexpected(Error::InvalidValue);
+                }
+
+                auto parsed = parse_fmtp_uint64(key_val_pair.substr(7));
+                if (!parsed.has_value()) {
+                    return std::unexpected(parsed.error());
+                }
+
+                if (*parsed > std::numeric_limits<std::size_t>::max()) {
+                    return std::unexpected(Error::InvalidValue);
+                }
+
+                max_udp_datagram_bytes = static_cast<std::size_t>(*parsed);
+                continue;
+            }
 
             RawVideoSdpFmtpUnknownParameter unknown_parameter{};
             const std::size_t eq_pos = key_val_pair.find('=');
@@ -489,6 +552,7 @@ namespace st2110 {
             return std::unexpected(Error::InvalidValue);
         }
         res.depth = *depth;
+        res.depth_floating_point = depth_floating_point;
 
         if (!colorimetry.has_value()) {
             return std::unexpected(Error::InvalidValue);
@@ -531,6 +595,10 @@ namespace st2110 {
 
         if (cmax.has_value()) {
             res.cmax = *cmax;
+        }
+
+        if (max_udp_datagram_bytes.has_value()) {
+            res.max_udp_datagram_bytes = *max_udp_datagram_bytes;
         }
 
         res.interlace = interlace;
