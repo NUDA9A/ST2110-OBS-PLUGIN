@@ -1071,6 +1071,48 @@
   - semantic interpretation of `encoding_name` and `clock_rate` should remain above this boundary;
   - later SDP ingestion should compose this file with raw media-section selection, fmtp parsing/mapping and timing-attribute parsing rather than merging logic ad hoc.
 
+### libs/st2110core/include/st2110/video_sdp_ingestion.hpp
+- Роль:
+  - final SDP-to-`VideoStreamSignaling` ingestion entry point для video.
+  - композиционный слой, который связывает уже существующие raw SDP parsing boundaries и signaling model mapping.
+  - отделяет SDP ingestion от transport/network config injection, runtime/bootstrap projection и receiver pipeline internals.
+- Связи:
+  - использует:
+    - `video_sdp_media_section.hpp` для выбора raw video media section по payload type;
+    - `video_sdp_fmtp.hpp` для parsing `a=fmtp`;
+    - `video_sdp_rtpmap.hpp` для parsing/binding `a=rtpmap`;
+    - `video_sdp_timing_attributes.hpp` для raw timing/reference/sender-timing attributes;
+    - `video_sdp_signaling_adapter.hpp` для mapping fmtp media-description fields в `VideoStreamSignaling`;
+    - `video_signaling.hpp` / `signaling_structs.hpp` для final structural signaling validation.
+  - не зависит от depacketizer / reorder buffer / receive pipeline internals.
+- Сущности:
+  - `ascii_iequals(...)`
+    - ASCII-only helper для case-insensitive comparison в SDP token validation.
+  - `validate_video_sdp_rtpmap_for_video_signaling(const RawVideoSdpRtpMap&)`
+    - final ingestion validation для video `a=rtpmap`;
+    - currently requires `raw/90000`;
+    - rejects `encoding_parameters` to avoid silently ignoring unmodeled semantics.
+  - hex parsing helpers:
+    - `hex_nibble(...)`
+    - `parse_hex_byte(...)`
+    - `parse_separated_hex_octets<N>(...)`
+    - используются для mapping raw PTP GMID / localmac forms into modeled clock identity fields.
+  - timing/signaling mapping helpers:
+    - `reference_clock_from_raw_video_sdp_reference_clock(...)`
+    - `media_clock_mode_from_raw_video_sdp_media_clock(...)`
+    - `timestamp_mode_from_raw_video_sdp_timestamp_mode(...)`
+    - `sender_type_from_raw_video_sdp_sender_type(...)`
+    - `apply_video_sdp_timing_attributes_to_signaling(...)`
+  - final entry points:
+    - `video_stream_signaling_from_raw_video_sdp_media_section(const RawVideoSdpMediaSection&)`
+      - composes already-bound raw media-section fields into a validated `VideoStreamSignaling`.
+    - `parse_video_stream_signaling_from_sdp(std::string_view, uint8_t)`
+      - selects the matching video media section and maps it into `VideoStreamSignaling`.
+- Примечание:
+  - это final SDP ingestion boundary, а не runtime receiver bootstrap;
+  - transport/network fields and receiver local policy inputs still belong to signaling-to-runtime/bootstrap projection layers;
+  - current `rtpmap` and timing interpretation intentionally remains conservative and localized.
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -1105,7 +1147,7 @@
 - [x] S007: Public headers currently contain non-trivial function definitions in a way that risks ODR / multiple-definition problems once the project grows beyond the current “mostly one translation unit per test executable” shape. The linkage model must be made explicit (true header-only with `inline`, or moved implementations) before backend/app growth.
 - [x] S008: `PacketParseStats` structures exist, but packet parsing does not yet expose a single integrated path that records stage-specific parse results through the real parse flow. This should be fixed so parse observability is not only nominal.
 - [ ] S009: Current packet size policy models a configurable UDP payload-size limit, but ST 2110-10 defines `MAXUDP` and receiver size expectations in terms of UDP datagram size, not only essence payload size. Standard UDP Size Limit and Extended UDP Size Limit handling, default behavior when `MAXUDP` is absent, and the receiver assumption around fragmented IP datagrams must be aligned with ST 2110-10 before packet sizing is considered spec-clean.
-- [ ] S010: The project now has an initial standards-aware video signaling model boundary, structural validation for key signaling fields, and projection paths into runtime/manual config. However, the receive path is still primarily driven by manual config and does not yet have full runtime integration of signaling-derived configuration or SDP ingestion. ST 2110-10 / -20 / -21 require or define stream interpretation/signaling through SDP attributes such as video sampling/depth/packing/framerate and timing-related attributes including `mediaclk`, `ts-refclk`, `MAXUDP`, `TSMODE`, `TSDELAY`, and sender timing parameters. This work must be completed through explicit runtime integration and a separate SDP parsing/ingestion path rather than by expanding ad hoc manual config assumptions.
+- [ ] S010: The project now has standards-aware video signaling model boundaries, structural validation, runtime/bootstrap projection helpers, raw SDP media-section parsing, per-attribute SDP parsers, and a final SDP-to-`VideoStreamSignaling` ingestion entry point. However, the receive path is still primarily driven by manual config in actual runtime/backend usage, and signaling-derived receiver bootstrap is not yet wired as the primary operational path. ST 2110-10 / -20 / -21 stream interpretation through SDP is now architecturally represented, but runtime integration of SDP-derived configuration, receiver timing policy, and end-to-end backend/app usage must still be completed without expanding ad hoc manual config assumptions.
 - [ ] S011: The current timestamp-strategy plan is still phrased as if internal video timestamps could be derived only from local fps cadence or arrival-time smoothing. For standards-aware ST 2110 receive, internal presentation timestamps must be mapped from RTP timestamp domain and associated clock/signaling model, not from a standalone frame counter alone. The timestamp plan must therefore be reworked around RTP/clock-based mapping.
 - [ ] S012: Receiver timing / conformance boundary for ST 2110-21 is now explicitly modeled through `video_receiver_timing.hpp` and `video_receiver_timing_signaling.hpp`, including receiver capability/requirements, receiver-vs-signaling consistency checks, and timing-aware bootstrap composition. However, fuller ST 2110-21 receiver behavior (buffering/tolerance/release policy and conformance-related runtime behavior) is not yet implemented and must continue to be added through this existing boundary rather than being pushed into parser/reorder/depacketizer internals.
 - [x] S013: `parse_packet_view_staged()` currently accepts arbitrary trailing octets after the bytes covered by `SRD Length` values. ST 2110-20 allows octets after the last Sample Row Data Segment only as terminal field/frame padding, and GPM/BPM padding octets are zero-valued. This must be validated through a localized packing-mode-aware / mode-aware boundary rather than silently tolerated on any packet.
@@ -1325,7 +1367,7 @@
   - [x] 069C4: Add architecture-focused regression tests for receiver timing boundary placement
     - prove receiver timing assumptions remain outside parser/reorder/depacketizer internals
     - prove later ST 2110-21 behavior can be filled into the existing boundary without reshaping public contracts
-- [ ] 069D: Add SDP parsing / ingestion path for video signaling model
+- [x] 069D: Add SDP parsing / ingestion path for video signaling model
   - **цель этой группы задач в MVP — заложить полную SDP/media-section ingestion architecture уже сейчас, even if coverage of many specific `a=` attributes will be expanded later**
   - [x] 069D0: Define raw SDP video media-section model / parsing boundary
     - define a dedicated raw parsed representation for one SDP video media section before mapping to `VideoStreamSignaling`
@@ -1384,7 +1426,7 @@
     - keep `a=rtpmap` parsing separate from `a=fmtp` parsing and separate from signaling validation
     - ensure the binding between payload type, media section, `a=rtpmap`, and `a=fmtp` remains explicit and localized
     - add focused tests for valid/invalid `a=rtpmap` syntax, payload-type mismatch, and missing/broken bindings
-  - [ ] 069D5: Add final SDP-to-`VideoStreamSignaling` ingestion entry point
+  - [x] 069D5: Add final SDP-to-`VideoStreamSignaling` ingestion entry point
     - parse a video SDP/media section into `VideoStreamSignaling`
     - compose raw media-section parsing, fmtp/media-description parsing, `a=rtpmap` binding, and timing/reference-clock parsing
     - keep transport/network/bootstrap projection separate from SDP parsing
