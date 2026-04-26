@@ -923,20 +923,33 @@
 ### libs/st2110core/include/st2110/video_sdp_media_section.hpp
 - Роль:
   - raw SDP video media-section parsing boundary для выбранного video payload type.
-  - отделяет raw SDP/media-section ingestion от `VideoStreamSignaling`, structural signaling validation и runtime/bootstrap projection.
+  - отделяет raw SDP/media-section/session transport ingestion от `VideoStreamSignaling`, structural signaling validation и runtime/bootstrap projection.
+  - сохраняет transport/redundancy-related SDP metadata как raw model, не смешивая ее с essence/timing signaling model.
 - Связи:
   - зависит только от `Error` и стандартных utility types;
-  - должен использоваться будущими SDP ingestion adapters/tasks `069D1`–`069D5`;
-  - не зависит от depacketizer / reorder / pipeline internals.
+  - используется final SDP ingestion layer из `video_sdp_ingestion.hpp`;
+  - не зависит от depacketizer / reorder / pipeline / backend internals.
+  - transport/backend projection по сохраненным raw SDP metadata остается future boundary (`214C` / `214D`).
 - Сущности:
   - `RawSdpAttribute`
-    - raw preserved unknown SDP attribute (`name`, `value`).
+    - raw preserved SDP attribute (`name`, `value`).
+  - `RawSdpConnectionData`
+    - raw parsed `c=` connection data:
+      - `network_type`
+      - `address_type`
+      - `connection_address`
+  - `RawSdpSourceFilter`
+    - preserved `a=source-filter` value as `raw_value`.
+  - `RawSdpGroup`
+    - raw parsed `a=group:<semantics> <mid>...`
+    - `semantics`
+    - `mids`
   - `RawVideoSdpMediaSection`
     - `media_line`
     - `payload_type`
     - `media_payload_types`
-    - `rtpmap`
-    - `fmtp`
+    - selected payload-type-bound `rtpmap`
+    - selected payload-type-bound `fmtp`
     - optional raw timing/reference/sender-related attributes:
       - `ts_refclk`
       - `mediaclk`
@@ -945,7 +958,15 @@
       - `tp`
       - `troff`
       - `cmax`
-    - `unknown_attributes`
+    - raw transport/redundancy metadata:
+      - `session_connection`
+      - `media_connection`
+      - `mid`
+      - `source_filters`
+      - `session_groups`
+    - unknown/preserved attributes:
+      - `unknown_session_attributes`
+      - `unknown_attributes`
   - helper functions:
     - `strip_cr(...)`
     - `split_ws(...)`
@@ -956,16 +977,26 @@
     - `parse_attribute_value(...)`
     - `trim_left_ws(...)`
     - `parse_unknown_sdp_attribute(...)`
+    - `parse_connection_data(...)`
+    - `parse_group_attribute(...)`
+    - `has_dup_session_group(...)`
   - main entry point:
     - `select_raw_video_sdp_media_section(...)`
-      - selects the matching `m=video` section for the requested payload type
-      - binds payload-type-specific `a=rtpmap` / `a=fmtp`
-      - captures raw timing/reference/sender-related attributes
-      - preserves unhandled `a=` attributes
-      - rejects duplicates / missing required bindings / invalid payload association
+      - selects the matching `m=video` section for the requested payload type;
+      - binds payload-type-specific `a=rtpmap` / `a=fmtp`;
+      - captures raw timing/reference/sender-related attributes;
+      - captures session-level `c=`;
+      - captures media-level `c=`;
+      - captures `a=mid`;
+      - captures session/media `a=source-filter`;
+      - captures session-level `a=group`, including `DUP`;
+      - preserves unknown session-level and selected-media-level attributes separately;
+      - rejects duplicate session/media `c=`, duplicate selected `mid`, duplicate selected timing attributes and duplicate selected payload bindings;
+      - if multiple matching video media sections exist under session-level `group:DUP`, keeps the first selected section as current primary/default raw section and ignores later matching sections until redundant-stream selection policy is implemented.
 - Примечание:
-  - это именно raw SDP boundary, а не signaling model и не validation layer;
-  - later tasks should map this raw representation into `VideoStreamSignaling` through explicit adapters instead of mixing SDP parsing directly into signaling/runtime code.
+  - это raw SDP boundary, а не signaling model и не validation/runtime layer;
+  - `c=`, `source-filter`, `mid`, `group:DUP` are intentionally preserved outside `VideoStreamSignaling`;
+  - later runtime/backend integration should consume these raw fields through dedicated bootstrap/transport adapters rather than reshaping `VideoStreamSignaling`.
 
 ### libs/st2110core/include/st2110/video_sdp_fmtp.hpp
 - Роль:
@@ -1194,6 +1225,7 @@
   - transport/network fields and receiver local policy inputs still belong to signaling-to-runtime/bootstrap projection layers;
   - current `rtpmap` and timing interpretation intentionally remains conservative and localized.
   - known timing/sender fields may now come from `a=fmtp` media type parameters or from standalone compatibility attributes, but duplicate/conflicting semantic sources are rejected at this composition boundary.
+  - raw transport/redundancy metadata parsed by `video_sdp_media_section.hpp` is preserved at the raw SDP boundary and intentionally not mapped into `VideoStreamSignaling`; backend/runtime consumption remains future work through dedicated bootstrap/transport adapters.
 
 ## Done
 - [x] 001: Repo skeleton + buildable stub
@@ -1244,7 +1276,7 @@
 - [x] S023: SDP `depth=16f` is now accepted in the video SDP fmtp parsing path and mapped to the existing `VideoBitDepth{bits=16, floating_point=true}` signaling representation. Runtime pixel-format/depacketizer support remains unchanged and rejects unsupported floating-point formats through existing projection/support boundaries.
 - [x] S024: The standards-aware video SDP media-property model now explicitly enumerates the known ST 2110-20 media-description variants covered by `069D8`, including additional `sampling`, `colorimetry`, and `TCS` values. `Other + raw_token` remains reserved for forward compatibility / truly unknown future values. Runtime support still rejects unsupported combinations through the existing projection/support boundaries.
 - [x] S025: Receiver-side signaling validation no longer treats optional ST 2110-21 sender timing parameters, especially `CMAX` for `TP=2110TPW`, as mandatory for SDP ingestion. Structural receiver-side SDP/signaling validation accepts standard-valid Wide sender signaling when optional parameters are absent, rejects malformed present values such as `CMAX=0`, and leaves stricter sender/conformance policy to a separate localized validation mode.
-- [ ] S026: Current video SDP ingestion is primarily media-section / selected-attribute oriented and does not yet have an explicit raw boundary for session/media transport and redundancy-related SDP constructs such as `c=`, `a=source-filter`, `a=mid`, and `a=group:DUP`. These constructs should be architecturally represented in the SDP parsing layer so later runtime/backend integration can be implemented by filling existing adapters/branches rather than reshaping SDP ingestion.
+- [x] S026: Video SDP ingestion now has an explicit raw boundary for session/media transport and redundancy-related SDP constructs such as `c=`, `a=source-filter`, `a=mid`, and `a=group:DUP`. These constructs are preserved in the raw SDP media-section model separately from `VideoStreamSignaling`; runtime/backend integration and redundant-stream selection policy remain future work through `214C` / `214D`.
 ---
 
 # Phase 1 — MVP
@@ -1454,7 +1486,7 @@
   - [x] 069C4: Add architecture-focused regression tests for receiver timing boundary placement
     - prove receiver timing assumptions remain outside parser/reorder/depacketizer internals
     - prove later ST 2110-21 behavior can be filled into the existing boundary without reshaping public contracts
-- [ ] 069D: Add SDP parsing / ingestion path for video signaling model
+- [x] 069D: Add SDP parsing / ingestion path for video signaling model
   - **цель этой группы задач в MVP — заложить полную SDP/media-section ingestion architecture уже сейчас, even if coverage of many specific `a=` attributes will be expanded later**
   - [x] 069D0: Define raw SDP video media-section model / parsing boundary
     - define a dedicated raw parsed representation for one SDP video media section before mapping to `VideoStreamSignaling`
@@ -1632,7 +1664,7 @@
       - `TP=2110TPW` without `CMAX`
       - malformed `CMAX`
       - receiver capability rejection still happening in the receiver timing boundary rather than generic SDP validation
-  - [ ] 069D10: Add raw SDP session/media transport and redundancy boundary for video ingestion
+  - [x] 069D10: Add raw SDP session/media transport and redundancy boundary for video ingestion
     - introduce or extend a raw SDP parsing structure that can preserve transport/redundancy-related SDP constructs separately from `VideoStreamSignaling`
     - cover at least:
       - media-level or session-level `c=` connection data relevant to the selected video media section

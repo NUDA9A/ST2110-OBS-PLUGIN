@@ -19,6 +19,21 @@ namespace st2110 {
         std::string value{};
     };
 
+    struct RawSdpConnectionData {
+        std::string network_type{};
+        std::string address_type{};
+        std::string connection_address{};
+    };
+
+    struct RawSdpSourceFilter {
+        std::string raw_value{};
+    };
+
+    struct RawSdpGroup {
+        std::string semantics{};
+        std::vector<std::string> mids{};
+    };
+
     struct RawVideoSdpMediaSection {
         std::string media_line{};
         uint8_t payload_type = 0;
@@ -34,6 +49,14 @@ namespace st2110 {
         std::optional<std::string> tp{};
         std::optional<std::string> troff{};
         std::optional<std::string> cmax{};
+        std::optional<RawSdpConnectionData> session_connection{};
+        std::optional<RawSdpConnectionData> media_connection{};
+
+        std::optional<std::string> mid{};
+        std::vector<RawSdpSourceFilter> source_filters{};
+        std::vector<RawSdpGroup> session_groups{};
+
+        std::vector<RawSdpAttribute> unknown_session_attributes{};
 
         std::vector<RawSdpAttribute> unknown_attributes{};
     };
@@ -242,11 +265,67 @@ namespace st2110 {
         };
     }
 
+    [[nodiscard]] inline std::expected<RawSdpConnectionData, Error>
+    parse_connection_data(std::string_view line) {
+        line = strip_cr(line);
+
+        if (!line.starts_with("c=")) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        const auto tokens = split_ws(line.substr(2));
+
+        // c=<nettype> <addrtype> <connection-address>
+        if (tokens.size() != 3) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        return RawSdpConnectionData{
+                .network_type = std::string(tokens[0]),
+                .address_type = std::string(tokens[1]),
+                .connection_address = std::string(tokens[2])
+        };
+    }
+
+    [[nodiscard]] inline std::expected<RawSdpGroup, Error>
+    parse_group_attribute(std::string_view value) {
+        value = strip_cr(value);
+        value = trim_left_ws(value);
+
+        const auto tokens = split_ws(value);
+
+        // a=group:<semantics> <mid>...
+        if (tokens.size() < 2) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        RawSdpGroup group{};
+        group.semantics = std::string(tokens[0]);
+        group.mids.reserve(tokens.size() - 1);
+
+        for (std::size_t i = 1; i < tokens.size(); ++i) {
+            group.mids.emplace_back(tokens[i]);
+        }
+
+        return group;
+    }
+
+    [[nodiscard]] inline bool has_dup_session_group(const std::vector<RawSdpGroup>& groups) {
+        for (const auto& group : groups) {
+            if (group.semantics == "DUP") {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     [[nodiscard]] inline std::expected<RawVideoSdpMediaSection, Error>
     select_raw_video_sdp_media_section(std::string_view sdp, uint8_t expected_payload_type) {
         RawVideoSdpMediaSection res{};
         bool found = false;
 
+        bool seen_any_media_section = false;
         bool inside_selected_media_section = false;
 
         bool found_rtpmap = false;
@@ -265,6 +344,7 @@ namespace st2110 {
             line = strip_cr(line);
 
             if (line.starts_with("m=")) {
+                seen_any_media_section = true;
                 inside_selected_media_section = false;
 
                 if (line.starts_with("m=video")) {
@@ -276,148 +356,242 @@ namespace st2110 {
 
                     if (contains_payload_type(*payload_types, expected_payload_type)) {
                         if (found) {
-                            return std::unexpected(Error::InvalidValue);
+                            // Redundant RTP descriptions may carry the same payload type
+                            // in multiple video media sections grouped by a=session-level
+                            // group:DUP. This raw SDP boundary does not implement redundant
+                            // stream selection yet; keep the first selected media section as
+                            // the current primary/default section and ignore later matching
+                            // sections instead of failing SDP ingestion.
+                            if (!has_dup_session_group(res.session_groups)) {
+                                return std::unexpected(Error::InvalidValue);
+                            }
+
+                            inside_selected_media_section = false;
+                        } else {
+                            res.media_line = std::string(line);
+                            res.payload_type = expected_payload_type;
+                            res.media_payload_types = std::move(*payload_types);
+
+                            found = true;
+                            inside_selected_media_section = true;
+                        }
+                    }
+                }
+            } else if (!seen_any_media_section) {
+                if (line.starts_with("c=")) {
+                    if (res.session_connection.has_value()) {
+                        return std::unexpected(Error::InvalidValue);
+                    }
+
+                    auto parsed_connection = parse_connection_data(line);
+
+                    if (!parsed_connection.has_value()) {
+                        return std::unexpected(parsed_connection.error());
+                    }
+
+                    res.session_connection = std::move(*parsed_connection);
+                } else {
+                    auto group = parse_attribute_value(line, "a=group:");
+
+                    if (group.has_value()) {
+                        auto parsed_group = parse_group_attribute(*group);
+
+                        if (!parsed_group.has_value()) {
+                            return std::unexpected(parsed_group.error());
                         }
 
-                        res.media_line = std::string(line);
-                        res.payload_type = expected_payload_type;
-                        res.media_payload_types = std::move(*payload_types);
+                        res.session_groups.push_back(std::move(*parsed_group));
+                    } else {
+                        auto source_filter = parse_attribute_value(line, "a=source-filter:");
 
-                        found = true;
-                        inside_selected_media_section = true;
+                        if (source_filter.has_value()) {
+                            const auto value = trim_left_ws(*source_filter);
+
+                            if (value.empty()) {
+                                return std::unexpected(Error::InvalidValue);
+                            }
+
+                            res.source_filters.push_back(RawSdpSourceFilter{
+                                    .raw_value = std::string(value)
+                            });
+                        } else if (line.starts_with("a=")) {
+                            res.unknown_session_attributes.push_back(parse_unknown_sdp_attribute(line));
+                        }
                     }
                 }
             } else if (inside_selected_media_section) {
-                bool handled_attribute = false;
-
-                auto rtpmap = parse_payload_bound_attribute_value(
-                        line,
-                        "a=rtpmap:",
-                        expected_payload_type
-                );
-
-                if (!rtpmap.has_value()) {
-                    return std::unexpected(rtpmap.error());
-                }
-
-                if (rtpmap->has_value()) {
-                    if (found_rtpmap) {
+                if (line.starts_with("c=")) {
+                    if (res.media_connection.has_value()) {
                         return std::unexpected(Error::InvalidValue);
                     }
 
-                    res.rtpmap = std::string(**rtpmap);
-                    found_rtpmap = true;
-                    handled_attribute = true;
-                }
+                    auto parsed_connection = parse_connection_data(line);
 
-                auto fmtp = parse_payload_bound_attribute_value(
-                        line,
-                        "a=fmtp:",
-                        expected_payload_type
-                );
-
-                if (!fmtp.has_value()) {
-                    return std::unexpected(fmtp.error());
-                }
-
-                if (fmtp->has_value()) {
-                    if (found_fmtp) {
-                        return std::unexpected(Error::InvalidValue);
+                    if (!parsed_connection.has_value()) {
+                        return std::unexpected(parsed_connection.error());
                     }
 
-                    res.fmtp = std::string(**fmtp);
-                    found_fmtp = true;
-                    handled_attribute = true;
-                }
+                    res.media_connection = std::move(*parsed_connection);
+                } else {
+                    bool handled_attribute = false;
 
-                auto ts_refclk = parse_attribute_value(line, "a=ts-refclk:");
+                    auto rtpmap = parse_payload_bound_attribute_value(
+                            line,
+                            "a=rtpmap:",
+                            expected_payload_type
+                    );
 
-                if (ts_refclk.has_value()) {
-                    if (res.ts_refclk.has_value()) {
-                        return std::unexpected(Error::InvalidValue);
+                    if (!rtpmap.has_value()) {
+                        return std::unexpected(rtpmap.error());
                     }
 
-                    res.ts_refclk = std::string(*ts_refclk);
-                    handled_attribute = true;
-                }
+                    if (rtpmap->has_value()) {
+                        if (found_rtpmap) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
 
-                auto mediaclk = parse_attribute_value(line, "a=mediaclk:");
-
-                if (mediaclk.has_value()) {
-                    if (res.mediaclk.has_value()) {
-                        return std::unexpected(Error::InvalidValue);
+                        res.rtpmap = std::string(**rtpmap);
+                        found_rtpmap = true;
+                        handled_attribute = true;
                     }
 
-                    res.mediaclk = std::string(*mediaclk);
-                    handled_attribute = true;
-                }
+                    auto fmtp = parse_payload_bound_attribute_value(
+                            line,
+                            "a=fmtp:",
+                            expected_payload_type
+                    );
 
-                auto tsmode = parse_attribute_value(line, "a=tsmode:");
-
-                if (tsmode.has_value()) {
-                    if (res.tsmode.has_value()) {
-                        return std::unexpected(Error::InvalidValue);
+                    if (!fmtp.has_value()) {
+                        return std::unexpected(fmtp.error());
                     }
 
-                    res.tsmode = std::string(*tsmode);
-                    handled_attribute = true;
-                }
+                    if (fmtp->has_value()) {
+                        if (found_fmtp) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
 
-                auto tsdelay = parse_attribute_value(line, "a=tsdelay:");
-
-                if (tsdelay.has_value()) {
-                    if (res.tsdelay.has_value()) {
-                        return std::unexpected(Error::InvalidValue);
+                        res.fmtp = std::string(**fmtp);
+                        found_fmtp = true;
+                        handled_attribute = true;
                     }
 
-                    res.tsdelay = std::string(*tsdelay);
-                    handled_attribute = true;
-                }
+                    auto ts_refclk = parse_attribute_value(line, "a=ts-refclk:");
 
-                auto tp = parse_attribute_value(line, "a=tp:");
-                if (!tp.has_value()) {
-                    tp = parse_attribute_value(line, "a=TP:");
-                }
+                    if (ts_refclk.has_value()) {
+                        if (res.ts_refclk.has_value()) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
 
-                if (tp.has_value()) {
-                    if (res.tp.has_value()) {
-                        return std::unexpected(Error::InvalidValue);
+                        res.ts_refclk = std::string(*ts_refclk);
+                        handled_attribute = true;
                     }
 
-                    res.tp = std::string(*tp);
-                    handled_attribute = true;
-                }
+                    auto mediaclk = parse_attribute_value(line, "a=mediaclk:");
 
-                auto troff = parse_attribute_value(line, "a=troff:");
-                if (!troff.has_value()) {
-                    troff = parse_attribute_value(line, "a=TROFF:");
-                }
+                    if (mediaclk.has_value()) {
+                        if (res.mediaclk.has_value()) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
 
-                if (troff.has_value()) {
-                    if (res.troff.has_value()) {
-                        return std::unexpected(Error::InvalidValue);
+                        res.mediaclk = std::string(*mediaclk);
+                        handled_attribute = true;
                     }
 
-                    res.troff = std::string(*troff);
-                    handled_attribute = true;
-                }
+                    auto tsmode = parse_attribute_value(line, "a=tsmode:");
 
-                auto cmax = parse_attribute_value(line, "a=cmax:");
-                if (!cmax.has_value()) {
-                    cmax = parse_attribute_value(line, "a=CMAX:");
-                }
+                    if (tsmode.has_value()) {
+                        if (res.tsmode.has_value()) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
 
-                if (cmax.has_value()) {
-                    if (res.cmax.has_value()) {
-                        return std::unexpected(Error::InvalidValue);
+                        res.tsmode = std::string(*tsmode);
+                        handled_attribute = true;
                     }
 
-                    res.cmax = std::string(*cmax);
-                    handled_attribute = true;
-                }
+                    auto tsdelay = parse_attribute_value(line, "a=tsdelay:");
 
-                if (line.starts_with("a=") && !handled_attribute) {
-                    res.unknown_attributes.push_back(parse_unknown_sdp_attribute(line));
+                    if (tsdelay.has_value()) {
+                        if (res.tsdelay.has_value()) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
+
+                        res.tsdelay = std::string(*tsdelay);
+                        handled_attribute = true;
+                    }
+
+                    auto tp = parse_attribute_value(line, "a=tp:");
+                    if (!tp.has_value()) {
+                        tp = parse_attribute_value(line, "a=TP:");
+                    }
+
+                    if (tp.has_value()) {
+                        if (res.tp.has_value()) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
+
+                        res.tp = std::string(*tp);
+                        handled_attribute = true;
+                    }
+
+                    auto troff = parse_attribute_value(line, "a=troff:");
+                    if (!troff.has_value()) {
+                        troff = parse_attribute_value(line, "a=TROFF:");
+                    }
+
+                    if (troff.has_value()) {
+                        if (res.troff.has_value()) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
+
+                        res.troff = std::string(*troff);
+                        handled_attribute = true;
+                    }
+
+                    auto cmax = parse_attribute_value(line, "a=cmax:");
+                    if (!cmax.has_value()) {
+                        cmax = parse_attribute_value(line, "a=CMAX:");
+                    }
+
+                    if (cmax.has_value()) {
+                        if (res.cmax.has_value()) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
+
+                        res.cmax = std::string(*cmax);
+                        handled_attribute = true;
+                    }
+
+                    auto source_filter = parse_attribute_value(line, "a=source-filter:");
+
+                    if (source_filter.has_value()) {
+                        const auto value = trim_left_ws(*source_filter);
+
+                        if (value.empty()) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
+
+                        res.source_filters.push_back(RawSdpSourceFilter{
+                                .raw_value = std::string(value)
+                        });
+                        handled_attribute = true;
+                    }
+
+                    auto mid = parse_attribute_value(line, "a=mid:");
+
+                    if (mid.has_value()) {
+                        const auto value = trim_left_ws(*mid);
+
+                        if (res.mid.has_value() || value.empty()) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
+
+                        res.mid = std::string(value);
+                        handled_attribute = true;
+                    }
+
+                    if (line.starts_with("a=") && !handled_attribute) {
+                        res.unknown_attributes.push_back(parse_unknown_sdp_attribute(line));
+                    }
                 }
             }
 
