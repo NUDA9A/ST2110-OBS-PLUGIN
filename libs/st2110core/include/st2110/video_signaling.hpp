@@ -30,16 +30,23 @@ namespace st2110 {
                     return Error::InvalidValue;
                 }
                 return Error::Ok;
+
             case VideoSenderType::NarrowLinear:
                 if (troff_us != std::nullopt || cmax != std::nullopt) {
                     return Error::InvalidValue;
                 }
                 return Error::Ok;
+
             case VideoSenderType::Wide:
-                if (!cmax.has_value() || *cmax == 0) {
+                // Receiver-side structural SDP ingestion must not require
+                // optional sender/conformance parameters merely because the
+                // sender type is Wide. A stricter sender-profile/conformance
+                // policy can be layered separately later.
+                if (cmax.has_value() && *cmax == 0) {
                     return Error::InvalidValue;
                 }
                 return Error::Ok;
+
             default:
                 return Error::InvalidValue;
         }

@@ -625,9 +625,11 @@
 - Сущности:
   - structural validation:
     - `validate_video_sender_signaling(...)`
-      - validates sender type vs `TROFF` / `CMAX`;
+      - validates sender type vs `TROFF` / `CMAX` for receiver-side structural signaling validation;
       - `Narrow` / `NarrowLinear` reject `TROFF` and `CMAX`;
-      - `Wide` requires positive `CMAX` and allows optional `TROFF`.
+      - `Wide` accepts absent optional `CMAX` / `TROFF`;
+      - if `CMAX` is present for `Wide`, it must be positive;
+      - stricter sender/conformance policy is intentionally left to a separate future validation mode.
     - `validate_reference_clock(...)`
     - `validate_media_clock_mode(...)`
     - `validate_timestamp_mode(...)`
@@ -885,6 +887,8 @@
     - helper для проверки, поддерживает ли receiver signaled sender type (`Narrow | NarrowLinear | Wide`).
   - `validate_video_receiver_timing_against_video_stream_signaling(const VideoReceiverTimingConfig&, const VideoStreamSignaling&)`
     - explicit consistency validation entry point между receiver timing config и signaling model;
+    - uses normal receiver-side structural sender validation, so optional `CMAX` for `Wide` sender type is not required here;
+    - stricter sender/conformance checks remain a future separate policy (`229B`).
     - валидирует:
       - receiver timing config;
       - sender timing signaling;
@@ -1239,7 +1243,7 @@
 - [x] S022: SDP ingestion now parses `MAXUDP` from video `a=fmtp` through the existing raw fmtp parsing / SDP-to-signaling adapter path. Parsed `MAXUDP` is mapped to `VideoStreamSignaling::max_udp_datagram_bytes` and then reaches `PacketParsePolicy` through the existing signaling projection path, without introducing a parallel runtime config mechanism.
 - [x] S023: SDP `depth=16f` is now accepted in the video SDP fmtp parsing path and mapped to the existing `VideoBitDepth{bits=16, floating_point=true}` signaling representation. Runtime pixel-format/depacketizer support remains unchanged and rejects unsupported floating-point formats through existing projection/support boundaries.
 - [x] S024: The standards-aware video SDP media-property model now explicitly enumerates the known ST 2110-20 media-description variants covered by `069D8`, including additional `sampling`, `colorimetry`, and `TCS` values. `Other + raw_token` remains reserved for forward compatibility / truly unknown future values. Runtime support still rejects unsupported combinations through the existing projection/support boundaries.
-- [ ] S025: Receiver-side signaling validation currently risks treating optional ST 2110-21 sender timing parameters, especially `CMAX` for `TP=2110TPW`, as mandatory for SDP ingestion. Structural receiver-side SDP ingestion should accept standard-valid SDP when optional parameters are absent, while any stricter sender/conformance policy must be a separate localized validation mode.
+- [x] S025: Receiver-side signaling validation no longer treats optional ST 2110-21 sender timing parameters, especially `CMAX` for `TP=2110TPW`, as mandatory for SDP ingestion. Structural receiver-side SDP/signaling validation accepts standard-valid Wide sender signaling when optional parameters are absent, rejects malformed present values such as `CMAX=0`, and leaves stricter sender/conformance policy to a separate localized validation mode.
 - [ ] S026: Current video SDP ingestion is primarily media-section / selected-attribute oriented and does not yet have an explicit raw boundary for session/media transport and redundancy-related SDP constructs such as `c=`, `a=source-filter`, `a=mid`, and `a=group:DUP`. These constructs should be architecturally represented in the SDP parsing layer so later runtime/backend integration can be implemented by filling existing adapters/branches rather than reshaping SDP ingestion.
 ---
 
@@ -1614,7 +1618,7 @@
       - known standard tokens map to explicit enum values
       - unknown future tokens are preserved through `Other`
       - runtime projection remains localized and does not silently accept unsupported formats
-  - [ ] 069D9: Relax receiver-side optional sender-timing validation for SDP ingestion
+  - [x] 069D9: Relax receiver-side optional sender-timing validation for SDP ingestion
     - ensure structural receiver-side signaling validation accepts absent optional sender timing parameters when the standard permits them
     - specifically, `TP=2110TPW` must not require explicit `CMAX` merely for receiver-side SDP ingestion
     - keep stricter sender/conformance validation, if needed, as a separate localized helper or future policy mode
