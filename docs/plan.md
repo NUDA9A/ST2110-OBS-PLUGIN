@@ -663,7 +663,7 @@
   - signaling model остается structurally broader than current runtime support;
   - `BPM` now remains valid inside signaling model but is rejected at explicit runtime-support boundaries for depacketizer/pipeline/bootstrap projections;
   - generic bootstrap path intentionally remains timing-agnostic; receiver timing validation/composition is layered on top through `video_receiver_timing_signaling.hpp`;
-  - detailed SDP parsing и fuller receiver timing integration остаются дальнейшими задачами `069C4` / `069D` / `229A`.
+  - SDP ingestion path is now implemented through `video_sdp_*` boundaries; fuller runtime integration of SDP-derived config and ST 2110-21 receiver behavior remains future work through `S010`, `214C`, `214D`, and `229A`.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -1277,6 +1277,12 @@
 - [x] S024: The standards-aware video SDP media-property model now explicitly enumerates the known ST 2110-20 media-description variants covered by `069D8`, including additional `sampling`, `colorimetry`, and `TCS` values. `Other + raw_token` remains reserved for forward compatibility / truly unknown future values. Runtime support still rejects unsupported combinations through the existing projection/support boundaries.
 - [x] S025: Receiver-side signaling validation no longer treats optional ST 2110-21 sender timing parameters, especially `CMAX` for `TP=2110TPW`, as mandatory for SDP ingestion. Structural receiver-side SDP/signaling validation accepts standard-valid Wide sender signaling when optional parameters are absent, rejects malformed present values such as `CMAX=0`, and leaves stricter sender/conformance policy to a separate localized validation mode.
 - [x] S026: Video SDP ingestion now has an explicit raw boundary for session/media transport and redundancy-related SDP constructs such as `c=`, `a=source-filter`, `a=mid`, and `a=group:DUP`. These constructs are preserved in the raw SDP media-section model separately from `VideoStreamSignaling`; runtime/backend integration and redundant-stream selection policy remain future work through `214C` / `214D`.
+- [ ] S027: Video signaling structural validation currently validates individual media-description fields but does not yet validate important cross-field constraints from ST 2110-20. In particular, 4:2:0 sampling variants must remain progressive-only at the signaling/structural level, and `KEY` sampling has special constraints such as requiring alpha colorimetry and not carrying a normal TCS value. These checks should be added as localized signaling-model cross-validation, not as runtime `PixelFormat` projection behavior.
+- [ ] S028: Raw SDP `a=source-filter` handling currently risks losing session-vs-media scope and/or keeping only an opaque raw value. For future backend/bootstrap integration, the raw SDP layer should preserve whether each source filter came from session level or the selected media section, and should minimally parse the RFC-style source-filter fields while still preserving the original raw value.
+- [ ] S029: Raw SDP redundancy handling currently preserves `a=group:DUP`, but the selected-video-media-section boundary does not yet model duplicate candidate media sections in a way that future redundant-stream selection can consume without reshaping SDP ingestion. `group:DUP` must be tied to actual `mid` values, and duplicate RTP stream candidates should be preserved as raw summaries or explicit raw candidate records.
+- [ ] S030: The SDP `a=fmtp` parser is still too permissive for the ST 2110-20 media type parameter grammar. It should reject whitespace around `=`, malformed token separators, and `;` separators not followed by required whitespace, while still preserving unknown valid parameters. This should be fixed locally in `video_sdp_fmtp.hpp` rather than by adding tolerant parsing elsewhere.
+- [ ] S031: Raw SDP `c=` connection data is preserved, but multicast connection-address parameters such as address/TTL/numaddr are not yet modeled explicitly enough for future backend bootstrap. The raw SDP layer should keep the original connection address string but also expose parsed base address and optional multicast parameters where present.
+- [ ] S032: SDP timing/reference-clock attributes such as `ts-refclk` and `mediaclk` can be session-level or media-level. The raw SDP ingestion boundary should preserve this scope and apply a localized session/media resolution rule for the selected video stream, rather than silently ignoring session-level timing or collapsing scope too early.
 ---
 
 # Phase 1 — MVP
@@ -1486,7 +1492,7 @@
   - [x] 069C4: Add architecture-focused regression tests for receiver timing boundary placement
     - prove receiver timing assumptions remain outside parser/reorder/depacketizer internals
     - prove later ST 2110-21 behavior can be filled into the existing boundary without reshaping public contracts
-- [x] 069D: Add SDP parsing / ingestion path for video signaling model
+- [ ] 069D: Add SDP parsing / ingestion path for video signaling model
   - **цель этой группы задач в MVP — заложить полную SDP/media-section ingestion architecture уже сейчас, even if coverage of many specific `a=` attributes will be expanded later**
   - [x] 069D0: Define raw SDP video media-section model / parsing boundary
     - define a dedicated raw parsed representation for one SDP video media section before mapping to `VideoStreamSignaling`
@@ -1687,6 +1693,135 @@
       - `a=group:DUP` is parsed/preserved
       - unknown attributes are preserved rather than rejected
       - existing single-media-section ingestion behavior remains unchanged
+  - [ ] 069D11: Add ST 2110-20 video media-description cross-field validation
+    - add localized structural validation for cross-field constraints that cannot be checked by validating each media-description enum/value independently
+    - cover at least:
+      - 4:2:0 sampling variants are valid only for progressive scan signaling:
+        - `YCbCr-4:2:0`
+        - `CLYCbCr-4:2:0`
+        - `ICtCp-4:2:0`
+      - `KEY` sampling requires alpha-oriented signaling:
+        - require `colorimetry=ALPHA`
+        - reject normal `TCS` presence for `KEY` unless a later explicit standard-backed branch says otherwise
+    - keep this as signaling/model validation, not runtime `PixelFormat` projection
+    - prefer minimal changes to existing `.hpp` files:
+      - `video_signaling.hpp`
+      - related tests only
+    - do not change `PixelFormat`, `VideoFrame`, depacketizer, segment placement, or runtime projection shape
+    - add focused tests proving:
+      - progressive 4:2:0 signaling is structurally accepted even if runtime projection is still unsupported
+      - interlaced/PsF 4:2:0 signaling is structurally rejected
+      - `KEY + ALPHA` without TCS is accepted
+      - `KEY` with non-alpha colorimetry is rejected
+      - `KEY` with normal TCS is rejected
+      - unsupported-but-standard media combinations still fail only at localized runtime projection boundaries
+  - [ ] 069D12: Preserve and minimally parse SDP `a=source-filter` scope in raw media-section model
+    - keep `source-filter` handling in the raw SDP layer, separate from `VideoStreamSignaling`
+    - preserve whether each source filter came from:
+      - session level
+      - selected media section level
+    - minimally parse the source-filter structure into fields while preserving the raw value:
+      - filter mode / type token
+      - network type
+      - address type
+      - destination address
+      - one or more source addresses
+    - prefer minimal changes to existing `.hpp` files:
+      - `video_sdp_media_section.hpp`
+      - related tests only
+    - acceptable minimal implementation options:
+      - either split storage into `session_source_filters` and `media_source_filters`
+      - or add an explicit `Scope { Session, Media }` field to `RawSdpSourceFilter`
+    - do not wire source filters into socket/backend behavior in this task
+    - add focused tests proving:
+      - session-level source-filter is preserved with session scope
+      - media-level source-filter is preserved with media scope
+      - both can coexist
+      - parsed fields are populated for valid source-filter syntax
+      - original raw value is still preserved
+      - unknown/unsupported source-filter shape is rejected only if structurally malformed, not because runtime multicast support is missing
+  - [ ] 069D13: Strengthen raw SDP `a=group:DUP` / duplicate media-section boundary
+    - keep redundancy modeling in the raw SDP layer, separate from `VideoStreamSignaling`
+    - tie `group:DUP` membership to actual `a=mid` values rather than treating the mere presence of any `group:DUP` as sufficient
+    - preserve duplicate video media-section candidates for future redundant-stream selection
+    - a minimal candidate model is enough for MVP, for example:
+      - media line
+      - selected payload type
+      - `mid`
+      - media-level `c=`
+      - media-level source filters
+      - selected payload-bound `rtpmap` / `fmtp` raw strings if already available without duplicating the full parser
+    - prefer minimal changes to existing `.hpp` files:
+      - `video_sdp_media_section.hpp`
+      - possibly `video_sdp_ingestion.hpp` only if final ingestion needs to ignore candidates explicitly
+      - related tests only
+    - do not implement full redundant RTP stream selection or ST 2022-7 behavior in this task
+    - add focused tests proving:
+      - two matching video media sections without `group:DUP` are rejected
+      - two matching video media sections with unrelated `group:DUP` are rejected
+      - two matching video media sections whose `mid`s are in `group:DUP` preserve the primary/default section and duplicate candidate summary
+      - existing single-media-section SDP ingestion remains unchanged
+  - [ ] 069D14: Make SDP `a=fmtp` media-parameter parsing strict enough for ST 2110-20 grammar
+    - keep the parser strict according to current project rule “strict parse, explicit fallback”
+    - reject whitespace around `=` in known and unknown `name=value` parameters
+    - reject malformed separators such as `sampling=YCbCr-4:2:2;width=1920` when the grammar requires semicolon followed by whitespace
+    - reject empty parameters caused by doubled separators
+    - continue preserving unknown syntactically valid parameters
+    - keep external line trimming / CRLF handling, but do not use trimming to silently accept malformed parameter tokens
+    - prefer minimal changes to existing `.hpp` files:
+      - `video_sdp_fmtp.hpp`
+      - related tests only
+    - do not change signaling adapter, runtime projection, or SDP media-section selection unless absolutely necessary
+    - add focused tests proving:
+      - valid `; ` separated parameters are accepted
+      - missing whitespace after `;` is rejected
+      - whitespace before or after `=` is rejected
+      - unknown valid parameters are preserved
+      - duplicate known fields still reject as before
+      - existing valid ST 2110 fmtp examples remain accepted
+  - [ ] 069D15: Preserve session/media scope for SDP timing and reference-clock attributes
+    - explicitly model whether timing/reference-clock attributes came from session level or selected media level
+    - cover at least:
+      - `ts-refclk`
+      - `mediaclk`
+      - optional compatibility forms currently modeled as standalone attributes:
+        - `TSMODE`
+        - `TSDELAY`
+        - `TP`
+        - `TROFF`
+        - `CMAX`
+    - define localized resolution behavior for final video stream ingestion:
+      - media-level value overrides / specializes session-level value where the SDP/RFC rules allow it
+      - conflicting duplicate media-level values remain invalid
+      - conflicting duplicate session-level values remain invalid
+    - keep this resolution in SDP ingestion / raw-to-signaling composition, not in runtime projection
+    - prefer minimal changes to existing `.hpp` files:
+      - `video_sdp_media_section.hpp`
+      - `video_sdp_timing_attributes.hpp`
+      - `video_sdp_ingestion.hpp`
+      - related tests only
+    - add focused tests proving:
+      - session-level `ts-refclk` / `mediaclk` are applied to selected video stream
+      - media-level value overrides session-level value where allowed
+      - duplicate media-level timing attributes are rejected
+      - existing media-level-only SDP behavior remains unchanged
+  - [ ] 069D16: Parse multicast address parameters from SDP `c=` connection data in raw SDP boundary
+    - keep `c=` data as raw SDP transport metadata, not as `VideoStreamSignaling`
+    - preserve the original connection address string
+    - additionally expose parsed connection-address components where present:
+      - base address
+      - optional TTL for IPv4 multicast form
+      - optional address count / numaddr
+    - keep backend/socket join behavior out of this task
+    - prefer minimal changes to existing `.hpp` files:
+      - `video_sdp_media_section.hpp`
+      - related tests only
+    - add focused tests proving:
+      - unicast `c=IN IP4 192.0.2.10` is parsed/preserved
+      - multicast `c=IN IP4 239.1.1.1/32` is parsed/preserved
+      - multicast address count form is parsed/preserved if supported by the chosen raw model
+      - malformed `c=` lines are rejected structurally
+      - session-level and media-level `c=` behavior remains unchanged
 - [x] 069E: Thread `VideoPackingMode` into runtime receive path as an explicit axis
   - **цель этой задачи в MVP — протащить packing mode как runtime/config/policy axis уже сейчас, even if часть branches пока останется `Unsupported`**
   - extend runtime receive configs / projections so packing mode reaches depacketizer, packet interpretation, and padding-validation boundaries
@@ -1917,19 +2052,30 @@
     - mapping branch
     - structural validation branch, where applicable
   - add focused tests for each newly supported SDP field and for coexistence with already-supported fields
-- [ ] 214C: Integrate parsed SDP transport/redundancy metadata into receiver bootstrap boundaries
-  - consume the raw SDP session/media transport boundary introduced in `069D10`
-  - derive backend-facing transport hints from parsed SDP where appropriate
+- [ ] 214C: Integrate parsed SDP transport metadata into receiver bootstrap boundaries
+  - consume the raw SDP session/media transport boundary introduced in `069D10` / `069D12` / `069D16`
+  - derive backend-facing transport hints from parsed SDP where appropriate:
+    - media/session `c=`
+    - parsed multicast address / TTL / address-count fields
+    - scoped `source-filter`
   - keep manual/local transport fields explicit and overrideable for tests/scaffolding
   - keep pure SDP parsing separate from backend/runtime socket or MTL implementation
   - future implementation should fill existing raw-SDP / bootstrap adapter branches rather than changing SDP parser shape
-  - add focused tests for `c=`, `source-filter`, `mid`, and single-stream bootstrap behavior
+  - add focused tests for:
+    - `c=` to transport hint projection
+    - source-filter to multicast-source hint projection
+    - manual override behavior
+    - single-stream bootstrap behavior
 - [ ] 214D: Add redundant RTP stream modeling and selection policy through existing SDP redundancy boundary
-  - model `a=group:DUP` / duplicate RTP stream relationships using the raw SDP structures introduced in `069D10`
+  - consume duplicate media-section candidate records introduced in `069D13`
+  - model `a=group:DUP` / duplicate RTP stream relationships through raw SDP `mid` linkage
   - define where primary/secondary stream selection and future seamless/redundant receive behavior will live
   - do not implement full SMPTE ST 2022-7 switching in this task unless explicitly chosen later
   - keep backend and receive-pipeline public contracts stable
-  - add focused architecture tests proving redundant-stream support plugs into existing SDP/bootstrap boundaries
+  - add focused architecture tests proving:
+    - redundant-stream support plugs into existing SDP/bootstrap boundaries
+    - duplicate candidates are selected/ignored through a local policy point
+    - parser shape does not need to change for future redundant receive behavior
 - [ ] 215: Expand audio signaling / channel-order / channel-mapping support through the already-modeled audio signaling boundary
   - add implementation for additional channel-order / channel-mapping cases without changing the core audio signaling/runtime contracts introduced in MVP
   - keep reordering/adaptation localized to the pre-defined boundaries
@@ -2028,7 +2174,14 @@
 - [ ] 266: Harden long-run stability and leak checks
 - [ ] 267: Final audit of spec compliance and removal of temporary limitations
 - [ ] 267A: Harden SDP ingestion interoperability and corner-case handling through the existing raw media-section / per-attribute parsing architecture
-  - harden handling of duplicate `a=` attributes, attribute ordering variations, unknown-attribute coexistence, partial/legacy SDP variants, and malformed-but-recoverable SDP forms where policy allows
+  - harden handling of:
+    - duplicate `a=` attributes
+    - attribute ordering variations
+    - session-level vs media-level inheritance / override behavior
+    - unknown-attribute coexistence
+    - partial/legacy SDP variants
+    - strict-vs-tolerant parsing policy boundaries
+    - malformed-but-recoverable SDP forms where policy explicitly allows recovery
   - keep robustness improvements localized to existing raw media-section, per-attribute parser, and mapping/validation branches
   - avoid reshaping signaling model or bootstrap contracts for interoperability fixes
   - add regression tests for real-world SDP edge cases and captured samples
