@@ -60,6 +60,12 @@ namespace st2110 {
             RGB,
             XYZ,
             Key,
+            CLYCbCr444,
+            CLYCbCr422,
+            CLYCbCr420,
+            ICtCp444,
+            ICtCp422,
+            ICtCp420,
             Other
         };
 
@@ -79,6 +85,10 @@ namespace st2110 {
             Bt2020,
             Bt2100,
             St2065_1,
+            St2065_3,
+            Unspecified,
+            Xyz,
+            Alpha,
             Other
         };
 
@@ -92,6 +102,13 @@ namespace st2110 {
             PQ,
             HLG,
             Linear,
+            Bt2100LinPq,
+            Bt2100LinHlg,
+            St2065_1,
+            St428_1,
+            Density,
+            St2115LogS3,
+            Unspecified,
             Other
         };
 

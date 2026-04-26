@@ -51,6 +51,18 @@ namespace st2110 {
             sampling.known = VideoSampling::Known::XYZ;
         } else if (raw.sampling == "KEY") {
             sampling.known = VideoSampling::Known::Key;
+        } else if (raw.sampling == "CLYCbCr-4:4:4") {
+            sampling.known = VideoSampling::Known::CLYCbCr444;
+        } else if (raw.sampling == "CLYCbCr-4:2:2") {
+            sampling.known = VideoSampling::Known::CLYCbCr422;
+        } else if (raw.sampling == "CLYCbCr-4:2:0") {
+            sampling.known = VideoSampling::Known::CLYCbCr420;
+        } else if (raw.sampling == "ICtCp-4:4:4") {
+            sampling.known = VideoSampling::Known::ICtCp444;
+        } else if (raw.sampling == "ICtCp-4:2:2") {
+            sampling.known = VideoSampling::Known::ICtCp422;
+        } else if (raw.sampling == "ICtCp-4:2:0") {
+            sampling.known = VideoSampling::Known::ICtCp420;
         } else {
             sampling.known = VideoSampling::Known::Other;
             sampling.raw_token = raw.sampling;
@@ -81,6 +93,14 @@ namespace st2110 {
             colorimetry.known = VideoColorimetry::Known::Bt2100;
         } else if (raw.colorimetry == "ST2065-1") {
             colorimetry.known = VideoColorimetry::Known::St2065_1;
+        } else if (raw.colorimetry == "ST2065-3") {
+            colorimetry.known = VideoColorimetry::Known::St2065_3;
+        } else if (raw.colorimetry == "UNSPECIFIED") {
+            colorimetry.known = VideoColorimetry::Known::Unspecified;
+        } else if (raw.colorimetry == "XYZ") {
+            colorimetry.known = VideoColorimetry::Known::Xyz;
+        } else if (raw.colorimetry == "ALPHA") {
+            colorimetry.known = VideoColorimetry::Known::Alpha;
         } else {
             colorimetry.known = VideoColorimetry::Known::Other;
             colorimetry.raw_token = raw.colorimetry;
@@ -95,8 +115,23 @@ namespace st2110 {
                 transferCharacteristicSystem.known = VideoTransferCharacteristicSystem::Known::PQ;
             } else if (*raw.transfer_characteristic_system == "HLG") {
                 transferCharacteristicSystem.known = VideoTransferCharacteristicSystem::Known::HLG;
-            } else if (*raw.transfer_characteristic_system == "Linear") {
+            } else if (*raw.transfer_characteristic_system == "LINEAR" ||
+                       *raw.transfer_characteristic_system == "Linear") {
                 transferCharacteristicSystem.known = VideoTransferCharacteristicSystem::Known::Linear;
+            } else if (*raw.transfer_characteristic_system == "BT2100LINPQ") {
+                transferCharacteristicSystem.known = VideoTransferCharacteristicSystem::Known::Bt2100LinPq;
+            } else if (*raw.transfer_characteristic_system == "BT2100LINHLG") {
+                transferCharacteristicSystem.known = VideoTransferCharacteristicSystem::Known::Bt2100LinHlg;
+            } else if (*raw.transfer_characteristic_system == "ST2065-1") {
+                transferCharacteristicSystem.known = VideoTransferCharacteristicSystem::Known::St2065_1;
+            } else if (*raw.transfer_characteristic_system == "ST428-1") {
+                transferCharacteristicSystem.known = VideoTransferCharacteristicSystem::Known::St428_1;
+            } else if (*raw.transfer_characteristic_system == "DENSITY") {
+                transferCharacteristicSystem.known = VideoTransferCharacteristicSystem::Known::Density;
+            } else if (*raw.transfer_characteristic_system == "ST2115LOGS3") {
+                transferCharacteristicSystem.known = VideoTransferCharacteristicSystem::Known::St2115LogS3;
+            } else if (*raw.transfer_characteristic_system == "UNSPECIFIED") {
+                transferCharacteristicSystem.known = VideoTransferCharacteristicSystem::Known::Unspecified;
             } else {
                 transferCharacteristicSystem.known = VideoTransferCharacteristicSystem::Known::Other;
                 transferCharacteristicSystem.raw_token = *raw.transfer_characteristic_system;

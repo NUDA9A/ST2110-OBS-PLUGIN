@@ -642,6 +642,8 @@
     - `validate_video_stream_signaling(...)`
   - projection boundary:
     - `pixel_format_from_video_stream_signaling(...) -> std::expected<PixelFormat, Error>`
+      - only the currently supported runtime combination `YCbCr-4:2:2 + integer 8-bit` projects to `PixelFormat::UYVY`;
+      - newly modeled known SDP sampling values from `069D8` remain structurally valid in signaling, but runtime projection returns localized `Unsupported` until corresponding pixel/storage formats are implemented.
   - signaling -> runtime/manual adapters:
     - `packet_parse_policy_from_video_stream_signaling(...)`
     - `depacketizer_config_from_video_stream_signaling(...)`
@@ -761,9 +763,50 @@
   - `ReferenceClock`
   - `VideoSenderType`
   - `VideoSampling`
+    - known SDP sampling tokens:
+      - `YCbCr422`
+      - `YCbCr444`
+      - `YCbCr420`
+      - `RGB`
+      - `XYZ`
+      - `Key`
+      - `CLYCbCr444`
+      - `CLYCbCr422`
+      - `CLYCbCr420`
+      - `ICtCp444`
+      - `ICtCp422`
+      - `ICtCp420`
+      - `Other`
+    - `raw_token` is used only for `Other` / forward-compatible unknown tokens.
   - `VideoBitDepth`
   - `VideoColorimetry`
+    - known SDP colorimetry tokens:
+      - `Bt601`
+      - `Bt709`
+      - `Bt2020`
+      - `Bt2100`
+      - `St2065_1`
+      - `St2065_3`
+      - `Unspecified`
+      - `Xyz`
+      - `Alpha`
+      - `Other`
+    - `raw_token` is used only for `Other` / forward-compatible unknown tokens.
   - `VideoTransferCharacteristicSystem`
+    - known SDP TCS tokens:
+      - `SDR`
+      - `PQ`
+      - `HLG`
+      - `Linear`
+      - `Bt2100LinPq`
+      - `Bt2100LinHlg`
+      - `St2065_1`
+      - `St428_1`
+      - `Density`
+      - `St2115LogS3`
+      - `Unspecified`
+      - `Other`
+    - `raw_token` is used only for `Other` / forward-compatible unknown tokens.
   - `VideoSignalStandard`
   - `VideoRange`
   - `VideoMediaDescription`
@@ -788,6 +831,8 @@
   - signaling model shape теперь вынесен отдельно от validation/projection helper’ов;
   - bootstrap config теперь несет не только parse/runtime pipeline projection, но и explicit receiver timing config as a first-class bootstrap input;
   - это упрощает дальнейшее расширение SDP parsing/ingestion path и ST 2110-21 timing composition без смешивания model declarations и adapter logic.
+  - video media-property enums now explicitly model the currently known ST 2110-20 SDP sampling / colorimetry / TCS variants covered by `069D8`;
+  - `Other + raw_token` remains reserved for forward compatibility and truly unknown future values, not for already-covered standard tokens.
 
 ### libs/st2110core/include/st2110/video_receiver_timing.hpp
 - Роль:
@@ -955,17 +1000,19 @@
       - `sender_type`
       - `troff_us`
       - `cmax`
-      - `unknown_parameters`
+    - `unknown_parameters`
+  - helper structs:
+    - `RawVideoSdpFmtpDepthValue`
+      - raw parsed depth representation (`bits`, `floating_point`)
   - helper functions:
     - `split_part_to_string_view(...)`
     - `trim_ascii_ws(...)`
     - `parse_fmtp_uint64(...)`
     - `parse_fmtp_uint32(...)`
-    - `parse_fmtp_attribute_payload_for_pt(...)`
-    - `RawVideoSdpFmtpDepthValue`
     - `parse_fmtp_depth(...)`
       - parses integer depths and standard `16f`;
       - rejects malformed depth tokens and non-16 floating-point depths.
+    - `parse_fmtp_attribute_payload_for_pt(...)`
   - main parsing entry points:
     - `parse_video_sdp_fmtp_payload(...)`
       - parses one raw fmtp payload string into `RawVideoSdpFmtpParameters`;
@@ -1000,6 +1047,8 @@
     - валидирует границы signaling-model представления там, где это относится к media description.
     - maps raw `depth_floating_point` into `VideoBitDepth::floating_point`;
     - `depth=16f` is represented as `VideoBitDepth{bits=16, floating_point=true}`.
+    - maps known ST 2110-20 SDP `sampling`, `colorimetry`, and `TCS` tokens into explicit modeled enum values, including the additional variants introduced by `069D8`;
+    - unknown/open-ended tokens remain preserved as `Known::Other + raw_token`;
   - `video_stream_signaling_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters&)`
     - собирает partial `VideoStreamSignaling` из raw fmtp mapping:
       - `media`
@@ -1189,7 +1238,7 @@
 - [x] S021: SDP ingestion path no longer treats ST 2110 timing/sender fields such as `TP`, `TROFF`, `CMAX`, `TSMODE`, and `TSDELAY` only as standalone `a=` attributes. Known ST 2110 timing/sender media type parameters are now parsed from `a=fmtp` into explicit raw fields, mapped into `VideoStreamSignaling`, and checked for conflicts with standalone compatibility attributes instead of remaining only in `unknown_parameters` and being silently ignored.
 - [x] S022: SDP ingestion now parses `MAXUDP` from video `a=fmtp` through the existing raw fmtp parsing / SDP-to-signaling adapter path. Parsed `MAXUDP` is mapped to `VideoStreamSignaling::max_udp_datagram_bytes` and then reaches `PacketParsePolicy` through the existing signaling projection path, without introducing a parallel runtime config mechanism.
 - [x] S023: SDP `depth=16f` is now accepted in the video SDP fmtp parsing path and mapped to the existing `VideoBitDepth{bits=16, floating_point=true}` signaling representation. Runtime pixel-format/depacketizer support remains unchanged and rejects unsupported floating-point formats through existing projection/support boundaries.
-- [ ] S024: The standards-aware video SDP media-property model still does not explicitly enumerate all known ST 2110-20 media-description variants. Known standard values such as additional `sampling`, `colorimetry`, and `TCS` values should be represented explicitly in signaling enums / mapping helpers, while `Other` remains only for forward compatibility or truly unknown future values. Runtime support may still reject unsupported combinations through existing projection/support boundaries.
+- [x] S024: The standards-aware video SDP media-property model now explicitly enumerates the known ST 2110-20 media-description variants covered by `069D8`, including additional `sampling`, `colorimetry`, and `TCS` values. `Other + raw_token` remains reserved for forward compatibility / truly unknown future values. Runtime support still rejects unsupported combinations through the existing projection/support boundaries.
 - [ ] S025: Receiver-side signaling validation currently risks treating optional ST 2110-21 sender timing parameters, especially `CMAX` for `TP=2110TPW`, as mandatory for SDP ingestion. Structural receiver-side SDP ingestion should accept standard-valid SDP when optional parameters are absent, while any stricter sender/conformance policy must be a separate localized validation mode.
 - [ ] S026: Current video SDP ingestion is primarily media-section / selected-attribute oriented and does not yet have an explicit raw boundary for session/media transport and redundancy-related SDP constructs such as `c=`, `a=source-filter`, `a=mid`, and `a=group:DUP`. These constructs should be architecturally represented in the SDP parsing layer so later runtime/backend integration can be implemented by filling existing adapters/branches rather than reshaping SDP ingestion.
 ---
@@ -1528,7 +1577,7 @@
       - `depth=16`
       - `depth=16f`
       - malformed depth tokens
-  - [ ] 069D8: Complete explicit known ST 2110-20 video SDP media-property enum coverage
+  - [x] 069D8: Complete explicit known ST 2110-20 video SDP media-property enum coverage
     - add explicit modeled values for known standard SDP media-description variants currently falling into `Other`
     - cover at least:
       - sampling variants:
@@ -1814,7 +1863,7 @@
 - [ ] 214: Expand standards-aware video signaling / media-property coverage through the already-modeled video signaling representation
   - continue expanding support for signaled video/media-property variants without changing the core signaling/runtime contracts introduced in MVP
   - keep parsing, validation, and projection extensions localized to existing model/adapter boundaries
-  - after `069D7`, future work should mostly add implementation behavior for already-explicit enum branches rather than routing unknown standard values through `Other`
+  - after `069D8`, future work should mostly add implementation behavior for already-explicit enum branches rather than routing known standard values through `Other`
 - [ ] 214A: Expand video SDP `a=` attribute coverage through the already-modeled raw SDP media-section boundary
   - add support for additional video-relevant `a=` attributes by filling existing per-attribute/per-PT parsing branches inside the raw SDP/media-section ingestion architecture introduced in MVP
   - do not reshape `VideoStreamSignaling`, raw SDP media-section model, or the final ingestion pipeline only to add new `a=` attribute coverage

@@ -204,6 +204,12 @@ namespace st2110 {
             case VideoSampling::Known::RGB:
             case VideoSampling::Known::XYZ:
             case VideoSampling::Known::Key:
+            case VideoSampling::Known::CLYCbCr444:
+            case VideoSampling::Known::CLYCbCr422:
+            case VideoSampling::Known::CLYCbCr420:
+            case VideoSampling::Known::ICtCp444:
+            case VideoSampling::Known::ICtCp422:
+            case VideoSampling::Known::ICtCp420:
             case VideoSampling::Known::Other:
             default:
                 return std::unexpected(Error::Unsupported);
