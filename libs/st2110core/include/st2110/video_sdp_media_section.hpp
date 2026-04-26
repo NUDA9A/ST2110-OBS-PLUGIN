@@ -26,7 +26,19 @@ namespace st2110 {
     };
 
     struct RawSdpSourceFilter {
+        enum class Scope {
+            Session,
+            Media
+        };
+
         std::string raw_value{};
+        Scope scope = Scope::Media;
+
+        std::string filter_mode{};
+        std::string network_type{};
+        std::string address_type{};
+        std::string destination_address{};
+        std::vector<std::string> source_addresses{};
     };
 
     struct RawSdpGroup {
@@ -287,6 +299,48 @@ namespace st2110 {
         };
     }
 
+    [[nodiscard]] inline std::expected<RawSdpSourceFilter, Error>
+    parse_source_filter_attribute_value(
+            std::string_view value,
+            RawSdpSourceFilter::Scope scope
+    ) {
+        value = strip_cr(value);
+        value = trim_left_ws(value);
+
+        if (value.empty()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        const auto tokens = split_ws(value);
+
+        // RFC-style source-filter shape:
+        // a=source-filter:<filter-mode> <nettype> <addrtype> <dest-address> <src-address>...
+        //
+        // Keep this raw layer runtime-agnostic:
+        // - do not reject because multicast/socket support is missing;
+        // - preserve the original value;
+        // - only reject structurally malformed values.
+        if (tokens.size() < 5) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        RawSdpSourceFilter res{
+                .raw_value = std::string(value),
+                .scope = scope,
+                .filter_mode = std::string(tokens[0]),
+                .network_type = std::string(tokens[1]),
+                .address_type = std::string(tokens[2]),
+                .destination_address = std::string(tokens[3])
+        };
+
+        res.source_addresses.reserve(tokens.size() - 4);
+        for (std::size_t i = 4; i < tokens.size(); ++i) {
+            res.source_addresses.emplace_back(tokens[i]);
+        }
+
+        return res;
+    }
+
     [[nodiscard]] inline std::expected<RawSdpGroup, Error>
     parse_group_attribute(std::string_view value) {
         value = strip_cr(value);
@@ -405,15 +459,16 @@ namespace st2110 {
                         auto source_filter = parse_attribute_value(line, "a=source-filter:");
 
                         if (source_filter.has_value()) {
-                            const auto value = trim_left_ws(*source_filter);
+                            auto parsed_source_filter = parse_source_filter_attribute_value(
+                                    *source_filter,
+                                    RawSdpSourceFilter::Scope::Session
+                            );
 
-                            if (value.empty()) {
-                                return std::unexpected(Error::InvalidValue);
+                            if (!parsed_source_filter.has_value()) {
+                                return std::unexpected(parsed_source_filter.error());
                             }
 
-                            res.source_filters.push_back(RawSdpSourceFilter{
-                                    .raw_value = std::string(value)
-                            });
+                            res.source_filters.push_back(std::move(*parsed_source_filter));
                         } else if (line.starts_with("a=")) {
                             res.unknown_session_attributes.push_back(parse_unknown_sdp_attribute(line));
                         }
@@ -564,15 +619,16 @@ namespace st2110 {
                     auto source_filter = parse_attribute_value(line, "a=source-filter:");
 
                     if (source_filter.has_value()) {
-                        const auto value = trim_left_ws(*source_filter);
+                        auto parsed_source_filter = parse_source_filter_attribute_value(
+                                *source_filter,
+                                RawSdpSourceFilter::Scope::Media
+                        );
 
-                        if (value.empty()) {
-                            return std::unexpected(Error::InvalidValue);
+                        if (!parsed_source_filter.has_value()) {
+                            return std::unexpected(parsed_source_filter.error());
                         }
 
-                        res.source_filters.push_back(RawSdpSourceFilter{
-                                .raw_value = std::string(value)
-                        });
+                        res.source_filters.push_back(std::move(*parsed_source_filter));
                         handled_attribute = true;
                     }
 

@@ -959,7 +959,14 @@
       - `address_type`
       - `connection_address`
   - `RawSdpSourceFilter`
-    - preserved `a=source-filter` value as `raw_value`.
+    - preserved and minimally parsed `a=source-filter` value:
+      - `raw_value`
+      - `Scope { Session, Media }`
+      - `filter_mode`
+      - `network_type`
+      - `address_type`
+      - `destination_address`
+      - `source_addresses`
   - `RawSdpGroup`
     - raw parsed `a=group:<semantics> <mid>...`
     - `semantics`
@@ -1000,6 +1007,11 @@
     - `parse_connection_data(...)`
     - `parse_group_attribute(...)`
     - `has_dup_session_group(...)`
+    - `parse_source_filter_attribute_value(...)`
+      - parses RFC-style source-filter value into scoped raw source-filter model;
+      - preserves `raw_value`;
+      - rejects structurally malformed values;
+      - remains runtime/backend agnostic.
   - main entry point:
     - `select_raw_video_sdp_media_section(...)`
       - selects the matching `m=video` section for the requested payload type;
@@ -1008,7 +1020,7 @@
       - captures session-level `c=`;
       - captures media-level `c=`;
       - captures `a=mid`;
-      - captures session/media `a=source-filter`;
+      - captures session/media `a=source-filter` with explicit scope and minimally parsed fields;
       - captures session-level `a=group`, including `DUP`;
       - preserves unknown session-level and selected-media-level attributes separately;
       - rejects duplicate session/media `c=`, duplicate selected `mid`, duplicate selected timing attributes and duplicate selected payload bindings;
@@ -1017,6 +1029,8 @@
   - это raw SDP boundary, а не signaling model и не validation/runtime layer;
   - `c=`, `source-filter`, `mid`, `group:DUP` are intentionally preserved outside `VideoStreamSignaling`;
   - later runtime/backend integration should consume these raw fields through dedicated bootstrap/transport adapters rather than reshaping `VideoStreamSignaling`.
+  - `a=source-filter` is now scope-aware and minimally parsed, but still intentionally not mapped into `VideoStreamSignaling`;
+  - backend/runtime use of parsed source-filter metadata remains future work through `214C`.
 
 ### libs/st2110core/include/st2110/video_sdp_fmtp.hpp
 - Роль:
@@ -1299,7 +1313,7 @@
 - [x] S025: Receiver-side signaling validation no longer treats optional ST 2110-21 sender timing parameters, especially `CMAX` for `TP=2110TPW`, as mandatory for SDP ingestion. Structural receiver-side SDP/signaling validation accepts standard-valid Wide sender signaling when optional parameters are absent, rejects malformed present values such as `CMAX=0`, and leaves stricter sender/conformance policy to a separate localized validation mode.
 - [x] S026: Video SDP ingestion now has an explicit raw boundary for session/media transport and redundancy-related SDP constructs such as `c=`, `a=source-filter`, `a=mid`, and `a=group:DUP`. These constructs are preserved in the raw SDP media-section model separately from `VideoStreamSignaling`; runtime/backend integration and redundant-stream selection policy remain future work through `214C` / `214D`.
 - [x] S027: Video signaling structural validation now includes localized media-description cross-field constraints from ST 2110-20. `4:2:0` sampling variants are accepted only with progressive scan signaling, and `KEY` sampling requires alpha colorimetry and rejects normal `TCS` presence. These checks live in the signaling/model validation boundary, not in runtime `PixelFormat` projection behavior.
-- [ ] S028: Raw SDP `a=source-filter` handling currently risks losing session-vs-media scope and/or keeping only an opaque raw value. For future backend/bootstrap integration, the raw SDP layer should preserve whether each source filter came from session level or the selected media section, and should minimally parse the RFC-style source-filter fields while still preserving the original raw value.
+- [x] S028: Raw SDP `a=source-filter` handling now preserves session-vs-media scope and minimally parses the RFC-style source-filter fields while preserving the original raw attribute value. Runtime/backend consumption remains future work through `214C`.
 - [ ] S029: Raw SDP redundancy handling currently preserves `a=group:DUP`, but the selected-video-media-section boundary does not yet model duplicate candidate media sections in a way that future redundant-stream selection can consume without reshaping SDP ingestion. `group:DUP` must be tied to actual `mid` values, and duplicate RTP stream candidates should be preserved as raw summaries or explicit raw candidate records.
 - [ ] S030: The SDP `a=fmtp` parser is still too permissive for the ST 2110-20 media type parameter grammar. It should reject whitespace around `=`, malformed token separators, and `;` separators not followed by required whitespace, while still preserving unknown valid parameters. This should be fixed locally in `video_sdp_fmtp.hpp` rather than by adding tolerant parsing elsewhere.
 - [ ] S031: Raw SDP `c=` connection data is preserved, but multicast connection-address parameters such as address/TTL/numaddr are not yet modeled explicitly enough for future backend bootstrap. The raw SDP layer should keep the original connection address string but also expose parsed base address and optional multicast parameters where present.
@@ -1736,7 +1750,7 @@
       - `KEY` with non-alpha colorimetry is rejected
       - `KEY` with normal TCS is rejected
       - unsupported-but-standard media combinations still fail only at localized runtime projection boundaries
-  - [ ] 069D12: Preserve and minimally parse SDP `a=source-filter` scope in raw media-section model
+  - [x] 069D12: Preserve and minimally parse SDP `a=source-filter` scope in raw media-section model
     - keep `source-filter` handling in the raw SDP layer, separate from `VideoStreamSignaling`
     - preserve whether each source filter came from:
       - session level
