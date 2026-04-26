@@ -642,6 +642,22 @@
     - `validate_video_range(...)`
     - `validate_video_media_description(...)`
     - `validate_video_stream_signaling(...)`
+      - validates media description fields;
+      - validates `scan_mode`;
+      - applies media-description cross-field constraints that depend on scan mode / sampling / colorimetry / TCS;
+      - validates timing, sender signaling, reference clock, and packet-size policy.
+    - `is_420_video_sampling(...)`
+      - helper для распознавания modeled `4:2:0` sampling variants:
+        - `YCbCr420`
+        - `CLYCbCr420`
+        - `ICtCp420`
+    - `validate_video_media_description_cross_field_constraints(...)`
+      - localized signaling/model cross-field validation;
+      - rejects non-progressive signaling for `4:2:0` sampling variants;
+      - validates `KEY` sampling as alpha/key signaling:
+        - requires `colorimetry=ALPHA`;
+        - rejects normal `TCS` presence;
+      - keeps these constraints out of runtime `PixelFormat` projection.
   - projection boundary:
     - `pixel_format_from_video_stream_signaling(...) -> std::expected<PixelFormat, Error>`
       - only the currently supported runtime combination `YCbCr-4:2:2 + integer 8-bit` projects to `PixelFormat::UYVY`;
@@ -664,6 +680,10 @@
   - `BPM` now remains valid inside signaling model but is rejected at explicit runtime-support boundaries for depacketizer/pipeline/bootstrap projections;
   - generic bootstrap path intentionally remains timing-agnostic; receiver timing validation/composition is layered on top through `video_receiver_timing_signaling.hpp`;
   - SDP ingestion path is now implemented through `video_sdp_*` boundaries; fuller runtime integration of SDP-derived config and ST 2110-21 receiver behavior remains future work through `S010`, `214C`, `214D`, and `229A`.
+  - ST 2110-20 media-description cross-field constraints are now represented at the signaling/model validation layer:
+    - `4:2:0` variants are progressive-only structurally;
+    - `KEY` requires alpha colorimetry and rejects normal TCS.
+  - Unsupported-but-standard runtime combinations, such as progressive `4:2:0`, remain structurally valid but still fail at localized runtime projection/support boundaries.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -1090,8 +1110,9 @@
       - `scan_mode`
       - `packing_mode`
       - optional `max_udp_datagram_bytes`
-    - на текущем шаге не наполняет timing/reference-clock/sender-related signaling fields;
-    - therefore validates mapped `media` through media-description boundary instead of requiring full `VideoStreamSignaling` completeness.
+    - validates mapped media fields through `validate_video_media_description(...)`;
+    - applies `validate_video_media_description_cross_field_constraints(...)` after deriving `scan_mode`, so SDP-derived invalid combinations such as interlaced `4:2:0` or invalid `KEY` signaling are rejected at the SDP-to-signaling adapter boundary;
+    - на текущем шаге не наполняет timing/reference-clock/sender-related signaling fields.
 - Примечание:
   - это mapping/adapter layer, а не raw SDP parser и не full signaling-ingestion entry point;
   - later tasks should compose it with raw media-section selection, `a=rtpmap`, and timing/reference-clock parsing instead of expanding ad hoc mapping directly in runtime/bootstrap code.
@@ -1277,7 +1298,7 @@
 - [x] S024: The standards-aware video SDP media-property model now explicitly enumerates the known ST 2110-20 media-description variants covered by `069D8`, including additional `sampling`, `colorimetry`, and `TCS` values. `Other + raw_token` remains reserved for forward compatibility / truly unknown future values. Runtime support still rejects unsupported combinations through the existing projection/support boundaries.
 - [x] S025: Receiver-side signaling validation no longer treats optional ST 2110-21 sender timing parameters, especially `CMAX` for `TP=2110TPW`, as mandatory for SDP ingestion. Structural receiver-side SDP/signaling validation accepts standard-valid Wide sender signaling when optional parameters are absent, rejects malformed present values such as `CMAX=0`, and leaves stricter sender/conformance policy to a separate localized validation mode.
 - [x] S026: Video SDP ingestion now has an explicit raw boundary for session/media transport and redundancy-related SDP constructs such as `c=`, `a=source-filter`, `a=mid`, and `a=group:DUP`. These constructs are preserved in the raw SDP media-section model separately from `VideoStreamSignaling`; runtime/backend integration and redundant-stream selection policy remain future work through `214C` / `214D`.
-- [ ] S027: Video signaling structural validation currently validates individual media-description fields but does not yet validate important cross-field constraints from ST 2110-20. In particular, 4:2:0 sampling variants must remain progressive-only at the signaling/structural level, and `KEY` sampling has special constraints such as requiring alpha colorimetry and not carrying a normal TCS value. These checks should be added as localized signaling-model cross-validation, not as runtime `PixelFormat` projection behavior.
+- [x] S027: Video signaling structural validation now includes localized media-description cross-field constraints from ST 2110-20. `4:2:0` sampling variants are accepted only with progressive scan signaling, and `KEY` sampling requires alpha colorimetry and rejects normal `TCS` presence. These checks live in the signaling/model validation boundary, not in runtime `PixelFormat` projection behavior.
 - [ ] S028: Raw SDP `a=source-filter` handling currently risks losing session-vs-media scope and/or keeping only an opaque raw value. For future backend/bootstrap integration, the raw SDP layer should preserve whether each source filter came from session level or the selected media section, and should minimally parse the RFC-style source-filter fields while still preserving the original raw value.
 - [ ] S029: Raw SDP redundancy handling currently preserves `a=group:DUP`, but the selected-video-media-section boundary does not yet model duplicate candidate media sections in a way that future redundant-stream selection can consume without reshaping SDP ingestion. `group:DUP` must be tied to actual `mid` values, and duplicate RTP stream candidates should be preserved as raw summaries or explicit raw candidate records.
 - [ ] S030: The SDP `a=fmtp` parser is still too permissive for the ST 2110-20 media type parameter grammar. It should reject whitespace around `=`, malformed token separators, and `;` separators not followed by required whitespace, while still preserving unknown valid parameters. This should be fixed locally in `video_sdp_fmtp.hpp` rather than by adding tolerant parsing elsewhere.
@@ -1693,7 +1714,7 @@
       - `a=group:DUP` is parsed/preserved
       - unknown attributes are preserved rather than rejected
       - existing single-media-section ingestion behavior remains unchanged
-  - [ ] 069D11: Add ST 2110-20 video media-description cross-field validation
+  - [x] 069D11: Add ST 2110-20 video media-description cross-field validation
     - add localized structural validation for cross-field constraints that cannot be checked by validating each media-description enum/value independently
     - cover at least:
       - 4:2:0 sampling variants are valid only for progressive scan signaling:

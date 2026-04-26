@@ -197,6 +197,14 @@ namespace st2110 {
         if (Error err = validate_video_media_description(res.media); err != Error::Ok) {
             return std::unexpected(err);
         }
+
+        if (Error err = validate_video_media_description_cross_field_constraints(
+                    res.media,
+                    res.scan_mode);
+                err != Error::Ok) {
+            return std::unexpected(err);
+        }
+
         return res;
     }
 }

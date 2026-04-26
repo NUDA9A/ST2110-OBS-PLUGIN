@@ -191,6 +191,45 @@ namespace st2110 {
         return Error::Ok;
     }
 
+    inline bool is_420_video_sampling(const VideoSampling& sampling) {
+        switch (sampling.known) {
+            case VideoSampling::Known::YCbCr420:
+            case VideoSampling::Known::CLYCbCr420:
+            case VideoSampling::Known::ICtCp420:
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    inline Error validate_video_media_description_cross_field_constraints(
+            const VideoMediaDescription& media,
+            VideoScanMode scan_mode) {
+        // ST 2110-20 4:2:0 sampling variants are progressive-only at the
+        // signaling/model layer. Runtime support may still reject them later
+        // through PixelFormat projection boundaries.
+        if (is_420_video_sampling(media.sampling) &&
+            scan_mode != VideoScanMode::Progressive) {
+            return Error::InvalidValue;
+        }
+
+        // KEY is an alpha/key signal, not a normal image signal.
+        // Keep this as signaling-model validation instead of runtime projection.
+        if (media.sampling.known == VideoSampling::Known::Key) {
+            if (media.colorimetry.known != VideoColorimetry::Known::Alpha ||
+                media.colorimetry.raw_token.has_value()) {
+                return Error::InvalidValue;
+            }
+
+            if (media.transfer_characteristic_system.has_value()) {
+                return Error::InvalidValue;
+            }
+        }
+
+        return Error::Ok;
+    }
+
     inline std::expected <PixelFormat, Error>
     pixel_format_from_video_stream_signaling(const VideoStreamSignaling &signaling) {
         if (Error err = validate_video_sampling(signaling.media.sampling); err != Error::Ok) {
@@ -262,6 +301,15 @@ namespace st2110 {
         if (Error err = validate_video_media_description(signaling.media); err != Error::Ok) {
             return err;
         }
+        if (Error err = config_validation::validate_video_scan_mode(signaling.scan_mode); err != Error::Ok) {
+            return err;
+        }
+        if (Error err = validate_video_media_description_cross_field_constraints(
+                    signaling.media,
+                    signaling.scan_mode);
+                err != Error::Ok) {
+            return err;
+        }
         if (Error err = validate_video_timing_signaling(
                     signaling.media_clock_mode,
                     signaling.timestamp_mode,
@@ -277,9 +325,6 @@ namespace st2110 {
             return err;
         }
         if (Error err = validate_reference_clock(signaling.reference_clock); err != Error::Ok) {
-            return err;
-        }
-        if (Error err = config_validation::validate_video_scan_mode(signaling.scan_mode); err != Error::Ok) {
             return err;
         }
         if (Error err = validate_packet_parse_policy_config(PacketParsePolicy{signaling.max_udp_datagram_bytes});
