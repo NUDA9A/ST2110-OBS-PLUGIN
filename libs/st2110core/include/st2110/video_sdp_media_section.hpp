@@ -374,7 +374,10 @@ namespace st2110 {
                     handled_attribute = true;
                 }
 
-                auto tp = parse_attribute_value(line, "a=TP:");
+                auto tp = parse_attribute_value(line, "a=tp:");
+                if (!tp.has_value()) {
+                    tp = parse_attribute_value(line, "a=TP:");
+                }
 
                 if (tp.has_value()) {
                     if (res.tp.has_value()) {
@@ -385,7 +388,10 @@ namespace st2110 {
                     handled_attribute = true;
                 }
 
-                auto troff = parse_attribute_value(line, "a=TROFF:");
+                auto troff = parse_attribute_value(line, "a=troff:");
+                if (!troff.has_value()) {
+                    troff = parse_attribute_value(line, "a=TROFF:");
+                }
 
                 if (troff.has_value()) {
                     if (res.troff.has_value()) {
@@ -396,7 +402,10 @@ namespace st2110 {
                     handled_attribute = true;
                 }
 
-                auto cmax = parse_attribute_value(line, "a=CMAX:");
+                auto cmax = parse_attribute_value(line, "a=cmax:");
+                if (!cmax.has_value()) {
+                    cmax = parse_attribute_value(line, "a=CMAX:");
+                }
 
                 if (cmax.has_value()) {
                     if (res.cmax.has_value()) {

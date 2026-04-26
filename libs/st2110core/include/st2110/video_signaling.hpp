@@ -36,7 +36,7 @@ namespace st2110 {
                 }
                 return Error::Ok;
             case VideoSenderType::Wide:
-                if (troff_us != std::nullopt || !cmax.has_value() || *cmax == 0) {
+                if (!cmax.has_value() || *cmax == 0) {
                     return Error::InvalidValue;
                 }
                 return Error::Ok;

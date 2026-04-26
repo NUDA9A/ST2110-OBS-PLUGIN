@@ -81,28 +81,35 @@ static void test_validate_video_sender_signaling_wide_requires_cmax() {
             std::nullopt) == st2110::Error::InvalidValue);
 }
 
-static void test_validate_video_sender_signaling_wide_accepts_positive_cmax() {
+static void test_validate_video_sender_signaling_wide_accepts_positive_cmax_without_troff() {
     assert(st2110::validate_video_sender_signaling(
             st2110::VideoSenderType::Wide,
             std::nullopt,
             4u) == st2110::Error::Ok);
 }
 
-static void test_validate_video_sender_signaling_wide_rejects_zero_cmax() {
+static void test_validate_video_sender_signaling_wide_accepts_positive_cmax_with_troff() {
+    assert(st2110::validate_video_sender_signaling(
+            st2110::VideoSenderType::Wide,
+            10u,
+            4u) == st2110::Error::Ok);
+}
+
+static void test_validate_video_sender_signaling_wide_rejects_zero_cmax_without_troff() {
     assert(st2110::validate_video_sender_signaling(
             st2110::VideoSenderType::Wide,
             std::nullopt,
             0u) == st2110::Error::InvalidValue);
 }
 
-static void test_validate_video_sender_signaling_wide_rejects_troff() {
+static void test_validate_video_sender_signaling_wide_rejects_zero_cmax_with_troff() {
     assert(st2110::validate_video_sender_signaling(
             st2110::VideoSenderType::Wide,
             10u,
-            4u) == st2110::Error::InvalidValue);
+            0u) == st2110::Error::InvalidValue);
 }
 
-static void test_validate_video_stream_signaling_accepts_valid_sender_signaling() {
+static void test_validate_video_stream_signaling_accepts_valid_wide_sender_without_troff() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.sender_type = st2110::VideoSenderType::Wide;
     s.cmax = 4u;
@@ -111,11 +118,29 @@ static void test_validate_video_stream_signaling_accepts_valid_sender_signaling(
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
 }
 
-static void test_validate_video_stream_signaling_rejects_invalid_sender_signaling() {
+static void test_validate_video_stream_signaling_accepts_valid_wide_sender_with_troff() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.sender_type = st2110::VideoSenderType::Wide;
+    s.cmax = 4u;
+    s.troff_us = 10u;
+
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
+}
+
+static void test_validate_video_stream_signaling_rejects_invalid_wide_sender_without_cmax() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.sender_type = st2110::VideoSenderType::Wide;
     s.cmax = std::nullopt;
     s.troff_us = std::nullopt;
+
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
+}
+
+static void test_validate_video_stream_signaling_rejects_invalid_wide_sender_with_troff_but_without_cmax() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.sender_type = st2110::VideoSenderType::Wide;
+    s.cmax = std::nullopt;
+    s.troff_us = 10u;
 
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
 }
@@ -130,11 +155,15 @@ int main() {
     test_validate_video_sender_signaling_narrow_linear_rejects_cmax();
 
     test_validate_video_sender_signaling_wide_requires_cmax();
-    test_validate_video_sender_signaling_wide_accepts_positive_cmax();
-    test_validate_video_sender_signaling_wide_rejects_zero_cmax();
-    test_validate_video_sender_signaling_wide_rejects_troff();
+    test_validate_video_sender_signaling_wide_accepts_positive_cmax_without_troff();
+    test_validate_video_sender_signaling_wide_accepts_positive_cmax_with_troff();
+    test_validate_video_sender_signaling_wide_rejects_zero_cmax_without_troff();
+    test_validate_video_sender_signaling_wide_rejects_zero_cmax_with_troff();
 
-    test_validate_video_stream_signaling_accepts_valid_sender_signaling();
-    test_validate_video_stream_signaling_rejects_invalid_sender_signaling();
+    test_validate_video_stream_signaling_accepts_valid_wide_sender_without_troff();
+    test_validate_video_stream_signaling_accepts_valid_wide_sender_with_troff();
+    test_validate_video_stream_signaling_rejects_invalid_wide_sender_without_cmax();
+    test_validate_video_stream_signaling_rejects_invalid_wide_sender_with_troff_but_without_cmax();
+
     return 0;
 }

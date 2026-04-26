@@ -625,6 +625,9 @@
 - Сущности:
   - structural validation:
     - `validate_video_sender_signaling(...)`
+      - validates sender type vs `TROFF` / `CMAX`;
+      - `Narrow` / `NarrowLinear` reject `TROFF` and `CMAX`;
+      - `Wide` requires positive `CMAX` and allows optional `TROFF`.
     - `validate_reference_clock(...)`
     - `validate_media_clock_mode(...)`
     - `validate_timestamp_mode(...)`
@@ -921,7 +924,7 @@
   - отделяет parsing одного `a=fmtp` attribute payload от raw media-section selection, `VideoStreamSignaling` mapping, structural validation и runtime/bootstrap projection.
 - Связи:
   - использует `Error` и raw SDP helper’ы из `video_sdp_media_section.hpp`;
-  - должен использоваться следующими шагами `069D2` и `069D5`;
+  - используется SDP ingestion/composition layer из `video_sdp_ingestion.hpp`;
   - не зависит от `VideoStreamSignaling`, depacketizer, reorder buffer и receive pipeline internals.
 - Сущности:
   - `RawVideoSdpExactFrameRate`
@@ -938,26 +941,36 @@
       - `colorimetry`
       - `packing_mode`
       - `signal_standard`
-    - optional raw parsed fields:
+    - optional raw parsed media-description fields:
       - `transfer_characteristic_system`
       - `range`
     - flag fields:
       - `interlace`
       - `segmented`
+    - optional known timing/sender fmtp parameters:
+      - `timestamp_mode`
+      - `ts_delay_sender_ticks`
+      - `sender_type`
+      - `troff_us`
+      - `cmax`
     - `unknown_parameters`
   - helper functions:
     - `split_part_to_string_view(...)`
     - `trim_ascii_ws(...)`
+    - `parse_fmtp_uint64(...)`
+    - `parse_fmtp_uint32(...)`
     - `parse_fmtp_attribute_payload_for_pt(...)`
   - main parsing entry points:
     - `parse_video_sdp_fmtp_payload(...)`
-      - parses one raw fmtp payload string into `RawVideoSdpFmtpParameters`
+      - parses one raw fmtp payload string into `RawVideoSdpFmtpParameters`;
+      - recognizes known media-description fields and known timing/sender parameters;
+      - preserves truly unknown parameters.
     - `parse_video_sdp_fmtp_attribute(...)`
-      - parses one full `a=fmtp:<pt> ...` line for the selected payload type
-      - returns `nullopt` on payload-type mismatch
+      - parses one full `a=fmtp:<pt> ...` line for the selected payload type;
+      - returns `nullopt` on payload-type mismatch.
 - Примечание:
   - это raw SDP/fmtp parsing layer, а не signaling validation и не mapping layer;
-  - unknown parameters/flags now remain preserved for later SDP coverage expansion;
+  - known ST 2110 timing/sender fmtp parameters no longer remain only in `unknown_parameters`;
   - current parser treats duplicate known keys/flags and malformed numeric fields as `InvalidValue`.
 
 ### libs/st2110core/include/st2110/video_sdp_signaling_adapter.hpp
@@ -1103,6 +1116,10 @@
     - `timestamp_mode_from_raw_video_sdp_timestamp_mode(...)`
     - `sender_type_from_raw_video_sdp_sender_type(...)`
     - `apply_video_sdp_timing_attributes_to_signaling(...)`
+    - `apply_video_sdp_fmtp_timing_sender_fields_to_signaling(...)`
+      - maps known timing/sender fields parsed from `a=fmtp` into `VideoStreamSignaling`.
+    - `validate_no_duplicate_fmtp_and_standalone_timing_fields(...)`
+      - rejects conflicting duplicate semantic fields when both fmtp media type parameters and standalone compatibility attributes provide the same timing/sender value.
   - final entry points:
     - `video_stream_signaling_from_raw_video_sdp_media_section(const RawVideoSdpMediaSection&)`
       - composes already-bound raw media-section fields into a validated `VideoStreamSignaling`.
@@ -1112,6 +1129,7 @@
   - это final SDP ingestion boundary, а не runtime receiver bootstrap;
   - transport/network fields and receiver local policy inputs still belong to signaling-to-runtime/bootstrap projection layers;
   - current `rtpmap` and timing interpretation intentionally remains conservative and localized.
+  - known timing/sender fields may now come from `a=fmtp` media type parameters or from standalone compatibility attributes, but duplicate/conflicting semantic sources are rejected at this composition boundary.
 
 ## Done
 - [x] 001: Repo skeleton + buildable stub
@@ -1158,6 +1176,7 @@
 - [ ] S018: Receiver-side playout / reconstruction timing boundary is not yet explicit. Mapping from RTP timestamp domain to internal `ts_ns`, receiver playout timing policy, and receiver-side offset/delay configuration must live above reorder/depacketize logic rather than collapsing into arrival-time smoothing or local cadence heuristics.
 - [ ] S019: RTP timestamp wraparound and long-running-stream continuity are not yet explicitly covered by timestamp-mapping tasks/tests. This must be handled and tested across reconstruction boundaries so long-lived streams do not silently drift or reset at wraparound.
 - [x] S020: Generic ST 2110-20 payload-header validation currently rejects non-zero `F` / `field_id` too early. This progressive-only restriction must not live in the low-level structural payload-header layer. Generic parsing/structural validation should accept packets for all already-modeled scan-mode variants, while mode-specific acceptance/rejection of `F` must remain localized in explicit mode-aware runtime boundaries so future `Interlaced` / `PsF` work can be implemented by filling existing branches rather than rewriting the parser/validator layer.
+- [x] S021: SDP ingestion path no longer treats ST 2110 timing/sender fields such as `TP`, `TROFF`, `CMAX`, `TSMODE`, and `TSDELAY` only as standalone `a=` attributes. Known ST 2110 timing/sender media type parameters are now parsed from `a=fmtp` into explicit raw fields, mapped into `VideoStreamSignaling`, and checked for conflicts with standalone compatibility attributes instead of remaining only in `unknown_parameters` and being silently ignored.---
 ---
 
 # Phase 1 — MVP
@@ -1413,14 +1432,40 @@
     - derive `packing_mode` and signaled media-description properties without mixing runtime-support assumptions into the parser
     - keep structural signaling validation in existing validation helpers
     - add focused tests
-  - [x] 069D3: Add parsing for timing/reference-clock/sender-timing SDP attributes
-    - parse `ts-refclk`
-    - parse `mediaclk`
-    - parse `TSMODE`
-    - parse `TSDELAY`
-    - parse sender-timing-related properties such as `TP`, `TROFF`, `CMAX`
-    - keep these parsers separate from signaling validation and separate from runtime projection
-    - add focused tests
+    - [x] 069D3: Add parsing for timing/reference-clock/sender-timing SDP attributes and media type parameters
+    - parse standalone SDP attributes such as `ts-refclk` and `mediaclk`
+    - parse ST 2110 timing/sender media type parameters from `a=fmtp` where they are signaled as media type parameters:
+      - `TP`
+      - `TROFF`
+      - `CMAX`
+      - `TSMODE` where applicable
+      - `TSDELAY` where applicable
+    - keep standalone-attribute parsing, if currently supported, as explicit compatibility branches rather than the only parsing path
+    - ensure known ST 2110 timing/sender parameters do not remain only in `unknown_parameters`
+    - map parsed values into `VideoStreamSignaling` through the existing SDP-to-signaling adapter
+    - keep parsing separate from validation and separate from runtime projection
+    - add focused tests for:
+      - `TP` / `TROFF` / `CMAX` inside `a=fmtp`
+      - `TSMODE` / `TSDELAY` inside `a=fmtp`
+      - optional standalone compatibility attributes
+      - conflict handling when the same semantic value appears both in `a=fmtp` and as a standalone attribute
+  - [x] 069D3A: Wire known ST 2110 timing/sender fmtp parameters through raw fmtp parsing and mapping
+    - extend the raw `a=fmtp` parsed structure with explicit optional fields for known timing/sender parameters instead of leaving them only in unknown-parameter storage:
+      - `TP`
+      - `TROFF`
+      - `CMAX`
+      - `TSMODE`
+      - `TSDELAY`
+    - update `parse_video_sdp_fmtp_payload(...)` to recognize these keys as known parameters
+    - update SDP-to-`VideoStreamSignaling` mapping so these values populate:
+      - `sender_type`
+      - `troff_us`
+      - `cmax`
+      - `timestamp_mode`
+      - `ts_delay_sender_ticks`
+    - preserve unknown-parameter behavior for truly unknown future parameters
+    - keep runtime support checks out of the parser
+    - add focused tests proving that known timing/sender fields inside `a=fmtp` are not silently ignored
   - [x] 069D4: Add pure SDP `a=rtpmap` parsing/binding for the selected video payload type
     - parse and bind `a=rtpmap` for the selected payload type inside the raw SDP media-section boundary
     - keep `a=rtpmap` parsing separate from `a=fmtp` parsing and separate from signaling validation
@@ -1652,6 +1697,15 @@
     - new per-attribute parser branches
     - new mapping/validation branches where applicable
   - add focused tests for each newly supported `a=` attribute and for coexistence with already-supported attributes
+- [ ] 214B: Expand remaining video SDP `a=` / fmtp media-parameter coverage through existing parser branches
+  - add support for additional ST 2110-relevant SDP attributes and fmtp media type parameters by filling existing raw media-section, per-attribute parser, and mapping branches
+  - do not reshape the SDP ingestion pipeline, `VideoStreamSignaling`, or runtime bootstrap contracts only to add new SDP coverage
+  - keep each newly supported field localized to:
+    - raw parsed representation
+    - parser branch
+    - mapping branch
+    - structural validation branch, where applicable
+  - add focused tests for each newly supported SDP field and for coexistence with already-supported fields
 - [ ] 215: Expand audio signaling / channel-order / channel-mapping support through the already-modeled audio signaling boundary
   - add implementation for additional channel-order / channel-mapping cases without changing the core audio signaling/runtime contracts introduced in MVP
   - keep reordering/adaptation localized to the pre-defined boundaries

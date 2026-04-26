@@ -331,6 +331,82 @@ namespace st2110 {
         return Error::Ok;
     }
 
+    [[nodiscard]] inline Error apply_video_sdp_fmtp_timing_sender_fields_to_signaling(
+            const RawVideoSdpFmtpParameters& raw,
+            VideoStreamSignaling& signaling
+    ) {
+        if (raw.timestamp_mode.has_value()) {
+            RawVideoSdpTimestampModeValue value{
+                    .raw_token = *raw.timestamp_mode
+            };
+
+            auto mapped = timestamp_mode_from_raw_video_sdp_timestamp_mode(value);
+            if (!mapped.has_value()) {
+                return mapped.error();
+            }
+
+            signaling.timestamp_mode = *mapped;
+        }
+
+        if (raw.ts_delay_sender_ticks.has_value()) {
+            if (*raw.ts_delay_sender_ticks > std::numeric_limits<uint32_t>::max()) {
+                return Error::InvalidValue;
+            }
+
+            signaling.ts_delay_sender_ticks = static_cast<uint32_t>(*raw.ts_delay_sender_ticks);
+        }
+
+        if (raw.sender_type.has_value()) {
+            RawVideoSdpSenderTypeValue value{
+                    .raw_token = *raw.sender_type
+            };
+
+            auto mapped = sender_type_from_raw_video_sdp_sender_type(value);
+            if (!mapped.has_value()) {
+                return mapped.error();
+            }
+
+            signaling.sender_type = *mapped;
+        }
+
+        if (raw.troff_us.has_value()) {
+            signaling.troff_us = *raw.troff_us;
+        }
+
+        if (raw.cmax.has_value()) {
+            signaling.cmax = *raw.cmax;
+        }
+
+        return Error::Ok;
+    }
+
+    [[nodiscard]] inline Error validate_no_duplicate_fmtp_and_standalone_timing_fields(
+            const RawVideoSdpFmtpParameters& fmtp,
+            const RawVideoSdpTimingAttributes& timing
+    ) {
+        if (fmtp.timestamp_mode.has_value() && timing.timestamp_mode.has_value()) {
+            return Error::InvalidValue;
+        }
+
+        if (fmtp.ts_delay_sender_ticks.has_value() && timing.ts_delay_sender_ticks.has_value()) {
+            return Error::InvalidValue;
+        }
+
+        if (fmtp.sender_type.has_value() && timing.sender_type.has_value()) {
+            return Error::InvalidValue;
+        }
+
+        if (fmtp.troff_us.has_value() && timing.troff_us.has_value()) {
+            return Error::InvalidValue;
+        }
+
+        if (fmtp.cmax.has_value() && timing.cmax.has_value()) {
+            return Error::InvalidValue;
+        }
+
+        return Error::Ok;
+    }
+
     [[nodiscard]] inline std::expected<VideoStreamSignaling, Error>
     video_stream_signaling_from_raw_video_sdp_media_section(const RawVideoSdpMediaSection& raw) {
         if (raw.fmtp.empty()) {
@@ -367,6 +443,20 @@ namespace st2110 {
 
         if (!expected_timing_attributes.has_value()) {
             return std::unexpected(expected_timing_attributes.error());
+        }
+
+        if (Error err = validate_no_duplicate_fmtp_and_standalone_timing_fields(
+                    *expected_fmtp,
+                    *expected_timing_attributes);
+                err != Error::Ok) {
+            return std::unexpected(err);
+        }
+
+        if (Error err = apply_video_sdp_fmtp_timing_sender_fields_to_signaling(
+                    *expected_fmtp,
+                    stream_signaling);
+                err != Error::Ok) {
+            return std::unexpected(err);
         }
 
         if (Error err = apply_video_sdp_timing_attributes_to_signaling(

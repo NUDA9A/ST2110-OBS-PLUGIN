@@ -46,6 +46,12 @@ namespace st2110 {
         bool interlace = false;
         bool segmented = false;
 
+        std::optional<std::string> timestamp_mode{};
+        std::optional<uint64_t> ts_delay_sender_ticks{};
+        std::optional<std::string> sender_type{};
+        std::optional<uint32_t> troff_us{};
+        std::optional<uint32_t> cmax{};
+
         std::vector<RawVideoSdpFmtpUnknownParameter> unknown_parameters{};
     };
 
@@ -72,6 +78,42 @@ namespace st2110 {
         }
 
         return text;
+    }
+
+    [[nodiscard]] inline std::expected<uint64_t, Error>
+    parse_fmtp_uint64(std::string_view value) {
+        value = trim_ascii_ws(value);
+
+        if (value.empty()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        uint64_t out = 0;
+        const char* first = value.data();
+        const char* last = value.data() + value.size();
+
+        const auto [ptr, ec] = std::from_chars(first, last, out);
+
+        if (ec != std::errc{} || ptr != last) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        return out;
+    }
+
+    [[nodiscard]] inline std::expected<uint32_t, Error>
+    parse_fmtp_uint32(std::string_view value) {
+        auto parsed = parse_fmtp_uint64(value);
+
+        if (!parsed.has_value()) {
+            return std::unexpected(parsed.error());
+        }
+
+        if (*parsed > std::numeric_limits<uint32_t>::max()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        return static_cast<uint32_t>(*parsed);
     }
 
     [[nodiscard]] inline std::expected<std::optional<std::string_view>, Error>
@@ -131,6 +173,11 @@ namespace st2110 {
         std::optional<std::string> signal_standard;
         std::optional<std::string> tcs;
         std::optional<std::string> range;
+        std::optional<std::string> timestamp_mode;
+        std::optional<uint64_t> ts_delay_sender_ticks;
+        std::optional<std::string> sender_type;
+        std::optional<uint32_t> troff_us;
+        std::optional<uint32_t> cmax;
         bool interlace = false;
         bool segmented = false;
 
@@ -318,6 +365,75 @@ namespace st2110 {
                 range = std::string(value);
                 continue;
             }
+            if (key_val_pair.starts_with("TSMODE=")) {
+                if (timestamp_mode.has_value()) {
+                    return std::unexpected(Error::InvalidValue);
+                }
+
+                auto value = key_val_pair.substr(7);
+                if (value.empty()) {
+                    return std::unexpected(Error::InvalidValue);
+                }
+
+                timestamp_mode = std::string(value);
+                continue;
+            }
+
+            if (key_val_pair.starts_with("TSDELAY=")) {
+                if (ts_delay_sender_ticks.has_value()) {
+                    return std::unexpected(Error::InvalidValue);
+                }
+
+                auto parsed = parse_fmtp_uint64(key_val_pair.substr(8));
+                if (!parsed.has_value()) {
+                    return std::unexpected(parsed.error());
+                }
+
+                ts_delay_sender_ticks = *parsed;
+                continue;
+            }
+
+            if (key_val_pair.starts_with("TP=")) {
+                if (sender_type.has_value()) {
+                    return std::unexpected(Error::InvalidValue);
+                }
+
+                auto value = key_val_pair.substr(3);
+                if (value.empty()) {
+                    return std::unexpected(Error::InvalidValue);
+                }
+
+                sender_type = std::string(value);
+                continue;
+            }
+
+            if (key_val_pair.starts_with("TROFF=")) {
+                if (troff_us.has_value()) {
+                    return std::unexpected(Error::InvalidValue);
+                }
+
+                auto parsed = parse_fmtp_uint32(key_val_pair.substr(6));
+                if (!parsed.has_value()) {
+                    return std::unexpected(parsed.error());
+                }
+
+                troff_us = *parsed;
+                continue;
+            }
+
+            if (key_val_pair.starts_with("CMAX=")) {
+                if (cmax.has_value()) {
+                    return std::unexpected(Error::InvalidValue);
+                }
+
+                auto parsed = parse_fmtp_uint32(key_val_pair.substr(5));
+                if (!parsed.has_value()) {
+                    return std::unexpected(parsed.error());
+                }
+
+                cmax = *parsed;
+                continue;
+            }
             if (key_val_pair == "interlace") {
                 if (interlace) {
                     return std::unexpected(Error::InvalidValue);
@@ -395,6 +511,26 @@ namespace st2110 {
 
         if (range.has_value()) {
             res.range = std::move(*range);
+        }
+
+        if (timestamp_mode.has_value()) {
+            res.timestamp_mode = std::move(*timestamp_mode);
+        }
+
+        if (ts_delay_sender_ticks.has_value()) {
+            res.ts_delay_sender_ticks = *ts_delay_sender_ticks;
+        }
+
+        if (sender_type.has_value()) {
+            res.sender_type = std::move(*sender_type);
+        }
+
+        if (troff_us.has_value()) {
+            res.troff_us = *troff_us;
+        }
+
+        if (cmax.has_value()) {
+            res.cmax = *cmax;
         }
 
         res.interlace = interlace;
