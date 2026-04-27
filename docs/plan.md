@@ -1431,6 +1431,38 @@
   - it intentionally does not implement playout/release policy yet;
   - receiver-side playout timing, offset/delay policy, and pipeline integration remain future work through `071A` / `072` / later bootstrap tasks.
 
+### libs/st2110core/include/st2110/video_playout_timing.hpp
+- Роль:
+  - explicit receiver-side playout / reconstruction timing boundary для video receive path.
+  - отделяет RTP-domain-to-`TimestampNs` mapping от receiver-side решения, когда reconstructed frame/unit считается доступным для дальнейшей выдачи.
+  - задает локальную точку будущего расширения для receiver offset/delay policy, buffering/release behavior и ST 2110-21-related receiver timing behavior.
+- Связи:
+  - использует `TimestampNs` из `timestamp.hpp`;
+  - использует `Error` для validation/result reporting;
+  - использует `ReconstructedVideoFrame` из `video_unit_reconstructor.hpp`;
+  - не зависит от `PacketView`, `Depacketizer`, reorder buffer, packet parsing или segment placement.
+- Сущности:
+  - `VideoReceiverPlayoutTimingConfig`
+    - `link_offset_delay_ns` — receiver-side reconstruction/playout offset относительно mapped media timestamp.
+  - `VideoReceiverPlayoutTimingDecision`
+    - `media_timestamp_ns`
+    - `reconstruction_timestamp_ns`
+  - `VideoReconstructedFrameTiming`
+    - `rtp_timestamp`
+    - `media_timestamp_ns`
+    - `reconstruction_timestamp_ns`
+  - `validate_video_receiver_playout_timing_config(...)`
+    - structural validation entry point for receiver playout timing config.
+  - `video_receiver_playout_timing_decision(...)`
+    - computes `reconstruction_timestamp_ns = media_timestamp_ns + link_offset_delay_ns`;
+    - rejects overflow as `InvalidValue`.
+  - `video_reconstructed_frame_timing(...)`
+    - adapter from `ReconstructedVideoFrame` metadata plus mapped media timestamp to explicit timing metadata.
+- Примечание:
+  - файл не реализует scheduler/sleep/release queue;
+  - он только фиксирует architecture boundary между timestamp mapping и future playout/release policy;
+  - future receiver timing behavior should extend this boundary rather than move into parser/reorder/depacketizer internals.
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -1472,7 +1504,7 @@
 - [x] S015: `VideoPackingMode` was initially modeled only in video signaling and not carried as an explicit runtime receive axis through depacketizer/runtime config/padding validation. This gap is now closed at the architecture/config level. If `BPM` remains unsupported in current MVP runtime behavior, that limitation must stay explicit, localized, and implemented through already-existing runtime branches/boundaries rather than by absence of architecture.
 - [x] S016: Current standards-aware video signaling representation is still too close to internal runtime/storage concepts and does not yet model enough signaled SDP/media properties separately from internal `PixelFormat` / storage format. This must be expanded so signaled stream description is not collapsed prematurely into runtime-only concepts. In particular, the modeled representation must explicitly account for signaled stream-description properties such as `sampling`, `width`, `height`, `exactframerate`, `depth`, `colorimetry`, `TCS`, `PM`, and `SSN`, with `RANGE` allowed as optional / future-expansion coverage.
 - [ ] S017: Audio path currently has no fully completed first-class ST 2110-30 signaling/model boundary, no explicit structural validation layer for that model, no explicit SDP ingestion path into such a model, and no clear modeled representation for signaled channel order / channel mapping distinct from internal audio buffer layout. The audio MVP target must be made explicit as a **Level A-oriented receiver baseline** (`48 kHz`, `1 ms packet time`, `1..8 channels`), and these axes/boundaries must be architecturally introduced in MVP even if some runtime variants remain later implementation work.
-- [ ] S018: Receiver-side playout / reconstruction timing boundary is not yet explicit. Mapping from RTP timestamp domain to internal `ts_ns`, receiver playout timing policy, and receiver-side offset/delay configuration must live above reorder/depacketize logic rather than collapsing into arrival-time smoothing or local cadence heuristics.
+- [x] S018: Receiver-side playout / reconstruction timing boundary is now explicit in `video_playout_timing.hpp`. RTP-domain timestamp mapping remains separate from receiver playout/reconstruction timing, and receiver-side offset/delay behavior has a localized boundary above reconstructed video frames. Fuller buffering/release scheduling remains future work through the existing timing/playout boundary.
 - [ ] S019: RTP timestamp wraparound and long-running-stream continuity are not yet explicitly covered by timestamp-mapping tasks/tests. This must be handled and tested across reconstruction boundaries so long-lived streams do not silently drift or reset at wraparound.
 - [x] S020: Generic ST 2110-20 payload-header validation currently rejects non-zero `F` / `field_id` too early. This progressive-only restriction must not live in the low-level structural payload-header layer. Generic parsing/structural validation should accept packets for all already-modeled scan-mode variants, while mode-specific acceptance/rejection of `F` must remain localized in explicit mode-aware runtime boundaries so future `Interlaced` / `PsF` work can be implemented by filling existing branches rather than rewriting the parser/validator layer.
 - [x] S021: SDP ingestion path no longer treats ST 2110 timing/sender fields such as `TP`, `TROFF`, `CMAX`, `TSMODE`, and `TSDELAY` only as standalone `a=` attributes. Known ST 2110 timing/sender media type parameters are now parsed from `a=fmtp` into explicit raw fields, mapped into `VideoStreamSignaling`, and checked for conflicts with standalone compatibility attributes instead of remaining only in `unknown_parameters` and being silently ignored.
@@ -2068,7 +2100,7 @@
   - define where `mediaclk` / `ts-refclk` / `TSMODE` / `TSDELAY`-related interpretation will plug into the receive pipeline
   - allow a localized synthetic/manual timing path for tests and offline tools, but do not make standalone fps cadence the primary standards-facing timing model
   - keep timestamp mapping above depacketizer and separate from segment placement / packet grouping logic
-- [ ] 071A: Define explicit receiver-side playout / reconstruction timing boundary
+- [x] 071A: Define explicit receiver-side playout / reconstruction timing boundary
   - separate RTP-domain timestamp mapping from receiver playout / reconstruction release policy
   - define where receiver-side offset/delay configuration (including future Link Offset Delay-like boundary) will live
   - define how this boundary interacts with reconstructed units / frames without burying policy in parser/reorder/depacketizer code
