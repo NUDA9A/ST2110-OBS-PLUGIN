@@ -1089,12 +1089,31 @@
     - `unknown_parameters`
   - helper structs:
     - `RawVideoSdpFmtpDepthValue`
-      - raw parsed depth representation (`bits`, `floating_point`)
+      - raw parsed depth representation (`bits`, `floating_point`).
+    - `RawVideoSdpFmtpParameterToken`
+      - strict parsed `fmtp` parameter token:
+        - `name`
+        - optional `value`
   - helper functions:
-    - `split_part_to_string_view(...)`
     - `trim_ascii_ws(...)`
     - `parse_fmtp_uint64(...)`
     - `parse_fmtp_uint32(...)`
+    - `is_fmtp_ascii_ws(...)`
+    - `contains_fmtp_ascii_ws(...)`
+    - `split_strict_video_sdp_fmtp_parameters(...)`
+      - strict splitter for `a=fmtp` media-parameter payloads;
+      - trims only the external payload edges;
+      - requires `;` separators to be followed by at least one space or tab;
+      - rejects empty parameters and whitespace inside parameter tokens.
+    - `parse_strict_video_sdp_fmtp_parameter_token(...)`
+      - parses one strict parameter token into `name` / optional `value`;
+      - rejects whitespace inside the token;
+      - rejects empty names, empty values for `name=`, and multiple `=` characters.
+    - `require_fmtp_parameter_value(...)`
+      - helper for known parameters that must have a non-empty value.
+    - `parse_required_positive_fmtp_uint32(...)`
+    - `parse_fmtp_exact_frame_rate(...)`
+      - parses integer or rational `exactframerate` values and rejects zero numerator/denominator.
     - `parse_fmtp_depth(...)`
       - parses integer depths and standard `16f`;
       - rejects malformed depth tokens and non-16 floating-point depths.
@@ -1111,7 +1130,13 @@
 - Примечание:
   - это raw SDP/fmtp parsing layer, а не signaling validation и не mapping layer;
   - known ST 2110 timing/sender fmtp parameters no longer remain only in `unknown_parameters`;
-  - current parser treats duplicate known keys/flags and malformed numeric fields as `InvalidValue`.
+  - parser is now intentionally strict at the local raw `fmtp` boundary:
+    - duplicate known keys/flags are `InvalidValue`;
+    - malformed numeric fields are `InvalidValue`;
+    - whitespace around `=` or inside parameter tokens is `InvalidValue`;
+    - `;` without following whitespace is `InvalidValue`;
+    - empty parameters from doubled/trailing separators are `InvalidValue`;
+    - unknown syntactically valid parameters are still preserved for forward compatibility.
 
 ### libs/st2110core/include/st2110/video_sdp_signaling_adapter.hpp
 - Роль:
@@ -1333,7 +1358,7 @@
 - [x] S027: Video signaling structural validation now includes localized media-description cross-field constraints from ST 2110-20. `4:2:0` sampling variants are accepted only with progressive scan signaling, and `KEY` sampling requires alpha colorimetry and rejects normal `TCS` presence. These checks live in the signaling/model validation boundary, not in runtime `PixelFormat` projection behavior.
 - [x] S028: Raw SDP `a=source-filter` handling now preserves session-vs-media scope and minimally parses the RFC-style source-filter fields while preserving the original raw attribute value. Runtime/backend consumption remains future work through `214C`.
 - [x] S029: Raw SDP redundancy handling now ties `a=group:DUP` membership to actual `a=mid` values and preserves duplicate RTP video media-section candidates as explicit raw candidate summaries. Full redundant-stream selection / ST 2022-7-style behavior remains future work through `214D`.
-- [ ] S030: The SDP `a=fmtp` parser is still too permissive for the ST 2110-20 media type parameter grammar. It should reject whitespace around `=`, malformed token separators, and `;` separators not followed by required whitespace, while still preserving unknown valid parameters. This should be fixed locally in `video_sdp_fmtp.hpp` rather than by adding tolerant parsing elsewhere.
+- [x] S030: SDP `a=fmtp` parser now uses a localized strict media-parameter parsing boundary in `video_sdp_fmtp.hpp`. It rejects whitespace inside parameter tokens including around `=`, rejects malformed separators such as `sampling=...;width=...` where `;` is not followed by required whitespace, rejects empty parameters caused by doubled/trailing separators, rejects malformed `name=value` tokens, and still preserves unknown syntactically valid parameters.
 - [ ] S031: Raw SDP `c=` connection data is preserved, but multicast connection-address parameters such as address/TTL/numaddr are not yet modeled explicitly enough for future backend bootstrap. The raw SDP layer should keep the original connection address string but also expose parsed base address and optional multicast parameters where present.
 - [ ] S032: SDP timing/reference-clock attributes such as `ts-refclk` and `mediaclk` can be session-level or media-level. The raw SDP ingestion boundary should preserve this scope and apply a localized session/media resolution rule for the selected video stream, rather than silently ignoring session-level timing or collapsing scope too early.
 ---
@@ -1814,7 +1839,7 @@
       - two matching video media sections with unrelated `group:DUP` are rejected
       - two matching video media sections whose `mid`s are in `group:DUP` preserve the primary/default section and duplicate candidate summary
       - existing single-media-section SDP ingestion remains unchanged
-  - [ ] 069D14: Make SDP `a=fmtp` media-parameter parsing strict enough for ST 2110-20 grammar
+  - [x] 069D14: Make SDP `a=fmtp` media-parameter parsing strict enough for ST 2110-20 grammar
     - keep the parser strict according to current project rule “strict parse, explicit fallback”
     - reject whitespace around `=` in known and unknown `name=value` parameters
     - reject malformed separators such as `sampling=YCbCr-4:2:2;width=1920` when the grammar requires semicolon followed by whitespace

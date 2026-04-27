@@ -119,6 +119,187 @@ namespace st2110 {
         return static_cast<uint32_t>(*parsed);
     }
 
+    struct RawVideoSdpFmtpParameterToken {
+        std::string_view name{};
+        std::optional<std::string_view> value{};
+    };
+
+    [[nodiscard]] inline bool is_fmtp_ascii_ws(char c) {
+        return c == ' ' || c == '\t';
+    }
+
+    [[nodiscard]] inline bool contains_fmtp_ascii_ws(std::string_view text) {
+        for (const char c : text) {
+            if (is_fmtp_ascii_ws(c)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    [[nodiscard]] inline std::expected<std::vector<std::string_view>, Error>
+    split_strict_video_sdp_fmtp_parameters(std::string_view payload) {
+        payload = strip_cr(payload);
+        payload = trim_ascii_ws(payload);
+
+        if (payload.empty()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        std::vector<std::string_view> parts{};
+
+        std::size_t part_start = 0;
+
+        while (part_start < payload.size()) {
+            const std::size_t separator_pos = payload.find(';', part_start);
+
+            const std::string_view part =
+                    separator_pos == std::string_view::npos
+                    ? payload.substr(part_start)
+                    : payload.substr(part_start, separator_pos - part_start);
+
+            if (part.empty()) {
+                return std::unexpected(Error::InvalidValue);
+            }
+
+            // Whitespace belongs to the separator grammar between parameters,
+            // not inside a parameter token. This keeps "strict parse, explicit
+            // fallback" and prevents silently accepting "width =1920" /
+            // "width= 1920" / "sampling=x ; width=...".
+            if (trim_ascii_ws(part) != part) {
+                return std::unexpected(Error::InvalidValue);
+            }
+
+            parts.push_back(part);
+
+            if (separator_pos == std::string_view::npos) {
+                break;
+            }
+
+            std::size_t next_part_start = separator_pos + 1;
+
+            // ST 2110-20 fmtp examples and the project grammar require a
+            // semicolon followed by at least one WSP between parameters.
+            // Reject "a=b;c=d" instead of treating it as tolerant input.
+            if (next_part_start >= payload.size() ||
+                !is_fmtp_ascii_ws(payload[next_part_start])) {
+                return std::unexpected(Error::InvalidValue);
+            }
+
+            while (next_part_start < payload.size() &&
+                   is_fmtp_ascii_ws(payload[next_part_start])) {
+                ++next_part_start;
+            }
+
+            if (next_part_start >= payload.size()) {
+                return std::unexpected(Error::InvalidValue);
+            }
+
+            part_start = next_part_start;
+        }
+
+        return parts;
+    }
+
+    [[nodiscard]] inline std::expected<RawVideoSdpFmtpParameterToken, Error>
+    parse_strict_video_sdp_fmtp_parameter_token(std::string_view parameter) {
+        if (parameter.empty() || contains_fmtp_ascii_ws(parameter)) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        const std::size_t eq_pos = parameter.find('=');
+
+        if (eq_pos == std::string_view::npos) {
+            return RawVideoSdpFmtpParameterToken{
+                    .name = parameter,
+                    .value = std::nullopt
+            };
+        }
+
+        if (eq_pos == 0 || eq_pos + 1 >= parameter.size()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        if (parameter.find('=', eq_pos + 1) != std::string_view::npos) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        return RawVideoSdpFmtpParameterToken{
+                .name = parameter.substr(0, eq_pos),
+                .value = parameter.substr(eq_pos + 1)
+        };
+    }
+
+    [[nodiscard]] inline std::expected<std::string_view, Error>
+    require_fmtp_parameter_value(const RawVideoSdpFmtpParameterToken& token) {
+        if (!token.value.has_value() || token.value->empty()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        return *token.value;
+    }
+
+    [[nodiscard]] inline std::expected<uint32_t, Error>
+    parse_required_positive_fmtp_uint32(std::string_view value) {
+        auto parsed = parse_fmtp_uint32(value);
+
+        if (!parsed.has_value()) {
+            return std::unexpected(parsed.error());
+        }
+
+        if (*parsed == 0) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        return *parsed;
+    }
+
+    [[nodiscard]] inline std::expected<RawVideoSdpExactFrameRate, Error>
+    parse_fmtp_exact_frame_rate(std::string_view value) {
+        if (value.empty()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        const std::size_t slash_pos = value.find('/');
+
+        if (slash_pos != std::string_view::npos &&
+            value.find('/', slash_pos + 1) != std::string_view::npos) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        const std::string_view numerator_text =
+                slash_pos == std::string_view::npos
+                ? value
+                : value.substr(0, slash_pos);
+
+        auto numerator = parse_required_positive_fmtp_uint32(numerator_text);
+
+        if (!numerator.has_value()) {
+            return std::unexpected(numerator.error());
+        }
+
+        RawVideoSdpExactFrameRate out{
+                .numerator = *numerator,
+                .denominator = 1
+        };
+
+        if (slash_pos == std::string_view::npos) {
+            return out;
+        }
+
+        const std::string_view denominator_text = value.substr(slash_pos + 1);
+
+        auto denominator = parse_required_positive_fmtp_uint32(denominator_text);
+
+        if (!denominator.has_value()) {
+            return std::unexpected(denominator.error());
+        }
+
+        out.denominator = *denominator;
+        return out;
+    }
+
     struct RawVideoSdpFmtpDepthValue {
         uint16_t bits = 0;
         bool floating_point = false;
@@ -214,7 +395,13 @@ namespace st2110 {
     [[nodiscard]] inline std::expected<RawVideoSdpFmtpParameters, Error>
     parse_video_sdp_fmtp_payload(std::string_view payload) {
         RawVideoSdpFmtpParameters res{};
-        auto split_view = payload | std::views::split(';');
+
+        auto split_parts = split_strict_video_sdp_fmtp_parameters(payload);
+
+        if (!split_parts.has_value()) {
+            return std::unexpected(split_parts.error());
+        }
+
         std::optional<std::string> sampling;
         std::optional<uint32_t> width;
         std::optional<uint32_t> height;
@@ -235,113 +422,105 @@ namespace st2110 {
         bool interlace = false;
         bool segmented = false;
 
+        for (const std::string_view parameter : *split_parts) {
+            auto parsed_token = parse_strict_video_sdp_fmtp_parameter_token(parameter);
 
-        for (auto elem : split_view) {
-            std::string_view key_val_pair = trim_ascii_ws(split_part_to_string_view(elem));
-
-            if (key_val_pair.empty()) {
-                return std::unexpected(Error::InvalidValue);
+            if (!parsed_token.has_value()) {
+                return std::unexpected(parsed_token.error());
             }
 
-            if (key_val_pair.starts_with("sampling=")) {
+            const RawVideoSdpFmtpParameterToken token = *parsed_token;
+
+            if (token.name == "sampling") {
                 if (sampling.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                auto value = key_val_pair.substr(9);
-                if (value.empty()) {
-                    return std::unexpected(Error::InvalidValue);
+                auto value = require_fmtp_parameter_value(token);
+
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
                 }
-                sampling = std::string(value);
+
+                sampling = std::string(*value);
                 continue;
             }
-            if (key_val_pair.starts_with("width=")) {
+
+            if (token.name == "width") {
                 if (width.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                unsigned value = 0;
+                auto value = require_fmtp_parameter_value(token);
 
-                const char* first = key_val_pair.data() + 6;
-                const char* last = key_val_pair.data() + key_val_pair.size();
-
-                const auto [ptr, ec] = std::from_chars(first, last, value);
-
-                if (ec != std::errc{} || ptr != last || value == 0) {
-                    return std::unexpected(Error::InvalidValue);
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
                 }
 
-                width = static_cast<uint32_t>(value);
+                auto parsed = parse_required_positive_fmtp_uint32(*value);
+
+                if (!parsed.has_value()) {
+                    return std::unexpected(parsed.error());
+                }
+
+                width = *parsed;
                 continue;
             }
-            if (key_val_pair.starts_with("height=")) {
+
+            if (token.name == "height") {
                 if (height.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                unsigned value = 0;
+                auto value = require_fmtp_parameter_value(token);
 
-                const char* first = key_val_pair.data() + 7;
-                const char* last = key_val_pair.data() + key_val_pair.size();
-
-                const auto [ptr, ec] = std::from_chars(first, last, value);
-
-                if (ec != std::errc{} || ptr != last || value == 0) {
-                    return std::unexpected(Error::InvalidValue);
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
                 }
 
-                height = static_cast<uint32_t>(value);
+                auto parsed = parse_required_positive_fmtp_uint32(*value);
+
+                if (!parsed.has_value()) {
+                    return std::unexpected(parsed.error());
+                }
+
+                height = *parsed;
                 continue;
             }
-            if (key_val_pair.starts_with("exactframerate=")) {
+
+            if (token.name == "exactframerate") {
                 if (exact_framerate.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                exact_framerate = RawVideoSdpExactFrameRate{};
-                key_val_pair = key_val_pair.substr(15);
-                std::size_t slash_pos = key_val_pair.find_first_of('/');
-                if (slash_pos == std::string_view::npos) {
-                    slash_pos = key_val_pair.size();
-                }
-                auto numerator_str = key_val_pair.substr(0, slash_pos);
-                unsigned value = 0;
+                auto value = require_fmtp_parameter_value(token);
 
-                const char* first = numerator_str.data();
-                const char* last = numerator_str.data() + numerator_str.size();
-
-                const auto [ptr, ec] = std::from_chars(first, last, value);
-
-                if (ec != std::errc{} || ptr != last || value == 0) {
-                    return std::unexpected(Error::InvalidValue);
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
                 }
 
-                exact_framerate->numerator = static_cast<uint32_t>(value);
-                if (slash_pos == key_val_pair.size()) {
-                    continue;
+                auto parsed = parse_fmtp_exact_frame_rate(*value);
+
+                if (!parsed.has_value()) {
+                    return std::unexpected(parsed.error());
                 }
 
-                auto denum_str = key_val_pair.substr(slash_pos + 1);
-
-                value = 0;
-                first = denum_str.data();
-                last = denum_str.data() + denum_str.size();
-
-                const auto [ptr2, ec2] = std::from_chars(first, last, value);
-
-                if (ec2 != std::errc{} || ptr2 != last || value == 0) {
-                    return std::unexpected(Error::InvalidValue);
-                }
-
-                exact_framerate->denominator = static_cast<uint32_t>(value);
+                exact_framerate = *parsed;
                 continue;
             }
-            if (key_val_pair.starts_with("depth=")) {
+
+            if (token.name == "depth") {
                 if (depth.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                auto parsed_depth = parse_fmtp_depth(key_val_pair.substr(6));
+                auto value = require_fmtp_parameter_value(token);
+
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
+                }
+
+                auto parsed_depth = parse_fmtp_depth(*value);
 
                 if (!parsed_depth.has_value()) {
                     return std::unexpected(parsed_depth.error());
@@ -351,86 +530,110 @@ namespace st2110 {
                 depth_floating_point = parsed_depth->floating_point;
                 continue;
             }
-            if (key_val_pair.starts_with("colorimetry=")) {
+
+            if (token.name == "colorimetry") {
                 if (colorimetry.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                auto value = key_val_pair.substr(12);
-                if (value.empty()) {
-                    return std::unexpected(Error::InvalidValue);
+                auto value = require_fmtp_parameter_value(token);
+
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
                 }
-                colorimetry = std::string(value);
+
+                colorimetry = std::string(*value);
                 continue;
             }
-            if (key_val_pair.starts_with("PM=")) {
+
+            if (token.name == "PM") {
                 if (packing_mode.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                auto value = key_val_pair.substr(3);
-                if (value.empty()) {
-                    return std::unexpected(Error::InvalidValue);
+                auto value = require_fmtp_parameter_value(token);
+
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
                 }
-                packing_mode = std::string(value);
+
+                packing_mode = std::string(*value);
                 continue;
             }
-            if (key_val_pair.starts_with("SSN=")) {
+
+            if (token.name == "SSN") {
                 if (signal_standard.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                auto value = key_val_pair.substr(4);
-                if (value.empty()) {
-                    return std::unexpected(Error::InvalidValue);
+                auto value = require_fmtp_parameter_value(token);
+
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
                 }
-                signal_standard = std::string(value);
+
+                signal_standard = std::string(*value);
                 continue;
             }
-            if (key_val_pair.starts_with("TCS=")) {
+
+            if (token.name == "TCS") {
                 if (tcs.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                auto value = key_val_pair.substr(4);
-                if (value.empty()) {
-                    return std::unexpected(Error::InvalidValue);
+                auto value = require_fmtp_parameter_value(token);
+
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
                 }
-                tcs = std::string(value);
+
+                tcs = std::string(*value);
                 continue;
             }
-            if (key_val_pair.starts_with("RANGE=")) {
+
+            if (token.name == "RANGE") {
                 if (range.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                auto value = key_val_pair.substr(6);
-                if (value.empty()) {
-                    return std::unexpected(Error::InvalidValue);
+                auto value = require_fmtp_parameter_value(token);
+
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
                 }
-                range = std::string(value);
+
+                range = std::string(*value);
                 continue;
             }
-            if (key_val_pair.starts_with("TSMODE=")) {
+
+            if (token.name == "TSMODE") {
                 if (timestamp_mode.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                auto value = key_val_pair.substr(7);
-                if (value.empty()) {
-                    return std::unexpected(Error::InvalidValue);
+                auto value = require_fmtp_parameter_value(token);
+
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
                 }
 
-                timestamp_mode = std::string(value);
+                timestamp_mode = std::string(*value);
                 continue;
             }
 
-            if (key_val_pair.starts_with("TSDELAY=")) {
+            if (token.name == "TSDELAY") {
                 if (ts_delay_sender_ticks.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                auto parsed = parse_fmtp_uint64(key_val_pair.substr(8));
+                auto value = require_fmtp_parameter_value(token);
+
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
+                }
+
+                auto parsed = parse_fmtp_uint64(*value);
+
                 if (!parsed.has_value()) {
                     return std::unexpected(parsed.error());
                 }
@@ -439,26 +642,34 @@ namespace st2110 {
                 continue;
             }
 
-            if (key_val_pair.starts_with("TP=")) {
+            if (token.name == "TP") {
                 if (sender_type.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                auto value = key_val_pair.substr(3);
-                if (value.empty()) {
-                    return std::unexpected(Error::InvalidValue);
+                auto value = require_fmtp_parameter_value(token);
+
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
                 }
 
-                sender_type = std::string(value);
+                sender_type = std::string(*value);
                 continue;
             }
 
-            if (key_val_pair.starts_with("TROFF=")) {
+            if (token.name == "TROFF") {
                 if (troff_us.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                auto parsed = parse_fmtp_uint32(key_val_pair.substr(6));
+                auto value = require_fmtp_parameter_value(token);
+
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
+                }
+
+                auto parsed = parse_fmtp_uint32(*value);
+
                 if (!parsed.has_value()) {
                     return std::unexpected(parsed.error());
                 }
@@ -467,12 +678,19 @@ namespace st2110 {
                 continue;
             }
 
-            if (key_val_pair.starts_with("CMAX=")) {
+            if (token.name == "CMAX") {
                 if (cmax.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                auto parsed = parse_fmtp_uint32(key_val_pair.substr(5));
+                auto value = require_fmtp_parameter_value(token);
+
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
+                }
+
+                auto parsed = parse_fmtp_uint32(*value);
+
                 if (!parsed.has_value()) {
                     return std::unexpected(parsed.error());
                 }
@@ -480,28 +698,20 @@ namespace st2110 {
                 cmax = *parsed;
                 continue;
             }
-            if (key_val_pair == "interlace") {
-                if (interlace) {
-                    return std::unexpected(Error::InvalidValue);
-                }
 
-                interlace = true;
-                continue;
-            }
-            if (key_val_pair == "segmented") {
-                if (segmented) {
-                    return std::unexpected(Error::InvalidValue);
-                }
-
-                segmented = true;
-                continue;
-            }
-            if (key_val_pair.starts_with("MAXUDP=")) {
+            if (token.name == "MAXUDP") {
                 if (max_udp_datagram_bytes.has_value()) {
                     return std::unexpected(Error::InvalidValue);
                 }
 
-                auto parsed = parse_fmtp_uint64(key_val_pair.substr(7));
+                auto value = require_fmtp_parameter_value(token);
+
+                if (!value.has_value()) {
+                    return std::unexpected(value.error());
+                }
+
+                auto parsed = parse_fmtp_uint64(*value);
+
                 if (!parsed.has_value()) {
                     return std::unexpected(parsed.error());
                 }
@@ -514,18 +724,32 @@ namespace st2110 {
                 continue;
             }
 
+            if (token.name == "interlace") {
+                if (token.value.has_value() || interlace) {
+                    return std::unexpected(Error::InvalidValue);
+                }
+
+                interlace = true;
+                continue;
+            }
+
+            if (token.name == "segmented") {
+                if (token.value.has_value() || segmented) {
+                    return std::unexpected(Error::InvalidValue);
+                }
+
+                segmented = true;
+                continue;
+            }
+
             RawVideoSdpFmtpUnknownParameter unknown_parameter{};
-            const std::size_t eq_pos = key_val_pair.find('=');
-            if (eq_pos == 0) {
-                return std::unexpected(Error::InvalidValue);
+            unknown_parameter.name = std::string(token.name);
+
+            if (token.value.has_value()) {
+                unknown_parameter.value = std::string(*token.value);
             }
-            if (eq_pos == std::string_view::npos) {
-                unknown_parameter.name = std::string(key_val_pair);
-            } else {
-                unknown_parameter.name = std::string(key_val_pair.substr(0, eq_pos));
-                unknown_parameter.value = std::string(key_val_pair.substr(eq_pos + 1));
-            }
-            res.unknown_parameters.push_back(unknown_parameter);
+
+            res.unknown_parameters.push_back(std::move(unknown_parameter));
         }
 
         if (!sampling.has_value()) {
