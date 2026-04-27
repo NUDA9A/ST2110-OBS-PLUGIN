@@ -273,7 +273,7 @@ namespace st2110 {
             VideoStreamSignaling& signaling
     ) {
         if (raw.reference_clock.has_value()) {
-            auto reference_clock = reference_clock_from_raw_video_sdp_reference_clock(*raw.reference_clock);
+            auto reference_clock = reference_clock_from_raw_video_sdp_reference_clock(raw.reference_clock->value);
 
             if (!reference_clock.has_value()) {
                 return reference_clock.error();
@@ -283,7 +283,7 @@ namespace st2110 {
         }
 
         if (raw.media_clock.has_value()) {
-            auto media_clock_mode = media_clock_mode_from_raw_video_sdp_media_clock(*raw.media_clock);
+            auto media_clock_mode = media_clock_mode_from_raw_video_sdp_media_clock(raw.media_clock->value);
 
             if (!media_clock_mode.has_value()) {
                 return media_clock_mode.error();
@@ -293,7 +293,7 @@ namespace st2110 {
         }
 
         if (raw.timestamp_mode.has_value()) {
-            auto timestamp_mode = timestamp_mode_from_raw_video_sdp_timestamp_mode(*raw.timestamp_mode);
+            auto timestamp_mode = timestamp_mode_from_raw_video_sdp_timestamp_mode(raw.timestamp_mode->value);
 
             if (!timestamp_mode.has_value()) {
                 return timestamp_mode.error();
@@ -303,15 +303,15 @@ namespace st2110 {
         }
 
         if (raw.ts_delay_sender_ticks.has_value()) {
-            if (*raw.ts_delay_sender_ticks > std::numeric_limits<uint32_t>::max()) {
+            if (raw.ts_delay_sender_ticks->value > std::numeric_limits<uint32_t>::max()) {
                 return Error::InvalidValue;
             }
 
-            signaling.ts_delay_sender_ticks = static_cast<uint32_t>(*raw.ts_delay_sender_ticks);
+            signaling.ts_delay_sender_ticks = static_cast<uint32_t>(raw.ts_delay_sender_ticks->value);
         }
 
         if (raw.sender_type.has_value()) {
-            auto sender_type = sender_type_from_raw_video_sdp_sender_type(*raw.sender_type);
+            auto sender_type = sender_type_from_raw_video_sdp_sender_type(raw.sender_type->value);
 
             if (!sender_type.has_value()) {
                 return sender_type.error();
@@ -321,11 +321,11 @@ namespace st2110 {
         }
 
         if (raw.troff_us.has_value()) {
-            signaling.troff_us = *raw.troff_us;
+            signaling.troff_us = raw.troff_us->value;
         }
 
         if (raw.cmax.has_value()) {
-            signaling.cmax = *raw.cmax;
+            signaling.cmax = raw.cmax->value;
         }
 
         return Error::Ok;
@@ -380,27 +380,42 @@ namespace st2110 {
         return Error::Ok;
     }
 
+    template<typename T>
+    [[nodiscard]] inline bool raw_video_sdp_timing_value_is_media_scoped(
+            const std::optional<RawVideoSdpScopedTimingValue<T>>& value
+    ) {
+        return value.has_value() && value->scope == RawSdpAttributeScope::Media;
+    }
+
     [[nodiscard]] inline Error validate_no_duplicate_fmtp_and_standalone_timing_fields(
             const RawVideoSdpFmtpParameters& fmtp,
             const RawVideoSdpTimingAttributes& timing
     ) {
-        if (fmtp.timestamp_mode.has_value() && timing.timestamp_mode.has_value()) {
+        // fmtp media type parameters are media-level signaling. They may override
+        // session-level standalone compatibility attributes, but must not coexist
+        // with media-level standalone attributes for the same semantic field.
+        if (fmtp.timestamp_mode.has_value() &&
+            raw_video_sdp_timing_value_is_media_scoped(timing.timestamp_mode)) {
             return Error::InvalidValue;
         }
 
-        if (fmtp.ts_delay_sender_ticks.has_value() && timing.ts_delay_sender_ticks.has_value()) {
+        if (fmtp.ts_delay_sender_ticks.has_value() &&
+            raw_video_sdp_timing_value_is_media_scoped(timing.ts_delay_sender_ticks)) {
             return Error::InvalidValue;
         }
 
-        if (fmtp.sender_type.has_value() && timing.sender_type.has_value()) {
+        if (fmtp.sender_type.has_value() &&
+            raw_video_sdp_timing_value_is_media_scoped(timing.sender_type)) {
             return Error::InvalidValue;
         }
 
-        if (fmtp.troff_us.has_value() && timing.troff_us.has_value()) {
+        if (fmtp.troff_us.has_value() &&
+            raw_video_sdp_timing_value_is_media_scoped(timing.troff_us)) {
             return Error::InvalidValue;
         }
 
-        if (fmtp.cmax.has_value() && timing.cmax.has_value()) {
+        if (fmtp.cmax.has_value() &&
+            raw_video_sdp_timing_value_is_media_scoped(timing.cmax)) {
             return Error::InvalidValue;
         }
 
@@ -452,15 +467,15 @@ namespace st2110 {
             return std::unexpected(err);
         }
 
-        if (Error err = apply_video_sdp_fmtp_timing_sender_fields_to_signaling(
-                    *expected_fmtp,
+        if (Error err = apply_video_sdp_timing_attributes_to_signaling(
+                    *expected_timing_attributes,
                     stream_signaling);
                 err != Error::Ok) {
             return std::unexpected(err);
         }
 
-        if (Error err = apply_video_sdp_timing_attributes_to_signaling(
-                    *expected_timing_attributes,
+        if (Error err = apply_video_sdp_fmtp_timing_sender_fields_to_signaling(
+                    *expected_fmtp,
                     stream_signaling);
                 err != Error::Ok) {
             return std::unexpected(err);

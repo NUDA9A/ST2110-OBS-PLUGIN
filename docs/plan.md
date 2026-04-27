@@ -958,6 +958,12 @@
       - `network_type`
       - `address_type`
       - `connection_address`
+  - `RawSdpAttributeScope`
+    - explicit scope marker for scoped raw SDP attributes:
+      - `Session`
+      - `Media`
+  - `RawSdpScopedAttributeValue`
+    - raw timing/reference/sender attribute value plus its session/media scope.
   - `RawSdpSourceFilter`
     - preserved and minimally parsed `a=source-filter` value:
       - `raw_value`
@@ -987,7 +993,7 @@
     - `media_payload_types`
     - selected payload-type-bound `rtpmap`
     - selected payload-type-bound `fmtp`
-    - optional raw timing/reference/sender-related attributes:
+    - resolved compatibility timing/reference/sender fields:
       - `ts_refclk`
       - `mediaclk`
       - `tsmode`
@@ -995,6 +1001,14 @@
       - `tp`
       - `troff`
       - `cmax`
+    - explicit scoped timing/reference/sender fields:
+      - `session_ts_refclk` / `media_ts_refclk`
+      - `session_mediaclk` / `media_mediaclk`
+      - `session_tsmode` / `media_tsmode`
+      - `session_tsdelay` / `media_tsdelay`
+      - `session_tp` / `media_tp`
+      - `session_troff` / `media_troff`
+      - `session_cmax` / `media_cmax`
     - raw transport/redundancy metadata:
       - `session_connection`
       - `media_connection`
@@ -1026,12 +1040,18 @@
     - `raw_sdp_group_contains_mid(...)`
     - `has_dup_session_group_containing_both_mids(...)`
       - validates that primary and duplicate media-section `mid` values are both members of the same session-level `group:DUP`.
+    - `set_raw_sdp_scoped_timing_attribute(...)`
+      - stores a timing/reference/sender attribute in the appropriate scoped slot;
+      - rejects duplicate values within the same scope;
+      - maintains the existing resolved compatibility field where media-level values override session-level values.
   - main entry point:
     - `select_raw_video_sdp_media_section(...)`
       - selects the matching `m=video` section for the requested payload type;
       - binds payload-type-specific `a=rtpmap` / `a=fmtp`;
       - captures raw timing/reference/sender-related attributes;
-      - captures session-level `c=`;
+      - captures session-level and selected media-level timing/reference/sender-related attributes with explicit scope;
+      - preserves legacy resolved timing fields where media-level values override session-level values;
+      - rejects duplicate scoped timing/reference/sender attributes within the same scope;
       - captures media-level `c=`;
       - captures `a=mid`;
       - captures session/media `a=source-filter` with explicit scope and minimally parsed fields;
@@ -1048,6 +1068,8 @@
   - backend/runtime use of parsed source-filter metadata remains future work through `214C`.
   - duplicate RTP video media sections are now preserved as raw candidate summaries when linked by `group:DUP` membership through actual `mid` values;
   - final stream selection / redundant receive policy is intentionally not implemented here and remains future work through `214D`.
+  - timing/reference/sender standalone attributes are now scope-aware in the raw SDP boundary;
+  - resolved compatibility fields remain for existing ingestion code, but the authoritative raw model now keeps session/media scoped fields separately.
 
 ### libs/st2110core/include/st2110/video_sdp_fmtp.hpp
 - Роль:
@@ -1201,8 +1223,12 @@
     - preserved raw `TSMODE` token.
   - `RawVideoSdpSenderTypeValue`
     - preserved raw `TP` token.
+  - `RawVideoSdpScopedTimingValue<T>`
+    - parsed timing/reference/sender value plus original SDP scope:
+      - `value`
+      - `scope`
   - `RawVideoSdpTimingAttributes`
-    - aggregates optional parsed timing-related attributes:
+    - aggregates optional parsed timing-related attributes with scope:
       - `reference_clock`
       - `media_clock`
       - `timestamp_mode`
@@ -1220,10 +1246,15 @@
     - `parse_video_sdp_troff(...)`
     - `parse_video_sdp_cmax(...)`
     - `parse_video_sdp_timing_attributes(...)`
+    - `resolve_raw_sdp_scoped_timing_attribute(...)`
+      - resolves media-level value over session-level value;
+      - falls back to legacy resolved fields for manually constructed test/raw objects.
 - Примечание:
   - файл выполняет только raw timing-attribute parsing;
   - semantic interpretation и mapping в modeled signaling должны добавляться поверх этого слоя, а не внутрь него;
   - unknown/open-ended reference/media clock forms сохраняются как `Other` с `raw_value` для дальнейшего локального расширения.
+  - parsed timing attributes now preserve whether the selected value came from session level or media level;
+  - this keeps scope resolution localized in SDP ingestion instead of leaking into runtime projection or receive pipeline internals.
 
 ### libs/st2110core/include/st2110/video_sdp_rtpmap.hpp
 - Роль:
@@ -1288,10 +1319,12 @@
     - `timestamp_mode_from_raw_video_sdp_timestamp_mode(...)`
     - `sender_type_from_raw_video_sdp_sender_type(...)`
     - `apply_video_sdp_timing_attributes_to_signaling(...)`
+      - consumes scoped parsed timing attributes after session/media resolution;
     - `apply_video_sdp_fmtp_timing_sender_fields_to_signaling(...)`
       - maps known timing/sender fields parsed from `a=fmtp` into `VideoStreamSignaling`.
     - `validate_no_duplicate_fmtp_and_standalone_timing_fields(...)`
-      - rejects conflicting duplicate semantic fields when both fmtp media type parameters and standalone compatibility attributes provide the same timing/sender value.
+      - rejects duplicate/conflicting semantic timing/sender fields when both `a=fmtp` media type parameters and media-level standalone compatibility attributes provide the same field;
+      - allows `a=fmtp` media type parameters to override session-level standalone compatibility attributes because `fmtp` is media-level signaling.
   - final entry points:
     - `video_stream_signaling_from_raw_video_sdp_media_section(const RawVideoSdpMediaSection&)`
       - composes already-bound raw media-section fields into a validated `VideoStreamSignaling`.
@@ -1304,6 +1337,9 @@
   - known timing/sender fields may now come from `a=fmtp` media type parameters or from standalone compatibility attributes, but duplicate/conflicting semantic sources are rejected at this composition boundary.
   - raw transport/redundancy metadata parsed by `video_sdp_media_section.hpp` is preserved at the raw SDP boundary and intentionally not mapped into `VideoStreamSignaling`; backend/runtime consumption remains future work through dedicated bootstrap/transport adapters.
   - duplicate candidate media sections preserved by `video_sdp_media_section.hpp` are intentionally ignored by final `VideoStreamSignaling` ingestion for now; redundant-stream selection remains a future bootstrap/transport policy boundary through `214D`.
+  - session-level standalone timing/reference-clock attributes are now applied to the selected video stream when no media-level value overrides them;
+  - media-level standalone values override session-level standalone values at the SDP ingestion boundary;
+  - `fmtp` timing media parameters are applied after standalone timing attributes and may override session-level standalone values, while conflicts with media-level standalone values are rejected.
 
 ## Done
 - [x] 001: Repo skeleton + buildable stub
@@ -1360,7 +1396,7 @@
 - [x] S029: Raw SDP redundancy handling now ties `a=group:DUP` membership to actual `a=mid` values and preserves duplicate RTP video media-section candidates as explicit raw candidate summaries. Full redundant-stream selection / ST 2022-7-style behavior remains future work through `214D`.
 - [x] S030: SDP `a=fmtp` parser now uses a localized strict media-parameter parsing boundary in `video_sdp_fmtp.hpp`. It rejects whitespace inside parameter tokens including around `=`, rejects malformed separators such as `sampling=...;width=...` where `;` is not followed by required whitespace, rejects empty parameters caused by doubled/trailing separators, rejects malformed `name=value` tokens, and still preserves unknown syntactically valid parameters.
 - [ ] S031: Raw SDP `c=` connection data is preserved, but multicast connection-address parameters such as address/TTL/numaddr are not yet modeled explicitly enough for future backend bootstrap. The raw SDP layer should keep the original connection address string but also expose parsed base address and optional multicast parameters where present.
-- [ ] S032: SDP timing/reference-clock attributes such as `ts-refclk` and `mediaclk` can be session-level or media-level. The raw SDP ingestion boundary should preserve this scope and apply a localized session/media resolution rule for the selected video stream, rather than silently ignoring session-level timing or collapsing scope too early.
+- [x] S032: SDP timing/reference-clock attributes such as `ts-refclk` and `mediaclk` can be session-level or media-level. The raw SDP ingestion boundary now preserves this scope explicitly and applies localized session/media resolution for the selected video stream. Media-level values override session-level values where allowed; duplicate values within the same scope are rejected; `fmtp` timing media parameters are treated as media-level signaling and conflict only with media-level standalone attributes for the same semantic field.
 ---
 
 # Phase 1 — MVP
@@ -1857,7 +1893,7 @@
       - unknown valid parameters are preserved
       - duplicate known fields still reject as before
       - existing valid ST 2110 fmtp examples remain accepted
-  - [ ] 069D15: Preserve session/media scope for SDP timing and reference-clock attributes
+  - [x] 069D15: Preserve session/media scope for SDP timing and reference-clock attributes
     - explicitly model whether timing/reference-clock attributes came from session level or selected media level
     - cover at least:
       - `ts-refclk`

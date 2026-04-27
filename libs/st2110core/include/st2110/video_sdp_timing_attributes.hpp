@@ -53,14 +53,20 @@ namespace st2110 {
         std::string raw_token{};
     };
 
+    template<typename T>
+    struct RawVideoSdpScopedTimingValue {
+        T value{};
+        RawSdpAttributeScope scope = RawSdpAttributeScope::Media;
+    };
+
     struct RawVideoSdpTimingAttributes {
-        std::optional<RawVideoSdpReferenceClock> reference_clock{};
-        std::optional<RawVideoSdpMediaClock> media_clock{};
-        std::optional<RawVideoSdpTimestampModeValue> timestamp_mode{};
-        std::optional<uint64_t> ts_delay_sender_ticks{};
-        std::optional<RawVideoSdpSenderTypeValue> sender_type{};
-        std::optional<uint32_t> troff_us{};
-        std::optional<uint32_t> cmax{};
+        std::optional<RawVideoSdpScopedTimingValue<RawVideoSdpReferenceClock>> reference_clock{};
+        std::optional<RawVideoSdpScopedTimingValue<RawVideoSdpMediaClock>> media_clock{};
+        std::optional<RawVideoSdpScopedTimingValue<RawVideoSdpTimestampModeValue>> timestamp_mode{};
+        std::optional<RawVideoSdpScopedTimingValue<uint64_t>> ts_delay_sender_ticks{};
+        std::optional<RawVideoSdpScopedTimingValue<RawVideoSdpSenderTypeValue>> sender_type{};
+        std::optional<RawVideoSdpScopedTimingValue<uint32_t>> troff_us{};
+        std::optional<RawVideoSdpScopedTimingValue<uint32_t>> cmax{};
     };
 
     [[nodiscard]] inline std::string_view trim(std::string_view s) {
@@ -263,64 +269,167 @@ namespace st2110 {
         return val;
     }
 
+    [[nodiscard]] inline std::optional<RawSdpScopedAttributeValue>
+    resolve_raw_sdp_scoped_timing_attribute(
+            const std::optional<RawSdpScopedAttributeValue>& session_value,
+            const std::optional<RawSdpScopedAttributeValue>& media_value,
+            const std::optional<std::string>& legacy_resolved_value
+    ) {
+        if (media_value.has_value()) {
+            return media_value;
+        }
+
+        if (session_value.has_value()) {
+            return session_value;
+        }
+
+        // Compatibility path for tests/callers that manually construct
+        // RawVideoSdpMediaSection using the old resolved fields.
+        if (legacy_resolved_value.has_value()) {
+            return RawSdpScopedAttributeValue{
+                    .value = *legacy_resolved_value,
+                    .scope = RawSdpAttributeScope::Media
+            };
+        }
+
+        return std::nullopt;
+    }
+
     [[nodiscard]] inline std::expected<RawVideoSdpTimingAttributes, Error>
     parse_video_sdp_timing_attributes(const RawVideoSdpMediaSection& raw) {
         RawVideoSdpTimingAttributes res{};
-        if (raw.ts_refclk) {
-            auto expected_ts_refclck = parse_video_sdp_reference_clock(*raw.ts_refclk);
-            if (expected_ts_refclck) {
-                res.reference_clock = std::move(*expected_ts_refclck);
-            } else {
-                return std::unexpected(expected_ts_refclck.error());
+
+        const auto ts_refclk = resolve_raw_sdp_scoped_timing_attribute(
+                raw.session_ts_refclk,
+                raw.media_ts_refclk,
+                raw.ts_refclk
+        );
+
+        if (ts_refclk.has_value()) {
+            auto parsed = parse_video_sdp_reference_clock(ts_refclk->value);
+
+            if (!parsed.has_value()) {
+                return std::unexpected(parsed.error());
             }
+
+            res.reference_clock = RawVideoSdpScopedTimingValue<RawVideoSdpReferenceClock>{
+                    .value = std::move(*parsed),
+                    .scope = ts_refclk->scope
+            };
         }
-        if (raw.mediaclk) {
-            auto expected_mediaclk = parse_video_sdp_media_clock(*raw.mediaclk);
-            if (expected_mediaclk) {
-                res.media_clock = std::move(*expected_mediaclk);
-            } else {
-                return std::unexpected(expected_mediaclk.error());
+
+        const auto mediaclk = resolve_raw_sdp_scoped_timing_attribute(
+                raw.session_mediaclk,
+                raw.media_mediaclk,
+                raw.mediaclk
+        );
+
+        if (mediaclk.has_value()) {
+            auto parsed = parse_video_sdp_media_clock(mediaclk->value);
+
+            if (!parsed.has_value()) {
+                return std::unexpected(parsed.error());
             }
+
+            res.media_clock = RawVideoSdpScopedTimingValue<RawVideoSdpMediaClock>{
+                    .value = std::move(*parsed),
+                    .scope = mediaclk->scope
+            };
         }
-        if (raw.tsmode) {
-            auto expected_tsmode = parse_video_sdp_timestamp_mode(*raw.tsmode);
-            if (expected_tsmode) {
-                res.timestamp_mode = std::move(*expected_tsmode);
-            } else {
-                return std::unexpected(expected_tsmode.error());
+
+        const auto tsmode = resolve_raw_sdp_scoped_timing_attribute(
+                raw.session_tsmode,
+                raw.media_tsmode,
+                raw.tsmode
+        );
+
+        if (tsmode.has_value()) {
+            auto parsed = parse_video_sdp_timestamp_mode(tsmode->value);
+
+            if (!parsed.has_value()) {
+                return std::unexpected(parsed.error());
             }
+
+            res.timestamp_mode = RawVideoSdpScopedTimingValue<RawVideoSdpTimestampModeValue>{
+                    .value = std::move(*parsed),
+                    .scope = tsmode->scope
+            };
         }
-        if (raw.tsdelay) {
-            auto expected_tsdelay = parse_video_sdp_ts_delay(*raw.tsdelay);
-            if (expected_tsdelay) {
-                res.ts_delay_sender_ticks = std::move(*expected_tsdelay);
-            } else {
-                return std::unexpected(expected_tsdelay.error());
+
+        const auto tsdelay = resolve_raw_sdp_scoped_timing_attribute(
+                raw.session_tsdelay,
+                raw.media_tsdelay,
+                raw.tsdelay
+        );
+
+        if (tsdelay.has_value()) {
+            auto parsed = parse_video_sdp_ts_delay(tsdelay->value);
+
+            if (!parsed.has_value()) {
+                return std::unexpected(parsed.error());
             }
+
+            res.ts_delay_sender_ticks = RawVideoSdpScopedTimingValue<uint64_t>{
+                    .value = *parsed,
+                    .scope = tsdelay->scope
+            };
         }
-        if (raw.tp) {
-            auto expected_tp = parse_video_sdp_sender_type(*raw.tp);
-            if (expected_tp) {
-                res.sender_type = std::move(*expected_tp);
-            } else {
-                return std::unexpected(expected_tp.error());
+
+        const auto tp = resolve_raw_sdp_scoped_timing_attribute(
+                raw.session_tp,
+                raw.media_tp,
+                raw.tp
+        );
+
+        if (tp.has_value()) {
+            auto parsed = parse_video_sdp_sender_type(tp->value);
+
+            if (!parsed.has_value()) {
+                return std::unexpected(parsed.error());
             }
+
+            res.sender_type = RawVideoSdpScopedTimingValue<RawVideoSdpSenderTypeValue>{
+                    .value = std::move(*parsed),
+                    .scope = tp->scope
+            };
         }
-        if (raw.troff) {
-            auto expected_troff = parse_video_sdp_troff(*raw.troff);
-            if (expected_troff) {
-                res.troff_us = std::move(*expected_troff);
-            } else {
-                return std::unexpected(expected_troff.error());
+
+        const auto troff = resolve_raw_sdp_scoped_timing_attribute(
+                raw.session_troff,
+                raw.media_troff,
+                raw.troff
+        );
+
+        if (troff.has_value()) {
+            auto parsed = parse_video_sdp_troff(troff->value);
+
+            if (!parsed.has_value()) {
+                return std::unexpected(parsed.error());
             }
+
+            res.troff_us = RawVideoSdpScopedTimingValue<uint32_t>{
+                    .value = *parsed,
+                    .scope = troff->scope
+            };
         }
-        if (raw.cmax) {
-            auto expected_cmax = parse_video_sdp_cmax(*raw.cmax);
-            if (expected_cmax) {
-                res.cmax = std::move(*expected_cmax);
-            } else {
-                return std::unexpected(expected_cmax.error());
+
+        const auto cmax = resolve_raw_sdp_scoped_timing_attribute(
+                raw.session_cmax,
+                raw.media_cmax,
+                raw.cmax
+        );
+
+        if (cmax.has_value()) {
+            auto parsed = parse_video_sdp_cmax(cmax->value);
+
+            if (!parsed.has_value()) {
+                return std::unexpected(parsed.error());
             }
+
+            res.cmax = RawVideoSdpScopedTimingValue<uint32_t>{
+                    .value = *parsed,
+                    .scope = cmax->scope
+            };
         }
 
         return res;

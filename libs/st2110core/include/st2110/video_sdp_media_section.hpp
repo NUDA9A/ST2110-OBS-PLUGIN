@@ -25,6 +25,16 @@ namespace st2110 {
         std::string connection_address{};
     };
 
+    enum class RawSdpAttributeScope {
+        Session,
+        Media
+    };
+
+    struct RawSdpScopedAttributeValue {
+        std::string value{};
+        RawSdpAttributeScope scope = RawSdpAttributeScope::Media;
+    };
+
     struct RawSdpSourceFilter {
         enum class Scope {
             Session,
@@ -74,6 +84,22 @@ namespace st2110 {
         std::optional<std::string> tp{};
         std::optional<std::string> troff{};
         std::optional<std::string> cmax{};
+
+        std::optional<RawSdpScopedAttributeValue> session_ts_refclk{};
+        std::optional<RawSdpScopedAttributeValue> media_ts_refclk{};
+        std::optional<RawSdpScopedAttributeValue> session_mediaclk{};
+        std::optional<RawSdpScopedAttributeValue> media_mediaclk{};
+        std::optional<RawSdpScopedAttributeValue> session_tsmode{};
+        std::optional<RawSdpScopedAttributeValue> media_tsmode{};
+        std::optional<RawSdpScopedAttributeValue> session_tsdelay{};
+        std::optional<RawSdpScopedAttributeValue> media_tsdelay{};
+        std::optional<RawSdpScopedAttributeValue> session_tp{};
+        std::optional<RawSdpScopedAttributeValue> media_tp{};
+        std::optional<RawSdpScopedAttributeValue> session_troff{};
+        std::optional<RawSdpScopedAttributeValue> media_troff{};
+        std::optional<RawSdpScopedAttributeValue> session_cmax{};
+        std::optional<RawSdpScopedAttributeValue> media_cmax{};
+
         std::optional<RawSdpConnectionData> session_connection{};
         std::optional<RawSdpConnectionData> media_connection{};
 
@@ -428,6 +454,31 @@ namespace st2110 {
         return false;
     }
 
+    [[nodiscard]] inline Error set_raw_sdp_scoped_timing_attribute(
+            std::optional<RawSdpScopedAttributeValue>& scoped_slot,
+            std::optional<std::string>& resolved_slot,
+            std::string_view value,
+            RawSdpAttributeScope scope
+    ) {
+        if (scoped_slot.has_value()) {
+            return Error::InvalidValue;
+        }
+
+        scoped_slot = RawSdpScopedAttributeValue{
+                .value = std::string(value),
+                .scope = scope
+        };
+
+        // Compatibility resolved field:
+        // - session fills it if no media-level override exists yet;
+        // - media always overrides session.
+        if (scope == RawSdpAttributeScope::Media || !resolved_slot.has_value()) {
+            resolved_slot = std::string(value);
+        }
+
+        return Error::Ok;
+    }
+
     [[nodiscard]] inline std::expected<RawVideoSdpMediaSection, Error>
     select_raw_video_sdp_media_section(std::string_view sdp, uint8_t expected_payload_type) {
         RawVideoSdpMediaSection res{};
@@ -532,6 +583,128 @@ namespace st2110 {
 
                     res.session_connection = std::move(*parsed_connection);
                 } else {
+                    bool handled_attribute = false;
+
+                    auto ts_refclk = parse_attribute_value(line, "a=ts-refclk:");
+
+                    if (ts_refclk.has_value()) {
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.session_ts_refclk,
+                                    res.ts_refclk,
+                                    *ts_refclk,
+                                    RawSdpAttributeScope::Session);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
+                        }
+
+                        handled_attribute = true;
+                    }
+
+                    auto mediaclk = parse_attribute_value(line, "a=mediaclk:");
+
+                    if (mediaclk.has_value()) {
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.session_mediaclk,
+                                    res.mediaclk,
+                                    *mediaclk,
+                                    RawSdpAttributeScope::Session);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
+                        }
+
+                        handled_attribute = true;
+                    }
+
+                    auto tsmode = parse_attribute_value(line, "a=tsmode:");
+                    if (!tsmode.has_value()) {
+                        tsmode = parse_attribute_value(line, "a=TSMODE:");
+                    }
+
+                    if (tsmode.has_value()) {
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.session_tsmode,
+                                    res.tsmode,
+                                    *tsmode,
+                                    RawSdpAttributeScope::Session);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
+                        }
+
+                        handled_attribute = true;
+                    }
+
+                    auto tsdelay = parse_attribute_value(line, "a=tsdelay:");
+                    if (!tsdelay.has_value()) {
+                        tsdelay = parse_attribute_value(line, "a=TSDELAY:");
+                    }
+
+                    if (tsdelay.has_value()) {
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.session_tsdelay,
+                                    res.tsdelay,
+                                    *tsdelay,
+                                    RawSdpAttributeScope::Session);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
+                        }
+
+                        handled_attribute = true;
+                    }
+
+                    auto tp = parse_attribute_value(line, "a=tp:");
+                    if (!tp.has_value()) {
+                        tp = parse_attribute_value(line, "a=TP:");
+                    }
+
+                    if (tp.has_value()) {
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.session_tp,
+                                    res.tp,
+                                    *tp,
+                                    RawSdpAttributeScope::Session);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
+                        }
+
+                        handled_attribute = true;
+                    }
+
+                    auto troff = parse_attribute_value(line, "a=troff:");
+                    if (!troff.has_value()) {
+                        troff = parse_attribute_value(line, "a=TROFF:");
+                    }
+
+                    if (troff.has_value()) {
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.session_troff,
+                                    res.troff,
+                                    *troff,
+                                    RawSdpAttributeScope::Session);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
+                        }
+
+                        handled_attribute = true;
+                    }
+
+                    auto cmax = parse_attribute_value(line, "a=cmax:");
+                    if (!cmax.has_value()) {
+                        cmax = parse_attribute_value(line, "a=CMAX:");
+                    }
+
+                    if (cmax.has_value()) {
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.session_cmax,
+                                    res.cmax,
+                                    *cmax,
+                                    RawSdpAttributeScope::Session);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
+                        }
+
+                        handled_attribute = true;
+                    }
+
                     auto group = parse_attribute_value(line, "a=group:");
 
                     if (group.has_value()) {
@@ -556,7 +729,7 @@ namespace st2110 {
                             }
 
                             res.source_filters.push_back(std::move(*parsed_source_filter));
-                        } else if (line.starts_with("a=")) {
+                        } else if (line.starts_with("a=") && !handled_attribute) {
                             res.unknown_session_attributes.push_back(parse_unknown_sdp_attribute(line));
                         }
                     }
@@ -620,44 +793,66 @@ namespace st2110 {
                     auto ts_refclk = parse_attribute_value(line, "a=ts-refclk:");
 
                     if (ts_refclk.has_value()) {
-                        if (res.ts_refclk.has_value()) {
-                            return std::unexpected(Error::InvalidValue);
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.media_ts_refclk,
+                                    res.ts_refclk,
+                                    *ts_refclk,
+                                    RawSdpAttributeScope::Media);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
                         }
 
-                        res.ts_refclk = std::string(*ts_refclk);
                         handled_attribute = true;
                     }
 
                     auto mediaclk = parse_attribute_value(line, "a=mediaclk:");
 
                     if (mediaclk.has_value()) {
-                        if (res.mediaclk.has_value()) {
-                            return std::unexpected(Error::InvalidValue);
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.media_mediaclk,
+                                    res.mediaclk,
+                                    *mediaclk,
+                                    RawSdpAttributeScope::Media);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
                         }
 
-                        res.mediaclk = std::string(*mediaclk);
                         handled_attribute = true;
                     }
 
                     auto tsmode = parse_attribute_value(line, "a=tsmode:");
+                    if (!tsmode.has_value()) {
+                        tsmode = parse_attribute_value(line, "a=TSMODE:");
+                    }
 
                     if (tsmode.has_value()) {
-                        if (res.tsmode.has_value()) {
-                            return std::unexpected(Error::InvalidValue);
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.media_tsmode,
+                                    res.tsmode,
+                                    *tsmode,
+                                    RawSdpAttributeScope::Media);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
                         }
 
-                        res.tsmode = std::string(*tsmode);
                         handled_attribute = true;
                     }
 
                     auto tsdelay = parse_attribute_value(line, "a=tsdelay:");
+                    if (!tsdelay.has_value()) {
+                        tsdelay = parse_attribute_value(line, "a=TSDELAY:");
+                    }
 
                     if (tsdelay.has_value()) {
-                        if (res.tsdelay.has_value()) {
-                            return std::unexpected(Error::InvalidValue);
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.media_tsdelay,
+                                    res.tsdelay,
+                                    *tsdelay,
+                                    RawSdpAttributeScope::Media);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
                         }
 
-                        res.tsdelay = std::string(*tsdelay);
                         handled_attribute = true;
                     }
 
@@ -667,11 +862,15 @@ namespace st2110 {
                     }
 
                     if (tp.has_value()) {
-                        if (res.tp.has_value()) {
-                            return std::unexpected(Error::InvalidValue);
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.media_tp,
+                                    res.tp,
+                                    *tp,
+                                    RawSdpAttributeScope::Media);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
                         }
 
-                        res.tp = std::string(*tp);
                         handled_attribute = true;
                     }
 
@@ -681,11 +880,15 @@ namespace st2110 {
                     }
 
                     if (troff.has_value()) {
-                        if (res.troff.has_value()) {
-                            return std::unexpected(Error::InvalidValue);
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.media_troff,
+                                    res.troff,
+                                    *troff,
+                                    RawSdpAttributeScope::Media);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
                         }
 
-                        res.troff = std::string(*troff);
                         handled_attribute = true;
                     }
 
@@ -695,11 +898,15 @@ namespace st2110 {
                     }
 
                     if (cmax.has_value()) {
-                        if (res.cmax.has_value()) {
-                            return std::unexpected(Error::InvalidValue);
+                        if (Error err = set_raw_sdp_scoped_timing_attribute(
+                                    res.media_cmax,
+                                    res.cmax,
+                                    *cmax,
+                                    RawSdpAttributeScope::Media);
+                                err != Error::Ok) {
+                            return std::unexpected(err);
                         }
 
-                        res.cmax = std::string(*cmax);
                         handled_attribute = true;
                     }
 
