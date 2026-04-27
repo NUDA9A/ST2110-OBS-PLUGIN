@@ -46,6 +46,19 @@ namespace st2110 {
         std::vector<std::string> mids{};
     };
 
+    struct RawVideoSdpDuplicateMediaCandidate {
+        std::string media_line{};
+        uint8_t payload_type = 0;
+        std::vector<uint8_t> media_payload_types{};
+
+        std::optional<std::string> mid{};
+        std::optional<RawSdpConnectionData> media_connection{};
+        std::vector<RawSdpSourceFilter> source_filters{};
+
+        std::string rtpmap{};
+        std::string fmtp{};
+    };
+
     struct RawVideoSdpMediaSection {
         std::string media_line{};
         uint8_t payload_type = 0;
@@ -67,6 +80,7 @@ namespace st2110 {
         std::optional<std::string> mid{};
         std::vector<RawSdpSourceFilter> source_filters{};
         std::vector<RawSdpGroup> session_groups{};
+        std::vector<RawVideoSdpDuplicateMediaCandidate> duplicate_candidates{};
 
         std::vector<RawSdpAttribute> unknown_session_attributes{};
 
@@ -374,6 +388,46 @@ namespace st2110 {
         return false;
     }
 
+    [[nodiscard]] inline bool raw_sdp_group_contains_mid(
+            const RawSdpGroup& group,
+            const std::string& mid
+    ) {
+        for (const auto& candidate_mid : group.mids) {
+            if (candidate_mid == mid) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    [[nodiscard]] inline bool has_dup_session_group_containing_both_mids(
+            const std::vector<RawSdpGroup>& groups,
+            const std::optional<std::string>& first_mid,
+            const std::optional<std::string>& second_mid
+    ) {
+        if (!first_mid.has_value() || !second_mid.has_value()) {
+            return false;
+        }
+
+        if (*first_mid == *second_mid) {
+            return false;
+        }
+
+        for (const auto& group : groups) {
+            if (group.semantics != "DUP") {
+                continue;
+            }
+
+            if (raw_sdp_group_contains_mid(group, *first_mid) &&
+                raw_sdp_group_contains_mid(group, *second_mid)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     [[nodiscard]] inline std::expected<RawVideoSdpMediaSection, Error>
     select_raw_video_sdp_media_section(std::string_view sdp, uint8_t expected_payload_type) {
         RawVideoSdpMediaSection res{};
@@ -384,6 +438,37 @@ namespace st2110 {
 
         bool found_rtpmap = false;
         bool found_fmtp = false;
+
+        bool inside_duplicate_candidate = false;
+        bool duplicate_found_rtpmap = false;
+        bool duplicate_found_fmtp = false;
+        RawVideoSdpDuplicateMediaCandidate duplicate_candidate{};
+
+        auto finish_duplicate_candidate = [&]() -> Error {
+            if (!inside_duplicate_candidate) {
+                return Error::Ok;
+            }
+
+            if (!duplicate_found_rtpmap || !duplicate_found_fmtp) {
+                return Error::InvalidValue;
+            }
+
+            if (!has_dup_session_group_containing_both_mids(
+                    res.session_groups,
+                    res.mid,
+                    duplicate_candidate.mid)) {
+                return Error::InvalidValue;
+            }
+
+            res.duplicate_candidates.push_back(std::move(duplicate_candidate));
+
+            duplicate_candidate = RawVideoSdpDuplicateMediaCandidate{};
+            duplicate_found_rtpmap = false;
+            duplicate_found_fmtp = false;
+            inside_duplicate_candidate = false;
+
+            return Error::Ok;
+        };
 
         std::size_t line_start = 0;
 
@@ -398,6 +483,9 @@ namespace st2110 {
             line = strip_cr(line);
 
             if (line.starts_with("m=")) {
+                if (Error err = finish_duplicate_candidate(); err != Error::Ok) {
+                    return std::unexpected(err);
+                }
                 seen_any_media_section = true;
                 inside_selected_media_section = false;
 
@@ -410,17 +498,16 @@ namespace st2110 {
 
                     if (contains_payload_type(*payload_types, expected_payload_type)) {
                         if (found) {
-                            // Redundant RTP descriptions may carry the same payload type
-                            // in multiple video media sections grouped by a=session-level
-                            // group:DUP. This raw SDP boundary does not implement redundant
-                            // stream selection yet; keep the first selected media section as
-                            // the current primary/default section and ignore later matching
-                            // sections instead of failing SDP ingestion.
-                            if (!has_dup_session_group(res.session_groups)) {
-                                return std::unexpected(Error::InvalidValue);
-                            }
+                            duplicate_candidate = RawVideoSdpDuplicateMediaCandidate{
+                                    .media_line = std::string(line),
+                                    .payload_type = expected_payload_type,
+                                    .media_payload_types = std::move(*payload_types)
+                            };
 
+                            duplicate_found_rtpmap = false;
+                            duplicate_found_fmtp = false;
                             inside_selected_media_section = false;
+                            inside_duplicate_candidate = true;
                         } else {
                             res.media_line = std::string(line);
                             res.payload_type = expected_payload_type;
@@ -649,6 +736,85 @@ namespace st2110 {
                         res.unknown_attributes.push_back(parse_unknown_sdp_attribute(line));
                     }
                 }
+            } else if (inside_duplicate_candidate) {
+                if (line.starts_with("c=")) {
+                    if (duplicate_candidate.media_connection.has_value()) {
+                        return std::unexpected(Error::InvalidValue);
+                    }
+
+                    auto parsed_connection = parse_connection_data(line);
+
+                    if (!parsed_connection.has_value()) {
+                        return std::unexpected(parsed_connection.error());
+                    }
+
+                    duplicate_candidate.media_connection = std::move(*parsed_connection);
+                } else {
+                    auto rtpmap = parse_payload_bound_attribute_value(
+                            line,
+                            "a=rtpmap:",
+                            expected_payload_type
+                    );
+
+                    if (!rtpmap.has_value()) {
+                        return std::unexpected(rtpmap.error());
+                    }
+
+                    if (rtpmap->has_value()) {
+                        if (duplicate_found_rtpmap) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
+
+                        duplicate_candidate.rtpmap = std::string(**rtpmap);
+                        duplicate_found_rtpmap = true;
+                    }
+
+                    auto fmtp = parse_payload_bound_attribute_value(
+                            line,
+                            "a=fmtp:",
+                            expected_payload_type
+                    );
+
+                    if (!fmtp.has_value()) {
+                        return std::unexpected(fmtp.error());
+                    }
+
+                    if (fmtp->has_value()) {
+                        if (duplicate_found_fmtp) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
+
+                        duplicate_candidate.fmtp = std::string(**fmtp);
+                        duplicate_found_fmtp = true;
+                    }
+
+                    auto source_filter = parse_attribute_value(line, "a=source-filter:");
+
+                    if (source_filter.has_value()) {
+                        auto parsed_source_filter = parse_source_filter_attribute_value(
+                                *source_filter,
+                                RawSdpSourceFilter::Scope::Media
+                        );
+
+                        if (!parsed_source_filter.has_value()) {
+                            return std::unexpected(parsed_source_filter.error());
+                        }
+
+                        duplicate_candidate.source_filters.push_back(std::move(*parsed_source_filter));
+                    }
+
+                    auto mid = parse_attribute_value(line, "a=mid:");
+
+                    if (mid.has_value()) {
+                        const auto value = trim_left_ws(*mid);
+
+                        if (duplicate_candidate.mid.has_value() || value.empty()) {
+                            return std::unexpected(Error::InvalidValue);
+                        }
+
+                        duplicate_candidate.mid = std::string(value);
+                    }
+                }
             }
 
             if (line_end == sdp.size()) {
@@ -656,6 +822,10 @@ namespace st2110 {
             }
 
             line_start = line_end + 1;
+        }
+
+        if (Error err = finish_duplicate_candidate(); err != Error::Ok) {
+            return std::unexpected(err);
         }
 
         if (!found || !found_rtpmap || !found_fmtp) {

@@ -971,6 +971,16 @@
     - raw parsed `a=group:<semantics> <mid>...`
     - `semantics`
     - `mids`
+  - `RawVideoSdpDuplicateMediaCandidate`
+    - minimal raw summary for duplicate RTP video media-section candidates preserved for future redundant-stream selection:
+      - `media_line`
+      - `payload_type`
+      - `media_payload_types`
+      - optional `mid`
+      - optional media-level `c=`
+      - media-level `source_filters`
+      - selected payload-type-bound `rtpmap`
+      - selected payload-type-bound `fmtp`
   - `RawVideoSdpMediaSection`
     - `media_line`
     - `payload_type`
@@ -991,6 +1001,7 @@
       - `mid`
       - `source_filters`
       - `session_groups`
+      - `duplicate_candidates`
     - unknown/preserved attributes:
       - `unknown_session_attributes`
       - `unknown_attributes`
@@ -1012,6 +1023,9 @@
       - preserves `raw_value`;
       - rejects structurally malformed values;
       - remains runtime/backend agnostic.
+    - `raw_sdp_group_contains_mid(...)`
+    - `has_dup_session_group_containing_both_mids(...)`
+      - validates that primary and duplicate media-section `mid` values are both members of the same session-level `group:DUP`.
   - main entry point:
     - `select_raw_video_sdp_media_section(...)`
       - selects the matching `m=video` section for the requested payload type;
@@ -1024,13 +1038,16 @@
       - captures session-level `a=group`, including `DUP`;
       - preserves unknown session-level and selected-media-level attributes separately;
       - rejects duplicate session/media `c=`, duplicate selected `mid`, duplicate selected timing attributes and duplicate selected payload bindings;
-      - if multiple matching video media sections exist under session-level `group:DUP`, keeps the first selected section as current primary/default raw section and ignores later matching sections until redundant-stream selection policy is implemented.
+      - if multiple matching video media sections exist, rejects them unless the primary selected section and each duplicate candidate have distinct `a=mid` values that are both members of a session-level `group:DUP`;
+      - preserves valid duplicate matching video media sections as `duplicate_candidates` raw summaries for future redundant-stream selection policy.
 - Примечание:
   - это raw SDP boundary, а не signaling model и не validation/runtime layer;
   - `c=`, `source-filter`, `mid`, `group:DUP` are intentionally preserved outside `VideoStreamSignaling`;
   - later runtime/backend integration should consume these raw fields through dedicated bootstrap/transport adapters rather than reshaping `VideoStreamSignaling`.
   - `a=source-filter` is now scope-aware and minimally parsed, but still intentionally not mapped into `VideoStreamSignaling`;
   - backend/runtime use of parsed source-filter metadata remains future work through `214C`.
+  - duplicate RTP video media sections are now preserved as raw candidate summaries when linked by `group:DUP` membership through actual `mid` values;
+  - final stream selection / redundant receive policy is intentionally not implemented here and remains future work through `214D`.
 
 ### libs/st2110core/include/st2110/video_sdp_fmtp.hpp
 - Роль:
@@ -1261,6 +1278,7 @@
   - current `rtpmap` and timing interpretation intentionally remains conservative and localized.
   - known timing/sender fields may now come from `a=fmtp` media type parameters or from standalone compatibility attributes, but duplicate/conflicting semantic sources are rejected at this composition boundary.
   - raw transport/redundancy metadata parsed by `video_sdp_media_section.hpp` is preserved at the raw SDP boundary and intentionally not mapped into `VideoStreamSignaling`; backend/runtime consumption remains future work through dedicated bootstrap/transport adapters.
+  - duplicate candidate media sections preserved by `video_sdp_media_section.hpp` are intentionally ignored by final `VideoStreamSignaling` ingestion for now; redundant-stream selection remains a future bootstrap/transport policy boundary through `214D`.
 
 ## Done
 - [x] 001: Repo skeleton + buildable stub
@@ -1314,7 +1332,7 @@
 - [x] S026: Video SDP ingestion now has an explicit raw boundary for session/media transport and redundancy-related SDP constructs such as `c=`, `a=source-filter`, `a=mid`, and `a=group:DUP`. These constructs are preserved in the raw SDP media-section model separately from `VideoStreamSignaling`; runtime/backend integration and redundant-stream selection policy remain future work through `214C` / `214D`.
 - [x] S027: Video signaling structural validation now includes localized media-description cross-field constraints from ST 2110-20. `4:2:0` sampling variants are accepted only with progressive scan signaling, and `KEY` sampling requires alpha colorimetry and rejects normal `TCS` presence. These checks live in the signaling/model validation boundary, not in runtime `PixelFormat` projection behavior.
 - [x] S028: Raw SDP `a=source-filter` handling now preserves session-vs-media scope and minimally parses the RFC-style source-filter fields while preserving the original raw attribute value. Runtime/backend consumption remains future work through `214C`.
-- [ ] S029: Raw SDP redundancy handling currently preserves `a=group:DUP`, but the selected-video-media-section boundary does not yet model duplicate candidate media sections in a way that future redundant-stream selection can consume without reshaping SDP ingestion. `group:DUP` must be tied to actual `mid` values, and duplicate RTP stream candidates should be preserved as raw summaries or explicit raw candidate records.
+- [x] S029: Raw SDP redundancy handling now ties `a=group:DUP` membership to actual `a=mid` values and preserves duplicate RTP video media-section candidates as explicit raw candidate summaries. Full redundant-stream selection / ST 2022-7-style behavior remains future work through `214D`.
 - [ ] S030: The SDP `a=fmtp` parser is still too permissive for the ST 2110-20 media type parameter grammar. It should reject whitespace around `=`, malformed token separators, and `;` separators not followed by required whitespace, while still preserving unknown valid parameters. This should be fixed locally in `video_sdp_fmtp.hpp` rather than by adding tolerant parsing elsewhere.
 - [ ] S031: Raw SDP `c=` connection data is preserved, but multicast connection-address parameters such as address/TTL/numaddr are not yet modeled explicitly enough for future backend bootstrap. The raw SDP layer should keep the original connection address string but also expose parsed base address and optional multicast parameters where present.
 - [ ] S032: SDP timing/reference-clock attributes such as `ts-refclk` and `mediaclk` can be session-level or media-level. The raw SDP ingestion boundary should preserve this scope and apply a localized session/media resolution rule for the selected video stream, rather than silently ignoring session-level timing or collapsing scope too early.
@@ -1775,7 +1793,7 @@
       - parsed fields are populated for valid source-filter syntax
       - original raw value is still preserved
       - unknown/unsupported source-filter shape is rejected only if structurally malformed, not because runtime multicast support is missing
-  - [ ] 069D13: Strengthen raw SDP `a=group:DUP` / duplicate media-section boundary
+  - [x] 069D13: Strengthen raw SDP `a=group:DUP` / duplicate media-section boundary
     - keep redundancy modeling in the raw SDP layer, separate from `VideoStreamSignaling`
     - tie `group:DUP` membership to actual `a=mid` values rather than treating the mere presence of any `group:DUP` as sufficient
     - preserve duplicate video media-section candidates for future redundant-stream selection
