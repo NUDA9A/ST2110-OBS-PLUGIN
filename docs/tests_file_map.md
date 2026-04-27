@@ -505,4 +505,13 @@
         - 48 kHz;
         - 1 ms packet time;
         - 1..8 channels;
-    - проверяет separation между signaled audio/media properties и future runtime audio buffer layout.
+    - проверяет separation между signaled audio/media properties и future runtime audio buffer layout;
+    - проверяет initial structural validation boundary:
+        - conformance range validation;
+        - media-description-to-baseline validation;
+        - valid / invalid Level A channel counts;
+        - valid / invalid sampling rate and packet time;
+        - optional absent channel-order behavior;
+        - minimal `SMPTE2110.` channel-order structural validation;
+        - explicit invalid `Unspecified` channel-order raw value rejection;
+        - forward-compatible `Other` channel-order preservation.

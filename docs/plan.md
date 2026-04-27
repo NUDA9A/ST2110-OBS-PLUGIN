@@ -671,7 +671,7 @@
   - make the MVP target explicit as a **Level A-oriented receiver baseline** rather than a generic PCM placeholder
   - capture at least the signaled media properties needed for the initial baseline (`48 kHz`, `1 ms packet time`, `1..8 channels`, AES67-compatible receive assumptions where applicable)
   - keep signaled audio/media properties separate from internal audio buffer layout/runtime config
-- [ ] 079A: Add explicit structural validation boundary inside audio signaling model
+- [x] 079A: Add explicit structural validation boundary inside audio signaling model
   - validate structural consistency of modeled audio signaling
   - validate MVP baseline / conformance assumptions for the initial Level A-oriented receiver baseline
   - validate sample rate / packet-time / channel-count consistency within the chosen baseline

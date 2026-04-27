@@ -1335,9 +1335,10 @@
     - standards-aware signaling model boundary для ST 2110-30 PCM audio.
     - задает декларативную audio stream/media-description модель отдельно от runtime `RxAudioConfig`, SDP parsing, audio buffer layout и backend transport fields.
     - фиксирует MVP audio baseline как Level A-oriented receiver baseline.
+    - содержит initial structural validation boundary для текущего Level A-oriented MVP signaling.
 - Связи:
-    - на текущем шаге зависит только от стандартных типов (`cstdint`, `string`, `optional`);
-    - будущая structural validation должна добавляться поверх этой модели в `079A`;
+    - использует `Error` из `error.hpp`;
+    - на текущем шаге не зависит от runtime audio config, SDP parsing, audio buffer layout или backend transport fields;
     - будущие SDP ingestion / channel-order parsing / runtime projection должны использовать эту модель, не смешивая signaling с backend/socket/runtime layout.
 - Сущности:
     - `AudioConformanceLevel`
@@ -1374,6 +1375,34 @@
         - top-level audio signaling object:
             - `media`
             - optional `channel_order`
+    - `validate_audio_conformance_range(const AudioConformanceRange&)`
+        - validates conformance range shape:
+            - known level enum;
+            - non-zero sampling rate;
+            - non-zero packet time;
+            - `min_channels >= 1`;
+            - `max_channels >= min_channels`.
+    - `audio_media_description_matches_conformance_range(...)`
+        - checks whether an audio media description matches a selected conformance range by:
+            - sampling rate;
+            - packet time;
+            - channel count range.
+    - `validate_audio_media_description_against_conformance_range(...)`
+        - validates:
+            - supported PCM encoding;
+            - selected conformance range shape;
+            - media description match against that range.
+    - `validate_audio_channel_order_signaling(...)`
+        - validates optional channel-order signaling when present:
+            - `Unspecified` requires empty `raw_value`;
+            - `Smpte2110` requires non-empty raw value with `SMPTE2110.` prefix;
+            - `Other` requires non-empty raw value and preserves future/unknown convention data.
+    - `validate_audio_stream_signaling(...)`
+        - top-level MVP structural validation entry point;
+        - validates media description against `audio_level_a_receiver_baseline()`;
+        - validates `channel_order` only when it is present;
+        - absence of `channel_order` remains explicitly representable and valid at this model boundary.
 - Примечание:
-    - файл intentionally does not implement validation, SDP parsing, channel-order group parsing, runtime audio config projection, or audio buffer layout;
+    - файл теперь реализует initial structural validation boundary for Level A-oriented MVP signaling;
+    - full SDP parsing, channel-order group parsing / count matching, runtime audio config projection, and audio buffer layout remain future work through `079B` / `079C` / `079D` / `080+`;
     - missing `channel_order` is explicitly representable and will be interpreted by later validation/projection logic.
