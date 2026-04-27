@@ -547,3 +547,19 @@
         - minimal `SMPTE2110.` channel-order structural validation;
         - explicit invalid `Unspecified` channel-order raw value rejection;
         - forward-compatible `Other` channel-order preservation.
+
+## Audio SDP raw media-section parsing
+
+### tests/audio_sdp_media_section_test.cpp
+- Роль:
+    - проверяет raw SDP audio media-section parsing boundary.
+    - покрывает:
+        - selection of matching `m=audio` section by payload type;
+        - preservation of media payload types;
+        - payload-bound `a=rtpmap` parsing into encoding name, sampling rate, and optional channel count;
+        - `a=ptime` parsing from milliseconds to integer microseconds;
+        - payload-bound `a=fmtp:<pt> channel-order=...` parsing;
+        - preservation of unknown fmtp parameters;
+        - preservation of unknown session/media attributes;
+        - standalone `a=channel-order:` remaining unknown rather than being treated as standards-facing channel-order signaling;
+        - rejection of missing selected `rtpmap`, duplicate selected `rtpmap`, duplicate selected `fmtp`, duplicate `ptime`, duplicate `channel-order`, malformed RTP clock/channel count, extra rtpmap slash, zero ptime, and non-integral-microsecond ptime.

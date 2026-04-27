@@ -1484,3 +1484,57 @@
     - transport/network fields stay outside the signaling model;
     - the projection path does not hardcode `samples_per_packet = 48`;
     - future channel mapping / runtime layout adaptation should extend this adapter or adjacent dedicated boundaries without changing the signaling model shape.
+
+### libs/st2110core/include/st2110/audio_sdp_media_section.hpp
+- Роль:
+    - raw SDP audio media-section parsing boundary для выбранного audio payload type.
+    - отделяет SDP/media-section parsing от `AudioStreamSignaling`, runtime `RxAudioConfig`, audio buffer layout и backend/socket transport behavior.
+    - является первым шагом audio SDP ingestion path; full raw-to-signaling adapter остается следующим слоем.
+- Связи:
+    - зависит только от `Error` и стандартных utility types;
+    - будет использоваться будущим audio SDP ingestion / signaling adapter layer;
+    - не зависит от video SDP boundary, audio runtime config, backend transport или OBS integration.
+- Сущности:
+    - `RawAudioSdpAttribute`
+        - raw preserved SDP attribute / fmtp parameter representation (`name`, `value`).
+    - `RawAudioSdpRtpMap`
+        - parsed audio `a=rtpmap` payload:
+            - `encoding_name`;
+            - `sampling_rate_hz`;
+            - optional `channel_count`.
+    - `RawAudioSdpFmtpParameters`
+        - parsed selected audio `a=fmtp` payload:
+            - optional `channel_order`;
+            - preserved unknown parameters.
+    - `RawAudioSdpMediaSection`
+        - selected raw audio media-section summary:
+            - `media_line`;
+            - selected `payload_type`;
+            - all media payload types;
+            - raw and parsed `rtpmap`;
+            - raw and parsed `fmtp`;
+            - optional `packet_time_us`;
+            - optional convenience `channel_order`;
+            - unknown session/media attributes.
+    - helper functions:
+        - `strip_audio_sdp_cr(...)`
+        - `split_audio_sdp_ws(...)`
+        - `parse_audio_payload_type(...)`
+        - `parse_audio_m_line_payload_types(...)`
+        - `contains_audio_payload_type(...)`
+        - `parse_audio_payload_bound_attribute_value(...)`
+        - `parse_unknown_audio_sdp_attribute(...)`
+        - `parse_audio_sdp_rtpmap_payload(...)`
+        - `parse_audio_sdp_ptime_us(...)`
+        - `parse_audio_sdp_fmtp_payload(...)`
+    - main entry point:
+        - `select_raw_audio_sdp_media_section(std::string_view, uint8_t) -> std::expected<RawAudioSdpMediaSection, Error>`
+            - selects the matching `m=audio` section for the requested payload type;
+            - requires selected payload-bound `a=rtpmap`;
+            - parses optional `a=ptime` into integer microseconds;
+            - parses payload-bound `a=fmtp:<pt> channel-order=...`;
+            - preserves standalone `a=channel-order:` as unknown instead of treating it as standards-facing signaling;
+            - rejects duplicate selected `rtpmap`, duplicate selected `fmtp`, duplicate `ptime`, malformed `rtpmap`, malformed `ptime`, malformed selected `fmtp`, and duplicate `channel-order` inside fmtp.
+- Примечание:
+    - this is a raw SDP boundary only;
+    - raw-to-`AudioStreamSignaling` mapping, Level A validation, channel-order semantic validation, transport metadata projection, and runtime/backend bootstrap remain future work through `079C` / `079D` / `079E`.

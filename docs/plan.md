@@ -681,10 +681,51 @@
   - derive `RxAudioConfig` and later runtime audio receive config from modeled signaling
   - keep transport/network fields and local receiver policy inputs explicit rather than hiding them inside signaling model
   - add focused tests for signaling-to-runtime projection and mismatch handling
+- [x] 079C0: Add raw SDP audio media-section parsing boundary
+  - implemented `audio_sdp_media_section.hpp` raw parsing model for selected audio payload type;
+  - parses `m=audio`, payload-bound `a=rtpmap`, `a=ptime`, and payload-bound `a=fmtp` with `channel-order`;
+  - preserves unknown session/media attributes;
+  - keeps raw SDP parsing separate from `AudioStreamSignaling`, `RxAudioConfig`, backend transport, and runtime audio layout;
+  - deliberately treats standalone `a=channel-order:` as unknown instead of standards-facing channel-order signaling.
 - [ ] 079C: Add SDP parsing / ingestion path for audio signaling model
-  - parse relevant ST 2110-30 / SDP attributes into modeled audio signaling structures
-  - keep parsing separate from validation and separate from runtime config projection
-  - add focused tests for valid/invalid SDP field mapping
+  - **цель этой группы задач в MVP — довести audio SDP ingestion от raw SDP media-section до validated `AudioStreamSignaling`, не смешивая parsing, signaling validation, runtime config projection, channel layout и backend transport**
+  - parse relevant ST 2110-30 / SDP attributes into modeled audio signaling structures;
+  - keep parsing separate from validation and separate from runtime config projection;
+  - keep raw SDP transport/session/media details outside `AudioStreamSignaling`;
+  - add focused tests for valid/invalid SDP field mapping.
+  - [ ] 079C1: Add raw audio SDP media-section to `AudioStreamSignaling` adapter
+    - consume `RawAudioSdpMediaSection` from `audio_sdp_media_section.hpp`;
+    - map selected payload-bound `a=rtpmap` into `AudioMediaDescription`:
+      - PCM encoding from encoding name;
+      - sampling rate;
+      - channel count;
+    - map `a=ptime` into `packet_time_us`;
+    - map payload-bound `fmtp channel-order=...` into modeled `AudioChannelOrderSignaling`;
+    - validate the resulting `AudioStreamSignaling` through the existing audio signaling validation boundary;
+    - keep transport fields, UDP port, local/destination IP and runtime `RxAudioConfig` projection out of this adapter;
+    - reject malformed or unsupported raw audio SDP combinations through localized `InvalidValue` / `Unsupported` results;
+    - add focused tests for:
+      - valid Level A stereo SDP mapping;
+      - valid min/max Level A channel counts;
+      - unsupported encoding name;
+      - missing `ptime`;
+      - missing channel count in `rtpmap`;
+      - invalid baseline values rejected by `validate_audio_stream_signaling(...)`;
+      - channel-order mapped from payload-bound `fmtp`.
+  - [ ] 079C2: Add final audio SDP-to-`AudioStreamSignaling` ingestion entry point
+    - compose raw audio media-section selection with the raw-to-signaling adapter;
+    - provide a final entry point similar in role to video SDP ingestion, for example `parse_audio_stream_signaling_from_sdp(...)`;
+    - keep this entry point signaling-only:
+      - no socket/backend config;
+      - no runtime `RxAudioConfig` projection;
+      - no audio buffer layout/channel reordering;
+    - add focused end-to-end SDP ingestion tests for:
+      - valid Level A SDP;
+      - payload type mismatch;
+      - missing required `rtpmap`;
+      - invalid `ptime`;
+      - unsupported runtime-independent signaling values;
+      - unknown SDP attributes preserved at raw layer but ignored by final signaling mapping unless explicitly modeled.
 - [ ] 079D: Add channel-order / channel-mapping modeled boundary and validation
   - represent signaled channel order / channel mapping separately from internal audio buffer layout
   - define where future reordering/adaptation will live
