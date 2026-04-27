@@ -544,9 +544,32 @@
         - valid / invalid Level A channel counts;
         - valid / invalid sampling rate and packet time;
         - optional absent channel-order behavior;
-        - minimal `SMPTE2110.` channel-order structural validation;
+        - `SMPTE2110.(...)` channel-order structural validation;
+        - declared channel-order count rejection when greater than stream channel count;
         - explicit invalid `Unspecified` channel-order raw value rejection;
         - forward-compatible `Other` channel-order preservation.
+
+### tests/audio_channel_order_test.cpp
+- Роль:
+    - проверяет modeled ST 2110-30 audio channel-order boundary.
+    - покрывает:
+        - parsing of `SMPTE2110.(...)` channel-order values;
+        - known grouping symbols:
+            - `M`;
+            - `DM`;
+            - `ST`;
+            - `LtRt`;
+            - `51`;
+            - `71`;
+            - `222`;
+            - `SGRP`;
+            - `U01`..`U64`;
+        - rejection of malformed `Uxx` groups and unsupported symbols;
+        - declared channel-count accumulation;
+        - rejection when declared SMPTE2110 channel count exceeds stream channel count;
+        - absent / unspecified channel-order becoming an effective Undefined group;
+        - under-declared SMPTE2110 channel-order appending an Undefined remainder group;
+        - separation of channel-order parsing/effective grouping from runtime audio buffer layout and channel reordering.
 
 ## Audio SDP parsing / signaling adapter / ingestion
 

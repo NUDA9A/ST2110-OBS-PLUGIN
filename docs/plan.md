@@ -49,7 +49,7 @@
 - [x] S014: Current RTP parsing/payload extraction path does not yet provide explicit receiver-side tolerance to RTP header extensions. For a standards-aware receiver, packets with valid RTP header extensions must still have payload location derived correctly rather than being handled only under an implicit “no extensions” assumption. This must be fixed locally in RTP parsing / payload extraction logic and not spread across the rest of the receive pipeline.
 - [x] S015: `VideoPackingMode` was initially modeled only in video signaling and not carried as an explicit runtime receive axis through depacketizer/runtime config/padding validation. This gap is now closed at the architecture/config level. If `BPM` remains unsupported in current MVP runtime behavior, that limitation must stay explicit, localized, and implemented through already-existing runtime branches/boundaries rather than by absence of architecture.
 - [x] S016: Current standards-aware video signaling representation is still too close to internal runtime/storage concepts and does not yet model enough signaled SDP/media properties separately from internal `PixelFormat` / storage format. This must be expanded so signaled stream description is not collapsed prematurely into runtime-only concepts. In particular, the modeled representation must explicitly account for signaled stream-description properties such as `sampling`, `width`, `height`, `exactframerate`, `depth`, `colorimetry`, `TCS`, `PM`, and `SSN`, with `RANGE` allowed as optional / future-expansion coverage.
-- [ ] S017: Audio path currently has no fully completed first-class ST 2110-30 signaling/model boundary, no explicit structural validation layer for that model, no explicit SDP ingestion path into such a model, and no clear modeled representation for signaled channel order / channel mapping distinct from internal audio buffer layout. The audio MVP target must be made explicit as a **Level A-oriented receiver baseline** (`48 kHz`, `1 ms packet time`, `1..8 channels`), and these axes/boundaries must be architecturally introduced in MVP even if some runtime variants remain later implementation work.
+- [x] S017: Audio path now has a first-class ST 2110-30 signaling/model boundary, explicit structural validation, SDP ingestion into `AudioStreamSignaling`, signaling-to-runtime `RxAudioConfig` projection, and a modeled channel-order boundary distinct from internal audio buffer layout. The MVP audio baseline is explicit as a Level A-oriented receiver baseline (`48 kHz`, `1 ms packet time`, `1..8 channels`). Remaining audio work is runtime/pipeline/backend integration and buffer/layout implementation through the existing boundaries, not absence of the signaling architecture.
 - [x] S018: Receiver-side playout / reconstruction timing boundary is now explicit in `video_playout_timing.hpp`. RTP-domain timestamp mapping remains separate from receiver playout/reconstruction timing, and receiver-side offset/delay behavior has a localized boundary above reconstructed video frames. Fuller buffering/release scheduling remains future work through the existing timing/playout boundary.
 - [x] S019: RTP timestamp wraparound and long-running-stream continuity are now explicitly covered by timestamp-mapping tests. `video_timestamp_mapping_invariants_test.cpp` verifies monotonic internal timestamps, continuity across 32-bit RTP timestamp wraparound, rejection of backward/ambiguous deltas, and separation of RTP-domain mapping from synthetic/manual timing and playout timing.
 - [x] S020: Generic ST 2110-20 payload-header validation currently rejects non-zero `F` / `field_id` too early. This progressive-only restriction must not live in the low-level structural payload-header layer. Generic parsing/structural validation should accept packets for all already-modeled scan-mode variants, while mode-specific acceptance/rejection of `F` must remain localized in explicit mode-aware runtime boundaries so future `Interlaced` / `PsF` work can be implemented by filling existing branches rather than rewriting the parser/validator layer.
@@ -717,10 +717,23 @@
       - no runtime `RxAudioConfig` projection;
       - no audio buffer layout/channel reordering;
     - preserves unknown SDP attributes at the raw layer and ignores them in final signaling mapping unless explicitly modeled.
-- [ ] 079D: Add channel-order / channel-mapping modeled boundary and validation
-  - represent signaled channel order / channel mapping separately from internal audio buffer layout
-  - define where future reordering/adaptation will live
-  - add focused tests
+- [x] 079D: Add channel-order / channel-mapping modeled boundary and validation
+  - implemented `audio_channel_order.hpp` as an explicit modeled boundary for parsed/effective audio channel order;
+  - parses `SMPTE2110.(...)` channel-order values into ordered channel grouping records;
+  - supports ST 2110-30 grouping symbols:
+    - `M`;
+    - `DM`;
+    - `ST`;
+    - `LtRt`;
+    - `51`;
+    - `71`;
+    - `222`;
+    - `SGRP`;
+    - `U01`..`U64`;
+  - validates declared group channel count against signaled stream channel count;
+  - allows under-declared SMPTE2110 channel-order and treats the remaining stream channels as an appended Undefined group;
+  - treats absent / unspecified channel-order as an effective Undefined group covering all stream channels;
+  - keeps channel-order parsing and effective grouping separate from internal audio buffer layout and future reordering/adaptation behavior.
 - [ ] 079E: Define the runtime integration boundary where signaling-derived audio config becomes the primary receiver bootstrap path
   - make signaling-derived audio config a first-class runtime input alongside the current manual/synthetic path
   - keep current manual-config path usable for tests and scaffolding
