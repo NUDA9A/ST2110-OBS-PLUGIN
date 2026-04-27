@@ -548,7 +548,7 @@
         - explicit invalid `Unspecified` channel-order raw value rejection;
         - forward-compatible `Other` channel-order preservation.
 
-## Audio SDP raw media-section parsing
+## Audio SDP parsing / signaling adapter
 
 ### tests/audio_sdp_media_section_test.cpp
 - Роль:
@@ -563,3 +563,17 @@
         - preservation of unknown session/media attributes;
         - standalone `a=channel-order:` remaining unknown rather than being treated as standards-facing channel-order signaling;
         - rejection of missing selected `rtpmap`, duplicate selected `rtpmap`, duplicate selected `fmtp`, duplicate `ptime`, duplicate `channel-order`, malformed RTP clock/channel count, extra rtpmap slash, zero ptime, and non-integral-microsecond ptime.
+
+### tests/audio_sdp_signaling_adapter_test.cpp
+- Роль:
+    - проверяет adapter from raw parsed audio SDP media section to `AudioStreamSignaling`.
+    - покрывает:
+        - valid Level A stereo raw SDP mapping;
+        - valid Level A min/max channel counts;
+        - mapping of `L24` / `L16` RTP encoding names to `AudioPcmEncoding::LinearPcm`;
+        - rejection of unsupported encoding names through `Unsupported`;
+        - rejection of missing `ptime`;
+        - rejection of missing explicit channel count in selected `rtpmap`;
+        - rejection of invalid baseline values through `validate_audio_stream_signaling(...)`;
+        - mapping of payload-bound `fmtp channel-order=...` into `AudioChannelOrderSignaling`;
+        - preservation of adapter boundary separation from `RxAudioConfig`, socket/backend transport fields, and audio buffer layout.

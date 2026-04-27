@@ -693,25 +693,18 @@
   - keep parsing separate from validation and separate from runtime config projection;
   - keep raw SDP transport/session/media details outside `AudioStreamSignaling`;
   - add focused tests for valid/invalid SDP field mapping.
-  - [ ] 079C1: Add raw audio SDP media-section to `AudioStreamSignaling` adapter
-    - consume `RawAudioSdpMediaSection` from `audio_sdp_media_section.hpp`;
-    - map selected payload-bound `a=rtpmap` into `AudioMediaDescription`:
+  - [x] 079C1: Add raw audio SDP media-section to `AudioStreamSignaling` adapter
+    - implemented `audio_sdp_signaling_adapter.hpp` as an explicit raw-SDP-to-signaling adapter layer;
+    - consumes `RawAudioSdpMediaSection` from `audio_sdp_media_section.hpp`;
+    - maps selected payload-bound `a=rtpmap` into `AudioMediaDescription`:
       - PCM encoding from encoding name;
       - sampling rate;
       - channel count;
-    - map `a=ptime` into `packet_time_us`;
-    - map payload-bound `fmtp channel-order=...` into modeled `AudioChannelOrderSignaling`;
-    - validate the resulting `AudioStreamSignaling` through the existing audio signaling validation boundary;
-    - keep transport fields, UDP port, local/destination IP and runtime `RxAudioConfig` projection out of this adapter;
-    - reject malformed or unsupported raw audio SDP combinations through localized `InvalidValue` / `Unsupported` results;
-    - add focused tests for:
-      - valid Level A stereo SDP mapping;
-      - valid min/max Level A channel counts;
-      - unsupported encoding name;
-      - missing `ptime`;
-      - missing channel count in `rtpmap`;
-      - invalid baseline values rejected by `validate_audio_stream_signaling(...)`;
-      - channel-order mapped from payload-bound `fmtp`.
+    - maps `a=ptime` into `packet_time_us`;
+    - maps payload-bound `fmtp channel-order=...` into modeled `AudioChannelOrderSignaling`;
+    - validates the resulting `AudioStreamSignaling` through the existing audio signaling validation boundary;
+    - keeps transport fields, UDP port, local/destination IP and runtime `RxAudioConfig` projection out of this adapter;
+    - rejects malformed or unsupported raw audio SDP combinations through localized `InvalidValue` / `Unsupported` results.
   - [ ] 079C2: Add final audio SDP-to-`AudioStreamSignaling` ingestion entry point
     - compose raw audio media-section selection with the raw-to-signaling adapter;
     - provide a final entry point similar in role to video SDP ingestion, for example `parse_audio_stream_signaling_from_sdp(...)`;

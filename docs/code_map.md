@@ -1538,3 +1538,43 @@
 - Примечание:
     - this is a raw SDP boundary only;
     - raw-to-`AudioStreamSignaling` mapping, Level A validation, channel-order semantic validation, transport metadata projection, and runtime/backend bootstrap remain future work through `079C` / `079D` / `079E`.
+
+### libs/st2110core/include/st2110/audio_sdp_signaling_adapter.hpp
+- Роль:
+    - explicit adapter layer от raw parsed audio SDP media section к modeled `AudioStreamSignaling`.
+    - отделяет raw SDP parsing от audio signaling model validation и от runtime/backend projection.
+    - является промежуточным слоем audio SDP ingestion path: raw SDP boundary уже выбран, но runtime `RxAudioConfig`, transport fields, backend/socket behavior и audio buffer layout сюда не попадают.
+- Связи:
+    - использует `audio_sdp_media_section.hpp` как источник `RawAudioSdpMediaSection`;
+    - использует `audio_signaling.hpp` как целевую standards-aware audio signaling model;
+    - использует `Error`;
+    - будет использоваться final audio SDP ingestion entry point из будущего `audio_sdp_ingestion.hpp`.
+- Сущности:
+    - `audio_sdp_ascii_lower(char) -> char`
+        - ASCII-only helper для case-insensitive token comparison.
+    - `audio_sdp_ascii_iequals(std::string_view, std::string_view) -> bool`
+        - ASCII-only case-insensitive comparison helper для SDP audio tokens.
+    - `audio_pcm_encoding_from_raw_audio_sdp_rtpmap_encoding_name(std::string_view) -> std::expected<AudioPcmEncoding, Error>`
+        - maps currently supported raw SDP RTP encoding names:
+            - `L24` -> `AudioPcmEncoding::LinearPcm`;
+            - `L16` -> `AudioPcmEncoding::LinearPcm`;
+        - returns `Unsupported` for unsupported encodings;
+        - returns `InvalidValue` for empty encoding names.
+    - `audio_channel_order_signaling_from_raw_audio_sdp_value(std::string_view) -> AudioChannelOrderSignaling`
+        - maps raw `channel-order` value into modeled channel-order signaling:
+            - `SMPTE2110.*` -> `AudioChannelOrderConvention::Smpte2110`;
+            - other non-empty values -> `AudioChannelOrderConvention::Other`;
+        - preserves original raw value.
+    - `audio_stream_signaling_from_raw_audio_sdp_media_section(const RawAudioSdpMediaSection&) -> std::expected<AudioStreamSignaling, Error>`
+        - validates that selected payload type belongs to the selected media section payload list;
+        - requires selected parsed `rtpmap`;
+        - requires `rtpmap` sampling rate;
+        - requires explicit `rtpmap` channel count;
+        - requires parsed `ptime`;
+        - maps encoding / sampling rate / packet time / channel count into `AudioMediaDescription`;
+        - maps optional payload-bound `fmtp channel-order=...` into `AudioChannelOrderSignaling`;
+        - validates the final `AudioStreamSignaling` through `validate_audio_stream_signaling(...)`;
+        - keeps UDP port, IP addresses, socket/backend fields, runtime sample format injection, `RxAudioConfig` projection, and audio buffer/channel layout outside this adapter.
+- Примечание:
+    - this is a signaling adapter only;
+    - full SDP entry point, runtime projection, backend bootstrap, and channel-layout/reordering behavior remain separate follow-up boundaries.
