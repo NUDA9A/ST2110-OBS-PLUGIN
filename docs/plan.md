@@ -677,7 +677,7 @@
   - validate sample rate / packet-time / channel-count consistency within the chosen baseline
   - validate signaled channel-order / channel-mapping consistency where applicable
   - keep this validation boundary separate from SDP parsing and separate from runtime config projection
-- [ ] 079B: Add explicit projection/adapters from audio signaling model to runtime config
+- [x] 079B: Add explicit projection/adapters from audio signaling model to runtime config
   - derive `RxAudioConfig` and later runtime audio receive config from modeled signaling
   - keep transport/network fields and local receiver policy inputs explicit rather than hiding them inside signaling model
   - add focused tests for signaling-to-runtime projection and mismatch handling
@@ -695,7 +695,7 @@
   - do not require full SDP parser yet; only make the receiver-side integration boundary explicit
   - ensure future channel-order / channel-mapping implementations plug into already-existing modeled/projection boundaries rather than reshaping runtime contracts
   - add focused tests for signaling-driven audio config composition / mismatch handling
-- [ ] 080: Define `RxAudioConfig` (sample_rate, channels, packet_time / samples_per_packet, payload_type, ip/port, format)
+- [x] 080: Define `RxAudioConfig` (sample_rate, channels, packet_time / samples_per_packet, payload_type, ip/port, format)
   - make the initial MVP target a narrow ST 2110-30 baseline rather than a format-free placeholder
   - make that baseline explicit as a **Level A-oriented receiver baseline** with `48 kHz`, `1 ms packet time`, and `1..8 channels`
   - capture at least the parameters needed for that initial receive path

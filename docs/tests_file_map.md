@@ -48,6 +48,10 @@
 ### tests/test_config_validation.cpp
 - Роль:
     - проверяет общие config validation helpers.
+    - дополнительно покрывает derived audio helper behavior where applicable:
+        - deriving `samples_per_packet` from sampling rate and packet time;
+        - invalid zero values;
+        - non-integral sample counts.
 
 ### tests/test_header_odr_link_main.cpp
 ### tests/test_header_odr_link_a.cpp
@@ -62,6 +66,20 @@
 ### tests/test_rx_config.cpp
 - Роль:
     - проверяет базовую validation модели `RxVideoConfig`.
+    - проверяет initial `RxAudioConfig` runtime validation:
+        - Level A-oriented default runtime support;
+        - channel count bounds;
+        - sample rate / packet time validation through runtime support policy;
+        - derived `samples_per_packet` consistency;
+        - UDP port;
+        - dynamic RTP payload type;
+        - destination IP requirement;
+        - local IP allowed to be empty;
+        - unsupported audio sample format rejection.
+    - проверяет architecture property for audio runtime support:
+        - `validate_rx_audio_config(...)` is a thin default-policy wrapper;
+        - `validate_rx_audio_config_against_runtime_support(...)` can validate a custom support policy without rewriting default validation;
+        - non-default packet time support can be accepted by explicit support policy while remaining rejected by current default policy.
 
 ### tests/test_backend_interface.cpp
 - Роль:
@@ -497,6 +515,20 @@
         - optional address count.
 
 ## Audio signaling model
+
+### tests/audio_signaling_to_rx_config_test.cpp
+- Роль:
+    - проверяет projection from `AudioStreamSignaling` to `RxAudioConfig`.
+    - покрывает:
+        - valid Level A stereo projection;
+        - min/max Level A channel counts;
+        - channel-order presence not leaking into runtime buffer layout yet;
+        - invalid signaling rejection;
+        - bad UDP port;
+        - bad RTP payload type;
+        - empty destination IP;
+        - unsupported runtime audio sample format.
+    - фиксирует, что `samples_per_packet` выводится из `sampling_rate_hz` + `packet_time_us`, а не задается как hardcoded runtime constant.
 
 ### tests/audio_signaling_model_test.cpp
 - Роль:

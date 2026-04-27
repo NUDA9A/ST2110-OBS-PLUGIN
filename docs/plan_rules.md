@@ -262,35 +262,67 @@
 
 ### 7.4. MVP-ограничения не должны становиться архитектурными ограничениями
 - **MVP может быть ограничен только в реализации, но не в архитектуре.**
-- Если стандартная ось уже известна в рамках ST 2110 family, она должна быть архитектурно представлена уже в MVP.
-- Для такой оси в MVP должны существовать:
-    - explicit modeled representation;
-    - explicit config/runtime axis или projection boundary;
-    - explicit dispatch / boundary / adapter / mapper / policy point;
-    - локализованные future implementation branches.
-- Допустимо, что часть веток в MVP пока возвращает `Unsupported`, `InvalidValue` через reject-by-policy или работает как placeholder.
-- Это допустимо только если сама ось и extension points уже существуют явно.
-- Поздние фазы (`Medium` / `Hardening`) должны по возможности сводиться к “заполнить уже существующие ветки реализацией”, а не к “впервые протащить эту ось через архитектуру”.
+- Любое известное или ожидаемо расширяемое измерение стандарта / runtime-модели / transport-модели / media-модели должно быть представлено явно, а не захардкожено в произвольном месте реализации.
+- Запрещено закреплять текущий MVP-scope как неявное архитектурное ограничение через:
+  - magic constants;
+  - неименованные literals;
+  - ad hoc `if` / `switch` без named boundary;
+  - вычисляемые значения, записанные как фиксированные числа;
+  - отсутствие поля / enum / helper / adapter / validation boundary для уже известной оси расширения.
+- Допустимо временно поддерживать только часть вариантов стандарта, но только если это оформлено как:
+  - explicit modeled representation;
+  - explicit config/runtime/signaling axis, если значение влияет на behavior;
+  - explicit validation/projection/support boundary;
+  - named helper / named constant / named policy;
+  - локализованный `Unsupported` / `InvalidValue` branch для пока не реализованных вариантов;
+  - follow-up task, если это ограничение должно быть снято позже.
+- Hardcoded значения допустимы только если они являются:
+  - wire-format константами стандарта, оформленными как named constants;
+  - локализованными current-support limits в явно названной support boundary;
+  - тестовыми значениями внутри tests.
+- Если значение может быть вычислено из signaled/runtime параметров, оно должно вычисляться через helper, а не записываться как фиксированная константа.
+  - Пример: audio `samples_per_packet` должен выводиться из `sampling_rate_hz` и `packet_time_us`, а не задаваться как `48`, даже если текущий Level A baseline дает именно `48`.
 
-### 7.5. Стандартные оси, которые должны быть представлены архитектурно
-- Правило про explicit modeled representation / boundary / dispatch / future branches относится, в частности, к уже известным стандартным осям и вариантам:
-    - `Progressive | Interlaced | PsF`;
-    - `GPM | BPM`;
-    - signaling / clock / timestamp / timing-related variants;
-    - standards-aware video media-property representation;
-    - standards-aware audio signaling / channel-order / channel-mapping representation;
-    - receiver timing / playout timing / capability boundaries.
+### 7.5. Стандартные и архитектурные оси, которые должны быть представлены явно
+- Правило explicit modeled representation / boundary / dispatch / future branches относится ко всем известным расширяемым осям проекта, а не только к уже перечисленным примерам.
+- В частности, явно должны моделироваться и не должны быть захардкожены:
+  - media kind (`video` / `audio` / future media types);
+  - backend kind (`socket` / `mtl` / future backend types);
+  - pixel/storage format;
+  - scan mode (`Progressive | Interlaced | PsF`);
+  - packing mode (`GPM | BPM`);
+  - RTP payload type admission;
+  - clock / timestamp / timing / playout policy;
+  - packet size / MAXUDP policy;
+  - SDP/raw signaling scope and mapping boundaries;
+  - video media-description properties;
+  - audio sampling rate / packet time / samples-per-packet derivation;
+  - audio conformance level / current runtime support boundary;
+  - audio channel count / channel order / channel mapping;
+  - receiver capability / support policy.
+- Этот список не является закрытым. Если новая задача касается параметра, который может меняться по стандарту, SDP, runtime config, backend capabilities или future support, он должен рассматриваться как архитектурная ось или derived value до доказательства обратного.
 
 ### 7.6. Поздние реализации для уже заложенных веток
-- Реализационные задачи для уже архитектурно заложенных веток **могут оставаться в `Medium`**.
+- Реализационные задачи для уже архитектурно заложенных веток **могут оставаться в `Medium` / later phases**.
 - Это не нарушает MVP-принцип, если сама ось, boundary и dispatch уже заведены в MVP.
+- Поздние фазы должны по возможности сводиться к:
+  - заполнить уже существующий branch;
+  - расширить enum/value coverage;
+  - добавить adapter/mapper case;
+  - добавить tests;
+    а не к:
+  - впервые протащить ось через architecture;
+  - переписать существующий pipeline;
+  - заменить hardcoded assumption на полноценную модель.
 
 ### 7.7. Временные упрощения
 - Все временные упрощения должны быть:
-    - явно зафиксированы в плане;
-    - локализованы;
-    - сопровождаться отдельной задачей на устранение.
+  - явно зафиксированы в плане;
+  - локализованы;
+  - оформлены как named support boundary / policy / adapter / helper;
+  - сопровождаться отдельной задачей на устранение, если ограничение должно быть снято.
 - Временное упрощение не должно маскироваться как окончательное архитектурное решение.
+- Если во время задачи обнаружено, что значение или behavior были захардкожены вместо modeled/derived/boundary-based решения, текущая задача не считается принятой до исправления или явного вынесения ограничения в `Spec notes / deviations` и backlog.
 
 ### 7.8. Работа с отклонениями от стандартов
 - **MVP не должен сознательно накапливать расхождения со стандартом**, если их можно избежать без взрывного роста сложности.

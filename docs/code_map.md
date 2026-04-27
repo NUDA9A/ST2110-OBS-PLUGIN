@@ -57,11 +57,18 @@
 
 ### libs/st2110core/include/st2110/config_validation.hpp
 - Роль:
-    - общие helper’ы для явной валидации конфигов и значений.
+    - общие helper’ы для явной валидации конфигов и derived values.
     - отражает правило “strict parse, explicit fallback”.
+    - содержит generic derived-value helper для audio `samples_per_packet`, чтобы runtime config не закреплял packet cadence через magic constants.
 - Связи:
-    - используется `RxVideoConfig` и будущими signaling/config model.
+    - используется `RxVideoConfig`, `RxAudioConfig`, signaling/runtime projection helpers и будущими config model.
 - Сущности:
+    - `audio_samples_per_packet_from_rate_and_packet_time(uint32_t sampling_rate_hz, uint32_t packet_time_us) -> std::expected<uint32_t, Error>`
+        - вычисляет `samples_per_packet` как `(sampling_rate_hz * packet_time_us) / 1'000'000`;
+        - rejects zero rate / packet time;
+        - rejects non-integral sample counts;
+        - rejects overflow / zero derived result;
+        - используется audio signaling-to-runtime projection и `RxAudioConfig` validation вместо hardcoded `48`.
     - `is_non_empty(std::string_view)`
     - `is_dynamic_rtp_payload_type(uint8_t)`
     - `validate_frame_rate(uint32_t num, uint32_t den)`
@@ -308,9 +315,13 @@
 
 ### libs/st2110core/include/st2110/rx_config.hpp
 - Роль:
-    - manual video RX config model для текущего MVP-path.
+    - manual/runtime RX config model для текущих MVP-path’ов.
+    - содержит video runtime config и initial audio runtime config.
+    - audio runtime validation now uses an explicit runtime support policy boundary instead of hardcoding Level A values directly inside validation logic.
 - Связи:
     - используется backend/video pipeline слоями;
+    - используется audio signaling projection layer из `audio_signaling_rx_config.hpp`;
+    - использует `config_validation.hpp`, `video_scan_mode.hpp`, `audio_signaling.hpp`.
     - в будущем должен сосуществовать со standards-aware signaling model, а не заменять его.
 - Сущности:
     - `RxVideoConfig`
@@ -323,6 +334,49 @@
         - `scan_mode`
         - `is_valid()`
     - `validate_rx_video_config(const RxVideoConfig&)`
+    - `AudioSampleFormat`
+        - `LinearPcm`
+    - `RxAudioConfig`
+        - `sampling_rate_hz`
+        - `packet_time_us`
+        - `samples_per_packet`
+        - `channel_count`
+        - `udp_port`
+        - `payload_type`
+        - `local_ip`
+        - `dest_ip`
+        - `format`
+        - `is_valid()`
+    - `AudioRuntimeSupportPolicy`
+        - `sample_formats`
+        - `conformance_ranges`
+        - explicit runtime support boundary for current/future audio runtime capabilities.
+    - `audio_runtime_support::default_sample_formats`
+        - current default runtime-supported audio sample formats.
+    - `audio_runtime_support::default_conformance_ranges`
+        - current default runtime-supported conformance ranges.
+        - currently contains the Level A-oriented receiver baseline.
+        - future audio level/profile support should extend this catalog rather than rewriting `validate_rx_audio_config(...)`.
+    - `audio_sample_format_supported(...)`
+        - checks whether a sample format is listed by a support policy.
+    - `audio_media_description_from_rx_audio_config(...)`
+        - maps runtime audio config back to modeled `AudioMediaDescription` for conformance-range matching.
+    - `rx_audio_config_matches_any_conformance_range(...)`
+        - checks runtime audio config against a list of supported conformance ranges.
+    - `validate_rx_audio_config_against_runtime_support(...)`
+        - main reusable audio runtime validation boundary;
+        - validates sample format support;
+        - validates conformance range support;
+        - derives expected `samples_per_packet` from `sampling_rate_hz` and `packet_time_us`;
+        - validates UDP port, dynamic RTP payload type, and destination IP.
+    - `default_audio_rx_runtime_support_policy()`
+        - returns the current default MVP audio runtime support policy.
+    - `validate_rx_audio_config(const RxAudioConfig&)`
+        - thin wrapper over `validate_rx_audio_config_against_runtime_support(...)` using `default_audio_rx_runtime_support_policy()`.
+- Примечание:
+    - current default runtime support remains Level A-oriented, but the validation path is policy-driven.
+    - adding a later supported audio conformance range should primarily extend `audio_runtime_support::default_conformance_ranges` and tests, not rewrite `validate_rx_audio_config(...)`.
+    - `samples_per_packet` is derived/validated through `config_validation::audio_samples_per_packet_from_rate_and_packet_time(...)`, not fixed as a magic constant.
 
 ### libs/st2110core/include/st2110/st2110_20.hpp
 - Роль:
@@ -1406,3 +1460,27 @@
     - файл теперь реализует initial structural validation boundary for Level A-oriented MVP signaling;
     - full SDP parsing, channel-order group parsing / count matching, runtime audio config projection, and audio buffer layout remain future work through `079B` / `079C` / `079D` / `080+`;
     - missing `channel_order` is explicitly representable and will be interpreted by later validation/projection logic.
+
+### libs/st2110core/include/st2110/audio_signaling_rx_config.hpp
+- Роль:
+    - explicit adapter/projection boundary from standards-aware `AudioStreamSignaling` to runtime `RxAudioConfig`.
+    - отделяет modeled audio signaling от backend/runtime transport fields.
+- Связи:
+    - использует `audio_signaling.hpp` for modeled ST 2110-30 audio signaling;
+    - использует `rx_config.hpp` for runtime audio config;
+    - использует `config_validation.hpp` for derived `samples_per_packet`.
+- Сущности:
+    - `rx_audio_config_from_audio_stream_signaling(...) -> std::expected<RxAudioConfig, Error>`
+        - validates `AudioStreamSignaling` first;
+        - derives `samples_per_packet` from signaled `sampling_rate_hz` and `packet_time_us`;
+        - injects local runtime/transport fields explicitly:
+            - `udp_port`;
+            - `payload_type`;
+            - `local_ip`;
+            - `dest_ip`;
+            - runtime `AudioSampleFormat`;
+        - validates final `RxAudioConfig` through the runtime support boundary.
+- Примечание:
+    - transport/network fields stay outside the signaling model;
+    - the projection path does not hardcode `samples_per_packet = 48`;
+    - future channel mapping / runtime layout adaptation should extend this adapter or adjacent dedicated boundaries without changing the signaling model shape.
