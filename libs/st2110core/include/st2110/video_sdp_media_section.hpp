@@ -10,6 +10,7 @@
 #include <vector>
 #include <utility>
 #include <system_error>
+#include <limits>
 
 #include "error.hpp"
 
@@ -23,6 +24,10 @@ namespace st2110 {
         std::string network_type{};
         std::string address_type{};
         std::string connection_address{};
+
+        std::string base_address{};
+        std::optional<uint8_t> ttl{};
+        std::optional<uint32_t> address_count{};
     };
 
     enum class RawSdpAttributeScope {
@@ -317,6 +322,107 @@ namespace st2110 {
         };
     }
 
+    struct RawSdpConnectionAddressParameters {
+        std::string base_address{};
+        std::optional<uint8_t> ttl{};
+        std::optional<uint32_t> address_count{};
+    };
+
+    [[nodiscard]] inline std::expected<uint64_t, Error>
+    parse_sdp_connection_address_uint64(std::string_view value) {
+        if (value.empty()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        uint64_t out = 0;
+
+        const char* first = value.data();
+        const char* last = value.data() + value.size();
+
+        const auto [ptr, ec] = std::from_chars(first, last, out);
+
+        if (ec != std::errc{} || ptr != last) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        return out;
+    }
+
+    [[nodiscard]] inline std::expected<RawSdpConnectionAddressParameters, Error>
+    parse_connection_address_parameters(std::string_view connection_address) {
+        connection_address = strip_cr(connection_address);
+
+        if (connection_address.empty()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        RawSdpConnectionAddressParameters res{};
+
+        const std::size_t first_slash = connection_address.find('/');
+
+        if (first_slash == std::string_view::npos) {
+            res.base_address = std::string(connection_address);
+            return res;
+        }
+
+        const std::string_view base_address = connection_address.substr(0, first_slash);
+
+        if (base_address.empty()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        res.base_address = std::string(base_address);
+
+        const std::size_t ttl_start = first_slash + 1;
+        const std::size_t second_slash = connection_address.find('/', ttl_start);
+
+        const std::string_view ttl_text =
+                second_slash == std::string_view::npos
+                ? connection_address.substr(ttl_start)
+                : connection_address.substr(ttl_start, second_slash - ttl_start);
+
+        auto parsed_ttl = parse_sdp_connection_address_uint64(ttl_text);
+
+        if (!parsed_ttl.has_value()) {
+            return std::unexpected(parsed_ttl.error());
+        }
+
+        if (*parsed_ttl > std::numeric_limits<uint8_t>::max()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        res.ttl = static_cast<uint8_t>(*parsed_ttl);
+
+        if (second_slash == std::string_view::npos) {
+            return res;
+        }
+
+        const std::size_t address_count_start = second_slash + 1;
+
+        if (connection_address.find('/', address_count_start) != std::string_view::npos) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        const std::string_view address_count_text =
+                connection_address.substr(address_count_start);
+
+        auto parsed_address_count =
+                parse_sdp_connection_address_uint64(address_count_text);
+
+        if (!parsed_address_count.has_value()) {
+            return std::unexpected(parsed_address_count.error());
+        }
+
+        if (*parsed_address_count == 0 ||
+            *parsed_address_count > std::numeric_limits<uint32_t>::max()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        res.address_count = static_cast<uint32_t>(*parsed_address_count);
+
+        return res;
+    }
+
     [[nodiscard]] inline std::expected<RawSdpConnectionData, Error>
     parse_connection_data(std::string_view line) {
         line = strip_cr(line);
@@ -332,10 +438,20 @@ namespace st2110 {
             return std::unexpected(Error::InvalidValue);
         }
 
+        auto parsed_connection_address =
+                parse_connection_address_parameters(tokens[2]);
+
+        if (!parsed_connection_address.has_value()) {
+            return std::unexpected(parsed_connection_address.error());
+        }
+
         return RawSdpConnectionData{
                 .network_type = std::string(tokens[0]),
                 .address_type = std::string(tokens[1]),
-                .connection_address = std::string(tokens[2])
+                .connection_address = std::string(tokens[2]),
+                .base_address = std::move(parsed_connection_address->base_address),
+                .ttl = parsed_connection_address->ttl,
+                .address_count = parsed_connection_address->address_count
         };
     }
 

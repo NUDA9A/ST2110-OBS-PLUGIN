@@ -957,7 +957,15 @@
     - raw parsed `c=` connection data:
       - `network_type`
       - `address_type`
-      - `connection_address`
+      - `connection_address` — original raw connection-address string
+      - `base_address` — parsed base address before optional multicast parameters
+      - `ttl` — optional parsed TTL/address parameter when present
+      - `address_count` — optional parsed address count / numaddr when present
+  - `RawSdpConnectionAddressParameters`
+    - helper parse result for connection-address decomposition:
+      - `base_address`
+      - optional `ttl`
+      - optional `address_count`
   - `RawSdpAttributeScope`
     - explicit scope marker for scoped raw SDP attributes:
       - `Session`
@@ -983,7 +991,7 @@
       - `payload_type`
       - `media_payload_types`
       - optional `mid`
-      - optional media-level `c=`
+      - optional media-level `c=`, including parsed connection-address components
       - media-level `source_filters`
       - selected payload-type-bound `rtpmap`
       - selected payload-type-bound `fmtp`
@@ -1010,8 +1018,8 @@
       - `session_troff` / `media_troff`
       - `session_cmax` / `media_cmax`
     - raw transport/redundancy metadata:
-      - `session_connection`
-      - `media_connection`
+      - `session_connection`, including parsed connection-address components
+      - `media_connection`, including parsed connection-address components
       - `mid`
       - `source_filters`
       - `session_groups`
@@ -1029,7 +1037,18 @@
     - `parse_attribute_value(...)`
     - `trim_left_ws(...)`
     - `parse_unknown_sdp_attribute(...)`
+    - `parse_sdp_connection_address_uint64(...)`
+    - `parse_connection_address_parameters(...)`
+      - decomposes SDP connection-address into:
+        - original base address
+        - optional TTL
+        - optional address count / numaddr
+      - rejects structurally malformed slash parameter forms;
+      - intentionally does not validate IP syntax, multicast membership, or backend socket support.
     - `parse_connection_data(...)`
+      - parses `c=<nettype> <addrtype> <connection-address>`;
+      - preserves original connection-address string;
+      - also fills parsed `base_address`, optional `ttl`, and optional `address_count`.
     - `parse_group_attribute(...)`
     - `has_dup_session_group(...)`
     - `parse_source_filter_attribute_value(...)`
@@ -1052,7 +1071,8 @@
       - captures session-level and selected media-level timing/reference/sender-related attributes with explicit scope;
       - preserves legacy resolved timing fields where media-level values override session-level values;
       - rejects duplicate scoped timing/reference/sender attributes within the same scope;
-      - captures media-level `c=`;
+      - captures session-level `c=` and selected media-level `c=`;
+      - parses and preserves connection-address base address plus optional TTL/address-count components;
       - captures `a=mid`;
       - captures session/media `a=source-filter` with explicit scope and minimally parsed fields;
       - captures session-level `a=group`, including `DUP`;
@@ -1070,6 +1090,8 @@
   - final stream selection / redundant receive policy is intentionally not implemented here and remains future work through `214D`.
   - timing/reference/sender standalone attributes are now scope-aware in the raw SDP boundary;
   - resolved compatibility fields remain for existing ingestion code, but the authoritative raw model now keeps session/media scoped fields separately.
+  - multicast-style connection-address parameters are now parsed and preserved in the raw SDP boundary;
+  - socket/backend join behavior, multicast validation, TTL application, source filtering, and address-count behavior remain future bootstrap/backend work through `214C`.
 
 ### libs/st2110core/include/st2110/video_sdp_fmtp.hpp
 - Роль:
@@ -1395,7 +1417,7 @@
 - [x] S028: Raw SDP `a=source-filter` handling now preserves session-vs-media scope and minimally parses the RFC-style source-filter fields while preserving the original raw attribute value. Runtime/backend consumption remains future work through `214C`.
 - [x] S029: Raw SDP redundancy handling now ties `a=group:DUP` membership to actual `a=mid` values and preserves duplicate RTP video media-section candidates as explicit raw candidate summaries. Full redundant-stream selection / ST 2022-7-style behavior remains future work through `214D`.
 - [x] S030: SDP `a=fmtp` parser now uses a localized strict media-parameter parsing boundary in `video_sdp_fmtp.hpp`. It rejects whitespace inside parameter tokens including around `=`, rejects malformed separators such as `sampling=...;width=...` where `;` is not followed by required whitespace, rejects empty parameters caused by doubled/trailing separators, rejects malformed `name=value` tokens, and still preserves unknown syntactically valid parameters.
-- [ ] S031: Raw SDP `c=` connection data is preserved, but multicast connection-address parameters such as address/TTL/numaddr are not yet modeled explicitly enough for future backend bootstrap. The raw SDP layer should keep the original connection address string but also expose parsed base address and optional multicast parameters where present.
+- [x] S031: Raw SDP `c=` connection data now preserves the original connection address string and also exposes parsed connection-address components for future backend bootstrap: `base_address`, optional TTL, and optional address count / numaddr. Runtime/backend consumption remains future work through `214C`.
 - [x] S032: SDP timing/reference-clock attributes such as `ts-refclk` and `mediaclk` can be session-level or media-level. The raw SDP ingestion boundary now preserves this scope explicitly and applies localized session/media resolution for the selected video stream. Media-level values override session-level values where allowed; duplicate values within the same scope are rejected; `fmtp` timing media parameters are treated as media-level signaling and conflict only with media-level standalone attributes for the same semantic field.
 ---
 
@@ -1606,7 +1628,7 @@
   - [x] 069C4: Add architecture-focused regression tests for receiver timing boundary placement
     - prove receiver timing assumptions remain outside parser/reorder/depacketizer internals
     - prove later ST 2110-21 behavior can be filled into the existing boundary without reshaping public contracts
-- [ ] 069D: Add SDP parsing / ingestion path for video signaling model
+- [x] 069D: Add SDP parsing / ingestion path for video signaling model
   - **цель этой группы задач в MVP — заложить полную SDP/media-section ingestion architecture уже сейчас, even if coverage of many specific `a=` attributes will be expanded later**
   - [x] 069D0: Define raw SDP video media-section model / parsing boundary
     - define a dedicated raw parsed representation for one SDP video media section before mapping to `VideoStreamSignaling`
@@ -1919,12 +1941,12 @@
       - media-level value overrides session-level value where allowed
       - duplicate media-level timing attributes are rejected
       - existing media-level-only SDP behavior remains unchanged
-  - [ ] 069D16: Parse multicast address parameters from SDP `c=` connection data in raw SDP boundary
+  - [x] 069D16: Parse multicast address parameters from SDP `c=` connection data in raw SDP boundary
     - keep `c=` data as raw SDP transport metadata, not as `VideoStreamSignaling`
     - preserve the original connection address string
     - additionally expose parsed connection-address components where present:
       - base address
-      - optional TTL for IPv4 multicast form
+      - optional TTL for IPv4 multicast-style form
       - optional address count / numaddr
     - keep backend/socket join behavior out of this task
     - prefer minimal changes to existing `.hpp` files:
