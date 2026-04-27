@@ -1619,7 +1619,8 @@
 - Примечание:
     - this is a final signaling ingestion boundary, not a receiver bootstrap boundary;
     - transport/network fields and local receiver policy inputs remain outside this file;
-    - channel layout / channel reordering behavior remains future work through `079D` and later audio runtime pipeline tasks.
+    - channel-order parsing/effective grouping now lives in `audio_channel_order.hpp`;
+    - audio buffer layout and channel reordering behavior remain future work through later audio runtime pipeline tasks that should consume the modeled channel-order boundary instead of reparsing SDP strings.
 
 ### libs/st2110core/include/st2110/audio_channel_order.hpp
 - Роль:
