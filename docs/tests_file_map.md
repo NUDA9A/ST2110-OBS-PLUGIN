@@ -21,7 +21,7 @@
     - каждый test executable линкуется с `st2110core`.
 - Сущности:
     - `add_st2110_test(...)`
-    - targets for smoke/base tests, RTP/ST2110 packet parsing, reorder, frame assembly, depacketizer, video signaling, SDP ingestion, timing, playout, and audio signaling model tests.
+    - targets for smoke/base tests, RTP/ST2110 packet parsing, reorder, frame assembly, depacketizer, video signaling, SDP ingestion, timing, playout, audio signaling model tests, audio SDP ingestion tests, and audio receiver bootstrap tests.
 
 ## Smoke / common foundations
 
@@ -570,6 +570,24 @@
         - absent / unspecified channel-order becoming an effective Undefined group;
         - under-declared SMPTE2110 channel-order appending an Undefined remainder group;
         - separation of channel-order parsing/effective grouping from runtime audio buffer layout and channel reordering.
+
+### tests/audio_receiver_bootstrap_test.cpp
+- Роль:
+    - проверяет audio receiver bootstrap composition boundary.
+    - покрывает:
+        - projection from `AudioStreamSignaling` to runtime `RxAudioConfig`;
+        - effective channel-order derivation in the same bootstrap result;
+        - absent channel-order becoming one Undefined group;
+        - exact SMPTE2110 channel-order preservation;
+        - under-declared SMPTE2110 channel-order appending an Undefined remainder group;
+        - `Other` channel-order convention preservation as an unknown/future convention;
+        - rejection of over-declared SMPTE2110 channel-order;
+        - rejection of invalid runtime transport fields:
+            - UDP port;
+            - RTP payload type;
+            - destination IP;
+        - rejection of unsupported runtime audio sample format.
+    - фиксирует, что bootstrap layer composes existing signaling/runtime/channel-order boundaries and does not implement audio buffer layout, channel reordering, packet pipeline, or backend behavior.
 
 ## Audio SDP parsing / signaling adapter / ingestion
 

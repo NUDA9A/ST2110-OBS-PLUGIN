@@ -1490,6 +1490,35 @@
     - the projection path does not hardcode `samples_per_packet = 48`;
     - future channel mapping / runtime layout adaptation should extend this adapter or adjacent dedicated boundaries without changing the signaling model shape.
 
+### libs/st2110core/include/st2110/audio_receiver_bootstrap.hpp
+- Роль:
+    - explicit audio receiver bootstrap composition boundary.
+    - связывает standards-aware `AudioStreamSignaling` с текущим runtime audio config и effective channel-order model.
+    - делает signaling-derived audio config first-class bootstrap input без смешивания с audio buffer layout, channel reordering, packet pipeline или backend/socket behavior.
+- Связи:
+    - использует `audio_signaling.hpp` for `AudioStreamSignaling`;
+    - использует `audio_signaling_rx_config.hpp` for signaling-to-`RxAudioConfig` projection;
+    - использует `audio_channel_order.hpp` for effective channel grouping;
+    - использует `rx_config.hpp` for runtime `RxAudioConfig` / `AudioSampleFormat`;
+    - future audio runtime pipeline / backend bootstrap should consume this composition boundary rather than reparsing SDP strings or directly coupling to raw SDP parsing.
+- Сущности:
+    - `AudioReceiverBootstrapConfig`
+        - `rx_config` — projected runtime audio receive config.
+        - `channel_order` — parsed/effective modeled channel-order representation.
+    - `audio_receiver_bootstrap_config_from_audio_stream_signaling(...) -> std::expected<AudioReceiverBootstrapConfig, Error>`
+        - validates and projects `AudioStreamSignaling` into `RxAudioConfig` through `rx_audio_config_from_audio_stream_signaling(...)`;
+        - derives effective channel order through `effective_audio_channel_order_from_audio_stream_signaling(...)`;
+        - keeps local runtime/transport fields explicit:
+            - `udp_port`;
+            - `payload_type`;
+            - `local_ip`;
+            - `dest_ip`;
+            - runtime `AudioSampleFormat`;
+        - propagates validation/projection errors from existing boundaries.
+- Примечание:
+    - this file intentionally does not implement audio sample buffer layout, channel reordering, audio RTP packet parsing, jitter/reorder, backend socket/MTL behavior, or OBS integration;
+    - future channel mapping / layout adaptation should consume `ParsedAudioChannelOrder` from this bootstrap result.
+
 ### libs/st2110core/include/st2110/audio_sdp_media_section.hpp
 - Роль:
     - raw SDP audio media-section parsing boundary для выбранного audio payload type.
