@@ -687,7 +687,7 @@
   - preserves unknown session/media attributes;
   - keeps raw SDP parsing separate from `AudioStreamSignaling`, `RxAudioConfig`, backend transport, and runtime audio layout;
   - deliberately treats standalone `a=channel-order:` as unknown instead of standards-facing channel-order signaling.
-- [ ] 079C: Add SDP parsing / ingestion path for audio signaling model
+- [x] 079C: Add SDP parsing / ingestion path for audio signaling model
   - **цель этой группы задач в MVP — довести audio SDP ingestion от raw SDP media-section до validated `AudioStreamSignaling`, не смешивая parsing, signaling validation, runtime config projection, channel layout и backend transport**
   - parse relevant ST 2110-30 / SDP attributes into modeled audio signaling structures;
   - keep parsing separate from validation and separate from runtime config projection;
@@ -705,20 +705,18 @@
     - validates the resulting `AudioStreamSignaling` through the existing audio signaling validation boundary;
     - keeps transport fields, UDP port, local/destination IP and runtime `RxAudioConfig` projection out of this adapter;
     - rejects malformed or unsupported raw audio SDP combinations through localized `InvalidValue` / `Unsupported` results.
-  - [ ] 079C2: Add final audio SDP-to-`AudioStreamSignaling` ingestion entry point
-    - compose raw audio media-section selection with the raw-to-signaling adapter;
-    - provide a final entry point similar in role to video SDP ingestion, for example `parse_audio_stream_signaling_from_sdp(...)`;
-    - keep this entry point signaling-only:
+  - [x] 079C2: Add final audio SDP-to-`AudioStreamSignaling` ingestion entry point
+    - implemented `audio_sdp_ingestion.hpp` as the final audio SDP-to-signaling composition boundary;
+    - composes `select_raw_audio_sdp_media_section(...)` with `audio_stream_signaling_from_raw_audio_sdp_media_section(...)`;
+    - provides `parse_audio_stream_signaling_from_sdp(...)` as the signaling-only final entry point;
+    - validates required ST 2110 clock-signaling presence at the ingestion boundary:
+      - requires `ts-refclk` at session or selected media scope;
+      - requires media-level `mediaclk`;
+    - keeps this entry point signaling-only:
       - no socket/backend config;
       - no runtime `RxAudioConfig` projection;
       - no audio buffer layout/channel reordering;
-    - add focused end-to-end SDP ingestion tests for:
-      - valid Level A SDP;
-      - payload type mismatch;
-      - missing required `rtpmap`;
-      - invalid `ptime`;
-      - unsupported runtime-independent signaling values;
-      - unknown SDP attributes preserved at raw layer but ignored by final signaling mapping unless explicitly modeled.
+    - preserves unknown SDP attributes at the raw layer and ignores them in final signaling mapping unless explicitly modeled.
 - [ ] 079D: Add channel-order / channel-mapping modeled boundary and validation
   - represent signaled channel order / channel mapping separately from internal audio buffer layout
   - define where future reordering/adaptation will live

@@ -1489,10 +1489,10 @@
 - Роль:
     - raw SDP audio media-section parsing boundary для выбранного audio payload type.
     - отделяет SDP/media-section parsing от `AudioStreamSignaling`, runtime `RxAudioConfig`, audio buffer layout и backend/socket transport behavior.
-    - является первым шагом audio SDP ingestion path; full raw-to-signaling adapter остается следующим слоем.
+    - является raw layer для audio SDP ingestion path; raw-to-signaling mapping живет в `audio_sdp_signaling_adapter.hpp`, final SDP-to-signaling composition — в `audio_sdp_ingestion.hpp`.
 - Связи:
     - зависит только от `Error` и стандартных utility types;
-    - будет использоваться будущим audio SDP ingestion / signaling adapter layer;
+    - используется `audio_sdp_signaling_adapter.hpp` и `audio_sdp_ingestion.hpp`;
     - не зависит от video SDP boundary, audio runtime config, backend transport или OBS integration.
 - Сущности:
     - `RawAudioSdpAttribute`
@@ -1518,14 +1518,21 @@
             - unknown session/media attributes.
     - helper functions:
         - `strip_audio_sdp_cr(...)`
+        - `is_audio_sdp_ascii_ws(...)`
+        - `trim_audio_sdp_ascii_ws(...)`
+        - `trim_audio_sdp_left_ws(...)`
         - `split_audio_sdp_ws(...)`
+        - `parse_audio_sdp_uint64(...)`
         - `parse_audio_payload_type(...)`
         - `parse_audio_m_line_payload_types(...)`
         - `contains_audio_payload_type(...)`
+        - `parse_audio_attribute_value(...)`
         - `parse_audio_payload_bound_attribute_value(...)`
         - `parse_unknown_audio_sdp_attribute(...)`
         - `parse_audio_sdp_rtpmap_payload(...)`
         - `parse_audio_sdp_ptime_us(...)`
+        - `split_audio_sdp_fmtp_parameters(...)`
+        - `parse_audio_sdp_fmtp_parameter_token(...)`
         - `parse_audio_sdp_fmtp_payload(...)`
     - main entry point:
         - `select_raw_audio_sdp_media_section(std::string_view, uint8_t) -> std::expected<RawAudioSdpMediaSection, Error>`
@@ -1533,11 +1540,12 @@
             - requires selected payload-bound `a=rtpmap`;
             - parses optional `a=ptime` into integer microseconds;
             - parses payload-bound `a=fmtp:<pt> channel-order=...`;
-            - preserves standalone `a=channel-order:` as unknown instead of treating it as standards-facing signaling;
-            - rejects duplicate selected `rtpmap`, duplicate selected `fmtp`, duplicate `ptime`, malformed `rtpmap`, malformed `ptime`, malformed selected `fmtp`, and duplicate `channel-order` inside fmtp.
+            - preserves standalone `a=channel-order:` as unknown instead of treating it as standards-facing channel-order signaling;
+            - preserves unknown session/media attributes, including currently unmodeled timing/reference-clock attributes consumed by final ingestion presence checks;
+            - rejects duplicate selected `rtpmap`, duplicate selected `fmtp`, duplicate `ptime`, duplicate `channel-order`, malformed RTP clock/channel count, extra rtpmap slash, zero ptime, and non-integral-microsecond ptime.
 - Примечание:
     - this is a raw SDP boundary only;
-    - raw-to-`AudioStreamSignaling` mapping, Level A validation, channel-order semantic validation, transport metadata projection, and runtime/backend bootstrap remain future work through `079C` / `079D` / `079E`.
+    - raw-to-`AudioStreamSignaling` mapping, Level A validation, final SDP ingestion, runtime projection, transport metadata projection, and audio buffer/channel layout remain separate boundaries.
 
 ### libs/st2110core/include/st2110/audio_sdp_signaling_adapter.hpp
 - Роль:
@@ -1548,7 +1556,7 @@
     - использует `audio_sdp_media_section.hpp` как источник `RawAudioSdpMediaSection`;
     - использует `audio_signaling.hpp` как целевую standards-aware audio signaling model;
     - использует `Error`;
-    - будет использоваться final audio SDP ingestion entry point из будущего `audio_sdp_ingestion.hpp`.
+    - используется final audio SDP ingestion entry point из `audio_sdp_ingestion.hpp`.
 - Сущности:
     - `audio_sdp_ascii_lower(char) -> char`
         - ASCII-only helper для case-insensitive token comparison.
@@ -1577,4 +1585,33 @@
         - keeps UDP port, IP addresses, socket/backend fields, runtime sample format injection, `RxAudioConfig` projection, and audio buffer/channel layout outside this adapter.
 - Примечание:
     - this is a signaling adapter only;
-    - full SDP entry point, runtime projection, backend bootstrap, and channel-layout/reordering behavior remain separate follow-up boundaries.
+    - final SDP entry point lives in `audio_sdp_ingestion.hpp`;
+    - runtime projection, backend bootstrap, and channel-layout/reordering behavior remain separate follow-up boundaries.
+
+### libs/st2110core/include/st2110/audio_sdp_ingestion.hpp
+- Роль:
+    - final SDP-to-`AudioStreamSignaling` ingestion entry point для audio.
+    - композиционный слой, который связывает raw audio SDP media-section selection и raw-to-signaling adapter.
+    - отделяет final SDP signaling ingestion от runtime `RxAudioConfig` projection, socket/backend config, audio buffer layout, channel reordering и backend transport behavior.
+- Связи:
+    - использует `audio_sdp_media_section.hpp` для выбора raw audio media section по payload type;
+    - использует `audio_sdp_signaling_adapter.hpp` для mapping raw selected media section в `AudioStreamSignaling`;
+    - использует `audio_signaling.hpp` как итоговую signaling model boundary;
+    - не зависит от audio runtime config, backend interfaces, packet parser, audio buffer layout или OBS integration.
+- Сущности:
+    - `raw_audio_sdp_has_attribute(const std::vector<RawAudioSdpAttribute>&, std::string_view) -> bool`
+        - helper для локальной проверки наличия raw SDP attribute by name.
+    - `validate_raw_audio_sdp_required_st2110_clock_signaling(const RawAudioSdpMediaSection&) -> Error`
+        - final ingestion presence check для required ST 2110 clock signaling at current raw boundary:
+            - accepts `ts-refclk` at session or selected media scope;
+            - requires `mediaclk` at selected media scope;
+        - keeps actual clock interpretation and stricter parsing as a future localized expansion rather than mixing it into runtime projection.
+    - `parse_audio_stream_signaling_from_sdp(std::string_view, uint8_t) -> std::expected<AudioStreamSignaling, Error>`
+        - selects matching raw audio SDP media section by expected payload type;
+        - validates required clock-signaling presence;
+        - maps selected raw media section into validated `AudioStreamSignaling`;
+        - returns parse/validation errors as localized `Error` values.
+- Примечание:
+    - this is a final signaling ingestion boundary, not a receiver bootstrap boundary;
+    - transport/network fields and local receiver policy inputs remain outside this file;
+    - channel layout / channel reordering behavior remains future work through `079D` and later audio runtime pipeline tasks.

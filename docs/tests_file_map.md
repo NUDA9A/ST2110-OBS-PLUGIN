@@ -548,7 +548,7 @@
         - explicit invalid `Unspecified` channel-order raw value rejection;
         - forward-compatible `Other` channel-order preservation.
 
-## Audio SDP parsing / signaling adapter
+## Audio SDP parsing / signaling adapter / ingestion
 
 ### tests/audio_sdp_media_section_test.cpp
 - Роль:
@@ -577,3 +577,19 @@
         - rejection of invalid baseline values through `validate_audio_stream_signaling(...)`;
         - mapping of payload-bound `fmtp channel-order=...` into `AudioChannelOrderSignaling`;
         - preservation of adapter boundary separation from `RxAudioConfig`, socket/backend transport fields, and audio buffer layout.
+
+### tests/audio_sdp_ingestion_test.cpp
+- Роль:
+    - проверяет final audio SDP-to-`AudioStreamSignaling` ingestion composition.
+    - покрывает:
+        - valid Level A SDP ingestion through `parse_audio_stream_signaling_from_sdp(...)`;
+        - composition of raw media-section selection with raw-to-signaling adapter;
+        - payload type mismatch rejection;
+        - missing required selected `rtpmap` rejection;
+        - invalid `ptime` rejection;
+        - unsupported runtime-independent signaling values rejected through signaling validation / adapter boundaries;
+        - required clock-signaling presence checks:
+            - `ts-refclk` at session or selected media scope;
+            - media-level `mediaclk`;
+        - unknown SDP attributes preserved at raw layer but ignored by final signaling mapping unless explicitly modeled;
+        - separation from runtime `RxAudioConfig`, socket/backend transport fields, and audio buffer/channel layout.
