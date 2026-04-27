@@ -49,6 +49,21 @@
   - пользователь сообщает о падении/адаптации тестов;
   - для приемки нужно проверить расхождение между ранее выданным тестом и фактическим состоянием репозитория.
 - Ассистент не должен ограничиваться описанием тестовой идеи; тестовые файлы должны быть даны в копируемом виде.
+- Перед началом каждой новой задачи ассистент обязан сверить формулировку задачи с:
+  - актуальными правилами проектирования из `plan.md`;
+  - актуальным file map / code map;
+  - релевантными `Spec notes / deviations`;
+  - доступными текстами стандартов / выдержками / PDF, если они предоставлены в контексте.
+- Если PDF недоступны в текущем контексте, ассистент должен явно сказать об этом и попросить пользователя прислать релевантный файл/фрагмент стандарта.
+- Каждая задача должна быть сформулирована так, чтобы сама по себе не закрепляла архитектурные или стандартные отклонения.
+- При приемке реализации ассистент обязан отдельно проверить:
+  - соответствие задаче;
+  - соответствие правилам проектирования из `plan.md`;
+  - соответствие релевантным требованиям стандарта в пределах доступных источников, если их нет в контексте, то явно попросить пользователя предоставить необходимые файлы;
+  - отсутствие новых незафиксированных deviations;
+  - что временные ограничения локализованы и имеют follow-up task, если нужны.
+- Если во время формулирования задачи или приемки обнаружено новое расхождение со стандартом, оно должно быть добавлено в `Spec notes / deviations` и, при необходимости, превращено в отдельную задачу.
+- Ассистент не должен писать полную реализацию задачи, если пользователь явно не попросил об этом. По умолчанию ассистент дает архитектурные требования, список точечных изменений, expected behavior и готовые тесты.
 
 ## Правила проектирования
 - Код должен быть написан в **расширяемом виде**.
@@ -1363,6 +1378,59 @@
   - media-level standalone values override session-level standalone values at the SDP ingestion boundary;
   - `fmtp` timing media parameters are applied after standalone timing attributes and may override session-level standalone values, while conflicts with media-level standalone values are rejected.
 
+### libs/st2110core/include/st2110/video_timestamp_mapping.hpp
+- Роль:
+  - standards-aware boundary для преобразования RTP timestamp domain в internal `TimestampNs`.
+  - отделяет RTP-domain timing от depacketizer packet grouping, segment placement, frame assembly и synthetic/manual timestamp generation.
+  - вводит отдельный synthetic timestamp mapper только для тестов/scaffolding/offline tools, чтобы fps cadence не становился standards-facing timing model.
+- Связи:
+  - использует `TimestampNs` из `timestamp.hpp`;
+  - использует `Error` для validation/result reporting;
+  - пока не подключен к `VideoReceivePipeline` / reconstructor / backend path;
+  - future integration should happen above depacketizer/reconstructor output boundaries, not inside packet parsing or segment placement.
+- Сущности:
+  - `videoTimestampNanosecondsPerSecond`
+    - common constant for timestamp conversion.
+  - `VideoRtpTimestampMapperConfig`
+    - `rtp_clock_rate`
+    - `anchor_rtp_timestamp`
+    - `anchor_timestamp_ns`
+  - `validate_video_rtp_timestamp_mapper_config(...)`
+    - rejects invalid RTP timestamp mapping config such as zero RTP clock rate.
+  - helper functions:
+    - `checked_video_timestamp_add_u64(...)`
+    - `checked_video_timestamp_mul_u64(...)`
+    - `forward_rtp_timestamp_delta(...)`
+      - computes forward RTP timestamp delta using 32-bit modulo arithmetic;
+      - accepts normal forward movement and wraparound;
+      - rejects backward / ambiguous jumps at or above half the 32-bit range.
+    - `rtp_ticks_to_timestamp_ns(...)`
+      - converts RTP ticks to nanoseconds relative to an anchor timestamp;
+      - uses integer arithmetic and overflow checks.
+  - `VideoRtpTimestampMapper`
+    - standards-facing RTP timestamp mapper.
+    - `map(uint32_t rtp_timestamp) -> std::expected<TimestampNs, Error>`
+      - maps RTP timestamps to internal nanoseconds;
+      - preserves continuity across RTP timestamp wraparound;
+      - rejects invalid/backward/ambiguous timestamp movement.
+    - `reset(VideoRtpTimestampMapperConfig)`
+      - resets anchor and accumulated timestamp state.
+  - `SyntheticVideoTimestampMapperConfig`
+    - `fps_num`
+    - `fps_den`
+    - `anchor_timestamp_ns`
+  - `validate_synthetic_video_timestamp_mapper_config(...)`
+    - validates synthetic/manual timestamp mapper config.
+  - `synthetic_unit_index_to_timestamp_ns(...)`
+    - maps a synthetic unit index to nanoseconds using explicit fps cadence.
+  - `SyntheticVideoTimestampMapper`
+    - synthetic/manual mapper for tests and scaffolding only.
+    - `map_unit_index(uint64_t) -> std::expected<TimestampNs, Error>`
+- Примечание:
+  - this file establishes the timestamp mapping architecture boundary required by MVP;
+  - it intentionally does not implement playout/release policy yet;
+  - receiver-side playout timing, offset/delay policy, and pipeline integration remain future work through `071A` / `072` / later bootstrap tasks.
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -1397,7 +1465,7 @@
 - [x] S008: `PacketParseStats` structures exist, but packet parsing does not yet expose a single integrated path that records stage-specific parse results through the real parse flow. This should be fixed so parse observability is not only nominal.
 - [ ] S009: Current packet size policy models a configurable UDP payload-size limit, but ST 2110-10 defines `MAXUDP` and receiver size expectations in terms of UDP datagram size, not only essence payload size. Standard UDP Size Limit and Extended UDP Size Limit handling, default behavior when `MAXUDP` is absent, and the receiver assumption around fragmented IP datagrams must be aligned with ST 2110-10 before packet sizing is considered spec-clean.
 - [ ] S010: The project now has standards-aware video signaling model boundaries, structural validation, runtime/bootstrap projection helpers, raw SDP media-section parsing, per-attribute SDP parsers, and a final SDP-to-`VideoStreamSignaling` ingestion entry point. However, the receive path is still primarily driven by manual config in actual runtime/backend usage, and signaling-derived receiver bootstrap is not yet wired as the primary operational path. ST 2110-10 / -20 / -21 stream interpretation through SDP is now architecturally represented, but runtime integration of SDP-derived configuration, receiver timing policy, and end-to-end backend/app usage must still be completed without expanding ad hoc manual config assumptions.
-- [ ] S011: The current timestamp-strategy plan is still phrased as if internal video timestamps could be derived only from local fps cadence or arrival-time smoothing. For standards-aware ST 2110 receive, internal presentation timestamps must be mapped from RTP timestamp domain and associated clock/signaling model, not from a standalone frame counter alone. The timestamp plan must therefore be reworked around RTP/clock-based mapping.
+- [x] S011: The timestamp strategy now has a standards-aware RTP timestamp mapping boundary in `video_timestamp_mapping.hpp`. RTP-domain timestamps are mapped to internal `TimestampNs` separately from synthetic fps-based timestamp generation, and the synthetic mapper is explicitly scoped to tests/scaffolding rather than standards-facing receive behavior.
 - [ ] S012: Receiver timing / conformance boundary for ST 2110-21 is now explicitly modeled through `video_receiver_timing.hpp` and `video_receiver_timing_signaling.hpp`, including receiver capability/requirements, receiver-vs-signaling consistency checks, and timing-aware bootstrap composition. However, fuller ST 2110-21 receiver behavior (buffering/tolerance/release policy and conformance-related runtime behavior) is not yet implemented and must continue to be added through this existing boundary rather than being pushed into parser/reorder/depacketizer internals.
 - [x] S013: `parse_packet_view_staged()` currently accepts arbitrary trailing octets after the bytes covered by `SRD Length` values. ST 2110-20 allows octets after the last Sample Row Data Segment only as terminal field/frame padding, and GPM/BPM padding octets are zero-valued. This must be validated through a localized packing-mode-aware / mode-aware boundary rather than silently tolerated on any packet.
 - [x] S014: Current RTP parsing/payload extraction path does not yet provide explicit receiver-side tolerance to RTP header extensions. For a standards-aware receiver, packets with valid RTP header extensions must still have payload location derived correctly rather than being handled only under an implicit “no extensions” assumption. This must be fixed locally in RTP parsing / payload extraction logic and not spread across the rest of the receive pipeline.
@@ -1993,7 +2061,7 @@
 
 ### A3. Video timestamp strategy
 - [x] 070: Define internal timestamp type: `uint64_t ts_ns`
-- [ ] 071: Define a standards-aware video timestamp mapping boundary from RTP timestamp domain to internal `ts_ns`
+- [x] 071: Define a standards-aware video timestamp mapping boundary from RTP timestamp domain to internal `ts_ns`
   - **цель этой задачи в MVP — заложить correct timing architecture boundary, even if fuller standards-aware implementation comes later**
   - keep RTP timestamp domain distinct from internal nanoseconds-domain timestamps
   - explicitly handle 32-bit RTP timestamp wraparound and long-running streams
