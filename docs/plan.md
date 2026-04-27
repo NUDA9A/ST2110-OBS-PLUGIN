@@ -1463,6 +1463,54 @@
   - он только фиксирует architecture boundary между timestamp mapping и future playout/release policy;
   - future receiver timing behavior should extend this boundary rather than move into parser/reorder/depacketizer internals.
 
+### libs/st2110core/include/st2110/audio_signaling.hpp
+- Роль:
+  - standards-aware signaling model boundary для ST 2110-30 PCM audio.
+  - задает декларативную audio stream/media-description модель отдельно от runtime `RxAudioConfig`, SDP parsing, audio buffer layout и backend transport fields.
+  - фиксирует MVP audio baseline как Level A-oriented receiver baseline.
+- Связи:
+  - на текущем шаге зависит только от стандартных типов (`cstdint`, `string`, `optional`);
+  - будущая structural validation должна добавляться поверх этой модели в `079A`;
+  - будущие SDP ingestion / channel-order parsing / runtime projection должны использовать эту модель, не смешивая signaling с backend/socket/runtime layout.
+- Сущности:
+  - `AudioConformanceLevel`
+    - modeled ST 2110-30 conformance levels:
+      - `LevelA`
+      - `LevelAX`
+      - `LevelB`
+      - `LevelBX`
+      - `LevelC`
+      - `LevelCX`
+  - `AudioConformanceRange`
+    - level + sampling-rate / packet-time / channel-count range description.
+  - `audio_level_a_receiver_baseline()`
+    - returns the MVP receiver baseline:
+      - `LevelA`
+      - `48000 Hz`
+      - `1000 us`
+      - `1..8 channels`
+  - `AudioPcmEncoding`
+    - currently models `LinearPcm`.
+  - `AudioMediaDescription`
+    - signaled audio media properties:
+      - `pcm_encoding`
+      - `sampling_rate_hz`
+      - `packet_time_us`
+      - `channel_count`
+  - `AudioChannelOrderConvention`
+    - `Unspecified`
+    - `Smpte2110`
+    - `Other`
+  - `AudioChannelOrderSignaling`
+    - carries parsed/recognized channel-order convention plus preserved raw value.
+  - `AudioStreamSignaling`
+    - top-level audio signaling object:
+      - `media`
+      - optional `channel_order`
+- Примечание:
+  - файл intentionally does not implement validation, SDP parsing, channel-order group parsing, runtime audio config projection, or audio buffer layout;
+  - missing `channel_order` is explicitly representable and will be interpreted by later validation/projection logic.
+
 ## Done
 - [x] 001: Repo skeleton + buildable stub
 - [x] 002: Fix WSL networking/DNS for git push
@@ -2119,7 +2167,7 @@
 > Audio MVP should be planned against ST 2110-30 from the start. Current MVP target should assume a narrow but explicit standards-aware baseline first: a **Level A-oriented receiver baseline** with `48 kHz`, `1 ms packet time`, and `1..8 channels`, with broader profile/level expansion later on top of the already-laid architecture.
 
 ### B0. Audio common abstractions
-- [ ] 079: Define a standards-aware audio SDP/signaling model boundary for ST 2110-30
+- [x] 079: Define a standards-aware audio SDP/signaling model boundary for ST 2110-30
   - **цель этой группы задач в MVP — заложить audio signaling/model architecture boundary уже сейчас, even if only a narrow baseline is fully implemented**
   - define modeled audio stream/signaling config separate from low-level `RxAudioConfig`
   - make the MVP target explicit as a **Level A-oriented receiver baseline** rather than a generic PCM placeholder
