@@ -1419,6 +1419,23 @@
 - [x] S030: SDP `a=fmtp` parser now uses a localized strict media-parameter parsing boundary in `video_sdp_fmtp.hpp`. It rejects whitespace inside parameter tokens including around `=`, rejects malformed separators such as `sampling=...;width=...` where `;` is not followed by required whitespace, rejects empty parameters caused by doubled/trailing separators, rejects malformed `name=value` tokens, and still preserves unknown syntactically valid parameters.
 - [x] S031: Raw SDP `c=` connection data now preserves the original connection address string and also exposes parsed connection-address components for future backend bootstrap: `base_address`, optional TTL, and optional address count / numaddr. Runtime/backend consumption remains future work through `214C`.
 - [x] S032: SDP timing/reference-clock attributes such as `ts-refclk` and `mediaclk` can be session-level or media-level. The raw SDP ingestion boundary now preserves this scope explicitly and applies localized session/media resolution for the selected video stream. Media-level values override session-level values where allowed; duplicate values within the same scope are rejected; `fmtp` timing media parameters are treated as media-level signaling and conflict only with media-level standalone attributes for the same semantic field.
+- [ ] S033: Video SDP/signaling validation still does not fully enforce the ST 2110-20 `SSN` cross-field rule. `SSN=ST2110-20:2017` is the normal value, while `SSN=ST2110-20:2022` is required when `colorimetry=ALPHA` or `TCS=ST2115LOGS3` is used. Current validation should be tightened locally in the video signaling cross-field validation boundary, without changing runtime `PixelFormat` projection.
+- [ ] S034: Video SDP/signaling validation still needs stricter `RANGE` handling. For `colorimetry=BT2100`, only `NARROW` and `FULL` are valid; outside the BT2100 context, `FULLPROTECT` is also a known standard value. This should be modeled explicitly in `VideoRange` / SDP mapping and validated as a media-description cross-field constraint.
+- [ ] S035: Video SDP ingestion currently does not model SDP `PAR` from `a=fmtp`. ST 2110-20 defines `PAR` as an optional pixel-aspect-ratio parameter with default `1:1`. This should be added as a signaling/media-description property with default behavior, but without affecting runtime frame storage or depacketizer behavior yet.
+- [ ] S036: SDP media-description `width` and `height` validation should enforce the ST 2110-20 allowed range `1..32767`, not only non-zero dimensions. This must be fixed in the existing video media-description / config validation boundary with minimal changes.
+- [ ] S037: SDP `exactframerate` parsing accepts syntactically valid rational values but does not yet enforce the ST 2110-20 canonical form requirements: integer frame rates should be signaled as a single decimal integer, and rational frame rates should use the numerically smallest numerator/denominator representation. This should be tightened locally in `video_sdp_fmtp.hpp`.
+- [ ] S038: ST 2110-10 requires `mediaclk` to be present as a media-level attribute. Current SDP timing scope handling preserves session/media scope, but final ST 2110 video ingestion must not treat session-level `mediaclk` alone as sufficient for standards-clean SDP ingestion. This should be enforced at the SDP ingestion boundary, while raw parsing may continue preserving session-level attributes.
+- [ ] S039: ST 2110-10 requires `ts-refclk` to be present for all stream descriptions, and the accepted `ptp` / `localmac` forms should be validated more strictly. Current raw parsing and modeled reference-clock validation should be tightened so missing or malformed reference-clock signaling does not silently pass final video SDP ingestion.
+- [ ] S040: SDP `MAXUDP` parsing is now wired through the correct path, but the accepted value still needs final policy validation against ST 2110-10 Standard UDP Size Limit / Extended UDP Size Limit semantics. This should reuse the existing `PacketParsePolicy` / packet-size validation path and avoid adding a parallel size policy.
+- [ ] S041: Raw SDP `a=source-filter` parsing preserves useful structure, but the raw parser should be tightened for known source-filter grammar details such as accepted filter-mode tokens and malformed source-list forms. Runtime/backend source-filter application remains future work through the existing transport/bootstrap boundary.
+- [ ] S042: Runtime video packet admission currently does not validate RTP payload type against the configured / signaled payload type before reorder/depacketizer use. `RxVideoConfig::payload_type` is validated and `RtpHeaderView::payload_type` is parsed, but the receive path lacks an explicit boundary that rejects or drops packets with a mismatching RTP payload type. This must be added before real backend receive paths feed packets into the video pipeline.
+- [ ] S043: Raw video SDP `m=video` parsing / final SDP ingestion currently accepts payload type values without enforcing the ST 2110 dynamic RTP payload type range `96..127` for raw video streams, and does not validate the media-line port/protocol shape. This should be tightened locally in the raw SDP media-section / final ingestion boundary without mixing transport socket behavior into `VideoStreamSignaling`.
+- [ ] S044: The receive/parser architecture currently has no explicit RTCP tolerance / datagram classification boundary. ST 2110-10 permits RTCP and requires receivers to tolerate its presence, but the current packet parser path treats every UDP datagram as an RTP/ST2110-20 media packet. A local classifier/drop boundary is needed so RTCP packets are ignored or accounted for without being reported as malformed media packets.
+- [ ] S045: SRD ordering validation is currently packet-local only. ST 2110-20 also requires SRD Row Number to increase within the frame/field/segment and SRD Offset to increase within the same sample row across successive RTP packets. The depacketizer currently does not track previous row/offset state inside the current assembly unit, so cross-packet row/offset regressions or overlaps can be accepted.
+- [ ] S046: `Depacketizer::write_packet_segments()` mutates the current `FrameAssembler` segment-by-segment. If a later SRD segment in the same packet fails placement/bounds validation, earlier segments from that packet may already have been written into the current frame/unit. Packet segment placement should be validated atomically before mutating assembly state.
+- [ ] S047: `VideoMediaDescription::signal_standard` is optional in the standards-aware signaling model, so manually constructed `VideoStreamSignaling` can validate without an `SSN` even though ST 2110-20 requires the `SSN` media type parameter for conforming video streams. SDP parsing requires `SSN`, but generic signaling-model validation should either require it for standards-clean video signaling or make the synthetic/manual fallback explicit.
+- [ ] S048: ST 2110-21 sender timing signaling is currently modeled too loosely in one place and too strictly in another. Final SDP ingestion can silently default absent `TP` to `VideoSenderType::Narrow`, even though `TP` is required by ST 2110-21 for video RTP streams. At the same time, `validate_video_sender_signaling()` rejects `TROFF` / `CMAX` for `Narrow` and `NarrowLinear`, although ST 2110-21 defines these as optional media type parameters with default assumptions when absent. This validation should be rechecked and corrected against ST 2110-21.
+- [ ] S049: Raw SDP `c=` connection data parsing preserves useful transport metadata but is still too permissive structurally. It accepts arbitrary `nettype` / `addrtype` tokens and parses slash parameters without validating whether the form is appropriate for the address type / multicast shape. This should be tightened in the raw SDP transport boundary while keeping backend socket behavior separate.
 ---
 
 # Phase 1 — MVP
@@ -2147,6 +2164,314 @@
 - [ ] 194: Implement timestamp mapping for OBS
 - [ ] 195: Verify start/stop stability and repeated reconfiguration
 
+---
+
+## Track E3 — Pre-MVP spec cleanup before readiness
+
+> Назначение этого track:
+> - собрать уже найденные standards/SMPTE cleanup issues в один pre-MVP-exit gate;
+> - выполнять эти задачи перед `Track F — MVP exit / readiness for testing`, либо явно документировать оставшиеся ограничения в `202`.
+
+- [ ] 196A: Tighten ST 2110-20 `SSN` cross-field validation
+  - enforce the standard relationship between:
+    - `SSN`
+    - `colorimetry=ALPHA`
+    - `TCS=ST2115LOGS3`
+  - expected behavior:
+    - normal non-ALPHA / non-`ST2115LOGS3` streams should use `SSN=ST2110-20:2017`;
+    - streams with `colorimetry=ALPHA` or `TCS=ST2115LOGS3` should require `SSN=ST2110-20:2022`;
+    - structurally unknown future `SSN` values may remain represented through `Other`, but known invalid standard combinations should reject.
+  - prefer minimal changes to existing `.hpp` files:
+    - `video_signaling.hpp`
+    - related tests only
+  - do not change runtime `PixelFormat`, frame storage, depacketizer, or pipeline projection shape.
+  - add focused tests for:
+    - BT709 / SDR with `SSN=ST2110-20:2017` accepted;
+    - BT709 / SDR with `SSN=ST2110-20:2022` rejected;
+    - `ALPHA` requiring `ST2110-20:2022`;
+    - `TCS=ST2115LOGS3` requiring `ST2110-20:2022`;
+    - unsupported runtime projection remaining localized.
+- [ ] 196B: Tighten `RANGE` modeling and validation
+  - model `FULLPROTECT` explicitly as a known `VideoRange` value instead of routing it through `Other`.
+  - validate ST 2110-20 range constraints:
+    - with `colorimetry=BT2100`, allow only `NARROW` / `FULL`;
+    - outside BT2100 context, allow `NARROW` / `FULLPROTECT` / `FULL`;
+    - absent `RANGE` keeps the existing default/unspecified behavior at signaling level.
+  - prefer minimal changes to existing `.hpp` files:
+    - `signaling_structs.hpp`
+    - `video_sdp_signaling_adapter.hpp`
+    - `video_signaling.hpp`
+    - related tests only
+  - do not change runtime frame storage or depacketizer behavior.
+  - add focused tests for:
+    - `BT2100 + RANGE=FULL`;
+    - `BT2100 + RANGE=FULLPROTECT` rejected;
+    - non-BT2100 `FULLPROTECT` accepted;
+    - unknown future range token preserved through `Other`.
+- [ ] 196C: Add SDP `PAR` media-description modeling
+  - parse optional `PAR=<w>:<h>` from video `a=fmtp`.
+  - represent PAR as a signaling/media-description property, not as runtime frame storage.
+  - apply default `PAR=1:1` when absent.
+  - validate:
+    - both parts are positive integers;
+    - malformed forms are rejected;
+    - canonical/minimal ratio form is preferred if practical without large implementation growth.
+  - prefer minimal changes to existing `.hpp` files:
+    - `signaling_structs.hpp`
+    - `video_sdp_fmtp.hpp`
+    - `video_sdp_signaling_adapter.hpp`
+    - `video_signaling.hpp`
+    - related tests only
+  - do not change `VideoFrame`, `PixelFormat`, depacketizer, placement, or runtime projection behavior.
+  - add focused tests for:
+    - absent `PAR` defaults to `1:1`;
+    - valid `PAR=1:1`;
+    - valid non-square `PAR=12:11`;
+    - malformed `PAR`;
+    - PAR surviving SDP-to-signaling mapping.
+- [ ] 196D: Enforce ST 2110-20 `width` / `height` SDP limits
+  - validate signaled video dimensions as `1..32767` in the signaling/media-description boundary.
+  - keep lower-level runtime/frame validation separate where it already exists.
+  - prefer minimal changes to existing `.hpp` files:
+    - `video_signaling.hpp`
+    - optionally `config_validation.hpp` only if a shared helper is cleaner
+    - related tests only
+  - do not change current UYVY-specific even-width runtime constraint; this task is about signaled SDP media-description limits.
+  - add focused tests for:
+    - width/height `1` accepted structurally;
+    - width/height `32767` accepted structurally;
+    - width/height `0` rejected;
+    - width/height `32768` rejected;
+    - current UYVY runtime projection constraints still remain localized.
+- [ ] 196E: Tighten SDP `exactframerate` canonical parsing
+  - keep `exactframerate` parsing local to `video_sdp_fmtp.hpp`.
+  - enforce:
+    - integer frame rates are represented as a single decimal integer, not `N/1`;
+    - rational frame rates use the smallest numerator/denominator representation;
+    - numerator and denominator are positive;
+    - malformed forms reject as `InvalidValue`.
+  - prefer minimal changes to existing `.hpp` files:
+    - `video_sdp_fmtp.hpp`
+    - related tests only
+  - do not change timestamp mapping or runtime cadence behavior in this task.
+  - add focused tests for:
+    - `25` accepted;
+    - `25/1` rejected;
+    - `30000/1001` accepted;
+    - reducible rational such as `60000/2002` rejected;
+    - zero numerator/denominator rejected;
+    - existing valid SDP examples remain accepted.
+- [ ] 196F: Require media-level `mediaclk` for final ST 2110 video SDP ingestion
+  - keep raw SDP parsing scope-aware and non-destructive.
+  - final `VideoStreamSignaling` ingestion should require a selected media-level `a=mediaclk`, as required by ST 2110-10.
+  - session-level `mediaclk` may remain preserved in the raw model, but must not by itself make final ST 2110 video ingestion standards-clean.
+  - prefer minimal changes to existing `.hpp` files:
+    - `video_sdp_media_section.hpp` only if helper access is needed
+    - `video_sdp_timing_attributes.hpp`
+    - `video_sdp_ingestion.hpp`
+    - related tests only
+  - do not move timing interpretation into runtime pipeline or depacketizer.
+  - add focused tests for:
+    - media-level `mediaclk:direct=0` accepted;
+    - session-level-only `mediaclk` rejected by final video ingestion;
+    - media-level value overriding session-level value still works where applicable;
+    - existing media-level-only SDP behavior remains unchanged.
+- [ ] 196G: Tighten required `ts-refclk` / reference-clock validation
+  - final ST 2110 video SDP ingestion should require `ts-refclk`.
+  - validate known reference-clock forms more strictly:
+    - `ptp=IEEE1588-2008:<gmid>[:domain]`;
+    - `ptp=IEEE1588-2008:traceable` if supported by the modeled representation;
+    - `localmac=<EUI-48 MAC>`.
+  - preserve unknown/open-ended reference-clock forms only where the current model intentionally supports them, but do not let malformed known forms pass silently.
+  - prefer minimal changes to existing `.hpp` files:
+    - `video_sdp_timing_attributes.hpp`
+    - `video_sdp_ingestion.hpp`
+    - `video_signaling.hpp`
+    - related tests only
+  - do not implement PTP runtime behavior in this task.
+  - add focused tests for:
+    - missing `ts-refclk` rejected by final video SDP ingestion;
+    - valid PTP GMID accepted;
+    - valid PTP traceable form accepted if modeled;
+    - malformed PTP GMID/domain rejected;
+    - valid localmac accepted;
+    - malformed localmac rejected.
+- [ ] 196H: Finalize `MAXUDP` value policy against ST 2110-10 limits
+  - reuse the existing `MAXUDP -> VideoStreamSignaling::max_udp_datagram_bytes -> PacketParsePolicy` path.
+  - validate values against current project policy for:
+    - Standard UDP Size Limit;
+    - Extended UDP Size Limit;
+    - absent `MAXUDP` defaulting to Standard UDP Size Limit.
+  - keep pure wire parsing separate from policy validation.
+  - prefer minimal changes to existing `.hpp` files:
+    - `packet_parse.hpp`
+    - `video_signaling.hpp`
+    - possibly `video_sdp_fmtp.hpp` only if parsing accepts malformed numeric values
+    - related tests only
+  - do not introduce a parallel runtime config mechanism.
+  - add focused tests for:
+    - absent `MAXUDP` uses Standard UDP Size Limit;
+    - valid standard-sized `MAXUDP`;
+    - valid extended-sized `MAXUDP` if current policy supports it;
+    - `MAXUDP` above Extended UDP Size Limit rejected;
+    - packet parse policy receives the final effective limit.
+- [ ] 196I: Tighten raw SDP `a=source-filter` grammar validation
+  - keep source-filter as raw transport metadata, outside `VideoStreamSignaling`.
+  - validate known structural fields more strictly:
+    - accepted filter mode tokens;
+    - required nettype / addrtype / destination address;
+    - at least one source address where required;
+    - malformed source-list forms rejected.
+  - preserve the original raw value and parsed fields.
+  - prefer minimal changes to existing `.hpp` files:
+    - `video_sdp_media_section.hpp`
+    - related tests only
+  - do not wire source-filter into socket/backend behavior in this task.
+  - add focused tests for:
+    - valid session-level source-filter;
+    - valid media-level source-filter;
+    - invalid filter mode rejected;
+    - missing destination/source fields rejected;
+    - parsed source-filter remains scope-aware;
+    - backend/runtime behavior remains untouched.
+- [ ] 196J: Add runtime RTP payload-type admission boundary
+  - add an explicit video packet admission / validation helper that compares `PacketView::rtp.payload_type` with the configured or signaled expected payload type.
+  - place this boundary before reorder/depacketizer use in the eventual receive path.
+  - keep raw RTP parsing separate from stream-specific admission policy:
+    - RTP parser should parse PT;
+    - admission policy should decide whether this packet belongs to the selected stream.
+  - wrong-PT packets should be rejected/dropped/accounted for locally without mutating depacketizer state.
+  - prefer minimal changes to existing `.hpp` files where possible:
+    - new small header if useful, for example `packet_admission.hpp`
+    - `rx_config.hpp` / `video_signaling.hpp` only if helper placement needs config types
+    - related tests only
+  - add focused tests for:
+    - matching dynamic payload type accepted;
+    - mismatching payload type rejected/dropped;
+    - payload type validation remains separate from generic RTP parsing;
+    - depacketizer is not entered for wrong-PT packets.
+- [ ] 196K: Tighten raw SDP `m=video` media-line validation for ST 2110 video
+  - keep this in the raw SDP media-section / final ingestion boundary.
+  - validate at least:
+    - selected video payload type is in the dynamic RTP payload type range `96..127`;
+    - `m=video` line has a structurally valid port token;
+    - protocol token is an expected RTP profile for the current project scope, initially `RTP/AVP` unless a later explicit branch supports more.
+  - preserve raw media-line text for future transport/bootstrap use.
+  - do not mix socket bind/join behavior into this task.
+  - prefer minimal changes to:
+    - `video_sdp_media_section.hpp`
+    - `video_sdp_ingestion.hpp` only if final ingestion needs an extra validation call
+    - related tests only
+  - add focused tests for:
+    - valid `m=video 50000 RTP/AVP 112`;
+    - non-dynamic PT rejected for ST 2110 raw video;
+    - malformed port rejected;
+    - unexpected protocol rejected;
+    - existing valid SDP ingestion remains unchanged.
+- [ ] 196L: Add RTCP tolerance / UDP datagram classification boundary
+  - define a local classifier before media packet parsing / pipeline use:
+    - RTP media packet candidate;
+    - RTCP packet candidate;
+    - malformed / unsupported datagram.
+  - RTCP packets should be tolerated:
+    - ignored or counted separately;
+    - not fed to `PacketView::from_udp_datagram()`;
+    - not counted as malformed ST 2110-20 media packets.
+  - keep actual RTCP semantic interpretation out of MVP unless later needed.
+  - prefer minimal changes:
+    - new small helper/header if useful, for example `rtp_datagram_classifier.hpp`
+    - parser stats extension only if needed
+    - related tests only
+  - add focused tests for:
+    - valid RTP media packet classified as media;
+    - common RTCP packet types classified as RTCP/tolerated;
+    - malformed short datagram rejected;
+    - RTCP does not reach depacketizer.
+- [ ] 196M: Enforce cross-packet SRD row/offset monotonicity inside assembly units
+  - extend the mode-aware receive semantics / depacketizer state with a localized packet-order validation boundary.
+  - enforce for current `Progressive + GPM` MVP path:
+    - SRD Row Number must not go backwards within the current frame;
+    - within the same row, SRD Offset must strictly increase across successive segments/packets;
+    - overlapping or regressing segments are rejected before writing.
+  - keep future `Interlaced` / `PsF` behavior behind the existing mode-aware branches.
+  - do not move this into generic low-level `st2110_20.hpp` parsing, because row/offset continuity is assembly-unit/mode dependent.
+  - prefer minimal changes:
+    - `video_receive_semantics.hpp`
+    - `depacketizer.hpp`
+    - related tests only
+  - add focused tests for:
+    - valid multi-packet same-row fragmentation;
+    - later packet with lower row rejected;
+    - later packet with same row and lower/equal offset rejected;
+    - row advance accepted;
+    - rejection does not emit or corrupt a frame.
+- [ ] 196N: Make depacketizer packet segment writes atomic
+  - refactor `Depacketizer::write_packet_segments()` so one packet is fully validated/mapped before any segment is written into `FrameAssembler`.
+  - collect all `VideoFrameWriteOp`s first.
+  - only after all placement/bounds checks succeed, apply writes.
+  - ensure invalid second/third SRD segment cannot partially mutate the current assembly unit.
+  - keep `FrameAssembler` byte-oriented and format-agnostic.
+  - prefer minimal changes:
+    - `depacketizer.hpp`
+    - optionally `video_segment_placement.hpp` only if row/bounds validation helper belongs there
+    - related tests only
+  - add focused tests for:
+    - packet with all valid segments writes successfully;
+    - packet with invalid later segment writes none of its segments;
+    - current unit remains recoverable/drop-policy-consistent after rejected packet;
+    - behavior remains unchanged for valid progressive packets.
+- [ ] 196O: Require or explicitly default `SSN` in standards-aware video signaling validation
+  - close the gap where SDP parsing requires `SSN`, but manually constructed `VideoStreamSignaling` can validate with `media.signal_standard == nullopt`.
+  - choose one explicit policy:
+    - require `signal_standard` for standards-clean `VideoStreamSignaling`;
+    - or add a clearly named synthetic/manual validation path where absent `SSN` is allowed only for tests/scaffolding.
+  - keep this separate from `196A`, which handles the `ST2110-20:2017` vs `ST2110-20:2022` cross-field rule.
+  - prefer minimal changes:
+    - `video_signaling.hpp`
+    - related tests only
+  - add focused tests for:
+    - missing `SSN` rejected by standards-clean signaling validation;
+    - SDP-derived signaling still passes when `SSN` is present;
+    - synthetic/manual fallback, if kept, is explicit and not used by final SDP ingestion.
+- [ ] 196P: Correct ST 2110-21 `TP` / `TROFF` / `CMAX` sender timing validation
+  - re-check `validate_video_sender_signaling(...)` and final SDP ingestion behavior against ST 2110-21.
+  - final video SDP ingestion should not silently treat absent `TP` as `2110TPN`.
+  - `TP` should be required for ST 2110-21-conforming video RTP streams.
+  - `TROFF` and `CMAX` should be validated according to ST 2110-21 optional-parameter semantics and sender-class defaults, rather than being rejected for `Narrow` / `NarrowLinear` solely because current structural validation says so.
+  - validate numeric constraints:
+    - `TROFF`, when present, must be a positive integer microsecond value;
+    - `CMAX`, when present, must be valid for the local modeled policy.
+  - keep stricter sender/conformance policy separate from normal receiver ingestion if needed.
+  - prefer minimal changes:
+    - `video_signaling.hpp`
+    - `video_sdp_ingestion.hpp`
+    - `video_sdp_fmtp.hpp` only if parser-level numeric positivity must change
+    - related tests only
+  - add focused tests for:
+    - missing `TP` rejected by final ST 2110 video SDP ingestion;
+    - `TP=2110TPN`, `TP=2110TPNL`, `TP=2110TPW` accepted;
+    - `TROFF` accepted where standard-valid;
+    - `TROFF=0` rejected;
+    - `CMAX` handling matches the corrected sender timing policy;
+    - receiver capability rejection still remains in `video_receiver_timing_signaling.hpp`.
+- [ ] 196Q: Tighten raw SDP `c=` connection-data structural validation
+  - keep `c=` as raw transport metadata outside `VideoStreamSignaling`.
+  - validate known SDP/ST 2110-relevant structure more explicitly:
+    - `nettype`, initially `IN`;
+    - `addrtype`, initially `IP4` and/or explicit `IP6` branch if supported by the raw model;
+    - non-empty base connection address;
+    - slash parameters only in forms where they are structurally meaningful;
+    - malformed TTL / address-count forms rejected.
+  - do not implement socket join / multicast source filtering here.
+  - prefer minimal changes:
+    - `video_sdp_media_section.hpp`
+    - related tests only
+  - add focused tests for:
+    - valid unicast `c=IN IP4 192.0.2.10`;
+    - valid multicast `c=IN IP4 239.1.1.1/32`;
+    - malformed nettype/addrtype rejected;
+    - malformed slash parameter forms rejected;
+    - existing session/media `c=` preservation remains unchanged.
 ---
 
 ## Track F — MVP exit / readiness for testing
