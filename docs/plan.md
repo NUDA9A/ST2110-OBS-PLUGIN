@@ -844,7 +844,33 @@
   - intentionally does not interpret RTP marker as an audio block boundary;
   - intentionally does not map RTP timestamps to `TimestampNs`;
   - intentionally does not implement jitter/reorder, audio block assembly, channel-order mapping, `AudioBuffer` creation, playout policy, socket backend behavior, or MTL backend behavior.
-- [ ] 092: Implement audio reorder/jitter handling MVP + tests
+- [x] 092: Implement audio reorder/jitter handling MVP + tests
+  - implemented `audio_reorder_buffer.hpp` as the first MVP audio reorder/jitter boundary;
+  - added `AudioReorderBufferConfig` with explicit fixed reorder window size;
+  - added `AudioReorderBufferStats` for:
+    - pushed packets;
+    - popped packets;
+    - duplicates;
+    - late packets;
+    - out-of-window packets;
+    - flushed missing packets.
+  - added `StoredAudioRtpPacket` as an owning stored-packet representation for audio RTP packets;
+  - added `AudioFixedWindowReorderBuffer`:
+    - accepts validated `AudioRtpPacketView`;
+    - stores payload bytes with ownership;
+    - reorders by RTP sequence number;
+    - emits packets only when the expected sequence number is available;
+    - rejects duplicates, late packets and packets beyond the configured window;
+    - supports explicit one-step missing-packet flush through `flush_missing_once()`;
+    - supports reset and pending-state inspection.
+  - keeps audio reorder/jitter handling separate from:
+    - RTP parsing;
+    - audio RTP packet validation;
+    - audio block/frame assembly;
+    - RTP timestamp mapping;
+    - playout timing;
+    - channel-order mapping / reordering;
+    - socket / MTL backend behavior.
 - [ ] 093: Implement audio frame/block assembly MVP + tests
 - [ ] 094: Add audio stats (packets_ok, packets_lost, blocks_ok, blocks_partial/dropped)
 

@@ -744,3 +744,23 @@
         - `AudioBuffer` creation;
         - channel-order mapping / reordering;
         - socket / MTL backend behavior.
+
+## Audio reorder / jitter MVP
+
+### tests/test_audio_reorder_buffer.cpp
+- Роль:
+    - проверяет MVP audio reorder/jitter boundary over validated `AudioRtpPacketView`.
+- Покрывает:
+    - `AudioFixedWindowReorderBuffer` in-order packet push/pop behavior;
+    - out-of-order packet arrival and ordered emission by RTP sequence number;
+    - RTP sequence-number wraparound behavior;
+    - duplicate packet rejection and stats accounting;
+    - late packet rejection after expected sequence has advanced;
+    - out-of-window packet rejection;
+    - explicit `flush_missing_once()` behavior for missing packets;
+    - `reset()` clearing pending state and stats;
+    - `StoredAudioRtpPacket::view()` restoring a valid non-owning `AudioRtpPacketView` over owned payload bytes.
+- Фиксирует:
+    - audio reorder remains separate from RTP parsing and payload validation;
+    - RTP marker and timestamp are preserved but not interpreted;
+    - reorder/jitter MVP does not create `AudioBuffer`, does not apply channel-order mapping, does not perform timestamp mapping, and does not implement backend behavior.

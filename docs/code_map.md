@@ -1834,3 +1834,62 @@
     - it does not create `AudioBuffer` or perform channel reordering;
     - it inherits CSRC/header-extension tolerance from the existing RTP parsing boundary;
     - later tasks should integrate this boundary into audio reorder/jitter handling, block assembly, timestamp/playout layers, and backend receive paths without changing the storage or SDP model shape.
+
+### libs/st2110core/include/st2110/audio_reorder_buffer.hpp
+- Роль:
+    - first MVP audio reorder/jitter boundary for ST 2110-30 receive path.
+    - provides fixed-window RTP sequence-number reordering for already-validated `AudioRtpPacketView` packets.
+    - separates audio packet ordering/loss accounting from:
+        - generic RTP parsing;
+        - audio RTP packet validation;
+        - audio block/frame assembly;
+        - audio timestamp mapping;
+        - receiver playout timing;
+        - channel-order / channel-mapping semantics;
+        - socket / MTL backend behavior.
+- Связи:
+    - uses `AudioRtpPacketView` and `AudioPcmWireFormat` from `audio_packet.hpp`;
+    - uses `RtpHeaderView` and sequence helpers from `rtp.hpp`;
+    - uses `Error` for localized admission failures;
+    - intended downstream consumer is future audio block/frame assembly task `093`;
+    - future audio stats / backend receive paths should consume this boundary rather than adding ad hoc sequence tracking.
+- Сущности:
+    - `AudioReorderBufferConfig`
+        - `window_size_packets` — explicit fixed reorder window size.
+    - `AudioReorderBufferStats`
+        - `packets_pushed`;
+        - `packets_popped`;
+        - `duplicates`;
+        - `late_packets`;
+        - `out_of_window`;
+        - `missing_packets_flushed`.
+    - `StoredAudioRtpPacket`
+        - owning stored representation of one audio RTP packet:
+            - `rtp`;
+            - owning `payload`;
+            - `sampling_rate_hz`;
+            - `channel_count`;
+            - `samples_per_channel`;
+            - `wire_format`.
+        - `view() const -> AudioRtpPacketView`
+            - reconstructs a non-owning packet view over the stored payload bytes.
+            - the returned `payload` span is authoritative for stored packet payload access.
+    - `AudioFixedWindowReorderBuffer`
+        - fixed-window reorder buffer by RTP sequence number.
+        - `push(const AudioRtpPacketView&) -> Error`
+            - accepts and stores a packet if it belongs to the current reorder window;
+            - rejects duplicate, late, out-of-window, or invalid-config cases locally.
+        - `pop_next() -> std::optional<StoredAudioRtpPacket>`
+            - emits the expected packet only when available.
+        - `flush_missing_once()`
+            - advances the expected sequence number by one missing packet and accounts it.
+        - `reset()`
+            - clears pending packets, expected sequence and stats.
+        - `has_pending()`
+        - `stats()`
+- Примечание:
+    - this file intentionally does not parse RTP datagrams and does not validate audio payload size or payload type; those remain in `audio_packet.hpp`;
+    - it preserves RTP marker/timestamp metadata but does not interpret marker as an audio block boundary;
+    - it does not map RTP timestamps to `TimestampNs`;
+    - it does not create `AudioBuffer` or perform channel reordering;
+    - time-based jitter/playout policy remains future work through `095` and later playout/release boundaries.
