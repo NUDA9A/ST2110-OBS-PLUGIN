@@ -44,7 +44,8 @@
 - Связи:
     - использует `VideoFrameView` и `RxVideoConfig` для video receive path;
     - использует `AudioFrameView` и `RxAudioConfig` для audio receive path;
-    - future backend factory / selector should consume `IRxBackend::capabilities()` and media-specific interfaces rather than duplicating backend lifecycle contracts.
+    - используется `backend_factory.hpp` как media-capability/source interface для backend selection/creation boundary;
+    - future socket/MTL backend implementations should expose their concrete selection/creation path through `IRxBackendFactory` rather than duplicating backend lifecycle contracts in app/plugin code.
 - Сущности:
     - `RxMediaKind`
         - modeled media capability axis:
@@ -75,12 +76,68 @@
         - uses virtual inheritance from `IRxBackend` so combined video+audio backends have a single common backend base;
         - `start_audio(const RxAudioConfig&, IAudioFrameSink&)`.
 - Примечание:
-    - audio/video backend capability shape is now explicit and backend-kind agnostic;
+    - audio/video backend capability shape is explicit and backend-kind agnostic;
     - a future socket or MTL backend can implement both `IRxVideoBackend` and `IRxAudioBackend` in one class without ambiguous `IRxBackend` duplication;
     - backend interfaces intentionally still consume existing runtime/storage boundaries and do not perform ST 2110 signaling interpretation themselves;
-    - channel-order interpretation remains outside this file and should consume `ParsedAudioChannelOrder` / `AudioReceiverBootstrapConfig`;
-    - future backend factory / selector work belongs to task `101`;
+    - backend kind selection / registration / creation now lives in `backend_factory.hpp`;
     - threading, socket/MTL behavior, RTP payload-type admission, SDP transport projection, and receive-loop stats remain separate boundaries/tasks.
+
+### libs/st2110core/include/st2110/backend_factory.hpp
+- Роль:
+    - explicit backend-kind modeling and backend selection/creation boundary.
+    - отделяет выбор backend implementation (`socket` / `mtl`) от media runtime config, packet pipeline, SDP/signaling parsing и concrete backend implementation details.
+    - задает extendable registration/selection layer поверх `IRxBackend`.
+- Связи:
+    - использует `backend.hpp` для `IRxBackend`, `RxMediaKind` и `RxBackendCapabilities`;
+    - использует `error.hpp` для validation/result reporting;
+    - должен потребляться будущими CLI / app / OBS bootstrap слоями при выборе backend’а;
+    - concrete socket/MTL implementations later should provide `IRxBackendFactory` instances rather than hardcoding creation branches directly in app/plugin code.
+- Сущности:
+    - `RxBackendKind`
+        - modeled backend axis:
+            - `Socket`;
+            - `Mtl`.
+    - `validate_rx_backend_kind(RxBackendKind) -> Error`
+        - validates known backend-kind enum values.
+    - `rx_backend_kind_name(RxBackendKind) -> std::string_view`
+        - stable string mapping for known backend kinds.
+    - `parse_rx_backend_kind(std::string_view) -> std::expected<RxBackendKind, Error>`
+        - strict parser for backend-kind selection tokens.
+    - `RxBackendDescriptor`
+        - backend-factory-advertised descriptor:
+            - `kind`;
+            - `name`;
+            - `capabilities`;
+            - `available`.
+    - `validate_rx_backend_descriptor(const RxBackendDescriptor&) -> Error`
+        - validates descriptor shape;
+        - rejects invalid backend kind, empty backend name, and descriptors with no media capability.
+    - `RxBackendSelection`
+        - requested backend selection:
+            - `backend_kind`;
+            - `media_kind`.
+    - `validate_rx_backend_selection(const RxBackendSelection&) -> Error`
+        - validates requested backend kind and requested media kind.
+    - `IRxBackendFactory`
+        - abstract backend-factory contract:
+            - `descriptor()`;
+            - `create_backend()`.
+    - `select_rx_backend_factory(std::span<IRxBackendFactory* const>, const RxBackendSelection&) -> std::expected<IRxBackendFactory*, Error>`
+        - validates the selection request and registered factories;
+        - selects a factory by requested backend kind plus required media capability;
+        - rejects unavailable or missing factories through explicit result codes.
+    - `create_rx_backend(std::span<IRxBackendFactory* const>, const RxBackendSelection&) -> std::expected<std::unique_ptr<IRxBackend>, Error>`
+        - selects a factory and creates one backend instance;
+        - rejects null backend results from a factory as invalid.
+- Примечание:
+    - backend kind is now a first-class architecture axis separate from media kind;
+    - descriptors advertise backend capabilities instead of assuming that backend kind implies a fixed media set;
+    - localized `available=false` keeps temporary runtime/build availability explicit without reshaping the API;
+    - future backend additions should mainly require:
+        - adding a new `RxBackendKind` value;
+        - adding its parse/name/validation case;
+        - providing a new concrete `IRxBackendFactory`;
+        - adding tests.
 
 ### libs/st2110core/include/st2110/bytes.hpp
 - Роль:

@@ -1,6 +1,7 @@
 function(add_st2110_test name)
     add_executable(${name} ${ARGN})
     target_link_libraries(${name} PRIVATE st2110core)
+    target_compile_features(${name} PRIVATE cxx_std_23)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
@@ -112,3 +113,4 @@ add_st2110_test(test_audio_frame_assembler test_audio_frame_assembler.cpp)
 add_st2110_test(test_audio_stats test_audio_stats.cpp)
 add_st2110_test(audio_timestamp_mapping_test audio_timestamp_mapping_test.cpp)
 add_st2110_test(audio_timestamp_mapping_invariants_test audio_timestamp_mapping_invariants_test.cpp)
+add_st2110_test(test_backend_factory test_backend_factory.cpp)

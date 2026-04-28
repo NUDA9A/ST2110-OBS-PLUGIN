@@ -18,10 +18,11 @@
 - Роль:
     - объявляет helper `add_st2110_test(name ...)`;
     - регистрирует все unit / architecture / regression tests через CTest;
-    - каждый test executable линкуется с `st2110core`.
+    - каждый test executable линкуется с `st2110core`;
+    - каждому test target явно задается `cxx_std_23`, чтобы IDE/test-target compilation model не расходился с project/toolchain requirements.
 - Сущности:
     - `add_st2110_test(...)`
-    - targets for smoke/base tests, RTP/ST2110 packet parsing, reorder, frame assembly, depacketizer, video signaling, SDP ingestion, timing, playout, audio signaling model tests, audio SDP ingestion tests, audio receiver bootstrap tests, backend interface tests, audio frame storage tests, and audio packet model tests.
+    - targets for smoke/base tests, RTP/ST2110 packet parsing, reorder, frame assembly, depacketizer, video signaling, SDP ingestion, timing, playout, audio signaling model tests, audio SDP ingestion tests, audio receiver bootstrap tests, backend interface tests, backend factory tests, audio frame storage tests, and audio packet model tests.
 
 ## Smoke / common foundations
 
@@ -133,6 +134,40 @@
 - Фиксирует:
     - socket/MTL backend implementations can later expose video-only, audio-only, or combined capabilities without duplicating common lifecycle/base API;
     - backend interfaces consume existing runtime/storage boundaries and do not embed SDP parsing, channel-order interpretation, RTP packet parsing, jitter/reorder, playout policy, socket behavior, or MTL behavior.
+
+### tests/test_backend_factory.cpp
+- Роль:
+    - проверяет backend factory / selector boundary.
+- Покрывает:
+    - modeled backend-kind axis:
+        - `RxBackendKind`;
+        - `validate_rx_backend_kind(...)`;
+        - `rx_backend_kind_name(...)`;
+        - `parse_rx_backend_kind(...)`.
+    - descriptor / selection validation:
+        - `RxBackendDescriptor`;
+        - `validate_rx_backend_descriptor(...)`;
+        - `RxBackendSelection`;
+        - `validate_rx_backend_selection(...)`.
+    - abstract factory shape:
+        - `IRxBackendFactory`;
+        - `descriptor()`;
+        - `create_backend()`.
+    - factory selection:
+        - `select_rx_backend_factory(...)`;
+        - selection by requested backend kind;
+        - selection constrained by requested media capability;
+        - unavailable backend rejection;
+        - missing backend-kind rejection;
+        - null factory entry rejection.
+    - backend creation:
+        - `create_rx_backend(...)`;
+        - uses the selected factory only;
+        - rejects null backend results from a factory.
+- Фиксирует:
+    - backend kind is modeled separately from media kind;
+    - backend selection remains separate from concrete socket/MTL implementation details and separate from video/audio runtime config and packet pipeline code;
+    - future backend expansion should plug in through descriptor/factory registration rather than ad hoc creation branches in apps/plugins.
 
 ## RTP / ST 2110-20 packet parsing
 
@@ -619,7 +654,7 @@
         - explicit invalid `Unspecified` channel-order raw value rejection;
         - forward-compatible `Other` channel-order preservation.
 
-### tests/audio_channel_order_test.cpp
+### tests/audio_channel_order_boundary_test.cpp
 - Роль:
     - проверяет modeled ST 2110-30 audio channel-order boundary.
     - покрывает:

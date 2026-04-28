@@ -981,7 +981,21 @@
   - signaling-to-runtime projection now preserves `signaling.packing_mode` in projected `RxVideoConfig`.
   - signaling-vs-manual config matching now verifies `cfg.packing_mode == signaling.packing_mode`.
   - no BPM runtime depacketize behavior was implemented in this task; future BPM behavior remains task `229` through the already-modeled packing-mode branches.
-- [ ] 101: Add backend factory / selector design (`socket|mtl`) in extendable form
+- [x] 101: Add backend factory / selector design (`socket|mtl`) in extendable form
+  - add explicit `RxBackendKind` modeled axis separate from `RxMediaKind`
+  - add backend descriptor / selection model with validation helpers
+  - add abstract `IRxBackendFactory` exposing descriptor + `create_backend()`
+  - add selector / creation helpers over registered backend factories
+  - keep backend selection separate from concrete socket/MTL implementation details and separate from media runtime config / packet pipeline logic
+  - represent temporary backend availability through validated descriptors rather than ad hoc branching
+  - reject invalid factory entries and null factory-create results through localized validation/result handling
+  - add focused tests for:
+    - backend kind validation / parse / name mapping;
+    - descriptor and selection validation;
+    - media-aware factory selection;
+    - unavailable / missing backend rejection;
+    - null factory entry rejection;
+    - null backend creation rejection
 
 ### C1. Socket video RX
 - [ ] 110: Implement `SocketRxVideoBackend` skeleton + smoke test
