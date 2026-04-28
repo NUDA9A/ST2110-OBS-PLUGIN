@@ -82,6 +82,9 @@
 - [ ] S047: `VideoMediaDescription::signal_standard` is optional in the standards-aware signaling model, so manually constructed `VideoStreamSignaling` can validate without an `SSN` even though ST 2110-20 requires the `SSN` media type parameter for conforming video streams. SDP parsing requires `SSN`, but generic signaling-model validation should either require it for standards-clean video signaling or make the synthetic/manual fallback explicit.
 - [ ] S048: ST 2110-21 sender timing signaling is currently modeled too loosely in one place and too strictly in another. Final SDP ingestion can silently default absent `TP` to `VideoSenderType::Narrow`, even though `TP` is required by ST 2110-21 for video RTP streams. At the same time, `validate_video_sender_signaling()` rejects `TROFF` / `CMAX` for `Narrow` and `NarrowLinear`, although ST 2110-21 defines these as optional media type parameters with default assumptions when absent. This validation should be rechecked and corrected against ST 2110-21.
 - [ ] S049: Raw SDP `c=` connection data parsing preserves useful transport metadata but is still too permissive structurally. It accepts arbitrary `nettype` / `addrtype` tokens and parses slash parameters without validating whether the form is appropriate for the address type / multicast shape. This should be tightened in the raw SDP transport boundary while keeping backend socket behavior separate.
+- [ ] S050: Current backend lifecycle contract is still skeleton-oriented: `IRxVideoBackend::start_video(...)`, `IRxAudioBackend::start_audio(...)`, and `IRxBackend::stop()` are `void`, while the common `Error` model is still centered on parse/validation failures. Before real backend runtime work (`socket`, `bind`, multicast join/leave, receive loop, lifecycle cleanup), backend-visible operational failures and lifecycle misuse must be represented through an explicit common result/state boundary rather than silent no-op behavior, ad hoc logging, or overloading parser errors.
+- [ ] S051: The plan still defers a socket platform boundary too late for a known future axis. Since the project already has an explicit future `Windows` phase for the project’s own socket backend, OS-specific socket operations must be isolated before real Linux socket RX implementation proceeds. Linux-first implementation is acceptable, but it should fill an already-defined OS-neutral socket runtime boundary so later Winsock support becomes a localized implementation task rather than a retrofit of the Linux path.
+---
 ---
 
 # Phase 1 — MVP
@@ -104,6 +107,32 @@
   - fix `scripts/build_and_test.sh` strict-mode typo
   - verify the script actually configures, builds, and runs tests from a clean checkout
   - add a minimal CI-oriented smoke check or documented manual verification step
+- [ ] 035: Extend common error/result model for operational backend/runtime failures
+  - keep parse/validation failures and backend/runtime failures explicitly distinguishable
+  - cover at least:
+    - invalid backend state / wrong lifecycle transition
+    - socket/system operation failure
+    - bind failure
+    - multicast join/leave failure
+    - receive-loop failure / interrupted/aborted I/O
+  - avoid silently collapsing real runtime failures into generic parse errors or no-op behavior
+  - keep the model reusable for:
+    - socket and MTL backends
+    - video and audio backends
+  - add focused tests
+- [ ] 036: Add explicit backend lifecycle result/state boundary before real socket/MTL runtime work
+  - replace the current placeholder-only `void` start/stop contract with an explicit result-returning and state-aware backend lifecycle boundary, or an equivalent explicit boundary with the same guarantees
+  - define localized policy for:
+    - start on an already-started backend
+    - stop before successful start
+    - repeated stop
+    - failed start followed by retry / cleanup
+  - preserve:
+    - existing media capability model
+    - future combined video+audio backend extensibility
+    - backend-kind-agnostic factory/selection shape
+  - keep transport/runtime failure reporting out of sinks and out of ad hoc logging-only paths
+  - add focused backend-interface regression tests
 
 ### A1. Video packet model
 - [x] 040: Define `PacketView` (rtp header + ext seq32 + srd list + payload bytes)
@@ -1013,8 +1042,29 @@
     - factory descriptor;
     - backend creation through the factory;
     - rejection of unsupported audio cast/use on the video-only backend.
-- [ ] 111: Implement UDP socket open/bind (unicast base path)
-- [ ] 112: Implement multicast join/leave (Linux) for socket video receive path
+- [ ] 110A: Define an OS-neutral socket video transport boundary before real Linux RX implementation
+  - introduce a localized socket runtime abstraction for the project’s own socket backend
+  - keep the abstraction narrow and backend-oriented, not a general networking framework
+  - cover only the operations needed by planned socket receive work:
+    - socket open/create
+    - bind
+    - multicast join/leave
+    - receive
+    - close/cleanup
+    - address/port preparation as needed
+  - keep Linux as the first concrete implementation
+  - shape the boundary so later Winsock support fills the same contract rather than refactoring Linux-oriented backend code
+  - keep RTP parsing, depacketizer/pipeline logic, SDP ingestion, and timing/playout outside this layer
+  - add focused tests for contract shape / failure mapping where practical
+- [ ] 110B: Rebase `SocketRxVideoBackend` onto the explicit backend lifecycle/error boundary and the socket transport boundary
+  - update the socket video backend skeleton after `035`, `036`, and `110A`
+  - current transport behavior may still remain placeholder/no-op after this task
+  - make successful placeholder start/stop explicit through the new lifecycle/result contract
+  - keep the backend video-only for now
+  - keep Linux-specific details behind the socket transport boundary rather than inside the backend public contract
+  - add focused smoke/regression tests
+- [ ] 111: Implement UDP socket open/bind (unicast base path) through the socket transport boundary
+- [ ] 112: Implement multicast join/leave (Linux) for socket video receive path through the socket transport boundary
 - [ ] 113: Add receive loop (recvfrom/recvmmsg later) and feed PacketView pipeline
 - [ ] 114: Add periodic stats print (pps, drops, frames/s)
 - [ ] 115: Add graceful stop (SIGINT) and cleanup
@@ -1577,9 +1627,12 @@
 
 ## Track M — Optional Windows support
 - [ ] 300: Decide whether Windows port is worth doing after Linux result is stable
-- [ ] 301: Introduce OS abstraction layer for sockets if still justified
-- [ ] 302: Implement Winsock backend (unicast first)
-- [ ] 303: Implement multicast join on Windows
+- [ ] 301: Fill Windows implementation behind the already-defined socket transport boundary
+  - do not introduce the socket OS/platform abstraction впервые in the Windows phase
+  - reuse the socket transport boundary introduced during Linux socket backend work
+  - keep Windows support limited to the project’s own socket backend
+- [ ] 302: Implement Winsock unicast receive path behind the existing socket transport boundary
+- [ ] 303: Implement Winsock multicast join/leave behind the existing socket transport boundary
 - [ ] 304: Build & run dump tool(s) on Windows
 - [ ] 305: Evaluate whether OBS Windows plugin integration is worth the effort
 - [ ] 306: Do not port MTL backend; Linux-only by design
