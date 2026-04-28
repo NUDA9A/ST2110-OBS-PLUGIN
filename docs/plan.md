@@ -85,7 +85,6 @@
 - [ ] S050: Current backend lifecycle contract is still skeleton-oriented: `IRxVideoBackend::start_video(...)`, `IRxAudioBackend::start_audio(...)`, and `IRxBackend::stop()` are `void`, while the common `Error` model is still centered on parse/validation failures. Before real backend runtime work (`socket`, `bind`, multicast join/leave, receive loop, lifecycle cleanup), backend-visible operational failures and lifecycle misuse must be represented through an explicit common result/state boundary rather than silent no-op behavior, ad hoc logging, or overloading parser errors.
 - [ ] S051: The plan still defers a socket platform boundary too late for a known future axis. Since the project already has an explicit future `Windows` phase for the project’s own socket backend, OS-specific socket operations must be isolated before real Linux socket RX implementation proceeds. Linux-first implementation is acceptable, but it should fill an already-defined OS-neutral socket runtime boundary so later Winsock support becomes a localized implementation task rather than a retrofit of the Linux path.
 ---
----
 
 # Phase 1 — MVP
 
@@ -804,7 +803,7 @@
 - [x] 082: Define audio sink/backend-facing interfaces or extend shared interfaces so audio can be supported without ломки video API
   - extended `backend.hpp` with audio-facing backend contracts;
   - added `IAudioFrameSink::on_audio_frame(const AudioFrameView&)`;
-  - added `IRxAudioBackend`, derived from `IRxBackend`, with `start(const RxAudioConfig&, IAudioFrameSink&)`;
+  - added `IRxAudioBackend`, derived from `IRxBackend`, with `start_audio(const RxAudioConfig&, IAudioFrameSink&)`;
   - preserved existing video API shape:
     - `IVideoFrameSink`;
     - `IRxVideoBackend`;
