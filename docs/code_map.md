@@ -2139,3 +2139,44 @@
     - this file does not implement scheduler/sleep/release queue behavior;
     - it does not interpret RTP marker, packet time, channel count, or channel order;
     - future audio runtime pipeline should consume this boundary above reorder/assembly rather than embedding timestamp conversion in RTP parsing or audio block assembly.
+
+### libs/st2110core/include/st2110/socket_rx_video_backend.hpp
+- Роль:
+    - первый concrete socket video backend skeleton для MVP.
+    - локализует concrete socket-video backend identity и factory registration, не смешивая их с RTP parsing, SDP ingestion, timing/playout policy или socket I/O implementation.
+- Связи:
+    - использует `backend.hpp` для `IRxVideoBackend`, `IVideoFrameSink`, `RxBackendCapabilities`, `RxVideoConfig`;
+    - использует `backend_factory.hpp` для `IRxBackendFactory`, `RxBackendDescriptor`, `RxBackendKind`;
+    - должен выбираться через existing backend factory / selector boundary, а не через ad hoc construction в app/plugin code.
+- Сущности:
+    - `SocketRxVideoBackend`
+        - concrete `IRxVideoBackend` skeleton.
+        - `backend_name() -> "socket"`.
+        - `capabilities() -> { video_rx = true, audio_rx = false }`.
+        - `start_video(const RxVideoConfig&, IVideoFrameSink&)`
+            - current no-op placeholder for future socket receive startup.
+        - `stop()`
+            - current no-op placeholder for future receive-loop shutdown / cleanup.
+    - `SocketRxVideoBackendFactory`
+        - first concrete `IRxBackendFactory` for socket video backend.
+        - `descriptor()`
+            - advertises:
+                - `kind = RxBackendKind::Socket`;
+                - `name = "socket"`;
+                - video-only capabilities;
+                - `available = true`.
+        - `create_backend()`
+            - creates one `SocketRxVideoBackend` instance as `std::unique_ptr<IRxBackend>`.
+- Примечание:
+    - это именно skeleton boundary;
+    - реальное UDP open/bind, multicast join, receive loop, packet admission, pipeline feed, stats и shutdown policy остаются следующими задачами;
+    - текущий header-only method body shape допустим для такого малого skeleton, но при росте реализации non-trivial socket behavior should live in `.cpp`.
+
+### libs/st2110core/src/socket_rx_video_backend.cpp
+- Роль:
+    - translation unit for the socket video backend skeleton.
+- Связи:
+    - includes `st2110/socket_rx_video_backend.hpp`;
+    - placeholder `.cpp` boundary for later non-trivial socket video backend implementation.
+- Сущности:
+    - currently contains only the include of the public header.

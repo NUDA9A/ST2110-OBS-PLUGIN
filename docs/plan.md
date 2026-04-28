@@ -998,7 +998,21 @@
     - null backend creation rejection
 
 ### C1. Socket video RX
-- [ ] 110: Implement `SocketRxVideoBackend` skeleton + smoke test
+- [x] 110: Implement `SocketRxVideoBackend` skeleton + smoke test
+  - added concrete `SocketRxVideoBackend` as the first socket video backend skeleton;
+  - added `SocketRxVideoBackendFactory` exposing the backend through the existing `IRxBackendFactory` boundary;
+  - current skeleton behavior is intentionally minimal:
+    - `backend_name() == "socket"`;
+    - video capability only;
+    - `start_video(...)` is a no-op placeholder;
+    - `stop()` is a no-op placeholder;
+  - added focused smoke coverage for:
+    - direct backend interface shape;
+    - capability reporting;
+    - no-op start/stop path;
+    - factory descriptor;
+    - backend creation through the factory;
+    - rejection of unsupported audio cast/use on the video-only backend.
 - [ ] 111: Implement UDP socket open/bind (unicast base path)
 - [ ] 112: Implement multicast join/leave (Linux) for socket video receive path
 - [ ] 113: Add receive loop (recvfrom/recvmmsg later) and feed PacketView pipeline

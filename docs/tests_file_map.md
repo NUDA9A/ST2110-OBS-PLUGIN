@@ -929,3 +929,32 @@
     - audio RTP timestamp mapping uses explicit RTP clock rate and RTP tick deltas rather than hardcoded packet cadence;
     - RTP-domain mapping remains separate from receiver-side playout timing;
     - timestamp invariants remain separate from RTP parsing, packet admission, reorder/jitter buffering, audio block assembly, channel-order mapping, socket backend, MTL backend, and OBS handoff behavior.
+
+
+### tests/test_socket_rx_video_backend.cpp
+- Роль:
+    - smoke/regression test for the first concrete socket video backend skeleton.
+- Покрывает:
+    - `SocketRxVideoBackend` direct backend behavior:
+        - `backend_name() == "socket"`;
+        - reports video-only capabilities;
+        - does not report audio capability;
+        - can be viewed through `IRxBackend&` / `IRxVideoBackend&`;
+        - video-only backend is not exposed as `IRxAudioBackend`.
+    - skeleton lifecycle behavior:
+        - `start_video(...)` is callable with valid `RxVideoConfig` and sink;
+        - current skeleton start path is a no-op and does not emit frames;
+        - `stop()` is callable and remains a no-op placeholder.
+    - `SocketRxVideoBackendFactory`:
+        - descriptor shape;
+        - `RxBackendKind::Socket`;
+        - `"socket"` name;
+        - video-only capability advertisement;
+        - `available = true`.
+    - backend creation:
+        - factory returns a non-null `IRxBackend`;
+        - created backend can be dynamically viewed as `IRxVideoBackend`;
+        - created backend remains video-only.
+- Фиксирует:
+    - the first concrete socket video backend plugs into the existing backend/factory architecture instead of bypassing it;
+    - socket video backend skeleton remains separate from UDP socket operations, RTP parsing, depacketizer/pipeline logic, timing/playout, and audio backend behavior.
