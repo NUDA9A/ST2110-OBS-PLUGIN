@@ -84,18 +84,32 @@
 ### tests/test_backend_interface.cpp
 - Роль:
     - проверяет backend/sink interface contracts;
-    - покрывает FakeBackend -> FakeVideoSink delivery path;
-    - покрывает FakeAudioBackend -> FakeAudioSink delivery path.
+    - покрывает FakeVideoBackend -> FakeVideoSink delivery path;
+    - покрывает FakeAudioBackend -> FakeAudioSink delivery path;
+    - покрывает combined video+audio backend shape over one common `IRxBackend` base.
 - Покрывает:
     - abstract/interface shape:
         - `IRxBackend`;
         - `IRxVideoBackend`;
         - `IRxAudioBackend`;
         - `IVideoFrameSink`;
-        - `IAudioFrameSink`;
+        - `IAudioFrameSink`.
+    - backend capability model:
+        - `RxMediaKind`;
+        - `RxBackendCapabilities`;
+        - `supports_media(...)`;
+        - unknown media enum value returns `false`.
     - inheritance:
         - `IRxVideoBackend` derives from `IRxBackend`;
         - `IRxAudioBackend` derives from `IRxBackend`;
+        - video/audio backend interfaces use virtual inheritance so a combined backend has a single common `IRxBackend` base.
+    - common backend API:
+        - `backend_name()`;
+        - `stop()`;
+        - `capabilities()`.
+    - media-specific start API:
+        - `IRxVideoBackend::start_video(const RxVideoConfig&, IVideoFrameSink&)`;
+        - `IRxAudioBackend::start_audio(const RxAudioConfig&, IAudioFrameSink&)`.
     - video delivery:
         - fake video backend starts with `RxVideoConfig`;
         - emits a `VideoFrameView`;
@@ -104,9 +118,14 @@
         - fake audio backend starts with `RxAudioConfig`;
         - emits an `AudioFrameView`;
         - sink receives sampling rate, channel count, samples per channel, timestamp, sample pointer, stride, total sample count, and byte size.
+    - combined backend:
+        - one fake backend implements both `IRxVideoBackend` and `IRxAudioBackend`;
+        - can be used through `IRxBackend&`, `IRxVideoBackend&`, and `IRxAudioBackend&`;
+        - reports both video and audio capabilities;
+        - delivers both video and audio through separate media-specific start methods.
 - Фиксирует:
-    - audio backend support is added without breaking existing video backend contracts;
-    - backend interfaces consume existing runtime/storage boundaries and do not embed SDP parsing, channel-order interpretation, RTP packet parsing, jitter/reorder, playout policy, or concrete backend behavior.
+    - socket/MTL backend implementations can later expose video-only, audio-only, or combined capabilities without duplicating common lifecycle/base API;
+    - backend interfaces consume existing runtime/storage boundaries and do not embed SDP parsing, channel-order interpretation, RTP packet parsing, jitter/reorder, playout policy, socket behavior, or MTL behavior.
 
 ## RTP / ST 2110-20 packet parsing
 

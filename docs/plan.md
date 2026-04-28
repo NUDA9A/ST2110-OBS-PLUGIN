@@ -970,7 +970,7 @@
 ## Track C — Linux backends (both required in MVP)
 
 ### C0. Socket backend common
-- [ ] 100: Refactor backend layer so socket/mtl can expose both video and audio capabilities without duplication explosion
+- [x] 100: Refactor backend layer so socket/mtl can expose both video and audio capabilities without duplication explosion
 - [ ] 100A: Align manual/backend-facing runtime video config contracts with already-modeled runtime axes
   - ensure the manual/backend-facing video runtime path is able to carry already-modeled standard runtime axes, not only the signaling-driven path
   - at minimum, thread `VideoPackingMode` through the backend-facing runtime config contract instead of leaving it signaling-only for manual/backend bootstrap

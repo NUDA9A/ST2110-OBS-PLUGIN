@@ -40,11 +40,23 @@
     - базовые backend/sink интерфейсы для receive path.
     - текущая точка расширения для socket/MTL video и audio backend’ов.
     - задает media-facing delivery contracts без смешивания с packet parsing, SDP ingestion, channel-order mapping, timing/playout policy или конкретным socket/MTL runtime behavior.
+    - содержит общий capability query layer, чтобы один будущий backend-класс мог быть video-capable, audio-capable или combined video+audio backend без дублирования common lifecycle/base API.
 - Связи:
     - использует `VideoFrameView` и `RxVideoConfig` для video receive path;
     - использует `AudioFrameView` и `RxAudioConfig` для audio receive path;
-    - future backend factory / selector should consume these interfaces rather than duplicating media-specific lifecycle contracts.
+    - future backend factory / selector should consume `IRxBackend::capabilities()` and media-specific interfaces rather than duplicating backend lifecycle contracts.
 - Сущности:
+    - `RxMediaKind`
+        - modeled media capability axis:
+            - `Video`;
+            - `Audio`.
+    - `RxBackendCapabilities`
+        - declares which receive media kinds a backend supports:
+            - `video_rx`;
+            - `audio_rx`.
+    - `supports_media(const RxBackendCapabilities&, RxMediaKind) -> bool`
+        - helper for querying media support;
+        - returns `false` for unknown enum values.
     - `IVideoFrameSink::on_video_frame(const VideoFrameView&)`
         - прием готового video frame/view.
     - `IAudioFrameSink::on_audio_frame(const AudioFrameView&)`
@@ -52,17 +64,23 @@
     - `IRxBackend`
         - общий lifecycle/base интерфейс backend’а:
             - `backend_name()`;
-            - `stop()`.
+            - `stop()`;
+            - `capabilities()`.
     - `IRxVideoBackend`
-        - video-специализация backend’а:
-            - `start(const RxVideoConfig&, IVideoFrameSink&)`.
+        - video receive capability interface;
+        - uses virtual inheritance from `IRxBackend` so combined video+audio backends have a single common backend base;
+        - `start_video(const RxVideoConfig&, IVideoFrameSink&)`.
     - `IRxAudioBackend`
-        - audio-специализация backend’а:
-            - `start(const RxAudioConfig&, IAudioFrameSink&)`.
+        - audio receive capability interface;
+        - uses virtual inheritance from `IRxBackend` so combined video+audio backends have a single common backend base;
+        - `start_audio(const RxAudioConfig&, IAudioFrameSink&)`.
 - Примечание:
-    - audio backend interface intentionally consumes already-modeled runtime/storage boundaries and does not perform ST 2110-30 signaling interpretation itself;
+    - audio/video backend capability shape is now explicit and backend-kind agnostic;
+    - a future socket or MTL backend can implement both `IRxVideoBackend` and `IRxAudioBackend` in one class without ambiguous `IRxBackend` duplication;
+    - backend interfaces intentionally still consume existing runtime/storage boundaries and do not perform ST 2110 signaling interpretation themselves;
     - channel-order interpretation remains outside this file and should consume `ParsedAudioChannelOrder` / `AudioReceiverBootstrapConfig`;
-    - future socket/MTL audio implementations should implement `IRxAudioBackend` without changing the existing video backend API.
+    - future backend factory / selector work belongs to task `101`;
+    - threading, socket/MTL behavior, RTP payload-type admission, SDP transport projection, and receive-loop stats remain separate boundaries/tasks.
 
 ### libs/st2110core/include/st2110/bytes.hpp
 - Роль:
