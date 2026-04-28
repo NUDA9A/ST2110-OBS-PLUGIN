@@ -1992,3 +1992,58 @@
     - this file intentionally does not decide what constitutes packet loss, partial block emission, or dropped block policy;
     - those decisions remain in reorder/jitter, assembler, and future playout/loss-policy layers;
     - this boundary only provides the shared counters and recording helpers.
+
+### libs/st2110core/include/st2110/audio_timestamp_mapping.hpp
+- Роль:
+    - explicit audio RTP timestamp mapping and receiver-side playout timing boundary for the MVP ST 2110-30 audio path.
+    - separates RTP timestamp domain from internal `TimestampNs`.
+    - separates media timestamp mapping from receiver-side playout/release timing decisions.
+- Связи:
+    - uses `TimestampNs` from `timestamp.hpp`;
+    - uses `Error` for validation/result reporting;
+    - intended downstream consumers include future audio receive pipeline composition, backend delivery, dump tools, and OBS handoff timing;
+    - remains separate from RTP parsing, audio packet validation, reorder/jitter buffering, audio block assembly, channel-order mapping, and backend socket/MTL behavior.
+- Сущности:
+    - `audioTimestampNanosecondsPerSecond`
+        - nanoseconds-per-second conversion constant.
+    - `audioRtpTimestampAmbiguousDelta`
+        - half-range threshold for rejecting backward / ambiguous RTP timestamp deltas.
+    - `AudioRtpTimestampMapperConfig`
+        - `rtp_clock_rate`;
+        - `anchor_rtp_timestamp`;
+        - `anchor_timestamp_ns`.
+    - `validate_audio_rtp_timestamp_mapper_config(...)`
+        - rejects invalid timestamp-mapper config such as zero RTP clock rate.
+    - `forward_audio_rtp_timestamp_delta(...)`
+        - computes forward RTP timestamp delta using 32-bit modulo arithmetic;
+        - accepts normal forward movement and wraparound;
+        - rejects backward / ambiguous movement at or above half the 32-bit range.
+    - `audio_rtp_ticks_to_timestamp_ns(...)`
+        - converts RTP ticks to nanoseconds using explicit RTP clock rate;
+        - rejects invalid clock rate and overflow.
+    - `AudioRtpTimestampMapper`
+        - standards-facing audio RTP timestamp mapper.
+        - `map(uint32_t rtp_timestamp) -> std::expected<TimestampNs, Error>`
+            - maps RTP timestamps to internal nanoseconds relative to an explicit anchor;
+            - preserves continuity across RTP timestamp wraparound;
+            - rejects invalid/backward/ambiguous timestamp movement.
+        - `reset(AudioRtpTimestampMapperConfig) -> Error`
+            - validates and resets the mapper anchor/state.
+    - `AudioReceiverPlayoutTimingConfig`
+        - `playout_delay_ns`.
+    - `AudioReceiverPlayoutTimingDecision`
+        - `media_timestamp_ns`;
+        - `playout_timestamp_ns`.
+    - `validate_audio_receiver_playout_timing_config(...)`
+        - structural validation entry point for receiver playout timing config.
+    - `audio_receiver_playout_timing_decision(...)`
+        - computes `playout_timestamp_ns = media_timestamp_ns + playout_delay_ns`;
+        - rejects overflow.
+    - `AudioBlockTiming`
+        - carries RTP timestamp, mapped media timestamp, and computed playout timestamp.
+    - `audio_block_timing(...)`
+        - adapter from RTP timestamp metadata plus mapped media timestamp to explicit block timing metadata.
+- Примечание:
+    - this file does not implement scheduler/sleep/release queue behavior;
+    - it does not interpret RTP marker, packet time, channel count, or channel order;
+    - future audio runtime pipeline should consume this boundary above reorder/assembly rather than embedding timestamp conversion in RTP parsing or audio block assembly.

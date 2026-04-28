@@ -936,11 +936,25 @@
     - socket / MTL backend behavior.
 
 ### B2. Audio timestamp strategy
-- [ ] 095: Define audio timestamp mapping / playout timing boundary to internal `ts_ns`
-  - keep RTP timestamp domain distinct from internal timestamps
-  - handle RTP timestamp wraparound / long-running streams explicitly
-  - keep standards-aware timing interpretation separate from local cadence heuristics
-  - separate RTP-domain mapping from receiver-side playout / block-release policy
+- [x] 095: Define audio timestamp mapping / playout timing boundary to internal `ts_ns`
+  - implemented `audio_timestamp_mapping.hpp` as the first explicit audio RTP timestamp mapping and receiver-side playout timing boundary;
+  - added `AudioRtpTimestampMapperConfig` and `AudioRtpTimestampMapper`;
+  - keeps RTP timestamp domain distinct from internal `TimestampNs`;
+  - validates RTP clock rate explicitly instead of assuming a fixed hardcoded audio clock;
+  - maps RTP timestamp deltas to nanoseconds through `audio_rtp_ticks_to_timestamp_ns(...)`;
+  - handles 32-bit RTP timestamp wraparound through forward modulo-delta tracking;
+  - rejects backward / ambiguous timestamp movement at or above half the 32-bit RTP timestamp range;
+  - preserves long-running continuity through accumulated RTP ticks since an explicit anchor;
+  - added `AudioReceiverPlayoutTimingConfig` and `audio_receiver_playout_timing_decision(...)` as a separate receiver-side playout-delay boundary;
+  - added `AudioBlockTiming` / `audio_block_timing(...)` as a small adapter for carrying RTP timestamp, mapped media timestamp, and playout timestamp together;
+  - keeps timestamp mapping separate from:
+    - RTP parsing;
+    - RTP payload type admission;
+    - reorder/jitter buffering;
+    - audio frame/block assembly;
+    - packet time / samples-per-packet derivation;
+    - channel-order / channel-mapping;
+    - socket / MTL backend behavior.
 - [ ] 096: Add monotonicity / cadence tests for audio path
   - include wraparound and long-running continuity cases where applicable
 

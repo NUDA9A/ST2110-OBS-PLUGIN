@@ -822,3 +822,32 @@
 - Фиксирует:
     - audio stats accounting remains a standalone boundary;
     - stats helpers do not embed RTP parsing, reorder/jitter, audio assembly, timestamp mapping, playout policy, channel-order mapping, socket backend, or MTL backend behavior.
+
+### tests/audio_timestamp_mapping_test.cpp
+- Роль:
+    - проверяет audio RTP timestamp mapping and receiver-side playout timing boundary introduced for task `095`.
+- Покрывает:
+    - `AudioRtpTimestampMapperConfig` validation:
+        - valid RTP clock rate;
+        - zero RTP clock rate rejected.
+    - RTP tick to nanosecond conversion:
+        - exact second conversion;
+        - fractional tick conversion;
+        - invalid clock rejection;
+        - overflow rejection where applicable.
+    - `AudioRtpTimestampMapper` behavior:
+        - mapping from explicit RTP/timestamp anchor;
+        - monotonic forward timestamp mapping;
+        - 32-bit RTP timestamp wraparound continuity;
+        - backward / ambiguous timestamp movement rejection;
+        - reset behavior.
+    - receiver-side playout timing:
+        - zero-delay behavior;
+        - positive playout delay addition;
+        - overflow rejection.
+    - `AudioBlockTiming` adapter behavior:
+        - preserves RTP timestamp metadata;
+        - carries mapped media timestamp;
+        - carries computed playout timestamp.
+- Фиксирует:
+    - audio timestamp mapping remains separate from RTP parsing, audio packet validation, reorder/jitter buffering, audio frame/block assembly, channel-order mapping, socket backend, MTL backend, and OBS handoff behavior.
