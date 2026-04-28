@@ -3,6 +3,7 @@
 
 #include "video_frame.hpp"
 #include "rx_config.hpp"
+#include "audio_frame.hpp"
 
 namespace st2110 {
     class IVideoFrameSink {
@@ -10,6 +11,13 @@ namespace st2110 {
         virtual void on_video_frame(const VideoFrameView &frame) = 0;
 
         virtual ~IVideoFrameSink() = default;
+    };
+
+    class IAudioFrameSink {
+    public:
+        virtual void on_audio_frame(const AudioFrameView& frame) = 0;
+
+        virtual ~IAudioFrameSink() = default;
     };
 
     class IRxBackend {
@@ -26,6 +34,13 @@ namespace st2110 {
         virtual void start(const RxVideoConfig &cfg, IVideoFrameSink &sink) = 0;
 
         ~IRxVideoBackend() override = default;
+    };
+
+    class IRxAudioBackend : public IRxBackend {
+    public:
+        virtual void start(const RxAudioConfig& cfg, IAudioFrameSink& sink) = 0;
+
+        ~IRxAudioBackend() override = default;
     };
 
 }

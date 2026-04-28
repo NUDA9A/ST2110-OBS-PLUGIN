@@ -37,15 +37,32 @@
 
 ### libs/st2110core/include/st2110/backend.hpp
 - Роль:
-    - базовые backend/sink интерфейсы для video receive path.
-    - текущая точка расширения для socket/MTL video backend’ов.
+    - базовые backend/sink интерфейсы для receive path.
+    - текущая точка расширения для socket/MTL video и audio backend’ов.
+    - задает media-facing delivery contracts без смешивания с packet parsing, SDP ingestion, channel-order mapping, timing/playout policy или конкретным socket/MTL runtime behavior.
 - Связи:
-    - использует `VideoFrameView` и `RxVideoConfig`;
-    - должна остаться совместимой с будущим audio/generalized backend layer.
+    - использует `VideoFrameView` и `RxVideoConfig` для video receive path;
+    - использует `AudioFrameView` и `RxAudioConfig` для audio receive path;
+    - future backend factory / selector should consume these interfaces rather than duplicating media-specific lifecycle contracts.
 - Сущности:
-    - `IVideoFrameSink::on_video_frame(const VideoFrameView&)` — прием готового video frame/view.
-    - `IRxBackend` — общий интерфейс backend’а (`backend_name()`, `stop()`).
-    - `IRxVideoBackend` — video-специализация backend’а, `start(const RxVideoConfig&, IVideoFrameSink&)`.
+    - `IVideoFrameSink::on_video_frame(const VideoFrameView&)`
+        - прием готового video frame/view.
+    - `IAudioFrameSink::on_audio_frame(const AudioFrameView&)`
+        - прием готового audio frame/block view.
+    - `IRxBackend`
+        - общий lifecycle/base интерфейс backend’а:
+            - `backend_name()`;
+            - `stop()`.
+    - `IRxVideoBackend`
+        - video-специализация backend’а:
+            - `start(const RxVideoConfig&, IVideoFrameSink&)`.
+    - `IRxAudioBackend`
+        - audio-специализация backend’а:
+            - `start(const RxAudioConfig&, IAudioFrameSink&)`.
+- Примечание:
+    - audio backend interface intentionally consumes already-modeled runtime/storage boundaries and does not perform ST 2110-30 signaling interpretation itself;
+    - channel-order interpretation remains outside this file and should consume `ParsedAudioChannelOrder` / `AudioReceiverBootstrapConfig`;
+    - future socket/MTL audio implementations should implement `IRxAudioBackend` without changing the existing video backend API.
 
 ### libs/st2110core/include/st2110/bytes.hpp
 - Роль:

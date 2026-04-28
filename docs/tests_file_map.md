@@ -84,7 +84,29 @@
 ### tests/test_backend_interface.cpp
 - Роль:
     - проверяет backend/sink interface contracts;
-    - покрывает FakeBackend -> FakeVideoSink delivery path.
+    - покрывает FakeBackend -> FakeVideoSink delivery path;
+    - покрывает FakeAudioBackend -> FakeAudioSink delivery path.
+- Покрывает:
+    - abstract/interface shape:
+        - `IRxBackend`;
+        - `IRxVideoBackend`;
+        - `IRxAudioBackend`;
+        - `IVideoFrameSink`;
+        - `IAudioFrameSink`;
+    - inheritance:
+        - `IRxVideoBackend` derives from `IRxBackend`;
+        - `IRxAudioBackend` derives from `IRxBackend`;
+    - video delivery:
+        - fake video backend starts with `RxVideoConfig`;
+        - emits a `VideoFrameView`;
+        - sink receives width/height/timestamp/data/stride.
+    - audio delivery:
+        - fake audio backend starts with `RxAudioConfig`;
+        - emits an `AudioFrameView`;
+        - sink receives sampling rate, channel count, samples per channel, timestamp, sample pointer, stride, total sample count, and byte size.
+- Фиксирует:
+    - audio backend support is added without breaking existing video backend contracts;
+    - backend interfaces consume existing runtime/storage boundaries and do not embed SDP parsing, channel-order interpretation, RTP packet parsing, jitter/reorder, playout policy, or concrete backend behavior.
 
 ## RTP / ST 2110-20 packet parsing
 

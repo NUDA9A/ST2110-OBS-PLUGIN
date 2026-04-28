@@ -772,8 +772,33 @@
   - added construction from explicit audio dimensions and from `RxAudioConfig`;
   - kept runtime/signaling audio validation outside the buffer contract;
   - kept channel-order / channel mapping / reordering outside this file and future-facing through the existing `ParsedAudioChannelOrder` boundary.
-- [ ] 082: Define audio sink/backend-facing interfaces or extend shared interfaces so audio can be supported without ломки video API
-- [ ] 083: Add FakeAudioBackend -> FakeAudioSink test
+- [x] 082: Define audio sink/backend-facing interfaces or extend shared interfaces so audio can be supported without ломки video API
+  - extended `backend.hpp` with audio-facing backend contracts;
+  - added `IAudioFrameSink::on_audio_frame(const AudioFrameView&)`;
+  - added `IRxAudioBackend`, derived from `IRxBackend`, with `start(const RxAudioConfig&, IAudioFrameSink&)`;
+  - preserved existing video API shape:
+    - `IVideoFrameSink`;
+    - `IRxVideoBackend`;
+    - `IRxBackend`;
+  - kept backend-facing audio API based on existing runtime/storage boundaries:
+    - `RxAudioConfig`;
+    - `AudioFrameView`;
+  - did not introduce SDP parsing, channel-order mapping, RTP packet parsing, jitter/reorder, playout policy, socket/MTL behavior, or OBS integration into the backend interface layer;
+  - updated backend interface test coverage with FakeAudioBackend -> FakeAudioSink delivery path.
+- [x] 083: Add FakeAudioBackend -> FakeAudioSink test
+  - covered in `tests/test_backend_interface.cpp`;
+  - verifies `IRxAudioBackend` is an abstract backend specialization derived from `IRxBackend`;
+  - verifies `IAudioFrameSink` receives an `AudioFrameView` emitted by a fake audio backend;
+  - checks core audio view fields needed by the backend-facing contract:
+    - sampling rate;
+    - channel count;
+    - samples per channel;
+    - timestamp;
+    - sample pointer;
+    - sample-frame stride;
+    - total sample count;
+    - byte size;
+  - confirms audio backend support was added without breaking existing video backend interface behavior.
 
 ### B1. Audio packet/depacketize MVP
 - [ ] 090: Define audio RTP packet model needed by MVP
