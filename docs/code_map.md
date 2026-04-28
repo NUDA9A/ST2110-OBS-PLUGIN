@@ -1893,3 +1893,62 @@
     - it does not map RTP timestamps to `TimestampNs`;
     - it does not create `AudioBuffer` or perform channel reordering;
     - time-based jitter/playout policy remains future work through `095` and later playout/release boundaries.
+
+### libs/st2110core/include/st2110/audio_frame_assembler.hpp
+- Роль:
+    - first MVP audio RTP packet -> internal audio block assembly boundary.
+    - converts already-validated `AudioRtpPacketView` packets into owning `AudioBuffer` blocks.
+    - keeps PCM wire decoding and internal audio storage creation separate from RTP parsing, reorder/jitter, timestamp mapping, playout policy, channel-order mapping, and backend behavior.
+- Связи:
+    - uses `AudioRtpPacketView` and `AudioPcmWireFormat` from `audio_packet.hpp`;
+    - uses `AudioBuffer` and `AudioSampleStorageFormat` from `audio_frame.hpp`;
+    - uses `ByteSpan` for local wire-sample decode views;
+    - uses `Error` / `std::expected` for localized validation and decode failures;
+    - intended upstream consumer is `AudioFixedWindowReorderBuffer` output from `audio_reorder_buffer.hpp`;
+    - intended downstream consumers are future audio timestamp/playout pipeline, dump writer, backend delivery, and OBS handoff boundaries.
+- Сущности:
+    - `AssembledAudioBlock`
+        - owning assembled audio block:
+            - `buffer`;
+            - `rtp_timestamp`;
+            - `rtp_sequence_number`;
+            - `rtp_marker`;
+            - `complete`.
+        - current MVP behavior emits one complete block per validated audio RTP packet.
+    - `AudioFrameAssemblerConfig`
+        - `storage_format`
+        - current supported internal storage format:
+            - `AudioSampleStorageFormat::InterleavedS32`.
+    - `AudioFrameAssemblerStats`
+        - `packets_used`;
+        - `packets_rejected`;
+        - `blocks_emitted`.
+    - `validate_audio_frame_assembler_config(...)`
+        - validates current assembler storage-format support.
+    - `checked_audio_assembler_payload_size_bytes(...)`
+        - derives expected wire payload size from:
+            - samples per channel;
+            - channel count;
+            - wire bytes per sample;
+        - rejects zero dimensions and overflow.
+    - `decode_audio_pcm_wire_sample_to_s32(...)`
+        - decodes one signed PCM wire sample into signed 32-bit internal sample value:
+            - `L16` from 2 big-endian octets;
+            - `L24` from 3 big-endian octets;
+        - rejects mismatched sample byte count or invalid wire format.
+    - `AudioFrameAssembler`
+        - `push(const AudioRtpPacketView&) -> std::expected<AssembledAudioBlock, Error>`
+            - validates packet dimensions and expected payload byte size;
+            - decodes interleaved wire PCM into `AudioBuffer`;
+            - preserves RTP timestamp, sequence number, and marker metadata without interpreting marker semantics;
+            - updates assembler stats.
+        - `reset()`
+            - clears assembler stats.
+        - `stats()`
+            - returns current assembler stats.
+- Примечание:
+    - this file intentionally does not parse RTP datagrams and does not validate RTP payload type; those remain in `audio_packet.hpp`;
+    - it intentionally does not reorder packets; reorder remains in `audio_reorder_buffer.hpp`;
+    - it intentionally does not map RTP timestamps to `TimestampNs`; that remains future work through `095`;
+    - it intentionally does not apply channel-order mapping/reordering; future mapping should consume `ParsedAudioChannelOrder` / `AudioReceiverBootstrapConfig`;
+    - current one-packet-one-block behavior matches the MVP Level A-oriented audio receive path and does not preclude later loss/concealment/playout policy above this boundary.

@@ -764,3 +764,42 @@
     - audio reorder remains separate from RTP parsing and payload validation;
     - RTP marker and timestamp are preserved but not interpreted;
     - reorder/jitter MVP does not create `AudioBuffer`, does not apply channel-order mapping, does not perform timestamp mapping, and does not implement backend behavior.
+
+## Audio frame/block assembly MVP
+
+### tests/test_audio_frame_assembler.cpp
+- Роль:
+    - проверяет MVP audio frame/block assembly boundary over already-validated `AudioRtpPacketView`.
+- Покрывает:
+    - `AudioFrameAssembler` valid L16 packet assembly into `AudioBuffer`;
+    - `AudioFrameAssembler` valid L24 packet assembly into `AudioBuffer`;
+    - signed big-endian PCM decoding behavior:
+        - positive values;
+        - zero;
+        - negative L16 sign extension;
+        - negative L24 sign extension.
+    - interleaved sample placement by `(sample_index, channel)`;
+    - assembled block metadata preservation:
+        - RTP timestamp;
+        - RTP sequence number;
+        - RTP marker bit.
+    - exact payload-size validation;
+    - invalid packet dimensions rejection;
+    - invalid assembler storage-format rejection;
+    - invalid wire format rejection;
+    - assembler stats:
+        - packets used;
+        - packets rejected;
+        - blocks emitted;
+        - reset clears stats.
+- Фиксирует:
+    - audio frame/block assembly consumes validated audio RTP packet views rather than parsing RTP itself;
+    - payload sizing is derived from packet dimensions and wire-format bytes per sample, not from hardcoded `48`, stereo-only, or L24-only assumptions;
+    - RTP marker is preserved as metadata but not interpreted as an audio block boundary;
+    - assembly remains separate from:
+        - RTP parsing;
+        - reorder/jitter;
+        - RTP timestamp mapping;
+        - playout/release policy;
+        - channel-order mapping / reordering;
+        - socket / MTL backend behavior.

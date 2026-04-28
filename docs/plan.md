@@ -871,7 +871,40 @@
     - playout timing;
     - channel-order mapping / reordering;
     - socket / MTL backend behavior.
-- [ ] 093: Implement audio frame/block assembly MVP + tests
+- [x] 093: Implement audio frame/block assembly MVP + tests
+  - implemented `audio_frame_assembler.hpp` as the first MVP audio RTP packet -> internal audio block assembly boundary;
+  - added `AssembledAudioBlock` carrying:
+    - owning `AudioBuffer`;
+    - source RTP timestamp;
+    - source RTP sequence number;
+    - source RTP marker bit preserved as metadata;
+    - `complete` flag for current one-packet-one-block MVP behavior.
+  - added `AudioFrameAssemblerConfig` with explicit internal storage-format selection;
+  - added `AudioFrameAssemblerStats` for:
+    - packets used;
+    - packets rejected;
+    - blocks emitted.
+  - added localized validation helpers:
+    - `validate_audio_frame_assembler_config(...)`;
+    - checked payload-size derivation from `samples_per_channel * channel_count * wire_sample_bytes`;
+    - `decode_audio_pcm_wire_sample_to_s32(...)` for signed big-endian L16/L24 PCM sample decoding.
+  - added `AudioFrameAssembler::push(const AudioRtpPacketView&)`:
+    - validates assembler config;
+    - validates non-zero packet audio dimensions;
+    - validates wire format through `audio_pcm_wire_sample_bytes(...)`;
+    - validates exact payload size;
+    - creates an owning `AudioBuffer`;
+    - decodes interleaved wire PCM samples into internal signed 32-bit interleaved storage;
+    - preserves RTP timestamp / sequence / marker metadata without interpreting marker as a block boundary.
+  - added `reset()` and `stats()` support.
+  - kept audio block assembly separate from:
+    - RTP parsing;
+    - payload type admission;
+    - reorder/jitter buffering;
+    - RTP timestamp mapping to `TimestampNs`;
+    - receiver playout timing;
+    - channel-order / channel-mapping / reordering;
+    - socket / MTL backend behavior.
 - [ ] 094: Add audio stats (packets_ok, packets_lost, blocks_ok, blocks_partial/dropped)
 
 ### B2. Audio timestamp strategy
