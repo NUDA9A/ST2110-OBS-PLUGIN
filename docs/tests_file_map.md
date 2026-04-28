@@ -36,7 +36,20 @@
 
 ### tests/test_error.cpp
 - Роль:
-    - проверяет общий error enum / string mapping.
+    - проверяет общий `Error` enum / string mapping.
+    - теперь покрывает не только базовые parse/validation errors, но и new backend/runtime operational error vocabulary.
+- Покрывает:
+    - non-empty string mapping for all known `Error` values;
+    - distinct string mapping for all known `Error` values;
+    - explicit backend/runtime error classification through `is_backend_runtime_error(...)`:
+        - parse/validation errors are not classified as backend/runtime errors;
+        - backend/runtime errors are classified correctly;
+        - unknown enum values are not classified as backend/runtime errors.
+    - regression for unknown enum handling:
+        - unknown `Error` value no longer renders as `"OK"`.
+- Фиксирует:
+    - common error vocabulary now separates parse/validation failures from backend/runtime operational failures;
+    - future backend lifecycle/runtime work can classify operational failures without overloading packet/signaling parse errors.
 
 ### tests/test_bytespan.cpp
 - Роль:

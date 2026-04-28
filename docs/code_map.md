@@ -215,18 +215,41 @@
 
 ### libs/st2110core/include/st2110/error.hpp
 - Роль:
-    - общий enum ошибок проекта на текущем этапе.
+    - общий enum ошибок проекта.
+    - теперь включает не только parse/validation errors, но и explicit operational/backend runtime error categories.
+    - задает OS-neutral semantic error vocabulary для backend lifecycle/runtime boundary без привязки к `errno`, Winsock codes или backend-specific detail types.
 - Связи:
-    - используется в parse/validation/reconstructor/signaling layers.
+    - используется в parse/validation/reconstructor/signaling layers;
+    - теперь также является общей error boundary для будущих backend lifecycle/runtime tasks (`035` / `036` / socket / MTL backend work).
 - Сущности:
     - `enum class Error`
-        - `Ok`
-        - `BufferTooSmall`
-        - `InvalidValue`
-        - `Unsupported`
-        - `ShortPacket`
-        - `BadRTPVersion`
-    - `to_string(Error)` — строковое представление ошибки.
+        - parse/validation-oriented:
+            - `Ok`
+            - `BufferTooSmall`
+            - `InvalidValue`
+            - `Unsupported`
+            - `ShortPacket`
+            - `BadRTPVersion`
+        - backend/runtime-oriented:
+            - `InvalidBackendState`
+            - `SystemFailure`
+            - `BindFailed`
+            - `MulticastJoinFailed`
+            - `MulticastLeaveFailed`
+            - `ReceiveFailed`
+            - `ReceiveInterrupted`
+            - `ReceiveAborted`
+    - `to_string(Error)`
+        - string mapping for all known error values;
+        - unknown enum values no longer fall through to `"OK"` and now return an explicit unknown-error string.
+    - `is_backend_runtime_error(Error) noexcept`
+        - helper classification boundary;
+        - returns `true` only for backend/runtime operational failures;
+        - returns `false` for `Ok`, parse/validation errors, and unknown enum values.
+- Примечание:
+    - этот файл теперь задает общую semantic boundary для future backend lifecycle/result modeling;
+    - точные OS-specific details should remain outside `Error` and may be carried/logged separately later;
+    - task `036` should build lifecycle result/state behavior on top of this vocabulary rather than overloading parse errors or using ad hoc no-op failures.
 
 ### libs/st2110core/include/st2110/fixed_reorder_buffer.hpp
 - Роль:
