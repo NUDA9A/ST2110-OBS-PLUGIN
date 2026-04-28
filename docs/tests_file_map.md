@@ -514,6 +514,28 @@
         - optional TTL;
         - optional address count.
 
+## Audio frame storage
+
+### tests/test_audio_frame.cpp
+- Роль:
+    - проверяет initial `AudioBuffer` / `AudioFrameView` contract.
+    - покрывает:
+        - construction from explicit audio dimensions;
+        - construction from `RxAudioConfig`;
+        - current MVP storage layout `InterleavedS32`;
+        - interleaved sample indexing by `(sample_index, channel)`;
+        - mutable and const sample access;
+        - total sample count;
+        - sample-frame stride;
+        - byte size;
+        - timestamp propagation into `AudioFrameView`;
+        - out-of-range sample/channel access rejection.
+    - фиксирует separation between:
+        - audio storage layout;
+        - runtime `RxAudioConfig` validation;
+        - channel-order / channel-mapping semantics;
+        - future audio RTP packet assembly and backend behavior.
+
 ## Audio signaling model
 
 ### tests/audio_signaling_to_rx_config_test.cpp

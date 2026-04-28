@@ -764,7 +764,14 @@
   - make the initial MVP target a narrow ST 2110-30 baseline rather than a format-free placeholder
   - make that baseline explicit as a **Level A-oriented receiver baseline** with `48 kHz`, `1 ms packet time`, and `1..8 channels`
   - capture at least the parameters needed for that initial receive path
-- [ ] 081: Define `AudioBuffer` / `AudioFrameView` contract
+- [x] 081: Define `AudioBuffer` / `AudioFrameView` contract
+  - implemented `audio_frame.hpp` as the initial owning audio sample-buffer storage and non-owning audio frame view boundary;
+  - introduced `AudioSampleStorageFormat` with current MVP storage layout `InterleavedS32`;
+  - added `AudioBuffer` owning storage for interleaved signed 32-bit samples;
+  - added `AudioFrameView` carrying storage format, sampling rate, channel count, samples per channel, sample pointer, total sample count, frame stride, byte size, and timestamp;
+  - added construction from explicit audio dimensions and from `RxAudioConfig`;
+  - kept runtime/signaling audio validation outside the buffer contract;
+  - kept channel-order / channel mapping / reordering outside this file and future-facing through the existing `ParsedAudioChannelOrder` boundary.
 - [ ] 082: Define audio sink/backend-facing interfaces or extend shared interfaces so audio can be supported without ломки video API
 - [ ] 083: Add FakeAudioBackend -> FakeAudioSink test
 

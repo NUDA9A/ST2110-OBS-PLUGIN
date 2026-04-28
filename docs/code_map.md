@@ -1707,3 +1707,48 @@
 - Примечание:
     - this boundary intentionally does not implement audio sample buffer layout or channel reordering;
     - future audio layout/reordering should consume `ParsedAudioChannelOrder` and stay outside SDP/signaling parsing.
+
+### libs/st2110core/include/st2110/audio_frame.hpp
+- Роль:
+    - owning audio sample-buffer storage and non-owning audio frame view boundary for the MVP audio path.
+    - separates audio storage/layout from ST 2110-30 signaling, runtime `RxAudioConfig` validation, channel-order semantics, packet parsing, and backend transport.
+    - provides the initial internal audio frame/block representation for future audio packet assembly, backend delivery, dump tools, and OBS handoff.
+- Связи:
+    - uses `TimestampNs` from `timestamp.hpp`;
+    - can be constructed from `RxAudioConfig` from `rx_config.hpp`;
+    - intended downstream consumers include future audio assembler/depacketizer, audio backend/sink interfaces, dump writers, and OBS audio integration.
+    - channel-order interpretation remains outside this file and should consume `ParsedAudioChannelOrder` from `audio_channel_order.hpp` / `AudioReceiverBootstrapConfig`.
+- Сущности:
+    - `AudioSampleStorageFormat`
+        - `InterleavedS32` — current MVP internal storage layout: interleaved signed 32-bit samples.
+    - `AudioFrameView`
+        - non-owning audio frame/block view:
+            - `storage_format`;
+            - `sampling_rate_hz`;
+            - `channel_count`;
+            - `samples_per_channel`;
+            - `samples`;
+            - `total_sample_count`;
+            - `sample_frame_stride`;
+            - `size_bytes`;
+            - `timestamp_ns`.
+    - `AudioBuffer`
+        - owning audio sample buffer.
+        - constructors:
+            - `(sampling_rate_hz, channel_count, samples_per_channel, storage_format)`;
+            - `(const RxAudioConfig&, storage_format)`, using `samples_per_packet` as `samples_per_channel`.
+        - accessors:
+            - `storage_format()`;
+            - `sampling_rate_hz()`;
+            - `channel_count()`;
+            - `samples_per_channel()`;
+            - `sample_frame_stride()`;
+            - `total_sample_count()`;
+            - `size_bytes()`;
+            - `samples()`;
+            - `sample(sample_index, channel)`;
+            - `view(TimestampNs = 0)`.
+- Примечание:
+    - current implementation intentionally models only storage/view behavior;
+    - it does not implement channel reordering, channel mapping, RTP packet parsing, jitter/reorder, playout policy, backend behavior, or OBS integration;
+    - future audio layout/reordering should stay outside this storage class and consume the existing channel-order boundary.
