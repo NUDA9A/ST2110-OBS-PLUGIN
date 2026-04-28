@@ -66,6 +66,13 @@
 ### tests/test_rx_config.cpp
 - Роль:
     - проверяет базовую validation модели `RxVideoConfig`.
+    - проверяет, что manual/backend-facing video runtime config carries already-modeled runtime axes:
+        - `VideoScanMode`;
+        - `VideoPackingMode`.
+    - проверяет current video packing-mode runtime support boundary:
+        - `VideoPackingMode::Gpm` accepted;
+        - `VideoPackingMode::Bpm` represented but rejected as `Unsupported` by current MVP runtime support;
+        - invalid packing-mode enum rejected as `InvalidValue`.
     - проверяет initial `RxAudioConfig` runtime validation:
         - Level A-oriented default runtime support;
         - channel count bounds;

@@ -971,11 +971,16 @@
 
 ### C0. Socket backend common
 - [x] 100: Refactor backend layer so socket/mtl can expose both video and audio capabilities without duplication explosion
-- [ ] 100A: Align manual/backend-facing runtime video config contracts with already-modeled runtime axes
-  - ensure the manual/backend-facing video runtime path is able to carry already-modeled standard runtime axes, not only the signaling-driven path
-  - at minimum, thread `VideoPackingMode` through the backend-facing runtime config contract instead of leaving it signaling-only for manual/backend bootstrap
-  - keep runtime limitations localized as explicit support boundaries rather than by omitting axes from config/API shape
-  - add focused tests for config validation / projection / backend-facing contract shape where applicable
+- [x] 100A: Align manual/backend-facing runtime video config contracts with already-modeled runtime axes
+  - `RxVideoConfig` now carries `VideoPackingMode` as an explicit manual/backend-facing runtime axis.
+  - default manual/runtime video config remains `VideoPackingMode::Gpm`.
+  - current MVP runtime support remains GPM-only through `validate_runtime_video_packing_mode_support(...)`:
+    - `Gpm` => `Ok`;
+    - `Bpm` => `Unsupported`;
+    - invalid enum => `InvalidValue`.
+  - signaling-to-runtime projection now preserves `signaling.packing_mode` in projected `RxVideoConfig`.
+  - signaling-vs-manual config matching now verifies `cfg.packing_mode == signaling.packing_mode`.
+  - no BPM runtime depacketize behavior was implemented in this task; future BPM behavior remains task `229` through the already-modeled packing-mode branches.
 - [ ] 101: Add backend factory / selector design (`socket|mtl`) in extendable form
 
 ### C1. Socket video RX

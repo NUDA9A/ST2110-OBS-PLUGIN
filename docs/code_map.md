@@ -352,11 +352,12 @@
 - Роль:
     - manual/runtime RX config model для текущих MVP-path’ов.
     - содержит video runtime config и initial audio runtime config.
+    - video runtime config now carries already-modeled runtime axes needed by backend/manual bootstrap, including scan mode and packing mode.
     - audio runtime validation now uses an explicit runtime support policy boundary instead of hardcoding Level A values directly inside validation logic.
 - Связи:
     - используется backend/video pipeline слоями;
     - используется audio signaling projection layer из `audio_signaling_rx_config.hpp`;
-    - использует `config_validation.hpp`, `video_scan_mode.hpp`, `audio_signaling.hpp`.
+    - использует `config_validation.hpp`, `video_scan_mode.hpp`, `video_packing_mode.hpp`, `audio_signaling.hpp`;
     - в будущем должен сосуществовать со standards-aware signaling model, а не заменять его.
 - Сущности:
     - `RxVideoConfig`
@@ -367,8 +368,16 @@
         - `local_ip`, `dest_ip`
         - `format`
         - `scan_mode`
+        - `packing_mode`
         - `is_valid()`
     - `validate_rx_video_config(const RxVideoConfig&)`
+        - validates video format/dimensions;
+        - validates frame rate;
+        - validates UDP port;
+        - validates dynamic RTP payload type;
+        - validates non-empty destination IP;
+        - validates scan mode;
+        - validates current runtime packing-mode support through `validate_runtime_video_packing_mode_support(...)`.
     - `AudioSampleFormat`
         - `LinearPcm`
     - `RxAudioConfig`
@@ -409,7 +418,10 @@
     - `validate_rx_audio_config(const RxAudioConfig&)`
         - thin wrapper over `validate_rx_audio_config_against_runtime_support(...)` using `default_audio_rx_runtime_support_policy()`.
 - Примечание:
-    - current default runtime support remains Level A-oriented, but the validation path is policy-driven.
+    - `RxVideoConfig::packing_mode` closes the gap where signaling-derived video runtime config carried packing mode but manual/backend-facing config did not.
+    - current default video runtime support remains `GPM` only, but `BPM` is represented and rejected through an explicit runtime-support boundary rather than omitted from the config shape.
+    - later BPM runtime work should fill existing packing-aware branches and extend support policy, not reshape the manual/backend-facing config contract.
+    - current default audio runtime support remains Level A-oriented, but the validation path is policy-driven.
     - adding a later supported audio conformance range should primarily extend `audio_runtime_support::default_conformance_ranges` and tests, not rewrite `validate_rx_audio_config(...)`.
     - `samples_per_packet` is derived/validated through `config_validation::audio_samples_per_packet_from_rate_and_packet_time(...)`, not fixed as a magic constant.
 
@@ -647,26 +659,31 @@
     - projection boundary:
         - `pixel_format_from_video_stream_signaling(...) -> std::expected<PixelFormat, Error>`
             - only the currently supported runtime combination `YCbCr-4:2:2 + integer 8-bit` projects to `PixelFormat::UYVY`;
-            - newly modeled known SDP sampling values from `069D8` remain structurally valid in signaling, but runtime projection returns localized `Unsupported` until corresponding pixel/storage formats are implemented.
+            - newly modeled known SDP sampling values remain structurally valid in signaling, but runtime projection returns localized `Unsupported` until corresponding pixel/storage formats are implemented.
     - signaling -> runtime/manual adapters:
         - `packet_parse_policy_from_video_stream_signaling(...)`
         - `depacketizer_config_from_video_stream_signaling(...)`
         - `video_unit_reconstructor_config_from_video_stream_signaling(...)`
         - `video_receive_pipeline_config_from_video_stream_signaling(...)`
         - `rx_video_config_from_video_stream_signaling(...)`
+            - projects dimensions, frame rate, runtime pixel format, scan mode, and packing mode into `RxVideoConfig`;
+            - preserves `signaling.packing_mode` rather than falling back to an implicit manual-config default.
         - `validate_video_stream_signaling_against_rx_video_config(...)`
+            - validates that manual/runtime `RxVideoConfig` matches signaling-derived fields, including `packing_mode`.
         - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
-            - generic signaling-driven bootstrap projection for parse policy + rx config + receive pipeline config
-            - does not itself apply receiver timing capability/requirement checks
+            - generic signaling-driven bootstrap projection for parse policy + rx config + receive pipeline config;
+            - does not itself apply receiver timing capability/requirement checks.
     - packing-mode handling:
-        - runtime projections to depacketizer / pipeline / bootstrap explicitly validate packing-mode support through `validate_runtime_video_packing_mode_support(...)`
-        - structural signaling validation itself does **not** reject `BPM`
+        - runtime projections to depacketizer / pipeline / bootstrap explicitly validate packing-mode support through `validate_runtime_video_packing_mode_support(...)`;
+        - `rx_video_config_from_video_stream_signaling(...)` now also carries packing mode into manual/backend-facing runtime config;
+        - structural signaling validation itself does **not** reject `BPM`.
 - Примечание:
     - signaling model остается structurally broader than current runtime support;
-    - `BPM` now remains valid inside signaling model but is rejected at explicit runtime-support boundaries for depacketizer/pipeline/bootstrap projections;
+    - `BPM` remains valid inside signaling model but is rejected at explicit runtime-support boundaries for depacketizer/pipeline/bootstrap/manual runtime config projections;
+    - manual/backend-facing `RxVideoConfig` now has the same packing-mode axis as signaling-derived receive config, so later backend/factory work does not need to reshape the config contract to support BPM.
     - generic bootstrap path intentionally remains timing-agnostic; receiver timing validation/composition is layered on top through `video_receiver_timing_signaling.hpp`;
     - SDP ingestion path is now implemented through `video_sdp_*` boundaries; fuller runtime integration of SDP-derived config and ST 2110-21 receiver behavior remains future work through `S010`, `214C`, `214D`, and `229A`.
-    - ST 2110-20 media-description cross-field constraints are now represented at the signaling/model validation layer:
+    - ST 2110-20 media-description cross-field constraints are represented at the signaling/model validation layer:
         - `4:2:0` variants are progressive-only structurally;
         - `KEY` requires alpha colorimetry and rejects normal TCS.
     - Unsupported-but-standard runtime combinations, such as progressive `4:2:0`, remain structurally valid but still fail at localized runtime projection/support boundaries.
