@@ -803,3 +803,22 @@
         - playout/release policy;
         - channel-order mapping / reordering;
         - socket / MTL backend behavior.
+
+### tests/test_audio_stats.cpp
+- Роль:
+    - проверяет shared audio receive stats boundary introduced for task `094`.
+- Покрывает:
+    - default `AudioReceiveStats` counters are initialized to zero;
+    - packet helper functions increment the correct counters:
+        - `record_audio_packet_ok(...)`;
+        - `record_audio_packet_lost(...)`;
+        - `record_audio_packet_rejected(...)`.
+    - `record_audio_block_result(...)` increments the correct block counters for:
+        - `AudioBlockCompletionStatus::Complete`;
+        - `AudioBlockCompletionStatus::Partial`;
+        - `AudioBlockCompletionStatus::Dropped`.
+    - invalid block-completion enum values are rejected and do not mutate stats;
+    - `reset_audio_receive_stats(...)` clears all counters.
+- Фиксирует:
+    - audio stats accounting remains a standalone boundary;
+    - stats helpers do not embed RTP parsing, reorder/jitter, audio assembly, timestamp mapping, playout policy, channel-order mapping, socket backend, or MTL backend behavior.

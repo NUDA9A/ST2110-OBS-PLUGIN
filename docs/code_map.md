@@ -1952,3 +1952,43 @@
     - it intentionally does not map RTP timestamps to `TimestampNs`; that remains future work through `095`;
     - it intentionally does not apply channel-order mapping/reordering; future mapping should consume `ParsedAudioChannelOrder` / `AudioReceiverBootstrapConfig`;
     - current one-packet-one-block behavior matches the MVP Level A-oriented audio receive path and does not preclude later loss/concealment/playout policy above this boundary.
+
+### libs/st2110core/include/st2110/audio_stats.hpp
+- Роль:
+    - shared audio receive stats boundary for the MVP audio receive path.
+    - provides packet/block counters and local helper functions for stats accounting.
+    - keeps stats representation separate from RTP parsing, reorder/jitter, frame assembly, timestamp/playout, channel-order mapping, and backend behavior.
+- Связи:
+    - uses `Error` from `error.hpp`;
+    - intended consumers include future audio parser/reorder/assembler pipeline composition, socket/MTL audio backend stats reporting, dump tools, and OBS handoff/status code.
+- Сущности:
+    - `AudioReceiveStats`
+        - packet-level counters:
+            - `packets_ok`;
+            - `packets_lost`;
+            - `packets_rejected`;
+        - block-level counters:
+            - `blocks_ok`;
+            - `blocks_partial`;
+            - `blocks_dropped`.
+    - `AudioBlockCompletionStatus`
+        - explicit block completion/result axis:
+            - `Complete`;
+            - `Partial`;
+            - `Dropped`.
+    - `validate_audio_block_completion_status(...)`
+        - validates known completion status enum values and rejects invalid enum values.
+    - packet stats helpers:
+        - `record_audio_packet_ok(...)`;
+        - `record_audio_packet_lost(...)`;
+        - `record_audio_packet_rejected(...)`.
+    - block stats helper:
+        - `record_audio_block_result(...)`
+            - validates status before mutating stats;
+            - increments the corresponding block counter for complete / partial / dropped results.
+    - `reset_audio_receive_stats(...)`
+        - resets all counters to zero.
+- Примечание:
+    - this file intentionally does not decide what constitutes packet loss, partial block emission, or dropped block policy;
+    - those decisions remain in reorder/jitter, assembler, and future playout/loss-policy layers;
+    - this boundary only provides the shared counters and recording helpers.

@@ -905,7 +905,35 @@
     - receiver playout timing;
     - channel-order / channel-mapping / reordering;
     - socket / MTL backend behavior.
-- [ ] 094: Add audio stats (packets_ok, packets_lost, blocks_ok, blocks_partial/dropped)
+- [x] 094: Add audio stats (packets_ok, packets_lost, blocks_ok, blocks_partial/dropped)
+  - implemented `audio_stats.hpp` as the first shared audio receive stats boundary;
+  - added `AudioReceiveStats` counters for:
+    - `packets_ok`;
+    - `packets_lost`;
+    - `packets_rejected`;
+    - `blocks_ok`;
+    - `blocks_partial`;
+    - `blocks_dropped`.
+  - added `AudioBlockCompletionStatus` as an explicit block-completion result axis:
+    - `Complete`;
+    - `Partial`;
+    - `Dropped`.
+  - added localized helper functions:
+    - `validate_audio_block_completion_status(...)`;
+    - `record_audio_packet_ok(...)`;
+    - `record_audio_packet_lost(...)`;
+    - `record_audio_packet_rejected(...)`;
+    - `record_audio_block_result(...)`;
+    - `reset_audio_receive_stats(...)`.
+  - kept stats accounting separate from:
+    - RTP parsing;
+    - RTP payload type admission;
+    - audio reorder/jitter buffering;
+    - audio frame/block assembly;
+    - RTP timestamp mapping to `TimestampNs`;
+    - receiver playout timing;
+    - channel-order / channel-mapping / reordering;
+    - socket / MTL backend behavior.
 
 ### B2. Audio timestamp strategy
 - [ ] 095: Define audio timestamp mapping / playout timing boundary to internal `ts_ns`
