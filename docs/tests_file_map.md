@@ -710,3 +710,37 @@
         - RTP timestamp mapping;
         - jitter/reorder;
         - socket / MTL backend behavior.
+
+### tests/test_audio_rtp_parser.cpp
+- Роль:
+    - проверяет minimal audio RTP parser integration entry point.
+- Покрывает:
+    - `parse_audio_rtp_packet_view(...)` composition over existing RTP helpers:
+        - `parse_rtp_header(...)`;
+        - `rtp_payload_span(...)`;
+        - `make_audio_rtp_packet_view(...)`.
+    - valid L24 audio RTP packet parsing;
+    - valid L16 audio RTP packet parsing;
+    - RTP metadata preservation:
+        - marker;
+        - payload type;
+        - sequence number;
+        - timestamp;
+        - SSRC;
+        - payload offset.
+    - CSRC and RTP header-extension tolerance through the existing RTP parsing boundary;
+    - payload type mismatch rejection;
+    - payload size mismatch rejection;
+    - short RTP packet rejection;
+    - bad RTP version rejection.
+- Фиксирует:
+    - audio parser integration does not duplicate RTP parsing;
+    - payload type admission remains stream-specific policy, separate from generic RTP parsing;
+    - RTP marker and timestamp are preserved but not interpreted;
+    - parser integration remains separate from:
+        - jitter/reorder;
+        - audio block assembly;
+        - timestamp mapping to `TimestampNs`;
+        - `AudioBuffer` creation;
+        - channel-order mapping / reordering;
+        - socket / MTL backend behavior.

@@ -831,7 +831,19 @@
     - RTP timestamp mapping to `TimestampNs`;
     - channel-order mapping / reordering;
     - socket / MTL backend behavior.
-- [ ] 091: Implement minimal audio RTP parser integration + tests
+- [x] 091: Implement minimal audio RTP parser integration + tests
+  - extended `audio_packet.hpp` with `parse_audio_rtp_packet_view(...)`;
+  - composes existing RTP parsing helpers:
+    - `parse_rtp_header(...)`;
+    - `rtp_payload_span(...)`;
+    - `make_audio_rtp_packet_view(...)`;
+  - keeps RTP parsing generic and keeps audio stream admission policy in the audio packet boundary;
+  - validates expected RTP payload type and exact audio RTP payload size through `AudioRtpPacketPolicy`;
+  - preserves RTP marker, sequence number, timestamp, SSRC, payload type, and payload span metadata;
+  - inherits existing RTP CSRC/header-extension tolerance from `rtp.hpp`;
+  - intentionally does not interpret RTP marker as an audio block boundary;
+  - intentionally does not map RTP timestamps to `TimestampNs`;
+  - intentionally does not implement jitter/reorder, audio block assembly, channel-order mapping, `AudioBuffer` creation, playout policy, socket backend behavior, or MTL backend behavior.
 - [ ] 092: Implement audio reorder/jitter handling MVP + tests
 - [ ] 093: Implement audio frame/block assembly MVP + tests
 - [ ] 094: Add audio stats (packets_ok, packets_lost, blocks_ok, blocks_partial/dropped)

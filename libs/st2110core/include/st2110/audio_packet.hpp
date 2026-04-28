@@ -98,6 +98,25 @@ namespace st2110 {
             policy.wire_format
         };
     }
+
+    [[nodiscard]] inline std::expected<AudioRtpPacketView, Error>
+    parse_audio_rtp_packet_view(
+            ByteSpan rtp_datagram,
+            const AudioRtpPacketPolicy& policy) {
+        auto rtp_header = parse_rtp_header(rtp_datagram);
+        if (!rtp_header) {
+            return std::unexpected(rtp_header.error());
+        }
+
+        auto payload = rtp_payload_span(rtp_datagram, *rtp_header);
+
+        auto rtp_packet_view = make_audio_rtp_packet_view(*rtp_header, payload, policy);
+        if (!rtp_packet_view) {
+            return std::unexpected(rtp_packet_view.error());
+        }
+
+        return *rtp_packet_view;
+    }
 }
 
 #endif //ST2110_OBS_PLUGIN_AUDIO_PACKET_HPP

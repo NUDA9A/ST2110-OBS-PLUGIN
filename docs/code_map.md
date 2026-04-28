@@ -1772,8 +1772,9 @@
 
 ### libs/st2110core/include/st2110/audio_packet.hpp
 - Роль:
-    - first explicit audio RTP packet model boundary for the MVP ST 2110-30 audio path.
+    - first explicit audio RTP packet model and minimal RTP parser integration boundary for the MVP ST 2110-30 audio path.
     - separates wire-level PCM packet interpretation from:
+        - generic RTP parsing mechanics;
         - `AudioBuffer` / `AudioFrameView` storage layout;
         - channel-order / channel-mapping semantics;
         - SDP parsing / SDP ingestion;
@@ -1781,8 +1782,8 @@
         - playout timing;
         - socket / MTL backend behavior.
 - Связи:
-    - uses `RtpHeaderView` from `rtp.hpp` for already-parsed RTP header metadata;
-    - uses `ByteSpan` from `bytes.hpp` for non-owning RTP payload bytes;
+    - uses `RtpHeaderView`, `parse_rtp_header(...)`, and `rtp_payload_span(...)` from `rtp.hpp`;
+    - uses `ByteSpan` from `bytes.hpp` for non-owning RTP datagram/payload bytes;
     - uses `RxAudioConfig` from `rx_config.hpp` to derive a runtime packet policy from the existing validated audio runtime config;
     - uses `Error` for localized validation failures.
 - Сущности:
@@ -1820,9 +1821,16 @@
         - validates RTP payload type admission against the packet policy;
         - validates exact payload byte size;
         - returns a non-owning `AudioRtpPacketView`.
+    - `parse_audio_rtp_packet_view(ByteSpan, const AudioRtpPacketPolicy&)`
+        - minimal audio RTP parser integration entry point;
+        - parses RTP header through `parse_rtp_header(...)`;
+        - derives payload span through `rtp_payload_span(...)`;
+        - validates/constructs audio packet view through `make_audio_rtp_packet_view(...)`;
+        - preserves RTP metadata without interpreting audio block, marker, timestamp, jitter, or playout semantics.
 - Примечание:
-    - this file does not parse UDP datagrams or RTP headers by itself;
+    - this file does not implement a separate audio-specific RTP header parser;
     - it does not interpret RTP marker as an audio block/frame boundary;
     - it does not map RTP timestamps to internal `TimestampNs`;
     - it does not create `AudioBuffer` or perform channel reordering;
-    - later tasks should integrate this boundary into audio RTP parsing, reorder/jitter handling, block assembly, and timestamp/playout layers without changing the storage or SDP model shape.
+    - it inherits CSRC/header-extension tolerance from the existing RTP parsing boundary;
+    - later tasks should integrate this boundary into audio reorder/jitter handling, block assembly, timestamp/playout layers, and backend receive paths without changing the storage or SDP model shape.
