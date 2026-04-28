@@ -955,8 +955,15 @@
     - packet time / samples-per-packet derivation;
     - channel-order / channel-mapping;
     - socket / MTL backend behavior.
-- [ ] 096: Add monotonicity / cadence tests for audio path
-  - include wraparound and long-running continuity cases where applicable
+- [x] 096: Add monotonicity / cadence tests for audio path
+  - added `audio_timestamp_mapping_invariants_test.cpp`;
+  - verifies regular 48 kHz / 1 ms audio RTP timestamp cadence maps to exact monotonic nanosecond timestamps;
+  - verifies non-default RTP clock rates are handled through explicit clock-rate configuration rather than hardcoded 48 kHz assumptions;
+  - verifies 32-bit RTP timestamp wraparound continuity;
+  - verifies long-running continuity across more than one 32-bit RTP timestamp epoch;
+  - verifies backward / ambiguous deltas are rejected without advancing mapper state;
+  - verifies reset reanchors mapping state;
+  - verifies receiver-side playout delay preserves media cadence while shifting playout timestamps.
 
 ---
 

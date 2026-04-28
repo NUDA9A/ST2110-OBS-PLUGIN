@@ -851,3 +851,20 @@
         - carries computed playout timestamp.
 - Фиксирует:
     - audio timestamp mapping remains separate from RTP parsing, audio packet validation, reorder/jitter buffering, audio frame/block assembly, channel-order mapping, socket backend, MTL backend, and OBS handoff behavior.
+
+### tests/audio_timestamp_mapping_invariants_test.cpp
+- Роль:
+    - проверяет audio timestamp mapping invariants and cadence behavior for task `096`.
+- Покрывает:
+    - exact and monotonic 48 kHz / 1 ms RTP timestamp cadence mapping;
+    - explicit non-default audio RTP clock-rate handling;
+    - 32-bit RTP timestamp wraparound continuity;
+    - long-running continuity beyond one 32-bit RTP timestamp epoch;
+    - rejection of backward / ambiguous timestamp deltas;
+    - failed timestamp mapping not advancing mapper state;
+    - reset/reanchor behavior;
+    - receiver-side playout timing preserving media cadence with a constant delay.
+- Фиксирует:
+    - audio RTP timestamp mapping uses explicit RTP clock rate and RTP tick deltas rather than hardcoded packet cadence;
+    - RTP-domain mapping remains separate from receiver-side playout timing;
+    - timestamp invariants remain separate from RTP parsing, packet admission, reorder/jitter buffering, audio block assembly, channel-order mapping, socket backend, MTL backend, and OBS handoff behavior.
