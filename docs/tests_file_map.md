@@ -21,7 +21,7 @@
     - каждый test executable линкуется с `st2110core`.
 - Сущности:
     - `add_st2110_test(...)`
-    - targets for smoke/base tests, RTP/ST2110 packet parsing, reorder, frame assembly, depacketizer, video signaling, SDP ingestion, timing, playout, audio signaling model tests, audio SDP ingestion tests, and audio receiver bootstrap tests.
+    - targets for smoke/base tests, RTP/ST2110 packet parsing, reorder, frame assembly, depacketizer, video signaling, SDP ingestion, timing, playout, audio signaling model tests, audio SDP ingestion tests, audio receiver bootstrap tests, backend interface tests, audio frame storage tests, and audio packet model tests.
 
 ## Smoke / common foundations
 
@@ -678,3 +678,35 @@
             - media-level `mediaclk`;
         - unknown SDP attributes preserved at raw layer but ignored by final signaling mapping unless explicitly modeled;
         - separation from runtime `RxAudioConfig`, socket/backend transport fields, and audio buffer/channel layout.
+
+## Audio packet model
+
+### tests/test_audio_packet.cpp
+- Роль:
+    - проверяет first audio RTP packet model boundary introduced for MVP audio packet/depacketize path.
+- Покрывает:
+    - `AudioPcmWireFormat` wire-format axis:
+        - `L16`;
+        - `L24`;
+        - invalid enum rejection.
+    - `audio_rtp_packet_policy_from_rx_audio_config(...)`:
+        - derives packet policy from validated `RxAudioConfig`;
+        - preserves sampling rate, channel count, samples per packet, payload type, and explicit wire format.
+    - `audio_rtp_packet_payload_size_bytes(...)`:
+        - derives payload byte size from `samples_per_packet * channel_count * wire_sample_bytes`;
+        - proves payload sizing is not hardcoded to `48`, stereo, or L24-only behavior.
+    - `make_audio_rtp_packet_view(...)`:
+        - accepts matching RTP payload type and exact payload size;
+        - preserves RTP timestamp/marker metadata without interpreting marker as an audio block boundary;
+        - returns a non-owning payload view;
+        - rejects payload type mismatch;
+        - rejects payload size mismatch.
+- Фиксирует:
+    - audio RTP packet model remains separate from:
+        - internal `AudioBuffer` / `AudioFrameView` storage;
+        - `InterleavedS32` layout;
+        - channel-order parsing / reordering;
+        - SDP ingestion;
+        - RTP timestamp mapping;
+        - jitter/reorder;
+        - socket / MTL backend behavior.

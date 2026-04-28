@@ -801,8 +801,36 @@
   - confirms audio backend support was added without breaking existing video backend interface behavior.
 
 ### B1. Audio packet/depacketize MVP
-- [ ] 090: Define audio RTP packet model needed by MVP
-  - align the MVP audio packet model with the initial ST 2110-30 baseline rather than a generic future audio placeholder
+- [x] 090: Define audio RTP packet model needed by MVP
+  - implemented `audio_packet.hpp` as the first explicit audio RTP packet model boundary;
+  - added `AudioPcmWireFormat` for wire PCM sample packing:
+    - `L16`;
+    - `L24`;
+  - added `AudioRtpPacketPolicy` carrying packet-level runtime interpretation:
+    - sampling rate;
+    - channel count;
+    - samples per packet;
+    - expected RTP payload type;
+    - wire PCM format.
+  - added `AudioRtpPacketView` as a non-owning view over parsed RTP header metadata plus audio payload bytes;
+  - added helpers:
+    - `audio_pcm_wire_sample_bytes(...)`;
+    - `audio_rtp_packet_policy_from_rx_audio_config(...)`;
+    - `audio_rtp_packet_payload_size_bytes(...)`;
+    - `make_audio_rtp_packet_view(...)`.
+  - packet payload sizing is derived from:
+    - `samples_per_packet`;
+    - `channel_count`;
+    - wire-format bytes per sample;
+    - not from hardcoded `48`, stereo-only assumptions, or internal `InterleavedS32` storage.
+  - packet view creation validates expected RTP payload type and exact payload byte size;
+  - this task intentionally does not implement:
+    - audio RTP datagram parser integration;
+    - jitter/reorder;
+    - audio block assembly;
+    - RTP timestamp mapping to `TimestampNs`;
+    - channel-order mapping / reordering;
+    - socket / MTL backend behavior.
 - [ ] 091: Implement minimal audio RTP parser integration + tests
 - [ ] 092: Implement audio reorder/jitter handling MVP + tests
 - [ ] 093: Implement audio frame/block assembly MVP + tests
