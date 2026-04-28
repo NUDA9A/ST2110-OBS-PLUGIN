@@ -9,68 +9,68 @@
 #include "packet_view.hpp"
 
 namespace st2110 {
-    struct ReorderBufferStats {
-        uint64_t packets_pushed = 0;
-        uint64_t packets_stored = 0;
-        uint64_t packets_popped = 0;
+struct ReorderBufferStats {
+  uint64_t packets_pushed = 0;
+  uint64_t packets_stored = 0;
+  uint64_t packets_popped = 0;
 
-        uint64_t duplicates = 0;
-        uint64_t out_of_window = 0;
-        uint64_t late_packets = 0;
-        uint64_t missing_seq = 0;
-        uint64_t missing_seq_flushed = 0;
-    };
+  uint64_t duplicates = 0;
+  uint64_t out_of_window = 0;
+  uint64_t late_packets = 0;
+  uint64_t missing_seq = 0;
+  uint64_t missing_seq_flushed = 0;
+};
 
-    struct StoredPacket {
-        RtpHeaderView rtp{};
-        uint32_t extended_seq = 0;
+struct StoredPacket {
+  RtpHeaderView rtp{};
+  uint32_t extended_seq = 0;
 
-        SrdHeader segment_headers[maxPacketSrdSegments]{};
-        uint8_t segment_count = 0;
+  SrdHeader segment_headers[maxPacketSrdSegments]{};
+  uint8_t segment_count = 0;
 
-        std::vector<uint8_t> payload_data{};
+  std::vector<uint8_t> payload_data{};
 
-        [[nodiscard]] PacketView view() const {
-            PacketView pkt{};
-            pkt.rtp = rtp;
-            pkt.extended_seq = extended_seq;
-            pkt.segment_count = segment_count;
-            pkt.payload_data = ByteSpan(payload_data.data(), payload_data.size());
+  [[nodiscard]] PacketView view() const {
+    PacketView pkt{};
+    pkt.rtp = rtp;
+    pkt.extended_seq = extended_seq;
+    pkt.segment_count = segment_count;
+    pkt.payload_data = ByteSpan(payload_data.data(), payload_data.size());
 
-            std::size_t offset = 0;
-            for (std::size_t i = 0; i < segment_count; ++i) {
-                pkt.segments[i].header = segment_headers[i];
-                pkt.segments[i].data = pkt.payload_data.subspan(offset, segment_headers[i].length);
-                offset += segment_headers[i].length;
-            }
+    std::size_t offset = 0;
+    for (std::size_t i = 0; i < segment_count; ++i) {
+      pkt.segments[i].header = segment_headers[i];
+      pkt.segments[i].data = pkt.payload_data.subspan(offset, segment_headers[i].length);
+      offset += segment_headers[i].length;
+    }
 
-            pkt.trailing_padding = pkt.payload_data.subspan(offset);
+    pkt.trailing_padding = pkt.payload_data.subspan(offset);
 
-            return pkt;
-        }
+    return pkt;
+  }
 
-        StoredPacket() = default;
+  StoredPacket() = default;
 
-        explicit StoredPacket(const PacketView& packetView) :
-        rtp(packetView.rtp), extended_seq(packetView.extended_seq), segment_count(packetView.segment_count) {
-            for (std::size_t i = 0; i < segment_count; ++i) {
-                segment_headers[i] = packetView.segments[i].header;
-            }
-            auto src = packetView.payload_data;
-            payload_data.assign(src.begin(), src.end());
-        }
-    };
+  explicit StoredPacket(const PacketView &packetView)
+      : rtp(packetView.rtp), extended_seq(packetView.extended_seq), segment_count(packetView.segment_count) {
+    for (std::size_t i = 0; i < segment_count; ++i) {
+      segment_headers[i] = packetView.segments[i].header;
+    }
+    auto src = packetView.payload_data;
+    payload_data.assign(src.begin(), src.end());
+  }
+};
 
-    class IReorderBuffer {
-    public:
-        virtual void push(const PacketView& packet) = 0;
+class IReorderBuffer {
+public:
+  virtual void push(const PacketView &packet) = 0;
 
-        [[nodiscard]] virtual std::optional<StoredPacket> pop_next() = 0;
+  [[nodiscard]] virtual std::optional<StoredPacket> pop_next() = 0;
 
-        virtual void reset() = 0;
+  virtual void reset() = 0;
 
-        virtual ~IReorderBuffer() = default;
-    };
+  virtual ~IReorderBuffer() = default;
+};
 
 } // namespace st2110
 

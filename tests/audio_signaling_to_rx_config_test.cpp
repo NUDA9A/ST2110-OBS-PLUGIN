@@ -11,159 +11,103 @@
 #include <utility>
 
 namespace {
-    st2110::AudioStreamSignaling make_level_a_stream(std::uint16_t channels = 2) {
-        st2110::AudioStreamSignaling signaling{};
-        signaling.media.pcm_encoding = st2110::AudioPcmEncoding::LinearPcm;
-        signaling.media.sampling_rate_hz = 48000;
-        signaling.media.packet_time_us = 1000;
-        signaling.media.channel_count = channels;
-        return signaling;
-    }
+st2110::AudioStreamSignaling make_level_a_stream(std::uint16_t channels = 2) {
+  st2110::AudioStreamSignaling signaling{};
+  signaling.media.pcm_encoding = st2110::AudioPcmEncoding::LinearPcm;
+  signaling.media.sampling_rate_hz = 48000;
+  signaling.media.packet_time_us = 1000;
+  signaling.media.channel_count = channels;
+  return signaling;
 }
+} // namespace
 
 int main() {
-    using namespace st2110;
+  using namespace st2110;
 
-    static_assert(std::is_same_v<
-                  decltype(rx_audio_config_from_audio_stream_signaling(
-                          std::declval<const AudioStreamSignaling&>(),
-                          std::uint16_t{},
-                          std::uint8_t{},
-                          std::declval<std::string>(),
-                          std::declval<std::string>(),
-                          AudioSampleFormat::LinearPcm)),
-                  std::expected<RxAudioConfig, Error>>);
+  static_assert(
+      std::is_same_v<decltype(rx_audio_config_from_audio_stream_signaling(
+                         std::declval<const AudioStreamSignaling &>(), std::uint16_t{}, std::uint8_t{},
+                         std::declval<std::string>(), std::declval<std::string>(), AudioSampleFormat::LinearPcm)),
+                     std::expected<RxAudioConfig, Error>>);
 
-    AudioStreamSignaling stereo = make_level_a_stream(2);
+  AudioStreamSignaling stereo = make_level_a_stream(2);
 
-    auto projected = rx_audio_config_from_audio_stream_signaling(
-            stereo,
-            30000,
-            111,
-            "0.0.0.0",
-            "239.1.1.2");
+  auto projected = rx_audio_config_from_audio_stream_signaling(stereo, 30000, 111, "0.0.0.0", "239.1.1.2");
 
-    assert(projected.has_value());
-    assert(projected->sampling_rate_hz == 48000);
-    assert(projected->packet_time_us == 1000);
-    assert(projected->samples_per_packet == 48);
-    assert(projected->channel_count == 2);
-    assert(projected->udp_port == 30000);
-    assert(projected->payload_type == 111);
-    assert(projected->local_ip == "0.0.0.0");
-    assert(projected->dest_ip == "239.1.1.2");
-    assert(projected->format == AudioSampleFormat::LinearPcm);
-    assert(projected->is_valid());
+  assert(projected.has_value());
+  assert(projected->sampling_rate_hz == 48000);
+  assert(projected->packet_time_us == 1000);
+  assert(projected->samples_per_packet == 48);
+  assert(projected->channel_count == 2);
+  assert(projected->udp_port == 30000);
+  assert(projected->payload_type == 111);
+  assert(projected->local_ip == "0.0.0.0");
+  assert(projected->dest_ip == "239.1.1.2");
+  assert(projected->format == AudioSampleFormat::LinearPcm);
+  assert(projected->is_valid());
 
-    AudioStreamSignaling min_channels = make_level_a_stream(1);
-    auto projected_min = rx_audio_config_from_audio_stream_signaling(
-            min_channels,
-            30000,
-            111,
-            "",
-            "239.1.1.2");
-    assert(projected_min.has_value());
-    assert(projected_min->channel_count == 1);
-    assert(projected_min->local_ip.empty());
-    assert(projected_min->is_valid());
+  AudioStreamSignaling min_channels = make_level_a_stream(1);
+  auto projected_min = rx_audio_config_from_audio_stream_signaling(min_channels, 30000, 111, "", "239.1.1.2");
+  assert(projected_min.has_value());
+  assert(projected_min->channel_count == 1);
+  assert(projected_min->local_ip.empty());
+  assert(projected_min->is_valid());
 
-    AudioStreamSignaling max_channels = make_level_a_stream(8);
-    auto projected_max = rx_audio_config_from_audio_stream_signaling(
-            max_channels,
-            30000,
-            111,
-            "0.0.0.0",
-            "239.1.1.2");
-    assert(projected_max.has_value());
-    assert(projected_max->channel_count == 8);
-    assert(projected_max->is_valid());
+  AudioStreamSignaling max_channels = make_level_a_stream(8);
+  auto projected_max = rx_audio_config_from_audio_stream_signaling(max_channels, 30000, 111, "0.0.0.0", "239.1.1.2");
+  assert(projected_max.has_value());
+  assert(projected_max->channel_count == 8);
+  assert(projected_max->is_valid());
 
-    AudioStreamSignaling with_channel_order = make_level_a_stream(8);
-    with_channel_order.channel_order = AudioChannelOrderSignaling{
-            AudioChannelOrderConvention::Smpte2110,
-            "SMPTE2110.(51,ST)"
-    };
+  AudioStreamSignaling with_channel_order = make_level_a_stream(8);
+  with_channel_order.channel_order =
+      AudioChannelOrderSignaling{AudioChannelOrderConvention::Smpte2110, "SMPTE2110.(51,ST)"};
 
-    auto projected_with_channel_order = rx_audio_config_from_audio_stream_signaling(
-            with_channel_order,
-            30000,
-            111,
-            "0.0.0.0",
-            "239.1.1.2");
+  auto projected_with_channel_order =
+      rx_audio_config_from_audio_stream_signaling(with_channel_order, 30000, 111, "0.0.0.0", "239.1.1.2");
 
-    assert(projected_with_channel_order.has_value());
-    assert(projected_with_channel_order->channel_count == 8);
-    assert(projected_with_channel_order->is_valid());
+  assert(projected_with_channel_order.has_value());
+  assert(projected_with_channel_order->channel_count == 8);
+  assert(projected_with_channel_order->is_valid());
 
-    AudioStreamSignaling wrong_sampling_rate = make_level_a_stream(2);
-    wrong_sampling_rate.media.sampling_rate_hz = 96000;
-    auto projected_wrong_sampling_rate = rx_audio_config_from_audio_stream_signaling(
-            wrong_sampling_rate,
-            30000,
-            111,
-            "0.0.0.0",
-            "239.1.1.2");
-    assert(!projected_wrong_sampling_rate.has_value());
-    assert(projected_wrong_sampling_rate.error() == Error::InvalidValue);
+  AudioStreamSignaling wrong_sampling_rate = make_level_a_stream(2);
+  wrong_sampling_rate.media.sampling_rate_hz = 96000;
+  auto projected_wrong_sampling_rate =
+      rx_audio_config_from_audio_stream_signaling(wrong_sampling_rate, 30000, 111, "0.0.0.0", "239.1.1.2");
+  assert(!projected_wrong_sampling_rate.has_value());
+  assert(projected_wrong_sampling_rate.error() == Error::InvalidValue);
 
-    AudioStreamSignaling wrong_packet_time = make_level_a_stream(2);
-    wrong_packet_time.media.packet_time_us = 125;
-    auto projected_wrong_packet_time = rx_audio_config_from_audio_stream_signaling(
-            wrong_packet_time,
-            30000,
-            111,
-            "0.0.0.0",
-            "239.1.1.2");
-    assert(!projected_wrong_packet_time.has_value());
-    assert(projected_wrong_packet_time.error() == Error::InvalidValue);
+  AudioStreamSignaling wrong_packet_time = make_level_a_stream(2);
+  wrong_packet_time.media.packet_time_us = 125;
+  auto projected_wrong_packet_time =
+      rx_audio_config_from_audio_stream_signaling(wrong_packet_time, 30000, 111, "0.0.0.0", "239.1.1.2");
+  assert(!projected_wrong_packet_time.has_value());
+  assert(projected_wrong_packet_time.error() == Error::InvalidValue);
 
-    AudioStreamSignaling too_many_channels = make_level_a_stream(9);
-    auto projected_too_many_channels = rx_audio_config_from_audio_stream_signaling(
-            too_many_channels,
-            30000,
-            111,
-            "0.0.0.0",
-            "239.1.1.2");
-    assert(!projected_too_many_channels.has_value());
-    assert(projected_too_many_channels.error() == Error::InvalidValue);
+  AudioStreamSignaling too_many_channels = make_level_a_stream(9);
+  auto projected_too_many_channels =
+      rx_audio_config_from_audio_stream_signaling(too_many_channels, 30000, 111, "0.0.0.0", "239.1.1.2");
+  assert(!projected_too_many_channels.has_value());
+  assert(projected_too_many_channels.error() == Error::InvalidValue);
 
-    AudioStreamSignaling valid_signaling = make_level_a_stream(2);
+  AudioStreamSignaling valid_signaling = make_level_a_stream(2);
 
-    auto bad_port = rx_audio_config_from_audio_stream_signaling(
-            valid_signaling,
-            0,
-            111,
-            "0.0.0.0",
-            "239.1.1.2");
-    assert(!bad_port.has_value());
-    assert(bad_port.error() == Error::InvalidValue);
+  auto bad_port = rx_audio_config_from_audio_stream_signaling(valid_signaling, 0, 111, "0.0.0.0", "239.1.1.2");
+  assert(!bad_port.has_value());
+  assert(bad_port.error() == Error::InvalidValue);
 
-    auto bad_payload_type = rx_audio_config_from_audio_stream_signaling(
-            valid_signaling,
-            30000,
-            95,
-            "0.0.0.0",
-            "239.1.1.2");
-    assert(!bad_payload_type.has_value());
-    assert(bad_payload_type.error() == Error::InvalidValue);
+  auto bad_payload_type =
+      rx_audio_config_from_audio_stream_signaling(valid_signaling, 30000, 95, "0.0.0.0", "239.1.1.2");
+  assert(!bad_payload_type.has_value());
+  assert(bad_payload_type.error() == Error::InvalidValue);
 
-    auto bad_dest_ip = rx_audio_config_from_audio_stream_signaling(
-            valid_signaling,
-            30000,
-            111,
-            "0.0.0.0",
-            "");
-    assert(!bad_dest_ip.has_value());
-    assert(bad_dest_ip.error() == Error::InvalidValue);
+  auto bad_dest_ip = rx_audio_config_from_audio_stream_signaling(valid_signaling, 30000, 111, "0.0.0.0", "");
+  assert(!bad_dest_ip.has_value());
+  assert(bad_dest_ip.error() == Error::InvalidValue);
 
-    auto bad_format = rx_audio_config_from_audio_stream_signaling(
-            valid_signaling,
-            30000,
-            111,
-            "0.0.0.0",
-            "239.1.1.2",
-            static_cast<AudioSampleFormat>(255));
-    assert(!bad_format.has_value());
+  auto bad_format = rx_audio_config_from_audio_stream_signaling(valid_signaling, 30000, 111, "0.0.0.0", "239.1.1.2",
+                                                                static_cast<AudioSampleFormat>(255));
+  assert(!bad_format.has_value());
 
-    return 0;
+  return 0;
 }

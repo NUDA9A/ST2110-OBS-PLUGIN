@@ -8,4 +8,4 @@ namespace st2110 {
 using ByteSpan = std::span<const uint8_t>;
 }
 
-#endif //ST2110_OBS_PLUGIN_BYTES_HPP
+#endif // ST2110_OBS_PLUGIN_BYTES_HPP

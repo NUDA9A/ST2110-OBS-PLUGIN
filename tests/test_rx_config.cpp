@@ -43,35 +43,31 @@ st2110::RxAudioConfig make_valid_level_a_audio_config(std::uint16_t channels = 2
   cfg.format = st2110::AudioSampleFormat::LinearPcm;
   return cfg;
 }
-}
+} // namespace
 
 int main() {
   static_assert(std::is_enum_v<st2110::AudioSampleFormat>);
   static_assert(!std::is_convertible_v<st2110::AudioSampleFormat, int>);
 
-  static_assert(std::is_same_v<
-                decltype(std::declval<st2110::RxVideoConfig&>().packing_mode),
-                st2110::VideoPackingMode>);
+  static_assert(
+      std::is_same_v<decltype(std::declval<st2110::RxVideoConfig &>().packing_mode), st2110::VideoPackingMode>);
 
-  static_assert(std::is_same_v<
-                decltype(st2110::validate_rx_video_config(std::declval<const st2110::RxVideoConfig&>())),
-                st2110::Error>);
+  static_assert(
+      std::is_same_v<decltype(st2110::validate_rx_video_config(std::declval<const st2110::RxVideoConfig &>())),
+                     st2110::Error>);
 
-  static_assert(std::is_same_v<
-                decltype(st2110::validate_rx_audio_config(std::declval<const st2110::RxAudioConfig&>())),
-                st2110::Error>);
+  static_assert(
+      std::is_same_v<decltype(st2110::validate_rx_audio_config(std::declval<const st2110::RxAudioConfig &>())),
+                     st2110::Error>);
 
-  static_assert(std::is_same_v<
-                decltype(st2110::validate_rx_audio_config_against_runtime_support(
-                    std::declval<const st2110::RxAudioConfig&>(),
-                    std::declval<const st2110::AudioRuntimeSupportPolicy&>())),
-                st2110::Error>);
+  static_assert(std::is_same_v<decltype(st2110::validate_rx_audio_config_against_runtime_support(
+                                   std::declval<const st2110::RxAudioConfig &>(),
+                                   std::declval<const st2110::AudioRuntimeSupportPolicy &>())),
+                               st2110::Error>);
 
-  static_assert(std::is_same_v<
-                decltype(st2110::config_validation::audio_samples_per_packet_from_rate_and_packet_time(
-                    std::uint32_t{},
-                    std::uint32_t{})),
-                std::expected<std::uint32_t, st2110::Error>>);
+  static_assert(std::is_same_v<decltype(st2110::config_validation::audio_samples_per_packet_from_rate_and_packet_time(
+                                   std::uint32_t{}, std::uint32_t{})),
+                               std::expected<std::uint32_t, st2110::Error>>);
 
   {
     auto samples = st2110::config_validation::audio_samples_per_packet_from_rate_and_packet_time(48000, 1000);
@@ -87,13 +83,11 @@ int main() {
     assert(!zero_rate.has_value());
     assert(zero_rate.error() == st2110::Error::InvalidValue);
 
-    auto zero_packet_time =
-        st2110::config_validation::audio_samples_per_packet_from_rate_and_packet_time(48000, 0);
+    auto zero_packet_time = st2110::config_validation::audio_samples_per_packet_from_rate_and_packet_time(48000, 0);
     assert(!zero_packet_time.has_value());
     assert(zero_packet_time.error() == st2110::Error::InvalidValue);
 
-    auto non_integral =
-        st2110::config_validation::audio_samples_per_packet_from_rate_and_packet_time(44100, 1000);
+    auto non_integral = st2110::config_validation::audio_samples_per_packet_from_rate_and_packet_time(44100, 1000);
     assert(!non_integral.has_value());
     assert(non_integral.error() == st2110::Error::InvalidValue);
   }
@@ -189,24 +183,14 @@ int main() {
   }
 
   {
-    static constexpr std::array custom_formats{
-        st2110::AudioSampleFormat::LinearPcm
-    };
+    static constexpr std::array custom_formats{st2110::AudioSampleFormat::LinearPcm};
 
     static constexpr std::array custom_ranges{
-        st2110::AudioConformanceRange{
-            st2110::AudioConformanceLevel::LevelAX,
-            48000,
-            125,
-            1,
-            8
-        }
-    };
+        st2110::AudioConformanceRange{st2110::AudioConformanceLevel::LevelAX, 48000, 125, 1, 8}};
 
     const st2110::AudioRuntimeSupportPolicy custom_support{
         std::span<const st2110::AudioSampleFormat>{custom_formats},
-        std::span<const st2110::AudioConformanceRange>{custom_ranges}
-    };
+        std::span<const st2110::AudioConformanceRange>{custom_ranges}};
 
     st2110::RxAudioConfig short_packet_time_cfg = make_valid_level_a_audio_config(2);
     short_packet_time_cfg.packet_time_us = 125;
@@ -216,15 +200,13 @@ int main() {
     assert(!short_packet_time_cfg.is_valid());
 
     // The generic runtime-support boundary accepts it when the explicit support policy allows it.
-    assert(st2110::validate_rx_audio_config_against_runtime_support(
-               short_packet_time_cfg,
-               custom_support) == st2110::Error::Ok);
+    assert(st2110::validate_rx_audio_config_against_runtime_support(short_packet_time_cfg, custom_support) ==
+           st2110::Error::Ok);
 
     st2110::RxAudioConfig wrong_derived_samples = short_packet_time_cfg;
     wrong_derived_samples.samples_per_packet = 48;
-    assert(st2110::validate_rx_audio_config_against_runtime_support(
-               wrong_derived_samples,
-               custom_support) == st2110::Error::InvalidValue);
+    assert(st2110::validate_rx_audio_config_against_runtime_support(wrong_derived_samples, custom_support) ==
+           st2110::Error::InvalidValue);
   }
 
   return 0;
