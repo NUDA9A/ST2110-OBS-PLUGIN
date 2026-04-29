@@ -5,6 +5,7 @@
 
 #include <st2110/backend.hpp>
 #include <st2110/backend_factory.hpp>
+#include <st2110/error.hpp>
 #include <st2110/rx_config.hpp>
 #include <st2110/socket_rx_video_backend.hpp>
 #include <st2110/video_frame.hpp>
@@ -12,6 +13,17 @@
 static_assert(std::is_final_v<st2110::SocketRxVideoBackend>);
 static_assert(std::is_base_of_v<st2110::IRxVideoBackend, st2110::SocketRxVideoBackend>);
 static_assert(std::is_convertible_v<st2110::SocketRxVideoBackend*, st2110::IRxBackend*>);
+
+static_assert(std::is_same_v<decltype(std::declval<const st2110::SocketRxVideoBackend&>().state()),
+                             st2110::RxBackendState>);
+
+static_assert(std::is_same_v<decltype(std::declval<st2110::SocketRxVideoBackend&>().stop()),
+                             st2110::RxBackendLifecycleResult>);
+
+static_assert(std::is_same_v<decltype(std::declval<st2110::SocketRxVideoBackend&>().start_video(
+                                 std::declval<const st2110::RxVideoConfig&>(),
+                                 std::declval<st2110::IVideoFrameSink&>())),
+                             st2110::RxBackendLifecycleResult>);
 
 static_assert(std::is_final_v<st2110::SocketRxVideoBackendFactory>);
 static_assert(std::is_base_of_v<st2110::IRxBackendFactory, st2110::SocketRxVideoBackendFactory>);
@@ -52,7 +64,7 @@ namespace
         return cfg;
     }
 
-    void test_socket_rx_video_backend_basic_contract()
+    void test_socket_rx_video_backend_basic_contract_and_lifecycle()
     {
         st2110::SocketRxVideoBackend backend;
 
@@ -65,6 +77,8 @@ namespace
         assert(st2110::supports_media(capabilities, st2110::RxMediaKind::Video));
         assert(!st2110::supports_media(capabilities, st2110::RxMediaKind::Audio));
 
+        assert(st2110::backend_is_stopped(backend_view.state()));
+
         auto* video_backend = dynamic_cast<st2110::IRxVideoBackend*>(&backend_base);
         assert(video_backend != nullptr);
 
@@ -74,11 +88,31 @@ namespace
         FakeVideoSink sink;
         const auto cfg = make_valid_video_config();
 
-        video_backend->start_video(cfg, sink);
+        auto started = video_backend->start_video(cfg, sink);
+        assert(started.has_value());
+        assert(st2110::backend_media_active(*started, st2110::RxMediaKind::Video));
+        assert(!st2110::backend_media_active(*started, st2110::RxMediaKind::Audio));
+        assert(st2110::backend_media_active(backend.state(), st2110::RxMediaKind::Video));
         assert(!sink.called);
 
-        backend_base.stop();
-        backend_base.stop();
+        auto started_again = video_backend->start_video(cfg, sink);
+        assert(!started_again.has_value());
+        assert(started_again.error() == st2110::Error::InvalidBackendState);
+        assert(st2110::backend_media_active(backend.state(), st2110::RxMediaKind::Video));
+
+        auto stopped = backend_base.stop();
+        assert(stopped.has_value());
+        assert(st2110::backend_is_stopped(*stopped));
+        assert(st2110::backend_is_stopped(backend.state()));
+
+        auto stopped_again = backend_base.stop();
+        assert(stopped_again.has_value());
+        assert(st2110::backend_is_stopped(*stopped_again));
+        assert(st2110::backend_is_stopped(backend.state()));
+
+        auto restarted = video_backend->start_video(cfg, sink);
+        assert(restarted.has_value());
+        assert(st2110::backend_media_active(*restarted, st2110::RxMediaKind::Video));
     }
 
     void test_socket_rx_video_backend_factory_descriptor()
@@ -96,7 +130,7 @@ namespace
         assert(st2110::validate_rx_backend_descriptor(descriptor) == st2110::Error::Ok);
     }
 
-    void test_socket_rx_video_backend_factory_creates_video_backend()
+    void test_socket_rx_video_backend_factory_creates_video_backend_with_stopped_initial_state()
     {
         st2110::SocketRxVideoBackendFactory factory;
 
@@ -108,6 +142,7 @@ namespace
         const auto capabilities = backend->capabilities();
         assert(st2110::supports_media(capabilities, st2110::RxMediaKind::Video));
         assert(!st2110::supports_media(capabilities, st2110::RxMediaKind::Audio));
+        assert(st2110::backend_is_stopped(backend->state()));
 
         auto* video_backend = dynamic_cast<st2110::IRxVideoBackend*>(backend.get());
         assert(video_backend != nullptr);
@@ -118,17 +153,22 @@ namespace
         FakeVideoSink sink;
         const auto cfg = make_valid_video_config();
 
-        video_backend->start_video(cfg, sink);
+        auto started = video_backend->start_video(cfg, sink);
+        assert(started.has_value());
+        assert(st2110::backend_media_active(*started, st2110::RxMediaKind::Video));
         assert(!sink.called);
 
-        backend->stop();
+        auto stopped = backend->stop();
+        assert(stopped.has_value());
+        assert(st2110::backend_is_stopped(*stopped));
+        assert(st2110::backend_is_stopped(backend->state()));
     }
 } // namespace
 
 int main()
 {
-    test_socket_rx_video_backend_basic_contract();
+    test_socket_rx_video_backend_basic_contract_and_lifecycle();
     test_socket_rx_video_backend_factory_descriptor();
-    test_socket_rx_video_backend_factory_creates_video_backend();
+    test_socket_rx_video_backend_factory_creates_video_backend_with_stopped_initial_state();
     return 0;
 }

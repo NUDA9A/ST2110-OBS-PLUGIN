@@ -13,8 +13,10 @@ namespace st2110
             return "socket";
         }
 
-        void stop() override
+        RxBackendLifecycleResult stop() override
         {
+            state_ = {};
+            return state_;
         }
 
         [[nodiscard]] RxBackendCapabilities capabilities() const override
@@ -22,11 +24,25 @@ namespace st2110
             return RxBackendCapabilities{.video_rx = true, .audio_rx = false};
         }
 
-        void start_video(const RxVideoConfig& cfg, IVideoFrameSink& sink) override
+        RxBackendLifecycleResult start_video(const RxVideoConfig& cfg, IVideoFrameSink& sink) override
         {
+            if (state_.video_active)
+            {
+                return std::unexpected(Error::InvalidBackendState);
+            }
+            state_.video_active = true;
             (void)cfg;
             (void)sink;
+
+            return state_;
         }
+
+        [[nodiscard]] RxBackendState state() const override
+        {
+            return state_;
+        }
+    private:
+        RxBackendState state_{};
     };
 
     class SocketRxVideoBackendFactory final : public IRxBackendFactory

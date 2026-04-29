@@ -107,7 +107,8 @@
     - проверяет backend/sink interface contracts;
     - покрывает FakeVideoBackend -> FakeVideoSink delivery path;
     - покрывает FakeAudioBackend -> FakeAudioSink delivery path;
-    - покрывает combined video+audio backend shape over one common `IRxBackend` base.
+    - покрывает combined video+audio backend shape over one common `IRxBackend` base;
+    - теперь также фиксирует explicit backend lifecycle result/state boundary.
 - Покрывает:
     - abstract/interface shape:
         - `IRxBackend`;
@@ -120,33 +121,30 @@
         - `RxBackendCapabilities`;
         - `supports_media(...)`;
         - unknown media enum value returns `false`.
-    - inheritance:
-        - `IRxVideoBackend` derives from `IRxBackend`;
-        - `IRxAudioBackend` derives from `IRxBackend`;
-        - video/audio backend interfaces use virtual inheritance so a combined backend has a single common `IRxBackend` base.
+    - lifecycle state model:
+        - `RxBackendState`;
+        - `RxBackendLifecycleResult`;
+        - `backend_is_stopped(...)`;
+        - `backend_media_active(...)`.
     - common backend API:
         - `backend_name()`;
-        - `stop()`;
+        - `stop() -> RxBackendLifecycleResult`;
+        - `state() -> RxBackendState`;
         - `capabilities()`.
     - media-specific start API:
-        - `IRxVideoBackend::start_video(const RxVideoConfig&, IVideoFrameSink&)`;
-        - `IRxAudioBackend::start_audio(const RxAudioConfig&, IAudioFrameSink&)`.
-    - video delivery:
-        - fake video backend starts with `RxVideoConfig`;
-        - emits a `VideoFrameView`;
-        - sink receives width/height/timestamp/data/stride.
-    - audio delivery:
-        - fake audio backend starts with `RxAudioConfig`;
-        - emits an `AudioFrameView`;
-        - sink receives sampling rate, channel count, samples per channel, timestamp, sample pointer, stride, total sample count, and byte size.
-    - combined backend:
-        - one fake backend implements both `IRxVideoBackend` and `IRxAudioBackend`;
-        - can be used through `IRxBackend&`, `IRxVideoBackend&`, and `IRxAudioBackend&`;
-        - reports both video and audio capabilities;
-        - delivers both video and audio through separate media-specific start methods.
+        - `IRxVideoBackend::start_video(...) -> RxBackendLifecycleResult`;
+        - `IRxAudioBackend::start_audio(...) -> RxBackendLifecycleResult`.
+    - lifecycle policy:
+        - stop before successful start is accepted and leaves backend stopped;
+        - repeated stop is accepted and remains stopped;
+        - repeated start on already-active media returns `InvalidBackendState`;
+        - failed start can leave backend stopped and retryable;
+        - combined backend can hold video and audio active simultaneously.
+    - video/audio delivery:
+        - successful start still delivers video/audio frames through sinks in fake backends.
 - Фиксирует:
-    - socket/MTL backend implementations can later expose video-only, audio-only, or combined capabilities without duplicating common lifecycle/base API;
-    - backend interfaces consume existing runtime/storage boundaries and do not embed SDP parsing, channel-order interpretation, RTP packet parsing, jitter/reorder, playout policy, socket behavior, or MTL behavior.
+    - backend lifecycle/runtime failures remain inside backend boundary and are not routed through sinks;
+    - combined backend extensibility remains explicit through per-media state instead of a single global running flag.
 
 ### tests/test_backend_factory.cpp
 - Роль:
@@ -176,11 +174,12 @@
     - backend creation:
         - `create_rx_backend(...)`;
         - uses the selected factory only;
-        - rejects null backend results from a factory.
+        - rejects null backend results from a factory;
+        - created backend starts in a stopped `RxBackendState`;
+        - created backend `stop()` returns a lifecycle result.
 - Фиксирует:
-    - backend kind is modeled separately from media kind;
-    - backend selection remains separate from concrete socket/MTL implementation details and separate from video/audio runtime config and packet pipeline code;
-    - future backend expansion should plug in through descriptor/factory registration rather than ad hoc creation branches in apps/plugins.
+    - backend selection/creation remains separate from backend lifecycle semantics;
+    - factory-created backends expose the new explicit lifecycle/state boundary immediately after construction.
 
 ## RTP / ST 2110-20 packet parsing
 
@@ -946,28 +945,26 @@
 
 ### tests/test_socket_rx_video_backend.cpp
 - Роль:
-    - smoke/regression test for the first concrete socket video backend skeleton.
+    - проверяет current socket video backend stub and its factory.
+    - теперь также покрывает explicit backend lifecycle result/state behavior of the socket backend stub.
 - Покрывает:
-    - `SocketRxVideoBackend` direct backend behavior:
-        - `backend_name() == "socket"`;
-        - reports video-only capabilities;
-        - does not report audio capability;
-        - can be viewed through `IRxBackend&` / `IRxVideoBackend&`;
-        - video-only backend is not exposed as `IRxAudioBackend`.
-    - skeleton lifecycle behavior:
-        - `start_video(...)` is callable with valid `RxVideoConfig` and sink;
-        - current skeleton start path is a no-op and does not emit frames;
-        - `stop()` is callable and remains a no-op placeholder.
-    - `SocketRxVideoBackendFactory`:
-        - descriptor shape;
-        - `RxBackendKind::Socket`;
-        - `"socket"` name;
-        - video-only capability advertisement;
-        - `available = true`.
-    - backend creation:
-        - factory returns a non-null `IRxBackend`;
-        - created backend can be dynamically viewed as `IRxVideoBackend`;
-        - created backend remains video-only.
+    - type/interface shape:
+        - `SocketRxVideoBackend`;
+        - `SocketRxVideoBackendFactory`;
+        - conversion to `IRxBackend` / `IRxVideoBackend`.
+    - descriptor/factory behavior:
+        - socket backend kind;
+        - backend name;
+        - video-only capabilities;
+        - factory returns a valid backend instance.
+    - lifecycle behavior:
+        - created backend starts in stopped state;
+        - successful `start_video(...)` returns active video state;
+        - repeated `start_video(...)` returns `InvalidBackendState`;
+        - `stop()` is idempotent and returns stopped state;
+        - backend can be started again after stop.
+    - stub behavior:
+        - current socket stub still does not emit frames yet.
 - Фиксирует:
-    - the first concrete socket video backend plugs into the existing backend/factory architecture instead of bypassing it;
-    - socket video backend skeleton remains separate from UDP socket operations, RTP parsing, depacketizer/pipeline logic, timing/playout, and audio backend behavior.
+    - socket backend now follows the same lifecycle/result contract expected from future real runtime implementations;
+    - further socket RX work should extend the existing state/result boundary instead of changing the public backend API.

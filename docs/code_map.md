@@ -40,12 +40,12 @@
     - базовые backend/sink интерфейсы для receive path.
     - текущая точка расширения для socket/MTL video и audio backend’ов.
     - задает media-facing delivery contracts без смешивания с packet parsing, SDP ingestion, channel-order mapping, timing/playout policy или конкретным socket/MTL runtime behavior.
-    - содержит общий capability query layer, чтобы один будущий backend-класс мог быть video-capable, audio-capable или combined video+audio backend без дублирования common lifecycle/base API.
+    - теперь также задает explicit lifecycle result/state boundary для backend runtime before real socket/MTL work.
 - Связи:
     - использует `VideoFrameView` и `RxVideoConfig` для video receive path;
     - использует `AudioFrameView` и `RxAudioConfig` для audio receive path;
-    - используется `backend_factory.hpp` как media-capability/source interface для backend selection/creation boundary;
-    - future socket/MTL backend implementations should expose their concrete selection/creation path through `IRxBackendFactory` rather than duplicating backend lifecycle contracts in app/plugin code.
+    - использует `Error` через `RxBackendLifecycleResult`;
+    - используется `backend_factory.hpp` как media-capability/source interface для backend selection/creation boundary.
 - Сущности:
     - `RxMediaKind`
         - modeled media capability axis:
@@ -55,6 +55,16 @@
         - declares which receive media kinds a backend supports:
             - `video_rx`;
             - `audio_rx`.
+    - `RxBackendState`
+        - explicit per-media lifecycle state:
+            - `video_active`;
+            - `audio_active`.
+    - `RxBackendLifecycleResult = std::expected<RxBackendState, Error>`
+        - common backend lifecycle result type for start/stop operations.
+    - `backend_is_stopped(const RxBackendState&) -> bool`
+        - helper for full stopped-state detection.
+    - `backend_media_active(const RxBackendState&, RxMediaKind) -> bool`
+        - helper for per-media activity query.
     - `supports_media(const RxBackendCapabilities&, RxMediaKind) -> bool`
         - helper for querying media support;
         - returns `false` for unknown enum values.
@@ -65,22 +75,22 @@
     - `IRxBackend`
         - общий lifecycle/base интерфейс backend’а:
             - `backend_name()`;
-            - `stop()`;
+            - `stop() -> RxBackendLifecycleResult`;
+            - `state() -> RxBackendState`;
             - `capabilities()`.
     - `IRxVideoBackend`
         - video receive capability interface;
         - uses virtual inheritance from `IRxBackend` so combined video+audio backends have a single common backend base;
-        - `start_video(const RxVideoConfig&, IVideoFrameSink&)`.
+        - `start_video(const RxVideoConfig&, IVideoFrameSink&) -> RxBackendLifecycleResult`.
     - `IRxAudioBackend`
         - audio receive capability interface;
         - uses virtual inheritance from `IRxBackend` so combined video+audio backends have a single common backend base;
-        - `start_audio(const RxAudioConfig&, IAudioFrameSink&)`.
+        - `start_audio(const RxAudioConfig&, IAudioFrameSink&) -> RxBackendLifecycleResult`.
 - Примечание:
-    - audio/video backend capability shape is explicit and backend-kind agnostic;
-    - a future socket or MTL backend can implement both `IRxVideoBackend` and `IRxAudioBackend` in one class without ambiguous `IRxBackend` duplication;
-    - backend interfaces intentionally still consume existing runtime/storage boundaries and do not perform ST 2110 signaling interpretation themselves;
-    - backend kind selection / registration / creation now lives in `backend_factory.hpp`;
-    - threading, socket/MTL behavior, RTP payload-type admission, SDP transport projection, and receive-loop stats remain separate boundaries/tasks.
+    - lifecycle/state policy is now explicit instead of relying on silent no-op behavior;
+    - repeated start of already-active media is expected to report `InvalidBackendState`;
+    - `stop()` is modeled as an idempotent state-clearing operation;
+    - future real runtime implementations should keep failed-start behavior transactional through this boundary rather than reporting operational failures via sinks.
 
 ### libs/st2110core/include/st2110/backend_factory.hpp
 - Роль:
@@ -2165,35 +2175,30 @@
 
 ### libs/st2110core/include/st2110/socket_rx_video_backend.hpp
 - Роль:
-    - первый concrete socket video backend skeleton для MVP.
-    - локализует concrete socket-video backend identity и factory registration, не смешивая их с RTP parsing, SDP ingestion, timing/playout policy или socket I/O implementation.
+    - текущий socket video backend stub.
+    - теперь служит минимальной concrete реализацией explicit backend lifecycle result/state boundary before real socket RX runtime is added.
 - Связи:
-    - использует `backend.hpp` для `IRxVideoBackend`, `IVideoFrameSink`, `RxBackendCapabilities`, `RxVideoConfig`;
-    - использует `backend_factory.hpp` для `IRxBackendFactory`, `RxBackendDescriptor`, `RxBackendKind`;
-    - должен выбираться через existing backend factory / selector boundary, а не через ad hoc construction в app/plugin code.
+    - реализует `IRxVideoBackend`;
+    - использует `backend_factory.hpp` для factory/selection integration;
+    - пока не выполняет реального socket bind/join/receive behavior.
 - Сущности:
     - `SocketRxVideoBackend`
-        - concrete `IRxVideoBackend` skeleton.
-        - `backend_name() -> "socket"`.
-        - `capabilities() -> { video_rx = true, audio_rx = false }`.
-        - `start_video(const RxVideoConfig&, IVideoFrameSink&)`
-            - current no-op placeholder for future socket receive startup.
-        - `stop()`
-            - current no-op placeholder for future receive-loop shutdown / cleanup.
+        - `backend_name()` -> `"socket"`;
+        - `capabilities()` -> video-only backend capability;
+        - `state()` -> current `RxBackendState`;
+        - `start_video(...) -> RxBackendLifecycleResult`
+            - rejects repeated video start with `Error::InvalidBackendState`;
+            - marks `video_active=true` on successful start;
+            - remains a no-runtime stub for actual packet reception.
+        - `stop() -> RxBackendLifecycleResult`
+            - clears backend state;
+            - idempotent for stop-before-start / repeated stop cases.
     - `SocketRxVideoBackendFactory`
-        - first concrete `IRxBackendFactory` for socket video backend.
-        - `descriptor()`
-            - advertises:
-                - `kind = RxBackendKind::Socket`;
-                - `name = "socket"`;
-                - video-only capabilities;
-                - `available = true`.
-        - `create_backend()`
-            - creates one `SocketRxVideoBackend` instance as `std::unique_ptr<IRxBackend>`.
+        - advertises socket backend descriptor;
+        - creates a new stopped `SocketRxVideoBackend`.
 - Примечание:
-    - это именно skeleton boundary;
-    - реальное UDP open/bind, multicast join, receive loop, packet admission, pipeline feed, stats и shutdown policy остаются следующими задачами;
-    - текущий header-only method body shape допустим для такого малого skeleton, но при росте реализации non-trivial socket behavior should live in `.cpp`.
+    - this file now exercises the localized lifecycle policy in a concrete backend without introducing real socket runtime yet;
+    - future socket RX work should extend this implementation through the existing lifecycle/state boundary rather than changing the public backend contract again.
 
 ### libs/st2110core/src/socket_rx_video_backend.cpp
 - Роль:
