@@ -257,10 +257,14 @@ struct SocketMulticastMembership {
 };
 
 [[nodiscard]] inline Error validate_socket_multicast_membership(const SocketMulticastMembership &membership) {
-    if (Error err = validate_socket_address_family(membership.family); err != Error::Ok) {
+    if (const Error err = validate_socket_address_family(membership.family); err != Error::Ok) {
         return err;
     }
     if (!is_valid_address(membership.group_address, membership.family)) {
+        return Error::InvalidValue;
+    }
+
+    if (!membership.interface_address.empty() && !is_valid_address(membership.interface_address, membership.family)) {
         return Error::InvalidValue;
     }
 
@@ -345,15 +349,23 @@ socket_rx_open_config_from_video_config(const RxVideoConfig &cfg) {
     }
 
     if (is_ipv4_multicast_address(cfg.dest_ip)) {
+        res.bind_endpoint.address = "0.0.0.0";
         res.multicast_membership = SocketMulticastMembership{
             .family = SocketAddressFamily::IPv4,
             .group_address = cfg.dest_ip,
         };
+        if (!cfg.local_ip.empty()) {
+            res.multicast_membership->interface_address = cfg.local_ip;
+        }
     } else if (is_ipv6_multicast_address(cfg.dest_ip)) {
+        res.bind_endpoint.address = "::";
         res.multicast_membership = SocketMulticastMembership{
             .family = SocketAddressFamily::IPv6,
             .group_address = cfg.dest_ip,
         };
+        if (!cfg.local_ip.empty()) {
+            res.multicast_membership->interface_address = cfg.local_ip;
+        }
     }
 
     if (Error err = validate_socket_rx_open_config(res); err != Error::Ok) {

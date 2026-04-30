@@ -134,6 +134,12 @@ st2110::RxVideoConfig make_valid_ipv4_multicast_video_config() {
     return cfg;
 }
 
+st2110::RxVideoConfig make_valid_ipv4_multicast_video_config_with_interface() {
+    auto cfg = make_valid_ipv4_multicast_video_config();
+    cfg.local_ip = "127.0.0.1";
+    return cfg;
+}
+
 st2110::RxVideoConfig make_valid_ipv4_unicast_video_config() {
     st2110::RxVideoConfig cfg{};
     cfg.width = 1280;
@@ -163,6 +169,12 @@ st2110::RxVideoConfig make_valid_ipv6_multicast_video_config() {
     cfg.format = st2110::PixelFormat::UYVY;
     cfg.scan_mode = st2110::VideoScanMode::Progressive;
     cfg.packing_mode = st2110::VideoPackingMode::Gpm;
+    return cfg;
+}
+
+st2110::RxVideoConfig make_valid_ipv6_multicast_video_config_with_interface() {
+    auto cfg = make_valid_ipv6_multicast_video_config();
+    cfg.local_ip = "::1";
     return cfg;
 }
 
@@ -238,11 +250,19 @@ void test_socket_endpoint_and_membership_validation() {
     membership4.interface_address = "";
     assert(st2110::validate_socket_multicast_membership(membership4) == st2110::Error::Ok);
 
+    st2110::SocketMulticastMembership membership4_with_interface = membership4;
+    membership4_with_interface.interface_address = "127.0.0.1";
+    assert(st2110::validate_socket_multicast_membership(membership4_with_interface) == st2110::Error::Ok);
+
     st2110::SocketMulticastMembership membership6{};
     membership6.family = st2110::SocketAddressFamily::IPv6;
     membership6.group_address = "ff15::abcd";
     membership6.interface_address = "";
     assert(st2110::validate_socket_multicast_membership(membership6) == st2110::Error::Ok);
+
+    st2110::SocketMulticastMembership membership6_with_interface = membership6;
+    membership6_with_interface.interface_address = "::1";
+    assert(st2110::validate_socket_multicast_membership(membership6_with_interface) == st2110::Error::Ok);
 
     st2110::SocketMulticastMembership empty_group = membership4;
     empty_group.group_address.clear();
@@ -255,6 +275,14 @@ void test_socket_endpoint_and_membership_validation() {
     st2110::SocketMulticastMembership unicast_group6 = membership6;
     unicast_group6.group_address = "2001:db8::20";
     assert(st2110::validate_socket_multicast_membership(unicast_group6) == st2110::Error::InvalidValue);
+
+    st2110::SocketMulticastMembership bad_interface4 = membership4;
+    bad_interface4.interface_address = "not-an-ip";
+    assert(st2110::validate_socket_multicast_membership(bad_interface4) == st2110::Error::InvalidValue);
+
+    st2110::SocketMulticastMembership bad_interface6 = membership6;
+    bad_interface6.interface_address = "127.0.0.1";
+    assert(st2110::validate_socket_multicast_membership(bad_interface6) == st2110::Error::InvalidValue);
 }
 
 void test_socket_open_config_validation_and_multicast_flag() {
@@ -288,6 +316,10 @@ void test_socket_open_config_validation_and_multicast_flag() {
     st2110::SocketRxOpenConfig mismatched_family = cfg4;
     mismatched_family.multicast_membership->family = st2110::SocketAddressFamily::IPv6;
     assert(st2110::validate_socket_rx_open_config(mismatched_family) == st2110::Error::InvalidValue);
+
+    st2110::SocketRxOpenConfig bad_interface = cfg4;
+    bad_interface.multicast_membership->interface_address = "not-an-ip";
+    assert(st2110::validate_socket_rx_open_config(bad_interface) == st2110::Error::InvalidValue);
 }
 
 void test_socket_open_config_projection_from_ipv4_video_config() {
@@ -317,6 +349,22 @@ void test_socket_open_config_projection_from_ipv4_video_config() {
     assert(!st2110::socket_rx_uses_multicast(*unicast_open_cfg));
 }
 
+void test_socket_open_config_projection_from_ipv4_video_config_with_interface() {
+    const auto multicast_cfg = make_valid_ipv4_multicast_video_config_with_interface();
+    auto multicast_open_cfg = st2110::socket_rx_open_config_from_video_config(multicast_cfg);
+    assert(multicast_open_cfg.has_value());
+
+    assert(multicast_open_cfg->bind_endpoint.family == st2110::SocketAddressFamily::IPv4);
+    assert(multicast_open_cfg->bind_endpoint.address == std::string_view{"0.0.0.0"});
+    assert(multicast_open_cfg->bind_endpoint.port == 5004);
+    assert(multicast_open_cfg->reuse_address);
+    assert(multicast_open_cfg->multicast_membership.has_value());
+    assert(multicast_open_cfg->multicast_membership->family == st2110::SocketAddressFamily::IPv4);
+    assert(multicast_open_cfg->multicast_membership->group_address == std::string_view{"239.10.20.30"});
+    assert(multicast_open_cfg->multicast_membership->interface_address == std::string_view{"127.0.0.1"});
+    assert(st2110::socket_rx_uses_multicast(*multicast_open_cfg));
+}
+
 void test_socket_open_config_projection_from_ipv6_video_config() {
     const auto multicast_cfg = make_valid_ipv6_multicast_video_config();
     auto multicast_open_cfg = st2110::socket_rx_open_config_from_video_config(multicast_cfg);
@@ -342,6 +390,22 @@ void test_socket_open_config_projection_from_ipv6_video_config() {
     assert(unicast_open_cfg->reuse_address);
     assert(!unicast_open_cfg->multicast_membership.has_value());
     assert(!st2110::socket_rx_uses_multicast(*unicast_open_cfg));
+}
+
+void test_socket_open_config_projection_from_ipv6_video_config_with_interface() {
+    const auto multicast_cfg = make_valid_ipv6_multicast_video_config_with_interface();
+    auto multicast_open_cfg = st2110::socket_rx_open_config_from_video_config(multicast_cfg);
+    assert(multicast_open_cfg.has_value());
+
+    assert(multicast_open_cfg->bind_endpoint.family == st2110::SocketAddressFamily::IPv6);
+    assert(multicast_open_cfg->bind_endpoint.address == std::string_view{"::"});
+    assert(multicast_open_cfg->bind_endpoint.port == 5008);
+    assert(multicast_open_cfg->reuse_address);
+    assert(multicast_open_cfg->multicast_membership.has_value());
+    assert(multicast_open_cfg->multicast_membership->family == st2110::SocketAddressFamily::IPv6);
+    assert(multicast_open_cfg->multicast_membership->group_address == std::string_view{"ff15::abcd"});
+    assert(multicast_open_cfg->multicast_membership->interface_address == std::string_view{"::1"});
+    assert(st2110::socket_rx_uses_multicast(*multicast_open_cfg));
 }
 
 void test_socket_open_config_projection_rejects_family_mismatch() {
@@ -382,7 +446,7 @@ void test_fake_socket_rx_port_lifecycle_and_receive_contract() {
     cfg.bind_endpoint.address = "::";
     cfg.bind_endpoint.port = 5004;
     cfg.multicast_membership = st2110::SocketMulticastMembership{
-        .family = st2110::SocketAddressFamily::IPv6, .group_address = "ff15::abcd", .interface_address = ""};
+        .family = st2110::SocketAddressFamily::IPv6, .group_address = "ff15::abcd", .interface_address = "::1"};
 
     assert(st2110::validate_socket_rx_open_config(cfg) == st2110::Error::Ok);
     assert(port.open(cfg) == st2110::Error::Ok);
@@ -392,6 +456,7 @@ void test_fake_socket_rx_port_lifecycle_and_receive_contract() {
     assert(port.last_open_config.bind_endpoint.address == std::string_view{"::"});
     assert(port.last_open_config.multicast_membership.has_value());
     assert(port.last_open_config.multicast_membership->family == st2110::SocketAddressFamily::IPv6);
+    assert(port.last_open_config.multicast_membership->interface_address == std::string_view{"::1"});
 
     assert(port.open(cfg) == st2110::Error::InvalidBackendState);
     assert(port.open_count == 1);
@@ -440,7 +505,9 @@ int main() {
     test_socket_endpoint_and_membership_validation();
     test_socket_open_config_validation_and_multicast_flag();
     test_socket_open_config_projection_from_ipv4_video_config();
+    test_socket_open_config_projection_from_ipv4_video_config_with_interface();
     test_socket_open_config_projection_from_ipv6_video_config();
+    test_socket_open_config_projection_from_ipv6_video_config_with_interface();
     test_socket_open_config_projection_rejects_family_mismatch();
     test_fake_socket_rx_port_lifecycle_and_receive_contract();
     test_fake_socket_rx_port_factory_returns_port_instances();

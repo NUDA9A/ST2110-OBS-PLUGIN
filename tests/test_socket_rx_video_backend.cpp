@@ -46,6 +46,8 @@ static_assert(std::is_final_v<st2110::SocketRxVideoBackendFactory>);
 static_assert(std::is_base_of_v<st2110::IRxBackendFactory, st2110::SocketRxVideoBackendFactory>);
 
 namespace {
+constexpr std::string_view kNonLocalIpv4Interface = "203.0.113.10";
+
 class FakeVideoSink final : public st2110::IVideoFrameSink {
   public:
     void on_video_frame(const st2110::VideoFrameView &frame) override {
@@ -274,6 +276,7 @@ void test_socket_rx_video_backend_uses_injected_socket_port_factory_for_ipv4_pro
     assert(state->last_open_config->multicast_membership.has_value());
     assert(state->last_open_config->multicast_membership->family == st2110::SocketAddressFamily::IPv4);
     assert(state->last_open_config->multicast_membership->group_address == std::string_view{"239.10.20.30"});
+    assert(state->last_open_config->multicast_membership->interface_address.empty());
     assert(!sink.called);
 
     auto started_again = backend.start_video(cfg, sink);
@@ -288,6 +291,35 @@ void test_socket_rx_video_backend_uses_injected_socket_port_factory_for_ipv4_pro
     assert(st2110::backend_is_stopped(backend.state()));
     assert(state->close_count == 1);
     assert(!state->is_open);
+}
+
+void test_socket_rx_video_backend_uses_injected_socket_port_factory_for_ipv4_multicast_interface_projection() {
+    auto state = std::make_shared<FakeSocketRxPortState>();
+    st2110::SocketRxVideoBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
+
+    FakeVideoSink sink;
+    auto cfg = make_valid_ipv4_multicast_video_config();
+    cfg.local_ip = "127.0.0.1";
+
+    auto started = backend.start_video(cfg, sink);
+    assert(started.has_value());
+    assert(st2110::backend_media_active(*started, st2110::RxMediaKind::Video));
+    assert(state->create_count == 1);
+    assert(state->open_count == 1);
+    assert(state->last_open_config.has_value());
+    assert(state->last_open_config->bind_endpoint.family == st2110::SocketAddressFamily::IPv4);
+    assert(state->last_open_config->bind_endpoint.address == std::string_view{"0.0.0.0"});
+    assert(state->last_open_config->bind_endpoint.port == 5004);
+    assert(state->last_open_config->multicast_membership.has_value());
+    assert(state->last_open_config->multicast_membership->family == st2110::SocketAddressFamily::IPv4);
+    assert(state->last_open_config->multicast_membership->group_address == std::string_view{"239.10.20.30"});
+    assert(state->last_open_config->multicast_membership->interface_address == std::string_view{"127.0.0.1"});
+    assert(!sink.called);
+
+    auto stopped = backend.stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+    assert(st2110::backend_is_stopped(backend.state()));
 }
 
 void test_socket_rx_video_backend_uses_injected_socket_port_factory_for_ipv6_projection() {
@@ -309,6 +341,7 @@ void test_socket_rx_video_backend_uses_injected_socket_port_factory_for_ipv6_pro
     assert(state->last_open_config->multicast_membership.has_value());
     assert(state->last_open_config->multicast_membership->family == st2110::SocketAddressFamily::IPv6);
     assert(state->last_open_config->multicast_membership->group_address == std::string_view{"ff15::abcd"});
+    assert(state->last_open_config->multicast_membership->interface_address.empty());
     assert(!sink.called);
 
     auto stopped = backend.stop();
@@ -472,7 +505,7 @@ void test_socket_rx_video_backend_factory_descriptor_and_creation_shape() {
 }
 
 #if defined(__linux__)
-void test_socket_rx_video_backend_default_backend_uses_linux_port_factory_on_linux() {
+void test_socket_rx_video_backend_default_backend_uses_linux_port_factory_on_linux_bind_failure() {
     auto reserved = reserve_ipv4_loopback_udp_socket();
     assert(reserved.valid());
 
@@ -498,6 +531,75 @@ void test_socket_rx_video_backend_default_backend_uses_linux_port_factory_on_lin
     reserved.close_now();
 
     auto second_start = video_backend->start_video(cfg, sink);
+    assert(second_start.has_value());
+    assert(st2110::backend_media_active(*second_start, st2110::RxMediaKind::Video));
+    assert(!sink.called);
+
+    auto stopped = backend->stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+    assert(st2110::backend_is_stopped(backend->state()));
+}
+
+void test_socket_rx_video_backend_default_backend_starts_ipv4_multicast_on_linux() {
+    auto reserved = reserve_ipv4_loopback_udp_socket();
+    assert(reserved.valid());
+    const uint16_t port = reserved.port();
+    reserved.close_now();
+
+    st2110::SocketRxVideoBackendFactory factory;
+    std::unique_ptr<st2110::IRxBackend> backend = factory.create_backend();
+    assert(backend != nullptr);
+
+    auto *video_backend = dynamic_cast<st2110::IRxVideoBackend *>(backend.get());
+    assert(video_backend != nullptr);
+
+    FakeVideoSink sink;
+    auto cfg = make_valid_ipv4_multicast_video_config();
+    cfg.udp_port = port;
+
+    auto started = video_backend->start_video(cfg, sink);
+    assert(started.has_value());
+    assert(st2110::backend_media_active(*started, st2110::RxMediaKind::Video));
+    assert(!sink.called);
+
+    auto stopped = backend->stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+    assert(st2110::backend_is_stopped(backend->state()));
+}
+
+void test_socket_rx_video_backend_default_backend_recovers_after_multicast_join_failure_on_linux() {
+    auto reserved = reserve_ipv4_loopback_udp_socket();
+    assert(reserved.valid());
+    const uint16_t port = reserved.port();
+    reserved.close_now();
+
+    st2110::SocketRxVideoBackendFactory factory;
+    std::unique_ptr<st2110::IRxBackend> backend = factory.create_backend();
+    assert(backend != nullptr);
+
+    auto *video_backend = dynamic_cast<st2110::IRxVideoBackend *>(backend.get());
+    assert(video_backend != nullptr);
+
+    FakeVideoSink sink;
+
+    auto bad_cfg = make_valid_ipv4_multicast_video_config();
+    bad_cfg.udp_port = port;
+    bad_cfg.local_ip = std::string(kNonLocalIpv4Interface);
+
+    auto first_start = video_backend->start_video(bad_cfg, sink);
+    assert(!first_start.has_value());
+    assert(first_start.error() == st2110::Error::MulticastJoinFailed);
+    assert(st2110::backend_is_stopped(backend->state()));
+    assert(!sink.called);
+
+    auto retry_cfg = make_valid_ipv4_unicast_video_config();
+    retry_cfg.udp_port = port;
+    retry_cfg.local_ip = "127.0.0.1";
+    retry_cfg.dest_ip = "127.0.0.1";
+
+    auto second_start = video_backend->start_video(retry_cfg, sink);
     assert(second_start.has_value());
     assert(st2110::backend_media_active(*second_start, st2110::RxMediaKind::Video));
     assert(!sink.called);
@@ -534,6 +636,7 @@ void test_socket_rx_video_backend_default_backend_uses_stub_factory_on_unsupport
 
 int main() {
     test_socket_rx_video_backend_uses_injected_socket_port_factory_for_ipv4_projection();
+    test_socket_rx_video_backend_uses_injected_socket_port_factory_for_ipv4_multicast_interface_projection();
     test_socket_rx_video_backend_uses_injected_socket_port_factory_for_ipv6_projection();
     test_socket_rx_video_backend_propagates_projection_failure_and_stays_stopped();
     test_socket_rx_video_backend_propagates_port_open_failure_and_allows_retry();
@@ -541,6 +644,12 @@ int main() {
     test_socket_rx_video_backend_stop_propagates_close_failure_without_losing_active_state();
     test_socket_rx_video_backend_can_restart_after_successful_stop();
     test_socket_rx_video_backend_factory_descriptor_and_creation_shape();
-    test_socket_rx_video_backend_default_backend_uses_linux_port_factory_on_linux();
+#if defined(__linux__)
+    test_socket_rx_video_backend_default_backend_uses_linux_port_factory_on_linux_bind_failure();
+    test_socket_rx_video_backend_default_backend_starts_ipv4_multicast_on_linux();
+    test_socket_rx_video_backend_default_backend_recovers_after_multicast_join_failure_on_linux();
+#else
+    test_socket_rx_video_backend_default_backend_uses_stub_factory_on_unsupported_build();
+#endif
     return 0;
 }

@@ -13,6 +13,7 @@
 #include <span>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 namespace st2110 {
 class LinuxSocketRxPort final : public ISocketRxPort {
@@ -60,6 +61,11 @@ class LinuxSocketRxPort final : public ISocketRxPort {
             return err;
         }
 
+        if (const Error err = join_multicast_membership(native_socket_val, cfg); err != Error::Ok) {
+            close_native_socket(native_socket_val);
+            return err;
+        }
+
         open_cfg_ = cfg;
         native_socket_ = native_socket_val;
 
@@ -69,6 +75,10 @@ class LinuxSocketRxPort final : public ISocketRxPort {
     Error close() override {
         if (!is_open()) {
             return Error::Ok;
+        }
+
+        if (const Error err = leave_multicast_membership(native_socket_, *open_cfg_); err != Error::Ok) {
+            return err;
         }
 
         if (const Error err = close_native_socket(native_socket_); err != Error::Ok) {
@@ -106,6 +116,71 @@ class LinuxSocketRxPort final : public ISocketRxPort {
     }
 
   private:
+    [[nodiscard]] static Error join_multicast_membership(const int native_socket, const SocketRxOpenConfig &cfg) {
+        if (!cfg.multicast_membership) {
+            return Error::Ok;
+        }
+
+        switch (cfg.multicast_membership->family) {
+        case SocketAddressFamily::IPv4: {
+            ip_mreq mreq{};
+            if (::inet_pton(AF_INET, cfg.multicast_membership->group_address.c_str(), &mreq.imr_multiaddr.s_addr) != 1) {
+                return Error::MulticastJoinFailed;
+            }
+            if (cfg.multicast_membership->interface_address.empty()) {
+                mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+            } else {
+                if (::inet_pton(AF_INET, cfg.multicast_membership->interface_address.c_str(), &mreq.imr_interface.s_addr) != 1) {
+                    return Error::MulticastJoinFailed;
+                }
+            }
+
+            if (::setsockopt(native_socket, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
+                return Error::MulticastJoinFailed;
+            }
+            break;
+        }
+        case SocketAddressFamily::IPv6:
+            return Error::Unsupported;
+        default:
+            return Error::InvalidValue;
+        }
+
+        return Error::Ok;
+    }
+
+    [[nodiscard]] static Error leave_multicast_membership(const int native_socket, const SocketRxOpenConfig &cfg) noexcept {
+        if (!cfg.multicast_membership) {
+            return Error::Ok;
+        }
+
+        switch (cfg.multicast_membership->family) {
+        case SocketAddressFamily::IPv4: {
+            ip_mreq mreq{};
+            if (::inet_pton(AF_INET, cfg.multicast_membership->group_address.c_str(), &mreq.imr_multiaddr.s_addr) != 1) {
+                return Error::MulticastLeaveFailed;
+            }
+            if (cfg.multicast_membership->interface_address.empty()) {
+                mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+            } else {
+                if (::inet_pton(AF_INET, cfg.multicast_membership->interface_address.c_str(), &mreq.imr_interface.s_addr) != 1) {
+                    return Error::MulticastLeaveFailed;
+                }
+            }
+
+            if (::setsockopt(native_socket, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
+                return Error::MulticastLeaveFailed;
+            }
+
+            return Error::Ok;
+        }
+        case SocketAddressFamily::IPv6:
+            return Error::Unsupported;
+        default:
+            return Error::InvalidValue;
+        }
+    }
+
     [[nodiscard]] static Error validate_open_request(const SocketRxOpenConfig &cfg) {
         if (const Error err = validate_socket_rx_open_config(cfg); err != Error::Ok) {
             return err;
@@ -119,7 +194,14 @@ class LinuxSocketRxPort final : public ISocketRxPort {
 
     [[nodiscard]] static Error validate_current_platform_support(const SocketRxOpenConfig &cfg) noexcept {
         if (cfg.multicast_membership) {
-            return Error::Unsupported;
+            switch (cfg.multicast_membership->family) {
+            case SocketAddressFamily::IPv4:
+                break;
+            case SocketAddressFamily::IPv6:
+                return Error::Unsupported;
+            default:
+                return Error::InvalidValue;
+            }
         }
 
         return Error::Ok;
