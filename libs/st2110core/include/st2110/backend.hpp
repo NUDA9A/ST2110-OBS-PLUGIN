@@ -8,101 +8,85 @@
 
 #include <expected>
 
+namespace st2110 {
+enum class RxMediaKind { Video, Audio };
 
-namespace st2110
-{
-    enum class RxMediaKind { Video, Audio };
+struct RxBackendCapabilities {
+    bool video_rx = false;
+    bool audio_rx = false;
+};
 
-    struct RxBackendCapabilities
-    {
-        bool video_rx = false;
-        bool audio_rx = false;
-    };
+struct RxBackendState {
+    bool video_active = false;
+    bool audio_active = false;
+};
 
-    struct RxBackendState
-    {
-        bool video_active = false;
-        bool audio_active = false;
-    };
+using RxBackendLifecycleResult = std::expected<RxBackendState, Error>;
 
-    using RxBackendLifecycleResult = std::expected<RxBackendState, Error>;
+inline bool backend_is_stopped(const RxBackendState &state) { return !state.video_active && !state.audio_active; }
 
-    inline bool backend_is_stopped(const RxBackendState& state)
-    {
-        return !state.video_active && !state.audio_active;
-    }
-
-    inline bool backend_media_active(const RxBackendState& state, RxMediaKind kind)
-    {
-        switch (kind)
-        {
-            case RxMediaKind::Video:
-                return state.video_active;
-            case RxMediaKind::Audio:
-                return state.audio_active;
-            default:
-                return false;
-        }
-    }
-
-    inline bool supports_media(const RxBackendCapabilities& capabilities, RxMediaKind media_kind) noexcept
-    {
-        switch (media_kind)
-        {
-        case RxMediaKind::Video:
-            return capabilities.video_rx;
-        case RxMediaKind::Audio:
-            return capabilities.audio_rx;
-        }
-
+inline bool backend_media_active(const RxBackendState &state, RxMediaKind kind) {
+    switch (kind) {
+    case RxMediaKind::Video:
+        return state.video_active;
+    case RxMediaKind::Audio:
+        return state.audio_active;
+    default:
         return false;
     }
+}
 
-    class IVideoFrameSink
-    {
-    public:
-        virtual void on_video_frame(const VideoFrameView& frame) = 0;
+inline bool supports_media(const RxBackendCapabilities &capabilities, RxMediaKind media_kind) noexcept {
+    switch (media_kind) {
+    case RxMediaKind::Video:
+        return capabilities.video_rx;
+    case RxMediaKind::Audio:
+        return capabilities.audio_rx;
+    }
 
-        virtual ~IVideoFrameSink() = default;
-    };
+    return false;
+}
 
-    class IAudioFrameSink
-    {
-    public:
-        virtual void on_audio_frame(const AudioFrameView& frame) = 0;
+class IVideoFrameSink {
+  public:
+    virtual void on_video_frame(const VideoFrameView &frame) = 0;
 
-        virtual ~IAudioFrameSink() = default;
-    };
+    virtual ~IVideoFrameSink() = default;
+};
 
-    class IRxBackend
-    {
-    public:
-        [[nodiscard]] virtual const char* backend_name() const = 0;
+class IAudioFrameSink {
+  public:
+    virtual void on_audio_frame(const AudioFrameView &frame) = 0;
 
-        virtual RxBackendLifecycleResult stop() = 0;
+    virtual ~IAudioFrameSink() = default;
+};
 
-        [[nodiscard]] virtual RxBackendState state() const = 0;
+class IRxBackend {
+  public:
+    [[nodiscard]] virtual const char *backend_name() const = 0;
 
-        virtual ~IRxBackend() = default;
+    virtual RxBackendLifecycleResult stop() = 0;
 
-        [[nodiscard]] virtual RxBackendCapabilities capabilities() const = 0;
-    };
+    [[nodiscard]] virtual RxBackendState state() const = 0;
 
-    class IRxVideoBackend : public virtual IRxBackend
-    {
-    public:
-        virtual RxBackendLifecycleResult start_video(const RxVideoConfig& cfg, IVideoFrameSink& sink) = 0;
+    virtual ~IRxBackend() = default;
 
-        ~IRxVideoBackend() override = default;
-    };
+    [[nodiscard]] virtual RxBackendCapabilities capabilities() const = 0;
+};
 
-    class IRxAudioBackend : public virtual IRxBackend
-    {
-    public:
-        virtual RxBackendLifecycleResult start_audio(const RxAudioConfig& cfg, IAudioFrameSink& sink) = 0;
+class IRxVideoBackend : public virtual IRxBackend {
+  public:
+    virtual RxBackendLifecycleResult start_video(const RxVideoConfig &cfg, IVideoFrameSink &sink) = 0;
 
-        ~IRxAudioBackend() override = default;
-    };
+    ~IRxVideoBackend() override = default;
+};
+
+class IRxAudioBackend : public virtual IRxBackend {
+  public:
+    virtual RxBackendLifecycleResult start_audio(const RxAudioConfig &cfg, IAudioFrameSink &sink) = 0;
+
+    ~IRxAudioBackend() override = default;
+};
 } // namespace st2110
 
 #endif // ST2110_OBS_PLUGIN_BACKEND_HPP

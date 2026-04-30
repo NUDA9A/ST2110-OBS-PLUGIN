@@ -3,7 +3,7 @@
 
 namespace st2110 {
 enum class PixelFormat {
-  UYVY,
+    UYVY,
 };
 }
 

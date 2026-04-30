@@ -7,14 +7,14 @@ namespace st2110 {
 enum class VideoPackingMode { Gpm, Bpm };
 
 inline Error validate_runtime_video_packing_mode_support(VideoPackingMode mode) {
-  switch (mode) {
-  case VideoPackingMode::Gpm:
-    return Error::Ok;
-  case VideoPackingMode::Bpm:
-    return Error::Unsupported;
-  default:
-    return Error::InvalidValue;
-  }
+    switch (mode) {
+    case VideoPackingMode::Gpm:
+        return Error::Ok;
+    case VideoPackingMode::Bpm:
+        return Error::Unsupported;
+    default:
+        return Error::InvalidValue;
+    }
 }
 } // namespace st2110
 

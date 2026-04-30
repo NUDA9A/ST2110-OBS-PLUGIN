@@ -10,45 +10,45 @@
 
 namespace st2110 {
 struct VideoSegmentConstraints {
-  std::size_t pgroup_bytes = 0;
-  uint16_t offset_alignment_samples = 0;
+    std::size_t pgroup_bytes = 0;
+    uint16_t offset_alignment_samples = 0;
 };
 
 [[nodiscard]] inline std::expected<VideoSegmentConstraints, Error> video_segment_constraints(PixelFormat format) {
-  VideoSegmentConstraints res;
-  switch (format) {
-  case PixelFormat::UYVY:
-    res.pgroup_bytes = 4;
-    res.offset_alignment_samples = 2;
-    break;
-  default:
-    return std::unexpected(Error::Unsupported);
-  }
-  return res;
+    VideoSegmentConstraints res;
+    switch (format) {
+    case PixelFormat::UYVY:
+        res.pgroup_bytes = 4;
+        res.offset_alignment_samples = 2;
+        break;
+    default:
+        return std::unexpected(Error::Unsupported);
+    }
+    return res;
 }
 
 [[nodiscard]] inline Error validate_video_segment_for_format(PixelFormat format, const SrdHeader &header,
                                                              ByteSpan data) {
-  auto constraints_expected = video_segment_constraints(format);
-  if (!constraints_expected.has_value()) {
-    return Error::Unsupported;
-  }
-  auto constraints = constraints_expected.value();
-  switch (format) {
-  case PixelFormat::UYVY:
-    if (data.size() != header.length) {
-      return Error::InvalidValue;
+    auto constraints_expected = video_segment_constraints(format);
+    if (!constraints_expected.has_value()) {
+        return Error::Unsupported;
     }
-    if (header.length % constraints.pgroup_bytes != 0) {
-      return Error::InvalidValue;
+    auto constraints = constraints_expected.value();
+    switch (format) {
+    case PixelFormat::UYVY:
+        if (data.size() != header.length) {
+            return Error::InvalidValue;
+        }
+        if (header.length % constraints.pgroup_bytes != 0) {
+            return Error::InvalidValue;
+        }
+        if (header.offset % constraints.offset_alignment_samples != 0) {
+            return Error::InvalidValue;
+        }
+        return Error::Ok;
+    default:
+        return Error::Unsupported;
     }
-    if (header.offset % constraints.offset_alignment_samples != 0) {
-      return Error::InvalidValue;
-    }
-    return Error::Ok;
-  default:
-    return Error::Unsupported;
-  }
 }
 } // namespace st2110
 
