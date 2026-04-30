@@ -2175,60 +2175,44 @@
 
 ### libs/st2110core/include/st2110/socket_rx_video_backend.hpp
 - Роль:
-    - current socket video backend layered on top of the explicit socket runtime boundary.
-    - больше не является transport-free lifecycle-only stub: now it owns runtime dependencies through `ISocketRxPortFactory` / `ISocketRxPort`.
+    - socket video backend поверх OS-neutral socket runtime boundary;
+    - теперь задает явную localized boundary для выбора default RX port factory, не подтягивая concrete platform headers в public header.
 - Связи:
-    - реализует `IRxVideoBackend`;
-    - использует `backend_factory.hpp` для factory/selection integration;
-    - использует `socket_runtime.hpp` for runtime config projection and abstract port lifecycle;
-    - использует `socket_stub_rx_port.hpp` as the current default concrete runtime dependency until the real Linux port implementation is added;
-    - пока не выполняет реального socket receive loop или frame delivery.
+    - использует `backend.hpp`, `backend_factory.hpp`, `socket_runtime.hpp`;
+    - concrete default factory selection реализуется в `libs/st2110core/src/socket_rx_video_backend.cpp`;
+    - default backend creation направляется в Linux socket port factory на supported Linux builds и в stub fallback на остальных build’ах;
+    - injected `ISocketRxPortFactory` ctor остается test/runtime-variant seam.
 - Сущности:
     - `SocketRxVideoBackend`
-        - constructors:
-            - default constructor
-                - creates backend with default stub socket-port factory;
-            - constructor taking `std::unique_ptr<ISocketRxPortFactory>`
-                - enables injected runtime dependency for tests and future platform/runtime wiring.
-        - `backend_name()` -> `"socket"`.
-        - `capabilities()` -> video-only backend capability.
-        - `state()` -> current `RxBackendState`.
-        - `start_video(const RxVideoConfig&, IVideoFrameSink&) -> RxBackendLifecycleResult`
-            - rejects repeated start with `InvalidBackendState`;
-            - validates runtime dependencies;
-            - builds `SocketRxOpenConfig` through `socket_rx_open_config_from_video_config(...)`;
-            - creates a candidate port through the configured factory;
-            - opens the port through the runtime boundary;
-            - stores the opened port and sets `video_active=true` only after successful open;
-            - does not emit frames yet.
-        - `stop() -> RxBackendLifecycleResult`
-            - idempotent stopped-state success path when no runtime object exists;
-            - closes the active port through the runtime boundary;
-            - propagates close failures explicitly;
-            - clears owned runtime objects on successful cleanup;
-            - preserves factory dependency so backend can restart after stop.
-        - internal helpers:
-            - `validate_runtime_dependencies()`
-            - `build_open_config(...)`
-            - `create_port()`
-            - `open_port_for_video(...)`
-            - `clear_runtime_objects()`
-    - `SocketRxVideoBackendFactory`
-        - advertises socket backend descriptor;
-        - creates a stopped backend with the default stub port factory.
+        - `SocketRxVideoBackend()`
+            - default ctor;
+            - строит backend через private localized helper `make_default_port_factory()`.
+        - `SocketRxVideoBackend(std::unique_ptr<ISocketRxPortFactory>)`
+            - explicit injected-factory seam для тестов и будущих runtime/platform variants.
+        - `backend_name()`
+        - `stop()`
+        - `capabilities()`
+        - `start_video(const RxVideoConfig&, IVideoFrameSink&)`
+        - `state()`
+        - `make_default_port_factory()`
+            - private localized default-runtime selection boundary.
 - Примечание:
-    - backend socket bootstrap logic is now routed through the shared socket runtime boundary instead of being duplicated in the backend;
-    - real Linux socket syscalls, multicast join/leave, receive loop, and frame delivery remain future work;
-    - temporary stub runtime behavior stays localized below the backend contract rather than keeping the backend itself transport-free.
+    - backend public API unchanged;
+    - platform branching remains localized under backend implementation instead of app/bootstrap code;
+    - current Linux default path intentionally exposes the real current runtime support/limitations of `LinuxSocketRxPort`.
 
 ### libs/st2110core/src/socket_rx_video_backend.cpp
 - Роль:
-    - translation unit for the socket video backend skeleton.
+    - implementation-side localization point для default socket RX port factory selection.
 - Связи:
-    - includes `st2110/socket_rx_video_backend.hpp`;
-    - placeholder `.cpp` boundary for later non-trivial socket video backend implementation.
+    - включает public backend header и stub socket port factory;
+    - conditionally включает concrete Linux socket port factory header только на Linux builds.
 - Сущности:
-    - currently contains only the include of the public header.
+    - `SocketRxVideoBackend::make_default_port_factory()`
+        - возвращает `make_linux_socket_rx_port_factory()` на supported Linux builds;
+        - иначе возвращает `make_socket_stub_rx_port_factory()`.
+- Примечание:
+    - keeps platform-specific factory includes and compile-time branching out of the public backend header.
 
 ### libs/st2110core/include/st2110/socket_runtime.hpp
 - Роль:

@@ -4,14 +4,13 @@
 #include "backend.hpp"
 #include "backend_factory.hpp"
 #include "socket_runtime.hpp"
-#include "socket_stub_rx_port.hpp"
 
 #include <memory>
 
 namespace st2110 {
 class SocketRxVideoBackend final : public IRxVideoBackend {
   public:
-    SocketRxVideoBackend() : port_factory_(make_socket_stub_rx_port_factory()) {}
+    SocketRxVideoBackend() : port_factory_(make_default_port_factory()) {}
 
     explicit SocketRxVideoBackend(std::unique_ptr<ISocketRxPortFactory> port_factory)
         : port_factory_(std::move(port_factory)) {}
@@ -67,6 +66,8 @@ class SocketRxVideoBackend final : public IRxVideoBackend {
     [[nodiscard]] RxBackendState state() const override { return state_; }
 
   private:
+    [[nodiscard]] static std::unique_ptr<ISocketRxPortFactory> make_default_port_factory();
+
     [[nodiscard]] Error validate_runtime_dependencies() const noexcept {
         if (port_factory_ == nullptr) {
             return Error::InvalidValue;

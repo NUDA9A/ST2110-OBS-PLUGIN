@@ -1,9 +1,13 @@
 #include <cassert>
+#include <cstdint>
+#include <expected>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include <st2110/backend.hpp>
 #include <st2110/backend_factory.hpp>
@@ -12,6 +16,13 @@
 #include <st2110/socket_runtime.hpp>
 #include <st2110/socket_rx_video_backend.hpp>
 #include <st2110/video_frame.hpp>
+
+#if defined(__linux__)
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 static_assert(std::is_final_v<st2110::SocketRxVideoBackend>);
 static_assert(std::is_base_of_v<st2110::IRxVideoBackend, st2110::SocketRxVideoBackend>);
@@ -126,6 +137,72 @@ class FakeSocketRxPortFactory final : public st2110::ISocketRxPortFactory {
   private:
     std::shared_ptr<FakeSocketRxPortState> state_;
 };
+
+#if defined(__linux__)
+class ReservedUdpSocket {
+  public:
+    ReservedUdpSocket() = default;
+
+    ReservedUdpSocket(int fd, uint16_t port) : fd_(fd), port_(port) {}
+
+    ReservedUdpSocket(const ReservedUdpSocket &) = delete;
+    ReservedUdpSocket &operator=(const ReservedUdpSocket &) = delete;
+
+    ReservedUdpSocket(ReservedUdpSocket &&other) noexcept : fd_(other.fd_), port_(other.port_) {
+        other.fd_ = -1;
+        other.port_ = 0;
+    }
+
+    ReservedUdpSocket &operator=(ReservedUdpSocket &&other) noexcept {
+        if (this != &other) {
+            close_now();
+            fd_ = other.fd_;
+            port_ = other.port_;
+            other.fd_ = -1;
+            other.port_ = 0;
+        }
+        return *this;
+    }
+
+    ~ReservedUdpSocket() { close_now(); }
+
+    [[nodiscard]] bool valid() const noexcept { return fd_ >= 0; }
+
+    [[nodiscard]] uint16_t port() const noexcept { return port_; }
+
+    void close_now() noexcept {
+        if (fd_ >= 0) {
+            ::close(fd_);
+            fd_ = -1;
+            port_ = 0;
+        }
+    }
+
+  private:
+    int fd_ = -1;
+    uint16_t port_ = 0;
+};
+
+ReservedUdpSocket reserve_ipv4_loopback_udp_socket() {
+    const int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+    assert(fd >= 0);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(0);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    const int bind_rc = ::bind(fd, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr));
+    assert(bind_rc == 0);
+
+    sockaddr_in bound{};
+    socklen_t bound_len = sizeof(bound);
+    const int name_rc = ::getsockname(fd, reinterpret_cast<sockaddr *>(&bound), &bound_len);
+    assert(name_rc == 0);
+
+    return ReservedUdpSocket(fd, ntohs(bound.sin_port));
+}
+#endif
 
 st2110::RxVideoConfig make_valid_ipv4_multicast_video_config() {
     st2110::RxVideoConfig cfg{};
@@ -374,7 +451,7 @@ void test_socket_rx_video_backend_can_restart_after_successful_stop() {
     assert(!state->is_open);
 }
 
-void test_socket_rx_video_backend_factory_descriptor_and_default_backend_creation() {
+void test_socket_rx_video_backend_factory_descriptor_and_creation_shape() {
     st2110::SocketRxVideoBackendFactory factory;
 
     const auto descriptor = factory.descriptor();
@@ -392,6 +469,52 @@ void test_socket_rx_video_backend_factory_descriptor_and_default_backend_creatio
 
     auto *video_backend = dynamic_cast<st2110::IRxVideoBackend *>(backend.get());
     assert(video_backend != nullptr);
+}
+
+#if defined(__linux__)
+void test_socket_rx_video_backend_default_backend_uses_linux_port_factory_on_linux() {
+    auto reserved = reserve_ipv4_loopback_udp_socket();
+    assert(reserved.valid());
+
+    st2110::SocketRxVideoBackendFactory factory;
+    std::unique_ptr<st2110::IRxBackend> backend = factory.create_backend();
+    assert(backend != nullptr);
+
+    auto *video_backend = dynamic_cast<st2110::IRxVideoBackend *>(backend.get());
+    assert(video_backend != nullptr);
+
+    FakeVideoSink sink;
+    auto cfg = make_valid_ipv4_unicast_video_config();
+    cfg.local_ip = "127.0.0.1";
+    cfg.dest_ip = "127.0.0.1";
+    cfg.udp_port = reserved.port();
+
+    auto first_start = video_backend->start_video(cfg, sink);
+    assert(!first_start.has_value());
+    assert(first_start.error() == st2110::Error::BindFailed);
+    assert(st2110::backend_is_stopped(backend->state()));
+    assert(!sink.called);
+
+    reserved.close_now();
+
+    auto second_start = video_backend->start_video(cfg, sink);
+    assert(second_start.has_value());
+    assert(st2110::backend_media_active(*second_start, st2110::RxMediaKind::Video));
+    assert(!sink.called);
+
+    auto stopped = backend->stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+    assert(st2110::backend_is_stopped(backend->state()));
+}
+#else
+void test_socket_rx_video_backend_default_backend_uses_stub_factory_on_unsupported_build() {
+    st2110::SocketRxVideoBackendFactory factory;
+    std::unique_ptr<st2110::IRxBackend> backend = factory.create_backend();
+    assert(backend != nullptr);
+
+    auto *video_backend = dynamic_cast<st2110::IRxVideoBackend *>(backend.get());
+    assert(video_backend != nullptr);
 
     FakeVideoSink sink;
     const auto cfg = make_valid_ipv4_multicast_video_config();
@@ -406,6 +529,7 @@ void test_socket_rx_video_backend_factory_descriptor_and_default_backend_creatio
     assert(st2110::backend_is_stopped(*stopped));
     assert(st2110::backend_is_stopped(backend->state()));
 }
+#endif
 } // namespace
 
 int main() {
@@ -416,6 +540,7 @@ int main() {
     test_socket_rx_video_backend_rejects_null_created_port();
     test_socket_rx_video_backend_stop_propagates_close_failure_without_losing_active_state();
     test_socket_rx_video_backend_can_restart_after_successful_stop();
-    test_socket_rx_video_backend_factory_descriptor_and_default_backend_creation();
+    test_socket_rx_video_backend_factory_descriptor_and_creation_shape();
+    test_socket_rx_video_backend_default_backend_uses_linux_port_factory_on_linux();
     return 0;
 }
