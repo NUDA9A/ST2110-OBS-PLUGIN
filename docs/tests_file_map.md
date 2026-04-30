@@ -945,41 +945,23 @@
 
 ### tests/test_socket_rx_video_backend.cpp
 - Роль:
-    - проверяет current `SocketRxVideoBackend` after rebasing it onto the explicit socket runtime boundary.
+    - проверяет lifecycle, config-projection и factory-selection behavior socket video backend’а через injected и default port-factory paths.
 - Покрывает:
-    - type/interface shape:
-        - `SocketRxVideoBackend`;
-        - `SocketRxVideoBackendFactory`;
-        - default constructor;
-        - injected `std::unique_ptr<ISocketRxPortFactory>` constructor;
-        - conversion to `IRxBackend` / `IRxVideoBackend`.
-    - descriptor/factory behavior:
-        - socket backend kind;
-        - backend name;
-        - video-only capabilities;
-        - default backend creation through `SocketRxVideoBackendFactory`.
-    - backend/runtime wiring through fakes:
-        - injected fake socket-port factory usage;
-        - candidate port creation through the runtime factory;
-        - port open through `ISocketRxPort`.
-    - `RxVideoConfig -> SocketRxOpenConfig` projection as exercised through backend start:
-        - IPv4 multicast projection;
-        - IPv6 multicast projection;
-        - family-aware wildcard bind selection.
-    - lifecycle/failure behavior:
-        - repeated start rejection with `InvalidBackendState`;
-        - projection failure propagation while backend remains stopped;
-        - null created-port rejection;
-        - port-open failure propagation and later retry;
-        - close-failure propagation without losing active state;
-        - successful restart after stop;
-        - default backend start/stop path remains operational.
-    - current delivery behavior:
-        - no fake video frames are emitted yet during backend start.
+    - injected-factory path:
+        - IPv4 / IPv6 `SocketRxOpenConfig` projection;
+        - projection failure;
+        - port-open failure и retry;
+        - null created port rejection;
+        - close-failure behavior during `stop()`;
+        - restart after successful stop.
+    - default-factory path:
+        - `SocketRxVideoBackendFactory::descriptor()` shape;
+        - `SocketRxVideoBackendFactory::create_backend()` shape;
+        - default backend creation path after 111A.
 - Фиксирует:
-    - `SocketRxVideoBackend` now depends on the explicit socket runtime boundary instead of remaining a transport-free placeholder;
-    - runtime dependency injection remains localized and testable through the port-factory boundary;
-    - cleanup after successful stop must clear runtime objects while preserving backend restartability.
+    - injected-factory constructor remains the explicit seam for tests and future runtime/platform variants;
+    - default `SocketRxVideoBackend` factory selection is no longer hardwired to the stub path;
+    - platform/runtime selection stays localized inside backend implementation rather than spreading into higher bootstrap layers.
 
 ### tests/test_socket_runtime_interface.cpp
 - Роль:
