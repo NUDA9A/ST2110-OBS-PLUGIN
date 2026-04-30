@@ -3,12 +3,12 @@
 
 #include "error.hpp"
 #include "signaling_structs.hpp"
-#include "video_signaling.hpp"
-#include "video_sdp_media_section.hpp"
 #include "video_sdp_fmtp.hpp"
+#include "video_sdp_media_section.hpp"
 #include "video_sdp_rtpmap.hpp"
-#include "video_sdp_timing_attributes.hpp"
 #include "video_sdp_signaling_adapter.hpp"
+#include "video_sdp_timing_attributes.hpp"
+#include "video_signaling.hpp"
 
 #include <array>
 #include <cstdint>

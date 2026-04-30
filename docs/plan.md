@@ -1104,13 +1104,44 @@
     - close-failure propagation without losing active state;
     - successful restart after stop;
     - default backend-factory creation path.
-- [ ] 111: Implement concrete Linux socket receive-port open/bind path behind `ISocketRxPort`
-  - add the first concrete Linux implementation of the already-defined socket runtime boundary;
-  - implement socket create/open, bind, and close/cleanup for the unicast base path;
-  - keep failure mapping localized to the socket runtime implementation;
-  - preserve the OS-neutral public boundary shape introduced in `110A`;
-  - do not mix packet parsing, depacketizer logic, or backend frame delivery into this task;
-  - add focused tests where practical for open/bind failure mapping and lifecycle behavior.
+- [x] 111: Implement first concrete Linux socket receive-port runtime behind `ISocketRxPort`
+  - added `linux_socket_rx_port.hpp` as the first concrete Linux implementation of the existing OS-neutral socket runtime boundary;
+  - introduced `LinuxSocketRxPort` and `LinuxSocketRxPortFactory` plus `make_linux_socket_rx_port_factory()`;
+  - `LinuxSocketRxPort` now provides real Linux socket behavior for the current unicast runtime path:
+    - UDP socket creation by explicit `SocketAddressFamily`;
+    - pre-bind socket configuration through `SO_REUSEADDR`;
+    - family-aware bind for `IPv4` and `IPv6`;
+    - idempotent close/cleanup behavior;
+    - one-datagram receive boundary via `recv(...)`.
+  - `open(...)` is transactional:
+    - validates the full open request before syscalls;
+    - rejects repeated open with `InvalidBackendState`;
+    - leaves the object closed on create/configure/bind failure;
+    - commits runtime state only after successful socket create + configure + bind.
+  - current Linux runtime support boundary for this task is explicit:
+    - unicast `IPv4` supported;
+    - unicast `IPv6` supported when the host supports it;
+    - any `multicast_membership` currently rejected with `Unsupported`.
+  - `receive(...)` remains a pure socket/datagram boundary for now:
+    - no RTP parsing;
+    - no ST 2110 packet classification;
+    - no depacketizer/frame delivery logic.
+  - low-level error mapping is localized in the Linux runtime implementation:
+    - bind failure -> `BindFailed`;
+    - receive interruption/aborted/generic receive failures -> corresponding receive errors;
+    - other socket/runtime failures -> `SystemFailure`.
+  - kept backend public API unchanged;
+  - kept `SocketRxVideoBackend` default runtime dependency on the stub factory for now;
+  - kept multicast join/leave, backend default-factory switch, receive-loop integration, RTCP tolerance/classification, and frame delivery as follow-up tasks;
+  - added focused Linux runtime tests covering:
+    - IPv4 unicast open/close and repeated-open rejection;
+    - IPv6 unicast open/close when supported by the host;
+    - invalid config rejection;
+    - explicit multicast `Unsupported`;
+    - bind-failure mapping;
+    - receive contract before open / with empty buffer;
+    - successful receipt of one IPv4 UDP datagram without parser logic;
+    - factory creation of distinct closed instances.
 - [ ] 111A: Switch default `SocketRxVideoBackend` runtime dependency from stub factory to the concrete Linux port factory on supported builds
   - keep injected-factory constructor for tests and future platform/runtime variants;
   - make default backend creation use the real Linux socket-port factory where available instead of the temporary stub factory;

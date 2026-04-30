@@ -6,12 +6,12 @@
 #include <optional>
 #include <string>
 
-#include "video_scan_mode.hpp"
 #include "packet_parse.hpp"
 #include "rx_config.hpp"
-#include "video_receive_pipeline.hpp"
 #include "video_packing_mode.hpp"
+#include "video_receive_pipeline.hpp"
 #include "video_receiver_timing.hpp"
+#include "video_scan_mode.hpp"
 
 namespace st2110 {
 enum class MediaClockMode { Direct, Sender };

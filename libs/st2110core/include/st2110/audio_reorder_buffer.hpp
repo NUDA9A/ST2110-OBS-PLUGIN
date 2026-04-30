@@ -1,9 +1,9 @@
 #ifndef ST2110_OBS_PLUGIN_AUDIO_REORDER_BUFFER_HPP
 #define ST2110_OBS_PLUGIN_AUDIO_REORDER_BUFFER_HPP
 
-#include "rtp.hpp"
 #include "audio_packet.hpp"
 #include "error.hpp"
+#include "rtp.hpp"
 
 #include <cstdint>
 #include <map>

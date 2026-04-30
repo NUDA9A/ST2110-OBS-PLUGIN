@@ -4,8 +4,8 @@
 #include <expected>
 
 #include "error.hpp"
-#include "video_scan_mode.hpp"
 #include "packet_view.hpp"
+#include "video_scan_mode.hpp"
 
 namespace st2110 {
 enum class VideoAssemblyUnitKind { Frame, Field, Segment };

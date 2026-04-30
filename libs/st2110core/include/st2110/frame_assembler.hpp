@@ -1,16 +1,16 @@
 #ifndef ST2110_OBS_PLUGIN_FRAME_ASSEMBLER_HPP
 #define ST2110_OBS_PLUGIN_FRAME_ASSEMBLER_HPP
 
-#include "video_frame.hpp"
 #include "bytes.hpp"
 #include "frame_write_coverage.hpp"
+#include "video_frame.hpp"
 #include "video_receive_semantics.hpp"
 
-#include <cstring>
 #include <cstdint>
-#include <utility>
-#include <stdexcept>
+#include <cstring>
 #include <optional>
+#include <stdexcept>
+#include <utility>
 
 namespace st2110 {
 enum class PartialFramePolicy { EmitWithFlag, Drop };

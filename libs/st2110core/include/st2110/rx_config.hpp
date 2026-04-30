@@ -10,8 +10,8 @@
 #include "audio_signaling.hpp"
 #include "config_validation.hpp"
 #include "pixel_format.hpp"
-#include "video_scan_mode.hpp"
 #include "video_packing_mode.hpp"
+#include "video_scan_mode.hpp"
 
 namespace st2110 {
 struct RxVideoConfig;

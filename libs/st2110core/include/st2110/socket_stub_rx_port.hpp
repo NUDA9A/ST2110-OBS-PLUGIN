@@ -7,16 +7,14 @@
 #include <optional>
 #include <span>
 
-namespace st2110
-{
-class SocketStubRxPort final : public ISocketRxPort
-{
-public:
+namespace st2110 {
+class SocketStubRxPort final : public ISocketRxPort {
+  public:
     SocketStubRxPort() = default;
 
     [[nodiscard]] bool is_open() const noexcept override { return open_; }
 
-    Error open(const SocketRxOpenConfig& cfg) override {
+    Error open(const SocketRxOpenConfig &cfg) override {
         if (Error err = validate_socket_rx_open_config(cfg); err != Error::Ok) {
             return err;
         }
@@ -39,8 +37,7 @@ public:
         return Error::Ok;
     }
 
-    [[nodiscard]] std::expected<SocketReceiveResult, Error>
-    receive(std::span<std::uint8_t> buffer) override {
+    [[nodiscard]] std::expected<SocketReceiveResult, Error> receive(std::span<std::uint8_t> buffer) override {
         if (!open_) {
             return std::unexpected(Error::InvalidBackendState);
         }
@@ -51,14 +48,13 @@ public:
         return std::unexpected(Error::Unsupported);
     }
 
-private:
+  private:
     bool open_ = false;
     std::optional<SocketRxOpenConfig> open_cfg_{};
 };
 
-class SocketStubRxPortFactory final : public ISocketRxPortFactory
-{
-public:
+class SocketStubRxPortFactory final : public ISocketRxPortFactory {
+  public:
     [[nodiscard]] std::unique_ptr<ISocketRxPort> create_port() const override {
         return std::make_unique<SocketStubRxPort>();
     }

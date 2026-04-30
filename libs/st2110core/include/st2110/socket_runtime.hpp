@@ -1,10 +1,11 @@
 #ifndef ST2110_OBS_PLUGIN_SOCKET_RUNTIME_HPP
 #define ST2110_OBS_PLUGIN_SOCKET_RUNTIME_HPP
 
+#include "config_validation.hpp"
 #include "error.hpp"
 #include "rx_config.hpp"
-#include "config_validation.hpp"
 
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -13,7 +14,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <charconv>
 
 namespace st2110 {
 enum class SocketAddressFamily {

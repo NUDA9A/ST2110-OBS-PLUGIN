@@ -1018,3 +1018,35 @@
     - socket runtime boundary is modeled independently from concrete Linux/Winsock implementation details;
     - IPv6 remains an explicit modeled architecture axis in the boundary and projection tests rather than being omitted from the public shape;
     - destination-address family consistency is enforced in the projection boundary instead of being left implicit for later runtime stages.
+
+### tests/test_linux_socket_rx_port.cpp
+- Роль:
+    - проверяет first concrete Linux implementation of the socket runtime boundary.
+- Покрывает:
+    - type/interface shape:
+        - `LinuxSocketRxPort`;
+        - `LinuxSocketRxPortFactory`;
+        - `make_linux_socket_rx_port_factory()`;
+        - conformance to `ISocketRxPort` / `ISocketRxPortFactory`.
+    - Linux unicast open/close behavior:
+        - IPv4 unicast open/close;
+        - repeated open rejection with `InvalidBackendState`;
+        - repeated close idempotence;
+        - IPv6 unicast open/close when supported by the host.
+    - request validation/support boundary:
+        - invalid open config rejection;
+        - explicit multicast rejection with `Unsupported`.
+    - Linux runtime error mapping:
+        - bind failure -> `BindFailed`.
+    - receive contract:
+        - receive before open -> `InvalidBackendState`;
+        - empty receive buffer -> `InvalidValue`;
+        - successful receipt of one IPv4 UDP datagram through the concrete Linux port;
+        - no RTP/ST 2110 parser logic required for the receive success path.
+    - factory behavior:
+        - each `create_port()` returns a distinct closed instance;
+        - helper-created factory is non-null and returns closed ports.
+- Фиксирует:
+    - the first concrete Linux socket runtime stays below `ISocketRxPort` rather than changing backend public contracts;
+    - current multicast limitation is explicit and localized in the Linux runtime support boundary;
+    - the concrete receive-port layer is datagram-oriented and does not yet imply backend receive-loop or RTP/ST 2110 parsing integration.

@@ -2,9 +2,9 @@
 #define ST2110_OBS_PLUGIN_BACKEND_HPP
 
 #include "audio_frame.hpp"
+#include "error.hpp"
 #include "rx_config.hpp"
 #include "video_frame.hpp"
-#include "error.hpp"
 
 #include <expected>
 

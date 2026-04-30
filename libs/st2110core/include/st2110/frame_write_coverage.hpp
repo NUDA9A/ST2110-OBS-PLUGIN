@@ -3,10 +3,10 @@
 
 #include "video_frame.hpp"
 
-#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <vector>
 
 namespace st2110 {
 struct PlaneWriteCoverage {

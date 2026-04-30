@@ -1,13 +1,13 @@
 #ifndef ST2110_OBS_PLUGIN_PACKET_PARSE_HPP
 #define ST2110_OBS_PLUGIN_PACKET_PARSE_HPP
 
-#include "error.hpp"
 #include "bytes.hpp"
+#include "error.hpp"
 #include "packet_view.hpp"
 
 #include <cstdint>
-#include <optional>
 #include <expected>
+#include <optional>
 
 namespace st2110 {
 inline constexpr std::size_t udpHeaderBytes = 8;

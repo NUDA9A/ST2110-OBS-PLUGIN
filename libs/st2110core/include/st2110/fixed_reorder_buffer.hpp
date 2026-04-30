@@ -3,8 +3,8 @@
 
 #include "reorder_buffer.hpp"
 #include <map>
-#include <stdexcept>
 #include <optional>
+#include <stdexcept>
 
 namespace st2110 {
 class FixedWindowReorderBuffer final : public IReorderBuffer {

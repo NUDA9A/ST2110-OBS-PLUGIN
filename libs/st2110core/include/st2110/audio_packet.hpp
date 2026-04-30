@@ -1,14 +1,14 @@
 #ifndef ST2110_OBS_PLUGIN_AUDIO_PACKET_HPP
 #define ST2110_OBS_PLUGIN_AUDIO_PACKET_HPP
 
+#include "bytes.hpp"
 #include "error.hpp"
 #include "rtp.hpp"
-#include "bytes.hpp"
 #include "rx_config.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <expected>
-#include <cstddef>
 
 namespace st2110 {
 enum class AudioPcmWireFormat {

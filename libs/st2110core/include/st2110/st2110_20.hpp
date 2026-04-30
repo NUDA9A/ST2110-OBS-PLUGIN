@@ -1,11 +1,11 @@
 #ifndef ST2110_OBS_PLUGIN_ST2110_20_HPP
 #define ST2110_OBS_PLUGIN_ST2110_20_HPP
 
-#include <cstdint>
-#include <expected>
-#include "error.hpp"
 #include "bytes.hpp"
 #include "endian.hpp"
+#include "error.hpp"
+#include <cstdint>
+#include <expected>
 
 namespace st2110 {
 struct ExtendedSequenceNumber {

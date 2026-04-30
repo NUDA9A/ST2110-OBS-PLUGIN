@@ -1,11 +1,11 @@
 #ifndef ST2110_OBS_PLUGIN_AUDIO_RECEIVER_BOOTSTRAP_HPP
 #define ST2110_OBS_PLUGIN_AUDIO_RECEIVER_BOOTSTRAP_HPP
 
+#include "audio_channel_order.hpp"
 #include "audio_signaling.hpp"
 #include "audio_signaling_rx_config.hpp"
-#include "audio_channel_order.hpp"
-#include "rx_config.hpp"
 #include "error.hpp"
+#include "rx_config.hpp"
 
 #include <expected>
 #include <string>

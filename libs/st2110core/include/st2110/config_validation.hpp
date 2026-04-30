@@ -2,9 +2,9 @@
 #define ST2110_OBS_PLUGIN_CONFIG_VALIDATION_HPP
 
 #include <cstdint>
-#include <string_view>
 #include <expected>
 #include <limits>
+#include <string_view>
 
 #include "error.hpp"
 #include "pixel_format.hpp"

@@ -13,7 +13,8 @@ class SocketRxVideoBackend final : public IRxVideoBackend {
   public:
     SocketRxVideoBackend() : port_factory_(make_socket_stub_rx_port_factory()) {}
 
-    explicit SocketRxVideoBackend(std::unique_ptr<ISocketRxPortFactory> port_factory) : port_factory_(std::move(port_factory)) {}
+    explicit SocketRxVideoBackend(std::unique_ptr<ISocketRxPortFactory> port_factory)
+        : port_factory_(std::move(port_factory)) {}
 
     [[nodiscard]] const char *backend_name() const override { return "socket"; }
 
@@ -74,8 +75,7 @@ class SocketRxVideoBackend final : public IRxVideoBackend {
         return Error::Ok;
     }
 
-    [[nodiscard]] static std::expected<SocketRxOpenConfig, Error>
-    build_open_config(const RxVideoConfig& cfg) {
+    [[nodiscard]] static std::expected<SocketRxOpenConfig, Error> build_open_config(const RxVideoConfig &cfg) {
         auto res = socket_rx_open_config_from_video_config(cfg);
         if (!res) {
             return std::unexpected(res.error());
@@ -84,11 +84,9 @@ class SocketRxVideoBackend final : public IRxVideoBackend {
         return res;
     }
 
-    [[nodiscard]] std::unique_ptr<ISocketRxPort> create_port() const {
-        return port_factory_->create_port();
-    }
+    [[nodiscard]] std::unique_ptr<ISocketRxPort> create_port() const { return port_factory_->create_port(); }
 
-    RxBackendLifecycleResult open_port_for_video(const SocketRxOpenConfig& open_cfg,
+    RxBackendLifecycleResult open_port_for_video(const SocketRxOpenConfig &open_cfg,
                                                  std::unique_ptr<ISocketRxPort> port) {
         if (Error err = port->open(open_cfg); err != Error::Ok) {
             return std::unexpected(err);

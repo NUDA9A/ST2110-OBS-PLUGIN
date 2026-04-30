@@ -1,8 +1,8 @@
 #ifndef ST2110_OBS_PLUGIN_VIDEO_TIMESTAMP_MAPPING_HPP
 #define ST2110_OBS_PLUGIN_VIDEO_TIMESTAMP_MAPPING_HPP
 
-#include "timestamp.hpp"
 #include "error.hpp"
+#include "timestamp.hpp"
 
 #include <cstdint>
 #include <expected>

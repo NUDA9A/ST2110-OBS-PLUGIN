@@ -6,10 +6,10 @@
 #include <expected>
 
 #include "bytes.hpp"
+#include "error.hpp"
 #include "rtp.hpp"
 #include "st2110_20.hpp"
 #include "stats.hpp"
-#include "error.hpp"
 
 namespace st2110 {
 

@@ -2332,3 +2332,69 @@
 - Примечание:
     - this file is intentionally a temporary transport/runtime stub;
     - real Linux socket behavior must be added later behind the same `ISocketRxPort` / `ISocketRxPortFactory` boundary rather than by changing backend public API.
+
+### libs/st2110core/include/st2110/linux_socket_rx_port.hpp
+- Роль:
+    - первая concrete Linux-реализация уже существующей OS-neutral socket runtime boundary.
+    - локализует Linux socket create/configure/bind/close/receive behavior под `ISocketRxPort`, не меняя backend public API.
+- Связи:
+    - реализует `ISocketRxPort` и `ISocketRxPortFactory` из `socket_runtime.hpp`;
+    - использует modeled runtime types:
+        - `SocketAddressFamily`;
+        - `SocketRxOpenConfig`;
+        - `SocketReceiveResult`;
+        - `SocketMulticastMembership`.
+    - пока не используется как default runtime dependency `SocketRxVideoBackend`; default switch остается отдельной задачей `111A`;
+    - не выполняет RTP parsing, ST 2110 packet classification, depacketizer integration, или frame delivery.
+- Сущности:
+    - `LinuxSocketRxPort`
+        - `LinuxSocketRxPort()`
+            - создает closed Linux port object.
+        - `~LinuxSocketRxPort()`
+            - best-effort closes the native socket if still open.
+        - `is_open() -> bool`
+            - reports whether a committed native socket handle/config is currently active.
+        - `open(const SocketRxOpenConfig&) -> Error`
+            - validates the request;
+            - rejects repeated open with `InvalidBackendState`;
+            - currently supports unicast `IPv4` / unicast `IPv6`;
+            - currently rejects multicast open requests with `Unsupported`;
+            - creates/configures/binds a Linux UDP socket transactionally;
+            - commits state only after full success.
+        - `close() -> Error`
+            - idempotent close path;
+            - closes the committed native socket;
+            - clears committed open-state only after successful close.
+        - `receive(std::span<std::uint8_t>) -> std::expected<SocketReceiveResult, Error>`
+            - rejects closed-port receive with `InvalidBackendState`;
+            - rejects empty receive buffer with `InvalidValue`;
+            - receives one UDP datagram through Linux `recv(...)`;
+            - does not parse RTP/ST 2110 payload.
+        - helpers:
+            - `validate_open_request(...)`
+                - composes runtime-structural validation with current Linux support policy.
+            - `validate_current_platform_support(...)`
+                - current task-local support boundary:
+                    - unicast supported;
+                    - multicast unsupported.
+            - `create_native_socket(...)`
+                - creates UDP socket for `AF_INET` / `AF_INET6`.
+            - `configure_native_socket_before_bind(...)`
+                - applies pre-bind socket options such as `SO_REUSEADDR`.
+            - `bind_native_socket(...)`
+                - performs family-aware bind for `sockaddr_in` / `sockaddr_in6`.
+            - `close_native_socket(...)`
+                - low-level wrapper around Linux `close(2)`.
+            - `clear_open_state()`
+                - resets committed runtime state to closed state.
+            - `native_socket_is_valid(...)`
+                - sentinel-based native-fd validity helper.
+    - `LinuxSocketRxPortFactory`
+        - `create_port() -> std::unique_ptr<ISocketRxPort>`
+            - returns a new closed `LinuxSocketRxPort`.
+    - `make_linux_socket_rx_port_factory() -> std::unique_ptr<ISocketRxPortFactory>`
+        - helper for future default backend wiring and runtime composition.
+- Примечание:
+    - this file currently implements only the unicast base path on Linux;
+    - multicast join/leave remains a localized follow-up through the same runtime boundary rather than through backend API changes;
+    - the receive boundary is intentionally datagram-oriented and separate from RTP/ST 2110 parsing and backend pipeline logic.

@@ -1,20 +1,20 @@
 #ifndef ST2110_OBS_PLUGIN_DEPACKETIZER_HPP
 #define ST2110_OBS_PLUGIN_DEPACKETIZER_HPP
 
-#include "packet_view.hpp"
 #include "frame_assembler.hpp"
+#include "packet_view.hpp"
 #include "stats.hpp"
-#include "video_scan_mode.hpp"
-#include "video_receive_semantics.hpp"
-#include "video_segment_placement.hpp"
 #include "video_packet_padding.hpp"
 #include "video_packing_mode.hpp"
+#include "video_receive_semantics.hpp"
+#include "video_scan_mode.hpp"
+#include "video_segment_placement.hpp"
 
 #include <cstdint>
 #include <optional>
-#include <vector>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace st2110 {
 

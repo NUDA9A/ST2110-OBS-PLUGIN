@@ -1,8 +1,8 @@
 #ifndef ST2110_OBS_PLUGIN_AUDIO_FRAME_HPP
 #define ST2110_OBS_PLUGIN_AUDIO_FRAME_HPP
 
-#include "timestamp.hpp"
 #include "rx_config.hpp"
+#include "timestamp.hpp"
 
 #include <cstddef>
 #include <cstdint>

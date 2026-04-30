@@ -1,10 +1,10 @@
 #ifndef ST2110_OBS_PLUGIN_VIDEO_SDP_SIGNALING_ADAPTER_HPP
 #define ST2110_OBS_PLUGIN_VIDEO_SDP_SIGNALING_ADAPTER_HPP
 
-#include "video_scan_mode.hpp"
 #include "error.hpp"
-#include "video_packing_mode.hpp"
 #include "signaling_structs.hpp"
+#include "video_packing_mode.hpp"
+#include "video_scan_mode.hpp"
 #include "video_sdp_fmtp.hpp"
 #include "video_signaling.hpp"
 

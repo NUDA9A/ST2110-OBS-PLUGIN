@@ -1,8 +1,8 @@
 #ifndef ST2110_OBS_PLUGIN_VIDEO_PLAYOUT_TIMING_HPP
 #define ST2110_OBS_PLUGIN_VIDEO_PLAYOUT_TIMING_HPP
 
-#include "timestamp.hpp"
 #include "error.hpp"
+#include "timestamp.hpp"
 #include "video_unit_reconstructor.hpp"
 
 #include <cstdint>

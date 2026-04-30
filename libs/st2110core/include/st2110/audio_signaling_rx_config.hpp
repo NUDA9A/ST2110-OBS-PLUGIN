@@ -2,8 +2,8 @@
 #define ST2110_OBS_PLUGIN_AUDIO_SIGNALING_RX_CONFIG_HPP
 
 #include "audio_signaling.hpp"
-#include "rx_config.hpp"
 #include "config_validation.hpp"
+#include "rx_config.hpp"
 
 #include <expected>
 #include <string>

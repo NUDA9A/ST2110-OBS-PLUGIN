@@ -3,15 +3,15 @@
 
 #include <expected>
 
-#include "video_signaling.hpp"
-#include "video_receiver_timing.hpp"
+#include "depacketizer.hpp"
+#include "error.hpp"
 #include "packet_parse.hpp"
 #include "rx_config.hpp"
-#include "error.hpp"
-#include "video_receive_pipeline.hpp"
-#include "depacketizer.hpp"
-#include "video_unit_reconstructor.hpp"
 #include "signaling_structs.hpp"
+#include "video_receive_pipeline.hpp"
+#include "video_receiver_timing.hpp"
+#include "video_signaling.hpp"
+#include "video_unit_reconstructor.hpp"
 
 namespace st2110 {
 [[nodiscard]] inline bool video_receiver_supports_sender_type(const VideoReceiverTimingCapability &capability,

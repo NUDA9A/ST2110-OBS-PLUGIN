@@ -1,10 +1,10 @@
 #ifndef ST2110_OBS_PLUGIN_VIDEO_PACKET_PADDING_HPP
 #define ST2110_OBS_PLUGIN_VIDEO_PACKET_PADDING_HPP
 
-#include "video_scan_mode.hpp"
-#include "packet_view.hpp"
 #include "error.hpp"
+#include "packet_view.hpp"
 #include "video_packing_mode.hpp"
+#include "video_scan_mode.hpp"
 
 namespace st2110 {
 inline Error validate_psf_video_packet_trailing_padding(const PacketView &pkt_view) { return Error::Unsupported; }

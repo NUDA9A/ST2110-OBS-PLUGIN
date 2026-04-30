@@ -3,10 +3,10 @@
 
 #include "pixel_format.hpp"
 #include "timestamp.hpp"
-#include <cstdint>
-#include <vector>
 #include <algorithm>
+#include <cstdint>
 #include <stdexcept>
+#include <vector>
 
 namespace st2110 {
 struct VideoFrameView {

@@ -5,6 +5,6 @@ int stub();
 }
 
 int main() {
-  assert(st2110::stub() == 0);
-  return 0;
+    assert(st2110::stub() == 0);
+    return 0;
 }

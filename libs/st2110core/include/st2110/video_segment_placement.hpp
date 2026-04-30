@@ -3,11 +3,11 @@
 
 #include "bytes.hpp"
 #include "error.hpp"
-#include "pixel_format.hpp"
-#include "video_scan_mode.hpp"
 #include "packet_view.hpp"
-#include "video_segment_constraints.hpp"
+#include "pixel_format.hpp"
 #include "video_packing_mode.hpp"
+#include "video_scan_mode.hpp"
+#include "video_segment_constraints.hpp"
 
 #include <expected>
 

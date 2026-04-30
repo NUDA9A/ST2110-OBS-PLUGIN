@@ -1,9 +1,9 @@
 #ifndef ST2110_OBS_PLUGIN_VIDEO_SEGMENT_CONSTRAINTS_HPP
 #define ST2110_OBS_PLUGIN_VIDEO_SEGMENT_CONSTRAINTS_HPP
 
-#include "pixel_format.hpp"
-#include "error.hpp"
 #include "bytes.hpp"
+#include "error.hpp"
+#include "pixel_format.hpp"
 #include "st2110_20.hpp"
 
 #include <expected>
