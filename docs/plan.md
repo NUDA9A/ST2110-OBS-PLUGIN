@@ -1073,18 +1073,37 @@
     - IPv6 unicast/multicast;
     - wildcard bind selection by family;
     - cross-family rejection.
-- [ ] 110B: Rebase `SocketRxVideoBackend` onto the explicit socket runtime boundary
-  - update `SocketRxVideoBackend` so it owns/uses `ISocketRxPort` through an injected or concrete factory boundary rather than remaining a transport-free stub;
-  - keep lifecycle behavior expressed only through `RxBackendLifecycleResult` / `RxBackendState`;
-  - make `start_video(...)` project `RxVideoConfig` to `SocketRxOpenConfig` through the existing helper rather than duplicating socket-bootstrap logic in the backend;
-  - keep the backend video-only for now;
-  - keep Linux-specific details outside the backend public contract and behind the socket runtime boundary;
-  - this task still does not need a real receive loop or frame delivery path;
-  - add focused smoke/regression tests for:
-    - backend construction with socket-port factory;
-    - start/stop state transitions;
-    - projection/open failure propagation;
-    - cleanup/reset behavior.
+- [x] 110B: Rebase `SocketRxVideoBackend` onto the explicit socket runtime boundary
+  - introduced `socket_stub_rx_port.hpp` as a temporary concrete stub implementation of the socket runtime boundary:
+    - `SocketStubRxPort`;
+    - `SocketStubRxPortFactory`;
+    - `make_socket_stub_rx_port_factory()`.
+  - `SocketRxVideoBackend` now owns and uses `ISocketRxPortFactory` / `ISocketRxPort` rather than remaining a transport-free stub.
+  - added two backend construction paths:
+    - default constructor using the temporary stub port factory;
+    - injected-factory constructor for tests and future concrete runtime wiring.
+  - `start_video(...)` now:
+    - validates runtime dependencies;
+    - projects `RxVideoConfig` to `SocketRxOpenConfig` through `socket_rx_open_config_from_video_config(...)`;
+    - creates a candidate port through the injected/default port factory;
+    - opens the port through the runtime boundary;
+    - transitions backend state to active only after successful port open.
+  - `stop()` now:
+    - closes the active port through the runtime boundary;
+    - propagates close failures explicitly;
+    - clears runtime objects after successful cleanup;
+    - preserves the backend factory dependency so restart after successful stop remains valid.
+  - kept backend public contract video-only and lifecycle-driven;
+  - kept real Linux syscalls, Winsock calls, socket receive loop, and frame delivery out of this task;
+  - added focused regression coverage for:
+    - injected fake port factory wiring;
+    - IPv4/IPv6 projection through backend start;
+    - projection failure propagation;
+    - null-port rejection;
+    - port-open failure propagation and retry;
+    - close-failure propagation without losing active state;
+    - successful restart after stop;
+    - default backend-factory creation path.
 - [ ] 111: Implement concrete Linux socket receive-port open/bind path behind `ISocketRxPort`
   - add the first concrete Linux implementation of the already-defined socket runtime boundary;
   - implement socket create/open, bind, and close/cleanup for the unicast base path;
@@ -1092,6 +1111,11 @@
   - preserve the OS-neutral public boundary shape introduced in `110A`;
   - do not mix packet parsing, depacketizer logic, or backend frame delivery into this task;
   - add focused tests where practical for open/bind failure mapping and lifecycle behavior.
+- [ ] 111A: Switch default `SocketRxVideoBackend` runtime dependency from stub factory to the concrete Linux port factory on supported builds
+  - keep injected-factory constructor for tests and future platform/runtime variants;
+  - make default backend creation use the real Linux socket-port factory where available instead of the temporary stub factory;
+  - keep backend public API unchanged;
+  - keep platform selection localized and avoid spreading platform branching into app/bootstrap code.
 - [ ] 112: Implement multicast join/leave for the Linux socket receive-port through the existing family-aware socket runtime boundary
   - implement multicast join/leave on top of the Linux `ISocketRxPort` implementation rather than in backend code;
   - keep IPv4/IPv6 family handling explicit through the already-modeled runtime boundary;

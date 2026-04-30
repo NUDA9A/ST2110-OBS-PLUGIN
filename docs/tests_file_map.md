@@ -945,29 +945,41 @@
 
 ### tests/test_socket_rx_video_backend.cpp
 - Роль:
-    - проверяет current socket video backend stub and its factory.
-    - теперь также покрывает explicit backend lifecycle result/state behavior of the socket backend stub.
+    - проверяет current `SocketRxVideoBackend` after rebasing it onto the explicit socket runtime boundary.
 - Покрывает:
     - type/interface shape:
         - `SocketRxVideoBackend`;
         - `SocketRxVideoBackendFactory`;
+        - default constructor;
+        - injected `std::unique_ptr<ISocketRxPortFactory>` constructor;
         - conversion to `IRxBackend` / `IRxVideoBackend`.
     - descriptor/factory behavior:
         - socket backend kind;
         - backend name;
         - video-only capabilities;
-        - factory returns a valid backend instance.
-    - lifecycle behavior:
-        - created backend starts in stopped state;
-        - successful `start_video(...)` returns active video state;
-        - repeated `start_video(...)` returns `InvalidBackendState`;
-        - `stop()` is idempotent and returns stopped state;
-        - backend can be started again after stop.
-    - stub behavior:
-        - current socket stub still does not emit frames yet.
+        - default backend creation through `SocketRxVideoBackendFactory`.
+    - backend/runtime wiring through fakes:
+        - injected fake socket-port factory usage;
+        - candidate port creation through the runtime factory;
+        - port open through `ISocketRxPort`.
+    - `RxVideoConfig -> SocketRxOpenConfig` projection as exercised through backend start:
+        - IPv4 multicast projection;
+        - IPv6 multicast projection;
+        - family-aware wildcard bind selection.
+    - lifecycle/failure behavior:
+        - repeated start rejection with `InvalidBackendState`;
+        - projection failure propagation while backend remains stopped;
+        - null created-port rejection;
+        - port-open failure propagation and later retry;
+        - close-failure propagation without losing active state;
+        - successful restart after stop;
+        - default backend start/stop path remains operational.
+    - current delivery behavior:
+        - no fake video frames are emitted yet during backend start.
 - Фиксирует:
-    - socket backend now follows the same lifecycle/result contract expected from future real runtime implementations;
-    - further socket RX work should extend the existing state/result boundary instead of changing the public backend API.
+    - `SocketRxVideoBackend` now depends on the explicit socket runtime boundary instead of remaining a transport-free placeholder;
+    - runtime dependency injection remains localized and testable through the port-factory boundary;
+    - cleanup after successful stop must clear runtime objects while preserving backend restartability.
 
 ### tests/test_socket_runtime_interface.cpp
 - Роль:
