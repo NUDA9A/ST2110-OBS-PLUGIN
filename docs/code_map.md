@@ -2208,3 +2208,71 @@
     - placeholder `.cpp` boundary for later non-trivial socket video backend implementation.
 - Сущности:
     - currently contains only the include of the public header.
+
+### libs/st2110core/include/st2110/socket_runtime.hpp
+- Роль:
+    - OS-neutral socket runtime boundary for future concrete socket receive implementations.
+    - отделяет public socket/runtime modeling from Linux syscalls, Winsock APIs, packet parsing, and backend receive-loop logic.
+    - задает family-aware socket configuration/projection layer before real socket backend runtime wiring.
+- Связи:
+    - использует `error.hpp` для validation/runtime result reporting;
+    - использует `rx_config.hpp` для `RxVideoConfig -> SocketRxOpenConfig` projection;
+    - использует `config_validation.hpp` для shared UDP-port validation;
+    - должен позже использоваться concrete Linux/Winsock socket runtime implementations and then `SocketRxVideoBackend`.
+- Сущности:
+    - `SocketAddressFamily`
+        - modeled socket address-family axis:
+            - `IPv4`;
+            - `IPv6`.
+    - `validate_socket_address_family(SocketAddressFamily) -> Error`
+        - validates known socket family enum values.
+    - `socket_address_family_name(SocketAddressFamily) -> std::string_view`
+        - stable string mapping for known socket families.
+    - IPv4/IPv6 address helpers
+        - localized textual-address validation and multicast detection helpers used by config validation/projection;
+        - keep public boundary OS-neutral and independent from platform socket structs.
+    - `SocketEndpoint`
+        - family-aware bind/local endpoint:
+            - `family`;
+            - `address`;
+            - `port`.
+    - `validate_socket_endpoint(const SocketEndpoint&) -> Error`
+        - validates endpoint family, textual address, and UDP port.
+    - `SocketMulticastMembership`
+        - family-aware multicast join description:
+            - `family`;
+            - `group_address`;
+            - `interface_address`.
+    - `validate_socket_multicast_membership(const SocketMulticastMembership&) -> Error`
+        - validates group address shape and multicast semantics for the declared family.
+    - `SocketRxOpenConfig`
+        - abstract socket receive-open configuration:
+            - `bind_endpoint`;
+            - optional `multicast_membership`;
+            - `reuse_address`.
+    - `validate_socket_rx_open_config(const SocketRxOpenConfig&) -> Error`
+        - validates bind endpoint plus optional multicast membership;
+        - rejects family mismatch between bind endpoint and multicast membership.
+    - `socket_rx_uses_multicast(const SocketRxOpenConfig&) -> bool`
+        - helper for open-config multicast detection.
+    - `socket_rx_open_config_from_video_config(const RxVideoConfig&) -> std::expected<SocketRxOpenConfig, Error>`
+        - projects runtime video config into the socket runtime boundary;
+        - resolves address family from `local_ip` or `dest_ip`;
+        - selects wildcard bind address by family (`0.0.0.0` / `::`);
+        - validates `dest_ip` against the resolved family;
+        - creates multicast membership only for multicast destinations.
+    - `SocketReceiveResult`
+        - minimal OS-neutral receive result carrier:
+            - `size_bytes`.
+    - `ISocketRxPort`
+        - abstract opened/closed socket receive-port lifecycle boundary:
+            - `is_open()`;
+            - `open(const SocketRxOpenConfig&)`;
+            - `close()`;
+            - `receive(std::span<std::uint8_t>)`.
+    - `ISocketRxPortFactory`
+        - factory boundary for creating concrete receive-port objects.
+- Примечание:
+    - this file models both IPv4 and IPv6 structurally in the public runtime boundary;
+    - any temporary lack of concrete IPv6 support should remain localized in future concrete runtime implementations, not in the boundary shape or config projection layer;
+    - RTCP/media classification and actual Linux/Winsock socket operations remain future work above/below this boundary, respectively.

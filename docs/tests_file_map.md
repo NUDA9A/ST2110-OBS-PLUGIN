@@ -968,3 +968,41 @@
 - Фиксирует:
     - socket backend now follows the same lifecycle/result contract expected from future real runtime implementations;
     - further socket RX work should extend the existing state/result boundary instead of changing the public backend API.
+
+### tests/test_socket_runtime_interface.cpp
+- Роль:
+    - проверяет OS-neutral socket runtime boundary introduced before real Linux socket RX wiring.
+- Покрывает:
+    - type/interface shape:
+        - `SocketAddressFamily`;
+        - `SocketEndpoint`;
+        - `SocketMulticastMembership`;
+        - `SocketRxOpenConfig`;
+        - `SocketReceiveResult`;
+        - `ISocketRxPort`;
+        - `ISocketRxPortFactory`.
+    - helper/validation behavior:
+        - socket family validation and stable family-name mapping;
+        - IPv4 multicast detection;
+        - IPv6 multicast detection;
+        - endpoint validation for IPv4 and IPv6;
+        - multicast-membership validation for IPv4 and IPv6;
+        - socket-open-config validation and multicast-presence helper.
+    - `RxVideoConfig -> SocketRxOpenConfig` projection:
+        - IPv4 multicast projection;
+        - IPv4 unicast projection;
+        - IPv6 multicast projection;
+        - IPv6 unicast projection;
+        - family-aware wildcard bind selection (`0.0.0.0` / `::`);
+        - rejection of cross-family or invalid destination-address combinations.
+    - abstract runtime lifecycle contract through fakes:
+        - closed initial state;
+        - `open()` rejection on repeated open;
+        - `receive()` rejection before open;
+        - `receive()` rejection on empty buffer;
+        - idempotent-looking close path in fake contract coverage;
+        - factory returns distinct closed port instances.
+- Фиксирует:
+    - socket runtime boundary is modeled independently from concrete Linux/Winsock implementation details;
+    - IPv6 remains an explicit modeled architecture axis in the boundary and projection tests rather than being omitted from the public shape;
+    - destination-address family consistency is enforced in the projection boundary instead of being left implicit for later runtime stages.

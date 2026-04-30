@@ -83,7 +83,7 @@
 - [ ] S048: ST 2110-21 sender timing signaling is currently modeled too loosely in one place and too strictly in another. Final SDP ingestion can silently default absent `TP` to `VideoSenderType::Narrow`, even though `TP` is required by ST 2110-21 for video RTP streams. At the same time, `validate_video_sender_signaling()` rejects `TROFF` / `CMAX` for `Narrow` and `NarrowLinear`, although ST 2110-21 defines these as optional media type parameters with default assumptions when absent. This validation should be rechecked and corrected against ST 2110-21.
 - [ ] S049: Raw SDP `c=` connection data parsing preserves useful transport metadata but is still too permissive structurally. It accepts arbitrary `nettype` / `addrtype` tokens and parses slash parameters without validating whether the form is appropriate for the address type / multicast shape. This should be tightened in the raw SDP transport boundary while keeping backend socket behavior separate.
 - [x] S050: Backend lifecycle boundary is no longer skeleton-oriented. `IRxVideoBackend::start_video(...)`, `IRxAudioBackend::start_audio(...)`, and `IRxBackend::stop()` now use an explicit result-returning, state-aware lifecycle boundary via `RxBackendState` / `RxBackendLifecycleResult`, with localized policy for repeated start, stop-before-start, repeated stop, and retry after failed start. Future socket/MTL runtime work must extend this existing boundary rather than reintroducing silent no-op behavior, ad hoc logging-only failure handling, or sink-coupled runtime error reporting.
-- [ ] S051: The plan still defers a socket platform boundary too late for a known future axis. Since the project already has an explicit future `Windows` phase for the project’s own socket backend, OS-specific socket operations must be isolated before real Linux socket RX implementation proceeds. Linux-first implementation is acceptable, but it should fill an already-defined OS-neutral socket runtime boundary so later Winsock support becomes a localized implementation task rather than a retrofit of the Linux path.
+- [x] S051: The socket platform boundary is no longer deferred behind concrete Linux receive-loop work. An OS-neutral socket runtime boundary now exists in `socket_runtime.hpp`, modeling socket address family, bind endpoint, multicast membership, socket-open config, config projection from `RxVideoConfig`, and abstract receive-port lifecycle separately from Linux/Winsock implementation details. Future Linux and Windows socket backends must fill this boundary rather than reshaping public backend/runtime contracts.
 ---
 
 # Phase 1 — MVP
@@ -1029,44 +1029,100 @@
 - [x] 110: Implement `SocketRxVideoBackend` skeleton + smoke test
   - added concrete `SocketRxVideoBackend` as the first socket video backend skeleton;
   - added `SocketRxVideoBackendFactory` exposing the backend through the existing `IRxBackendFactory` boundary;
-  - current skeleton behavior is intentionally minimal:
-    - `backend_name() == "socket"`;
-    - video capability only;
-    - `start_video(...)` is a no-op placeholder;
-    - `stop()` is a no-op placeholder;
+  - current skeleton behavior remains intentionally minimal and video-only;
+  - current backend lifecycle is explicit through the existing `RxBackendLifecycleResult` / `RxBackendState` boundary, but no real socket runtime is used yet;
   - added focused smoke coverage for:
     - direct backend interface shape;
     - capability reporting;
-    - no-op start/stop path;
+    - lifecycle-aware start/stop placeholder path;
     - factory descriptor;
     - backend creation through the factory;
     - rejection of unsupported audio cast/use on the video-only backend.
-- [ ] 110A: Define an OS-neutral socket video transport boundary before real Linux RX implementation
-  - introduce a localized socket runtime abstraction for the project’s own socket backend
-  - keep the abstraction narrow and backend-oriented, not a general networking framework
-  - cover only the operations needed by planned socket receive work:
-    - socket open/create
-    - bind
-    - multicast join/leave
-    - receive
-    - close/cleanup
-    - address/port preparation as needed
-  - keep Linux as the first concrete implementation
-  - shape the boundary so later Winsock support fills the same contract rather than refactoring Linux-oriented backend code
-  - keep RTP parsing, depacketizer/pipeline logic, SDP ingestion, and timing/playout outside this layer
-  - add focused tests for contract shape / failure mapping where practical
-- [ ] 110B: Rebase `SocketRxVideoBackend` onto the explicit backend lifecycle/error boundary and the socket transport boundary
-  - update the socket video backend skeleton after `035`, `036`, and `110A`
-  - current transport behavior may still remain placeholder/no-op after this task
-  - make successful placeholder start/stop explicit through the new lifecycle/result contract
-  - keep the backend video-only for now
-  - keep Linux-specific details behind the socket transport boundary rather than inside the backend public contract
-  - add focused smoke/regression tests
-- [ ] 111: Implement UDP socket open/bind (unicast base path) through the socket transport boundary
-- [ ] 112: Implement multicast join/leave (Linux) for socket video receive path through the socket transport boundary
-- [ ] 113: Add receive loop (recvfrom/recvmmsg later) and feed PacketView pipeline
-- [ ] 114: Add periodic stats print (pps, drops, frames/s)
-- [ ] 115: Add graceful stop (SIGINT) and cleanup
+- [x] 110A: Add OS-neutral socket runtime boundary before real Linux RX implementation
+  - introduced `socket_runtime.hpp` as an OS-neutral socket runtime boundary for the project’s own socket backend;
+  - modeled socket address family explicitly through `SocketAddressFamily`:
+    - `IPv4`;
+    - `IPv6`.
+  - added family-aware structural runtime types:
+    - `SocketEndpoint`;
+    - `SocketMulticastMembership`;
+    - `SocketRxOpenConfig`;
+    - `SocketReceiveResult`.
+  - added explicit validation/helpers for the boundary:
+    - socket family validation/name mapping;
+    - textual IPv4/IPv6 address validation helpers;
+    - IPv4/IPv6 multicast detection helpers;
+    - endpoint validation;
+    - multicast-membership validation;
+    - socket-open-config validation;
+    - multicast-presence helper.
+  - added explicit `RxVideoConfig -> SocketRxOpenConfig` projection through `socket_rx_open_config_from_video_config(...)`;
+  - projection behavior now:
+    - resolves address family from `local_ip`, or from `dest_ip` when `local_ip` is empty;
+    - chooses wildcard bind address by family:
+      - `0.0.0.0` for `IPv4`;
+      - `::` for `IPv6`;
+    - validates `dest_ip` against the resolved family;
+    - creates multicast membership only for multicast destinations.
+  - added abstract receive-port lifecycle boundary:
+    - `ISocketRxPort`;
+    - `ISocketRxPortFactory`.
+  - kept Linux syscalls / Winsock APIs, packet parsing, RTCP classification, depacketizer/reconstructor pipeline, and backend receive loop outside this task;
+  - added focused interface/projection tests including:
+    - IPv4 unicast/multicast;
+    - IPv6 unicast/multicast;
+    - wildcard bind selection by family;
+    - cross-family rejection.
+- [ ] 110B: Rebase `SocketRxVideoBackend` onto the explicit socket runtime boundary
+  - update `SocketRxVideoBackend` so it owns/uses `ISocketRxPort` through an injected or concrete factory boundary rather than remaining a transport-free stub;
+  - keep lifecycle behavior expressed only through `RxBackendLifecycleResult` / `RxBackendState`;
+  - make `start_video(...)` project `RxVideoConfig` to `SocketRxOpenConfig` through the existing helper rather than duplicating socket-bootstrap logic in the backend;
+  - keep the backend video-only for now;
+  - keep Linux-specific details outside the backend public contract and behind the socket runtime boundary;
+  - this task still does not need a real receive loop or frame delivery path;
+  - add focused smoke/regression tests for:
+    - backend construction with socket-port factory;
+    - start/stop state transitions;
+    - projection/open failure propagation;
+    - cleanup/reset behavior.
+- [ ] 111: Implement concrete Linux socket receive-port open/bind path behind `ISocketRxPort`
+  - add the first concrete Linux implementation of the already-defined socket runtime boundary;
+  - implement socket create/open, bind, and close/cleanup for the unicast base path;
+  - keep failure mapping localized to the socket runtime implementation;
+  - preserve the OS-neutral public boundary shape introduced in `110A`;
+  - do not mix packet parsing, depacketizer logic, or backend frame delivery into this task;
+  - add focused tests where practical for open/bind failure mapping and lifecycle behavior.
+- [ ] 112: Implement multicast join/leave for the Linux socket receive-port through the existing family-aware socket runtime boundary
+  - implement multicast join/leave on top of the Linux `ISocketRxPort` implementation rather than in backend code;
+  - keep IPv4/IPv6 family handling explicit through the already-modeled runtime boundary;
+  - if some concrete family branch remains temporarily unsupported, keep that limitation localized in the Linux socket runtime implementation rather than removing family coverage from the boundary;
+  - keep backend public contracts unchanged;
+  - add focused tests where practical for multicast lifecycle and failure mapping.
+- [ ] 113: Add socket video datagram receive path and feed the existing video receive pipeline
+  - create/open the socket port from `SocketRxVideoBackend`;
+  - receive UDP datagrams through `ISocketRxPort::receive(...)`;
+  - keep datagram classification / stream admission as explicit local boundaries rather than burying them in ad hoc parser failures;
+  - parse media datagrams into `PacketView`;
+  - feed the current packet/reorder/video-receive pipeline;
+  - deliver reconstructed video frames to `IVideoFrameSink`;
+  - keep socket runtime, packet parsing, pipeline reconstruction, and timing/playout as separate layers;
+  - add focused tests/smoke coverage where practical.
+- [ ] 114: Add periodic socket video RX stats
+  - report backend/runtime-oriented stats such as:
+    - received datagrams;
+    - parsed/rejected packets;
+    - ignored control/non-media datagrams if tracked;
+    - frames delivered;
+    - drops / loss-related counters exposed by existing pipeline stats.
+  - keep stats collection localized and avoid spreading backend observability across sink code.
+- [ ] 115: Add graceful stop and cleanup for socket video RX
+  - stop the receive path cleanly;
+  - close the socket port through the runtime boundary;
+  - release/reset backend-owned runtime objects;
+  - preserve existing lifecycle guarantees for:
+    - stop before successful start;
+    - repeated stop;
+    - retry after failed start.
 
 ### C2. Socket audio RX
 - [ ] 120: Implement `SocketRxAudioBackend` skeleton + smoke test
