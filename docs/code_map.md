@@ -2221,71 +2221,59 @@
 
 ### libs/st2110core/include/st2110/socket_runtime.hpp
 - Роль:
-    - OS-neutral socket runtime boundary for future concrete socket receive implementations.
-    - отделяет public socket/runtime modeling from Linux syscalls, Winsock APIs, packet parsing, and backend receive-loop logic.
-    - задает family-aware socket configuration/projection layer before real socket backend runtime wiring.
+    - OS-neutral socket runtime boundary for receive-port lifecycle and config projection;
+    - keeps socket family, bind endpoint, multicast membership, and open-config semantics explicit above concrete Linux/Winsock code.
 - Связи:
-    - использует `error.hpp` для validation/runtime result reporting;
-    - использует `rx_config.hpp` для `RxVideoConfig -> SocketRxOpenConfig` projection;
-    - использует `config_validation.hpp` для shared UDP-port validation;
-    - должен позже использоваться concrete Linux/Winsock socket runtime implementations and then `SocketRxVideoBackend`.
+    - использует `config_validation.hpp`, `error.hpp`, `rx_config.hpp`;
+    - используется `SocketRxVideoBackend` and concrete socket runtime implementations such as `LinuxSocketRxPort`.
 - Сущности:
     - `SocketAddressFamily`
-        - modeled socket address-family axis:
+        - modeled socket family axis:
             - `IPv4`;
             - `IPv6`.
-    - `validate_socket_address_family(SocketAddressFamily) -> Error`
-        - validates known socket family enum values.
-    - `socket_address_family_name(SocketAddressFamily) -> std::string_view`
-        - stable string mapping for known socket families.
-    - IPv4/IPv6 address helpers
-        - localized textual-address validation and multicast detection helpers used by config validation/projection;
-        - keep public boundary OS-neutral and independent from platform socket structs.
+    - `validate_socket_address_family(...)`
+    - `socket_address_family_name(...)`
+    - address helpers:
+        - `is_valid_ipv4_address(...)`
+        - `is_ipv4_multicast_address(...)`
+        - `is_valid_ipv6_address(...)`
+        - `is_ipv6_multicast_address(...)`
+        - `is_valid_address(...)`
     - `SocketEndpoint`
-        - family-aware bind/local endpoint:
-            - `family`;
-            - `address`;
-            - `port`.
-    - `validate_socket_endpoint(const SocketEndpoint&) -> Error`
-        - validates endpoint family, textual address, and UDP port.
+        - `family`
+        - `address`
+        - `port`
+    - `validate_socket_endpoint(...)`
     - `SocketMulticastMembership`
-        - family-aware multicast join description:
-            - `family`;
-            - `group_address`;
-            - `interface_address`.
-    - `validate_socket_multicast_membership(const SocketMulticastMembership&) -> Error`
-        - validates group address shape and multicast semantics for the declared family.
+        - `family`
+        - `group_address`
+        - `interface_address`
+            - explicit multicast join interface/local-address selection boundary.
+    - `validate_socket_multicast_membership(...)`
+        - validates multicast group syntax and optional interface-address syntax within the same family.
     - `SocketRxOpenConfig`
-        - abstract socket receive-open configuration:
-            - `bind_endpoint`;
-            - optional `multicast_membership`;
-            - `reuse_address`.
-    - `validate_socket_rx_open_config(const SocketRxOpenConfig&) -> Error`
-        - validates bind endpoint plus optional multicast membership;
-        - rejects family mismatch between bind endpoint and multicast membership.
-    - `socket_rx_uses_multicast(const SocketRxOpenConfig&) -> bool`
-        - helper for open-config multicast detection.
-    - `socket_rx_open_config_from_video_config(const RxVideoConfig&) -> std::expected<SocketRxOpenConfig, Error>`
-        - projects runtime video config into the socket runtime boundary;
-        - resolves address family from `local_ip` or `dest_ip`;
-        - selects wildcard bind address by family (`0.0.0.0` / `::`);
-        - validates `dest_ip` against the resolved family;
-        - creates multicast membership only for multicast destinations.
+        - `bind_endpoint`
+        - optional `multicast_membership`
+        - `reuse_address`
+    - `validate_socket_rx_open_config(...)`
+    - `socket_rx_uses_multicast(...)`
+    - `socket_rx_open_config_from_video_config(const RxVideoConfig&)`
+        - projects manual/backend-facing video config into socket-open config;
+        - for multicast destinations, maps bind address to family wildcard (`0.0.0.0` / `::`);
+        - carries destination multicast group through `multicast_membership.group_address`;
+        - carries explicit `RxVideoConfig.local_ip` into `multicast_membership.interface_address` when present.
     - `SocketReceiveResult`
-        - minimal OS-neutral receive result carrier:
-            - `size_bytes`.
+        - `size_bytes`
     - `ISocketRxPort`
-        - abstract opened/closed socket receive-port lifecycle boundary:
-            - `is_open()`;
-            - `open(const SocketRxOpenConfig&)`;
-            - `close()`;
-            - `receive(std::span<std::uint8_t>)`.
+        - `is_open()`
+        - `open(...)`
+        - `close()`
+        - `receive(...)`
     - `ISocketRxPortFactory`
-        - factory boundary for creating concrete receive-port objects.
+        - `create_port()`
 - Примечание:
-    - this file models both IPv4 and IPv6 structurally in the public runtime boundary;
-    - any temporary lack of concrete IPv6 support should remain localized in future concrete runtime implementations, not in the boundary shape or config projection layer;
-    - RTCP/media classification and actual Linux/Winsock socket operations remain future work above/below this boundary, respectively.
+    - multicast interface selection is now modeled explicitly inside the existing runtime boundary rather than being hidden in Linux-only backend code;
+    - family coverage remains explicit even where some concrete runtime branches are still temporarily unsupported.
 
 ### libs/st2110core/include/st2110/socket_stub_rx_port.hpp
 - Роль:
@@ -2324,66 +2312,39 @@
 
 ### libs/st2110core/include/st2110/linux_socket_rx_port.hpp
 - Роль:
-    - первая concrete Linux-реализация уже существующей OS-neutral socket runtime boundary.
-    - локализует Linux socket create/configure/bind/close/receive behavior под `ISocketRxPort`, не меняя backend public API.
+    - concrete Linux UDP receive-port implementation of the existing socket runtime boundary;
+    - handles native socket create/configure/bind/receive plus localized multicast membership lifecycle.
 - Связи:
-    - реализует `ISocketRxPort` и `ISocketRxPortFactory` из `socket_runtime.hpp`;
-    - использует modeled runtime types:
-        - `SocketAddressFamily`;
-        - `SocketRxOpenConfig`;
-        - `SocketReceiveResult`;
-        - `SocketMulticastMembership`.
-    - пока не используется как default runtime dependency `SocketRxVideoBackend`; default switch остается отдельной задачей `111A`;
-    - не выполняет RTP parsing, ST 2110 packet classification, depacketizer integration, или frame delivery.
+    - реализует `ISocketRxPort` / `ISocketRxPortFactory` from `socket_runtime.hpp`;
+    - используется default Linux path of `SocketRxVideoBackend`.
 - Сущности:
     - `LinuxSocketRxPort`
-        - `LinuxSocketRxPort()`
-            - создает closed Linux port object.
-        - `~LinuxSocketRxPort()`
-            - best-effort closes the native socket if still open.
-        - `is_open() -> bool`
-            - reports whether a committed native socket handle/config is currently active.
-        - `open(const SocketRxOpenConfig&) -> Error`
-            - validates the request;
-            - rejects repeated open with `InvalidBackendState`;
-            - currently supports unicast `IPv4` / unicast `IPv6`;
-            - currently rejects multicast open requests with `Unsupported`;
-            - creates/configures/binds a Linux UDP socket transactionally;
-            - commits state only after full success.
-        - `close() -> Error`
-            - idempotent close path;
-            - closes the committed native socket;
-            - clears committed open-state only after successful close.
-        - `receive(std::span<std::uint8_t>) -> std::expected<SocketReceiveResult, Error>`
-            - rejects closed-port receive with `InvalidBackendState`;
-            - rejects empty receive buffer with `InvalidValue`;
-            - receives one UDP datagram through Linux `recv(...)`;
-            - does not parse RTP/ST 2110 payload.
-        - helpers:
+        - `is_open()`
+        - `open(const SocketRxOpenConfig&)`
+            - validates config/platform support;
+            - creates/configures/binds native UDP socket;
+            - performs IPv4 multicast join when `multicast_membership` is present;
+            - on join failure closes the bound native socket and leaves the object stopped/retryable.
+        - `close()`
+            - performs IPv4 multicast leave before native socket close when multicast was in use;
+            - preserves open state if multicast leave fails;
+            - clears open state only after successful leave + close.
+        - `receive(...)`
+            - raw UDP receive boundary with explicit runtime error mapping.
+        - localized private helpers:
             - `validate_open_request(...)`
-                - composes runtime-structural validation with current Linux support policy.
             - `validate_current_platform_support(...)`
-                - current task-local support boundary:
-                    - unicast supported;
-                    - multicast unsupported.
             - `create_native_socket(...)`
-                - creates UDP socket for `AF_INET` / `AF_INET6`.
             - `configure_native_socket_before_bind(...)`
-                - applies pre-bind socket options such as `SO_REUSEADDR`.
             - `bind_native_socket(...)`
-                - performs family-aware bind for `sockaddr_in` / `sockaddr_in6`.
+            - `join_multicast_membership(...)`
+            - `leave_multicast_membership(...)`
             - `close_native_socket(...)`
-                - low-level wrapper around Linux `close(2)`.
             - `clear_open_state()`
-                - resets committed runtime state to closed state.
-            - `native_socket_is_valid(...)`
-                - sentinel-based native-fd validity helper.
     - `LinuxSocketRxPortFactory`
-        - `create_port() -> std::unique_ptr<ISocketRxPort>`
-            - returns a new closed `LinuxSocketRxPort`.
-    - `make_linux_socket_rx_port_factory() -> std::unique_ptr<ISocketRxPortFactory>`
-        - helper for future default backend wiring and runtime composition.
+        - `create_port()`
+    - `make_linux_socket_rx_port_factory()`
 - Примечание:
-    - this file currently implements only the unicast base path on Linux;
-    - multicast join/leave remains a localized follow-up through the same runtime boundary rather than through backend API changes;
-    - the receive boundary is intentionally datagram-oriented and separate from RTP/ST 2110 parsing and backend pipeline logic.
+    - IPv4 unicast and IPv4 multicast are supported through the existing runtime boundary;
+    - IPv6 unicast remains supported;
+    - IPv6 multicast remains explicitly localized as `Unsupported` in the Linux runtime implementation rather than being erased from the boundary or pushed upward into backend/app code.

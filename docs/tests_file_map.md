@@ -945,90 +945,65 @@
 
 ### tests/test_socket_rx_video_backend.cpp
 - Роль:
-    - проверяет lifecycle, config-projection и factory-selection behavior socket video backend’а через injected и default port-factory paths.
+    - проверяет lifecycle, config projection, and default-factory behavior of socket video backend through injected and real Linux socket-port paths.
 - Покрывает:
     - injected-factory path:
-        - IPv4 / IPv6 `SocketRxOpenConfig` projection;
+        - IPv4 multicast projection;
+        - IPv4 multicast projection with explicit interface/local address;
+        - IPv6 multicast projection;
         - projection failure;
-        - port-open failure и retry;
+        - port-open failure and retry;
         - null created port rejection;
         - close-failure behavior during `stop()`;
         - restart after successful stop.
-    - default-factory path:
-        - `SocketRxVideoBackendFactory::descriptor()` shape;
-        - `SocketRxVideoBackendFactory::create_backend()` shape;
-        - default backend creation path after 111A.
+    - factory/default path:
+        - descriptor and backend-creation shape;
+        - Linux default backend bind-failure path on real Linux socket port;
+        - Linux default backend successful IPv4 multicast start/stop path;
+        - Linux default backend recovery after real multicast join failure.
 - Фиксирует:
-    - injected-factory constructor remains the explicit seam for tests and future runtime/platform variants;
-    - default `SocketRxVideoBackend` factory selection is no longer hardwired to the stub path;
-    - platform/runtime selection stays localized inside backend implementation rather than spreading into higher bootstrap layers.
+    - default Linux `SocketRxVideoBackend` is now usable with IPv4 multicast RX configs through the real Linux socket runtime implementation;
+    - multicast join failure is surfaced through backend lifecycle results without corrupting backend stopped/retryable state;
+    - injected-factory constructor remains the explicit test/runtime seam.
 
 ### tests/test_socket_runtime_interface.cpp
 - Роль:
-    - проверяет OS-neutral socket runtime boundary introduced before real Linux socket RX wiring.
+    - проверяет OS-neutral socket runtime boundary shape, validation, and config projection behavior.
 - Покрывает:
-    - type/interface shape:
-        - `SocketAddressFamily`;
-        - `SocketEndpoint`;
-        - `SocketMulticastMembership`;
-        - `SocketRxOpenConfig`;
-        - `SocketReceiveResult`;
-        - `ISocketRxPort`;
-        - `ISocketRxPortFactory`.
-    - helper/validation behavior:
-        - socket family validation and stable family-name mapping;
-        - IPv4 multicast detection;
-        - IPv6 multicast detection;
-        - endpoint validation for IPv4 and IPv6;
-        - multicast-membership validation for IPv4 and IPv6;
-        - socket-open-config validation and multicast-presence helper.
-    - `RxVideoConfig -> SocketRxOpenConfig` projection:
-        - IPv4 multicast projection;
-        - IPv4 unicast projection;
-        - IPv6 multicast projection;
-        - IPv6 unicast projection;
-        - family-aware wildcard bind selection (`0.0.0.0` / `::`);
-        - rejection of cross-family or invalid destination-address combinations.
-    - abstract runtime lifecycle contract through fakes:
-        - closed initial state;
-        - `open()` rejection on repeated open;
-        - `receive()` rejection before open;
-        - `receive()` rejection on empty buffer;
-        - idempotent-looking close path in fake contract coverage;
-        - factory returns distinct closed port instances.
+    - `SocketAddressFamily` helpers;
+    - endpoint validation;
+    - multicast membership validation:
+        - valid IPv4/IPv6 multicast groups;
+        - optional empty interface address;
+        - valid explicit interface address in the same family;
+        - invalid interface-address syntax;
+        - family-mismatched interface address;
+        - rejection of unicast group addresses.
+    - `SocketRxOpenConfig` validation and `socket_rx_uses_multicast(...)`;
+    - `socket_rx_open_config_from_video_config(...)`:
+        - IPv4/IPv6 unicast projection;
+        - IPv4/IPv6 multicast projection;
+        - multicast wildcard bind behavior;
+        - propagation of explicit `RxVideoConfig.local_ip` into `multicast_membership.interface_address`.
+    - abstract `ISocketRxPort` / `ISocketRxPortFactory` shape through fake implementations.
 - Фиксирует:
-    - socket runtime boundary is modeled independently from concrete Linux/Winsock implementation details;
-    - IPv6 remains an explicit modeled architecture axis in the boundary and projection tests rather than being omitted from the public shape;
-    - destination-address family consistency is enforced in the projection boundary instead of being left implicit for later runtime stages.
+    - multicast interface selection is modeled explicitly inside the runtime boundary;
+    - backend-facing `RxVideoConfig.local_ip` now maps to multicast membership interface selection rather than overriding multicast wildcard bind semantics.
 
 ### tests/test_linux_socket_rx_port.cpp
 - Роль:
-    - проверяет first concrete Linux implementation of the socket runtime boundary.
+    - проверяет concrete Linux socket receive-port lifecycle and failure mapping against the existing socket runtime boundary.
 - Покрывает:
-    - type/interface shape:
-        - `LinuxSocketRxPort`;
-        - `LinuxSocketRxPortFactory`;
-        - `make_linux_socket_rx_port_factory()`;
-        - conformance to `ISocketRxPort` / `ISocketRxPortFactory`.
-    - Linux unicast open/close behavior:
-        - IPv4 unicast open/close;
-        - repeated open rejection with `InvalidBackendState`;
-        - repeated close idempotence;
-        - IPv6 unicast open/close when supported by the host.
-    - request validation/support boundary:
-        - invalid open config rejection;
-        - explicit multicast rejection with `Unsupported`.
-    - Linux runtime error mapping:
-        - bind failure -> `BindFailed`.
-    - receive contract:
-        - receive before open -> `InvalidBackendState`;
-        - empty receive buffer -> `InvalidValue`;
-        - successful receipt of one IPv4 UDP datagram through the concrete Linux port;
-        - no RTP/ST 2110 parser logic required for the receive success path.
-    - factory behavior:
-        - each `create_port()` returns a distinct closed instance;
-        - helper-created factory is non-null and returns closed ports.
+    - IPv4 unicast open/close/repeated-open behavior;
+    - IPv6 unicast open/close when loopback IPv6 is available;
+    - IPv4 multicast open/close/repeated-close behavior;
+    - invalid open requests;
+    - localized rejection of IPv6 multicast as `Unsupported`;
+    - bind failure mapping to `BindFailed`;
+    - IPv4 multicast join failure mapping to `MulticastJoinFailed`;
+    - cleanup after failed multicast join so the bound port can be reopened successfully;
+    - basic raw UDP receive contract and factory shape.
 - Фиксирует:
-    - the first concrete Linux socket runtime stays below `ISocketRxPort` rather than changing backend public contracts;
-    - current multicast limitation is explicit and localized in the Linux runtime support boundary;
-    - the concrete receive-port layer is datagram-oriented and does not yet imply backend receive-loop or RTP/ST 2110 parsing integration.
+    - multicast join/leave is implemented in the Linux socket runtime layer, not in backend code;
+    - failed multicast join remains transactional and does not leak an already-bound native socket into later opens;
+    - unsupported family branches stay localized in Linux runtime behavior.

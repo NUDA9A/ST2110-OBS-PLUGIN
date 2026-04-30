@@ -13,7 +13,6 @@
 #include <span>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <fcntl.h>
 
 namespace st2110 {
 class LinuxSocketRxPort final : public ISocketRxPort {

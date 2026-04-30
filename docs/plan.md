@@ -1147,7 +1147,7 @@
   - make default backend creation use the real Linux socket-port factory where available instead of the temporary stub factory;
   - keep backend public API unchanged;
   - keep platform selection localized and avoid spreading platform branching into app/bootstrap code.
-- [ ] 112: Implement multicast join/leave for the Linux socket receive-port through the existing family-aware socket runtime boundary
+- [x] 112: Implement multicast join/leave for the Linux socket receive-port through the existing family-aware socket runtime boundary
   - implement multicast join/leave on top of the Linux `ISocketRxPort` implementation rather than in backend code;
   - keep IPv4/IPv6 family handling explicit through the already-modeled runtime boundary;
   - if some concrete family branch remains temporarily unsupported, keep that limitation localized in the Linux socket runtime implementation rather than removing family coverage from the boundary;
