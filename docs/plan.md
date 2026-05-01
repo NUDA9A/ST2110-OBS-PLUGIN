@@ -1192,10 +1192,10 @@
     - sink delivery for assembled audio blocks;
   - before marking this task done, keep `record_rejected_packet(...)` stats mutation fully synchronized in the common socket single-media base;
   - keep temporary audio wire-format support localized through the explicit backend helper boundary.
-- [ ] 122A: Model explicit audio RTP wire-format / bit-depth axis through signaling/runtime/backend path
+- [x] 122A: Model explicit audio RTP wire-format / bit-depth axis through signaling/runtime/backend path
   - current audio packet model already distinguishes `AudioPcmWireFormat::{L16, L24}`;
-  - current socket audio RX runtime still selects a temporary backend wire format from `RxAudioConfig` through `select_audio_wire_format(...)`;
-  - extend signaling/runtime/backend boundaries so wire format / bit depth is modeled explicitly rather than remaining a localized `LinearPcm -> L24` temporary assumption.
+  - current socket audio RX runtime no longer relies on a localized `LinearPcm -> L24` assumption;
+  - signaling/runtime/backend path now carries explicit PCM bit depth via `AudioMediaDescription::pcm_bit_depth`, `RxAudioConfig::pcm_bit_depth`, SDP `L16`/`L24` mapping, and `audio_rtp_packet_policy_from_rx_audio_config(...)`.
 - [ ] 123: Add periodic stats print (pps, drops, audio blocks/s)
 - [x] 124: Add graceful stop and cleanup reuse
 

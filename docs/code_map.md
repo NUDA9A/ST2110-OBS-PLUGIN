@@ -459,9 +459,8 @@
 ### libs/st2110core/include/st2110/rx_config.hpp
 - Роль:
     - manual/runtime RX config model для текущих MVP-path’ов.
-    - содержит video runtime config и initial audio runtime config.
-    - video runtime config now carries already-modeled runtime axes needed by backend/manual bootstrap, including scan mode and packing mode.
-    - audio runtime validation now uses an explicit runtime support policy boundary instead of hardcoding Level A values directly inside validation logic.
+    - содержит video runtime config и audio runtime config.
+    - audio runtime config now explicitly models both sample format and PCM bit depth, instead of leaving RTP wire format as a backend-local assumption.
 - Связи:
     - используется backend/video pipeline слоями;
     - используется audio signaling projection layer из `audio_signaling_rx_config.hpp`;
@@ -479,13 +478,6 @@
         - `packing_mode`
         - `is_valid()`
     - `validate_rx_video_config(const RxVideoConfig&)`
-        - validates video format/dimensions;
-        - validates frame rate;
-        - validates UDP port;
-        - validates dynamic RTP payload type;
-        - validates non-empty destination IP;
-        - validates scan mode;
-        - validates current runtime packing-mode support through `validate_runtime_video_packing_mode_support(...)`.
     - `AudioSampleFormat`
         - `LinearPcm`
     - `RxAudioConfig`
@@ -498,40 +490,29 @@
         - `local_ip`
         - `dest_ip`
         - `format`
+        - `pcm_bit_depth`
         - `is_valid()`
     - `AudioRuntimeSupportPolicy`
         - `sample_formats`
         - `conformance_ranges`
-        - explicit runtime support boundary for current/future audio runtime capabilities.
     - `audio_runtime_support::default_sample_formats`
-        - current default runtime-supported audio sample formats.
     - `audio_runtime_support::default_conformance_ranges`
-        - current default runtime-supported conformance ranges.
-        - currently contains the Level A-oriented receiver baseline.
-        - future audio level/profile support should extend this catalog rather than rewriting `validate_rx_audio_config(...)`.
     - `audio_sample_format_supported(...)`
-        - checks whether a sample format is listed by a support policy.
     - `audio_media_description_from_rx_audio_config(...)`
-        - maps runtime audio config back to modeled `AudioMediaDescription` for conformance-range matching.
+        - maps runtime audio config back to modeled `AudioMediaDescription`, including `pcm_bit_depth`.
     - `rx_audio_config_matches_any_conformance_range(...)`
-        - checks runtime audio config against a list of supported conformance ranges.
     - `validate_rx_audio_config_against_runtime_support(...)`
-        - main reusable audio runtime validation boundary;
-        - validates sample format support;
-        - validates conformance range support;
-        - derives expected `samples_per_packet` from `sampling_rate_hz` and `packet_time_us`;
+        - validates sample-format support;
+        - validates `pcm_bit_depth`;
+        - validates conformance-range support;
+        - validates derived `samples_per_packet`;
         - validates UDP port, dynamic RTP payload type, and destination IP.
     - `default_audio_rx_runtime_support_policy()`
-        - returns the current default MVP audio runtime support policy.
     - `validate_rx_audio_config(const RxAudioConfig&)`
-        - thin wrapper over `validate_rx_audio_config_against_runtime_support(...)` using `default_audio_rx_runtime_support_policy()`.
 - Примечание:
-    - `RxVideoConfig::packing_mode` closes the gap where signaling-derived video runtime config carried packing mode but manual/backend-facing config did not.
-    - current default video runtime support remains `GPM` only, but `BPM` is represented and rejected through an explicit runtime-support boundary rather than omitted from the config shape.
-    - later BPM runtime work should fill existing packing-aware branches and extend support policy, not reshape the manual/backend-facing config contract.
-    - current default audio runtime support remains Level A-oriented, but the validation path is policy-driven.
-    - adding a later supported audio conformance range should primarily extend `audio_runtime_support::default_conformance_ranges` and tests, not rewrite `validate_rx_audio_config(...)`.
-    - `samples_per_packet` is derived/validated through `config_validation::audio_samples_per_packet_from_rate_and_packet_time(...)`, not fixed as a magic constant.
+    - current default audio runtime support remains Level A-oriented, but PCM bit depth is no longer implicit;
+    - runtime config still does not encode audio buffer layout or channel reordering;
+    - `samples_per_packet` remains derived/validated through `config_validation::audio_samples_per_packet_from_rate_and_packet_time(...)`.
 
 ### libs/st2110core/include/st2110/st2110_20.hpp
 - Роль:
@@ -1590,109 +1571,58 @@
 
 ### libs/st2110core/include/st2110/audio_signaling.hpp
 - Роль:
-    - standards-aware signaling model boundary для ST 2110-30 PCM audio.
-    - задает декларативную audio stream/media-description модель отдельно от runtime `RxAudioConfig`, SDP parsing, audio buffer layout и backend transport fields.
-    - фиксирует MVP audio baseline как Level A-oriented receiver baseline.
-    - содержит structural validation boundary для текущего Level A-oriented MVP signaling.
-    - выполняет базовую validation of channel-order signaling shape and declared count so top-level `AudioStreamSignaling` validation can reject over-declared channel-order values without depending on runtime layout.
+    - standards-aware signaling/model boundary for ST 2110-30 audio.
+    - explicitly separates PCM encoding kind from PCM bit depth so SDP/media-description interpretation is not collapsed into one implicit `LinearPcm -> L24` assumption.
 - Связи:
-    - использует `Error` из `error.hpp`;
-    - используется SDP adapter/ingestion path, runtime projection path and `audio_channel_order.hpp`;
-    - не зависит от runtime audio buffer layout или backend transport fields.
+    - используется `rx_config.hpp`, `audio_signaling_rx_config.hpp`, `audio_receiver_bootstrap.hpp`, `audio_sdp_signaling_adapter.hpp`;
+    - задает signaling/media-description layer above runtime transport/backend config.
 - Сущности:
     - `AudioConformanceLevel`
-        - modeled ST 2110-30 conformance levels:
-            - `LevelA`
-            - `LevelAX`
-            - `LevelB`
-            - `LevelBX`
-            - `LevelC`
-            - `LevelCX`
     - `AudioConformanceRange`
-        - level + sampling-rate / packet-time / channel-count range description.
-    - `audio_level_a_receiver_baseline()`
-        - returns the MVP receiver baseline:
-            - `LevelA`
-            - `48000 Hz`
-            - `1000 us`
-            - `1..8 channels`.
     - `AudioPcmEncoding`
-        - currently models `LinearPcm`.
+        - `LinearPcm`
+    - `AudioPcmBitDepth`
+        - `Bits16`
+        - `Bits24`
+    - `validate_audio_pcm_bit_depth(AudioPcmBitDepth) -> Error`
+        - explicit validation boundary for modeled PCM bit depth.
     - `AudioMediaDescription`
-        - signaled audio media properties:
-            - `pcm_encoding`
-            - `sampling_rate_hz`
-            - `packet_time_us`
-            - `channel_count`.
+        - `pcm_encoding`
+        - `pcm_bit_depth`
+        - `sampling_rate_hz`
+        - `packet_time_us`
+        - `channel_count`
     - `AudioChannelOrderConvention`
-        - `Unspecified`
-        - `Smpte2110`
-        - `Other`.
     - `AudioChannelOrderSignaling`
-        - carries parsed/recognized channel-order convention plus preserved raw value.
     - `AudioStreamSignaling`
-        - top-level audio signaling object:
-            - `media`
-            - optional `channel_order`.
-    - `AudioChannelOrderDeclaredCountValidation`
-        - helper result for validating/parsing declared channel counts from SMPTE2110 channel-order symbols.
-    - `validate_audio_conformance_range(const AudioConformanceRange&)`
-        - validates conformance range shape.
+    - `audio_level_a_receiver_baseline()`
+    - `validate_audio_conformance_range(...)`
     - `audio_media_description_matches_conformance_range(...)`
-        - checks whether an audio media description matches a selected conformance range.
     - `validate_audio_media_description_against_conformance_range(...)`
-        - validates supported PCM encoding and media description against a conformance range.
-    - `audio_signaling_smpte2110_channel_order_symbol_count(...)`
-        - maps known ST 2110-30 SMPTE2110 channel grouping symbols to declared channel counts:
-            - `M` => 1
-            - `DM` => 2
-            - `ST` => 2
-            - `LtRt` => 2
-            - `51` => 6
-            - `71` => 8
-            - `222` => 24
-            - `SGRP` => 4
-            - `U01`..`U64` => indicated undefined count.
-    - `validate_smpte2110_audio_channel_order_raw_value_and_count(...)`
-        - validates `SMPTE2110.(...)` raw syntax and computes declared channel count.
+        - now validates modeled PCM bit depth in addition to encoding/rate/ptime/channel-count constraints.
     - `validate_audio_channel_order_signaling(...)`
-        - validates optional channel-order signaling when present:
-            - `Unspecified` requires empty `raw_value`;
-            - `Smpte2110` requires valid `SMPTE2110.(...)` grouping syntax;
-            - `Other` requires non-empty raw value and preserves future/unknown convention data.
     - `validate_audio_stream_signaling(...)`
-        - top-level MVP structural validation entry point;
-        - validates media description against `audio_level_a_receiver_baseline()`;
-        - validates `channel_order` only when it is present;
-        - rejects SMPTE2110 channel-order whose declared channel count is greater than signaled stream channel count;
-        - allows under-declared SMPTE2110 channel-order so the remaining channels can be treated as Undefined by `audio_channel_order.hpp`.
 - Примечание:
-    - full audio buffer layout, channel reordering/adaptation, audio RTP packet model, and backend/runtime pipeline remain separate follow-up boundaries;
-    - top-level validation now understands enough SMPTE2110 channel-order syntax to enforce declared-count consistency without making audio buffer layout assumptions.
+    - PCM bit depth is now a first-class modeled axis in signaling;
+    - channel-order semantics remain separate from PCM encoding/bit-depth semantics;
+    - runtime storage layout is still a separate boundary and is not used as a proxy for signaled wire bit depth.
 
 ### libs/st2110core/include/st2110/audio_signaling_rx_config.hpp
 - Роль:
-    - explicit adapter/projection boundary from standards-aware `AudioStreamSignaling` to runtime `RxAudioConfig`.
-    - отделяет modeled audio signaling от backend/runtime transport fields.
+    - projection from standards-aware `AudioStreamSignaling` to backend/manual-facing `RxAudioConfig`.
+    - keeps signaled PCM bit depth explicit when moving from SDP/signaling layer into runtime/backend config.
 - Связи:
-    - использует `audio_signaling.hpp` for modeled ST 2110-30 audio signaling;
-    - использует `rx_config.hpp` for runtime audio config;
-    - использует `config_validation.hpp` for derived `samples_per_packet`.
+    - использует `audio_signaling.hpp`, `config_validation.hpp`, `rx_config.hpp`;
+    - потребляется `audio_receiver_bootstrap.hpp` и future backend/bootstrap layers.
 - Сущности:
-    - `rx_audio_config_from_audio_stream_signaling(...) -> std::expected<RxAudioConfig, Error>`
-        - validates `AudioStreamSignaling` first;
-        - derives `samples_per_packet` from signaled `sampling_rate_hz` and `packet_time_us`;
-        - injects local runtime/transport fields explicitly:
-            - `udp_port`;
-            - `payload_type`;
-            - `local_ip`;
-            - `dest_ip`;
-            - runtime `AudioSampleFormat`;
-        - validates final `RxAudioConfig` through the runtime support boundary.
+    - `rx_audio_config_from_audio_stream_signaling(const AudioStreamSignaling&, uint16_t udp_port, uint8_t payload_type, std::string local_ip, std::string dest_ip, AudioSampleFormat format = AudioSampleFormat::LinearPcm) -> std::expected<RxAudioConfig, Error>`
+        - validates signaling;
+        - derives `samples_per_packet` from `sampling_rate_hz` + `packet_time_us`;
+        - projects transport fields and runtime sample format;
+        - projects `signaling.media.pcm_bit_depth` into `RxAudioConfig::pcm_bit_depth`;
+        - validates the resulting runtime config before returning it.
 - Примечание:
-    - transport/network fields stay outside the signaling model;
-    - the projection path does not hardcode `samples_per_packet = 48`;
-    - future channel mapping / runtime layout adaptation should extend this adapter or adjacent dedicated boundaries without changing the signaling model shape.
+    - bit depth is now preserved through signaling-to-runtime projection rather than being reselected later inside the backend.
 
 ### libs/st2110core/include/st2110/audio_receiver_bootstrap.hpp
 - Роль:
@@ -1787,44 +1717,29 @@
 
 ### libs/st2110core/include/st2110/audio_sdp_signaling_adapter.hpp
 - Роль:
-    - explicit adapter layer от raw parsed audio SDP media section к modeled `AudioStreamSignaling`.
-    - отделяет raw SDP parsing от audio signaling model validation и от runtime/backend projection.
-    - является промежуточным слоем audio SDP ingestion path: raw SDP boundary уже выбран, но runtime `RxAudioConfig`, transport fields, backend/socket behavior и audio buffer layout сюда не попадают.
+    - adapter from raw parsed audio SDP media-section data to modeled `AudioStreamSignaling`.
+    - explicitly derives both PCM encoding kind and PCM bit depth from SDP `a=rtpmap` encoding names such as `L16` / `L24`.
 - Связи:
-    - использует `audio_sdp_media_section.hpp` как источник `RawAudioSdpMediaSection`;
-    - использует `audio_signaling.hpp` как целевую standards-aware audio signaling model;
-    - использует `Error`;
-    - используется final audio SDP ingestion entry point из `audio_sdp_ingestion.hpp`.
+    - использует `audio_sdp_media_section.hpp`, `audio_signaling.hpp`, `error.hpp`;
+    - sits between raw SDP parsing and signaling/runtime projection.
 - Сущности:
-    - `audio_sdp_ascii_lower(char) -> char`
-        - ASCII-only helper для case-insensitive token comparison.
-    - `audio_sdp_ascii_iequals(std::string_view, std::string_view) -> bool`
-        - ASCII-only case-insensitive comparison helper для SDP audio tokens.
+    - `audio_sdp_ascii_lower(...)`
+    - `audio_sdp_ascii_iequals(...)`
+    - `audio_pcm_bit_depth_from_raw_audio_sdp_rtpmap_encoding_name(std::string_view) -> std::expected<AudioPcmBitDepth, Error>`
+        - maps `L16` -> `Bits16`;
+        - maps `L24` -> `Bits24`;
+        - rejects empty token as `InvalidValue`;
+        - rejects unsupported encodings as `Unsupported`.
     - `audio_pcm_encoding_from_raw_audio_sdp_rtpmap_encoding_name(std::string_view) -> std::expected<AudioPcmEncoding, Error>`
-        - maps currently supported raw SDP RTP encoding names:
-            - `L24` -> `AudioPcmEncoding::LinearPcm`;
-            - `L16` -> `AudioPcmEncoding::LinearPcm`;
-        - returns `Unsupported` for unsupported encodings;
-        - returns `InvalidValue` for empty encoding names.
-    - `audio_channel_order_signaling_from_raw_audio_sdp_value(std::string_view) -> AudioChannelOrderSignaling`
-        - maps raw `channel-order` value into modeled channel-order signaling:
-            - `SMPTE2110.*` -> `AudioChannelOrderConvention::Smpte2110`;
-            - other non-empty values -> `AudioChannelOrderConvention::Other`;
-        - preserves original raw value.
+    - `audio_channel_order_signaling_from_raw_audio_sdp_value(...)`
     - `audio_stream_signaling_from_raw_audio_sdp_media_section(const RawAudioSdpMediaSection&) -> std::expected<AudioStreamSignaling, Error>`
-        - validates that selected payload type belongs to the selected media section payload list;
-        - requires selected parsed `rtpmap`;
-        - requires `rtpmap` sampling rate;
-        - requires explicit `rtpmap` channel count;
-        - requires parsed `ptime`;
-        - maps encoding / sampling rate / packet time / channel count into `AudioMediaDescription`;
-        - maps optional payload-bound `fmtp channel-order=...` into `AudioChannelOrderSignaling`;
-        - validates the final `AudioStreamSignaling` through `validate_audio_stream_signaling(...)`;
-        - keeps UDP port, IP addresses, socket/backend fields, runtime sample format injection, `RxAudioConfig` projection, and audio buffer/channel layout outside this adapter.
+        - validates selected payload binding and required raw fields;
+        - maps RTP encoding token to both `pcm_encoding` and `pcm_bit_depth`;
+        - preserves payload-bound channel-order signaling;
+        - finishes with `validate_audio_stream_signaling(...)`.
 - Примечание:
-    - this is a signaling adapter only;
-    - final SDP entry point lives in `audio_sdp_ingestion.hpp`;
-    - runtime projection, backend bootstrap, and channel-layout/reordering behavior remain separate follow-up boundaries.
+    - the SDP adapter no longer collapses `L16` and `L24` into the same signaling shape;
+    - unknown/unsupported RTP encodings still remain rejected through the adapter boundary.
 
 ### libs/st2110core/include/st2110/audio_sdp_ingestion.hpp
 - Роль:
@@ -1959,68 +1874,41 @@
 
 ### libs/st2110core/include/st2110/audio_packet.hpp
 - Роль:
-    - first explicit audio RTP packet model and minimal RTP parser integration boundary for the MVP ST 2110-30 audio path.
-    - separates wire-level PCM packet interpretation from:
-        - generic RTP parsing mechanics;
-        - `AudioBuffer` / `AudioFrameView` storage layout;
-        - channel-order / channel-mapping semantics;
-        - SDP parsing / SDP ingestion;
-        - jitter/reorder;
-        - playout timing;
-        - socket / MTL backend behavior.
+    - normalized audio RTP packet policy/view layer.
+    - keeps explicit separation between runtime-configured PCM bit depth and RTP wire-format width in octets.
 - Связи:
-    - uses `RtpHeaderView`, `parse_rtp_header(...)`, and `rtp_payload_span(...)` from `rtp.hpp`;
-    - uses `ByteSpan` from `bytes.hpp` for non-owning RTP datagram/payload bytes;
-    - uses `RxAudioConfig` from `rx_config.hpp` to derive a runtime packet policy from the existing validated audio runtime config;
-    - uses `Error` for localized validation failures.
+    - использует `rtp.hpp`, `rx_config.hpp`, `bytes.hpp`, `error.hpp`;
+    - используется `audio_frame_assembler.hpp`, `test_audio_rtp_parser.cpp`, `socket_rx_audio_backend.hpp`.
 - Сущности:
     - `AudioPcmWireFormat`
-        - explicit wire PCM sample packing axis:
-            - `L16`;
-            - `L24`.
-        - intentionally separate from internal `AudioSampleStorageFormat::InterleavedS32` and from generic `AudioSampleFormat::LinearPcm`.
+        - `L16`
+        - `L24`
     - `AudioRtpPacketPolicy`
-        - packet-level runtime interpretation policy:
-            - `sampling_rate_hz`;
-            - `channel_count`;
-            - `samples_per_packet`;
-            - expected RTP `payload_type`;
-            - `wire_format`.
+        - `sampling_rate_hz`
+        - `channel_count`
+        - `samples_per_packet`
+        - `payload_type`
+        - `wire_format`
     - `AudioRtpPacketView`
-        - non-owning audio RTP packet view:
-            - parsed RTP header;
-            - payload bytes;
-            - sampling rate;
-            - channel count;
-            - samples per channel;
-            - wire PCM format.
-    - `audio_pcm_wire_sample_bytes(AudioPcmWireFormat)`
-        - maps wire PCM format to bytes per sample:
-            - `L16` => 2;
-            - `L24` => 3;
-            - invalid enum => `InvalidValue`.
-    - `audio_rtp_packet_policy_from_rx_audio_config(const RxAudioConfig&, AudioPcmWireFormat)`
-        - validates `RxAudioConfig`;
-        - derives packet policy fields from runtime config plus explicit wire format.
+        - `rtp`
+        - `payload`
+        - `sampling_rate_hz`
+        - `channel_count`
+        - `samples_per_channel`
+        - `wire_format`
+    - `audio_pcm_wire_sample_bytes(AudioPcmWireFormat) -> std::expected<std::size_t, Error>`
+    - `audio_pcm_wire_format_from_bit_depth(AudioPcmBitDepth) -> std::expected<AudioPcmWireFormat, Error>`
+        - maps explicit runtime PCM bit depth to RTP wire format.
+    - `audio_rtp_packet_policy_from_rx_audio_config(const RxAudioConfig&) -> std::expected<AudioRtpPacketPolicy, Error>`
+        - validates runtime audio config;
+        - derives `wire_format` from `cfg.pcm_bit_depth`;
+        - does not require a backend-local wire-format override parameter.
     - `audio_rtp_packet_payload_size_bytes(const AudioRtpPacketPolicy&)`
-        - derives expected RTP payload byte size from samples-per-packet, channel count, and wire bytes per sample.
-    - `make_audio_rtp_packet_view(const RtpHeaderView&, ByteSpan, const AudioRtpPacketPolicy&)`
-        - validates RTP payload type admission against the packet policy;
-        - validates exact payload byte size;
-        - returns a non-owning `AudioRtpPacketView`.
+    - `make_audio_rtp_packet_view(...)`
     - `parse_audio_rtp_packet_view(ByteSpan, const AudioRtpPacketPolicy&)`
-        - minimal audio RTP parser integration entry point;
-        - parses RTP header through `parse_rtp_header(...)`;
-        - derives payload span through `rtp_payload_span(...)`;
-        - validates/constructs audio packet view through `make_audio_rtp_packet_view(...)`;
-        - preserves RTP metadata without interpreting audio block, marker, timestamp, jitter, or playout semantics.
 - Примечание:
-    - this file does not implement a separate audio-specific RTP header parser;
-    - it does not interpret RTP marker as an audio block/frame boundary;
-    - it does not map RTP timestamps to internal `TimestampNs`;
-    - it does not create `AudioBuffer` or perform channel reordering;
-    - it inherits CSRC/header-extension tolerance from the existing RTP parsing boundary;
-    - later tasks should integrate this boundary into audio reorder/jitter handling, block assembly, timestamp/playout layers, and backend receive paths without changing the storage or SDP model shape.
+    - packet-policy construction no longer bakes in a temporary `LinearPcm -> L24` assumption;
+    - payload sizing remains driven by `samples_per_packet * channel_count * wire-sample-bytes`.
 
 ### libs/st2110core/include/st2110/audio_reorder_buffer.hpp
 - Роль:
@@ -2277,62 +2165,31 @@
 
 ### libs/st2110core/include/st2110/socket_rx_audio_backend.hpp
 - Роль:
-    - final socket audio RX backend поверх общего `SocketRxSingleMediaBackendBase`.
-    - current scope now includes real audio packet/runtime integration:
-        - audio RTP packet parsing;
-        - audio reorder buffering;
-        - audio block assembly;
-        - audio RTP timestamp mapping;
-        - sink delivery of assembled audio blocks.
+    - concrete socket-based audio receive backend over the common single-media socket runtime base.
+    - consumes explicit runtime audio signaling/projection results without reintroducing a backend-local hardcoded wire-format assumption.
 - Связи:
-    - наследует общий socket lifecycle/runtime/state/stats from `SocketRxSingleMediaBackendBase`;
-    - использует:
-        - `audio_packet.hpp`;
-        - `audio_reorder_buffer.hpp`;
-        - `audio_frame_assembler.hpp`;
-        - `audio_timestamp_mapping.hpp`;
-        - `socket_rx_open_config_from_audio_config(...)`.
+    - использует `audio_frame_assembler.hpp`, `audio_packet.hpp`, `audio_reorder_buffer.hpp`, `audio_timestamp_mapping.hpp`, `backend.hpp`, `backend_factory.hpp`, `packet_parse.hpp`, `socket_runtime.hpp`, `socket_rx_single_media_backend_base.hpp`;
+    - получает transport/runtime config из `RxAudioConfig`.
 - Сущности:
     - `SocketRxAudioBackend`
-        - `start_audio(const RxAudioConfig&, IAudioFrameSink&)`
-            - validates common lifecycle preconditions;
-            - projects `RxAudioConfig` to `SocketRxOpenConfig`;
-            - creates socket port through the common factory boundary;
-            - builds audio-specific runtime objects and starts shared socket runtime.
-        - audio-specific runtime state:
-            - `packet_parse_policy_`;
-            - `audio_packet_policy_`;
-            - `audio_wire_format_`;
-            - `reorder_buffer_`;
-            - `audio_frame_assembler_`;
-            - `audio_timestamp_mapper_`;
-            - `audio_sink_`;
-            - `configured_audio_payload_type_`;
-            - `configured_sampling_rate_hz_`;
-            - `configured_packet_time_us_`;
-            - `configured_samples_per_packet_`;
-            - `configured_channel_count_`.
-        - audio-specific helpers/hooks:
-            - `clear_media_runtime_objects()`;
-            - `process_received_datagram(ByteSpan)`;
-            - `build_packet_parse_policy(const RxAudioConfig&)`;
-            - `build_open_config(const RxAudioConfig&)`;
-            - `build_audio_packet_policy(...)`;
-            - `build_audio_frame_assembler_config(...)`;
-            - `select_audio_wire_format(...)`;
-            - `build_audio_reorder_buffer_config(...)`;
-            - `build_audio_timestamp_mapper_config(...)`;
-            - `start_audio_runtime(...)`;
-            - `drain_reorder_buffer_to_sink()`;
-            - `deliver_assembled_audio_block(...)`;
-            - `map_block_timestamp_ns(...)`.
+        - `start_audio(const RxAudioConfig&, IAudioFrameSink&) -> RxBackendLifecycleResult`
+        - `process_received_datagram(ByteSpan) noexcept`
+        - `clear_media_runtime_objects() noexcept`
+        - `build_open_config(const RxAudioConfig&)`
+        - `build_audio_packet_policy(const RxAudioConfig&)`
+            - delegates to `audio_rtp_packet_policy_from_rx_audio_config(...)`;
+            - therefore uses explicit `pcm_bit_depth` from runtime config.
+        - `build_audio_frame_assembler_config(const RxAudioConfig&)`
+        - `start_audio_runtime(...)`
+        - `drain_reorder_buffer_to_sink() noexcept`
+        - `deliver_assembled_audio_block(...) noexcept`
+        - `map_block_timestamp_ns(...) noexcept`
+        - `build_audio_reorder_buffer_config(...)`
+        - `build_audio_timestamp_mapper_config(...)`
     - `SocketRxAudioBackendFactory`
-        - advertises `Socket` + `video_rx=false` + `audio_rx=true`;
-        - creates one `SocketRxAudioBackend`.
 - Примечание:
-    - RTCP tolerance and configured RTP payload-type admission are localized in the socket audio datagram receive path before audio parser/reorder/assembler use;
-    - audio delivery increments backend `media_units_delivered` but does not use `frames_delivered`;
-    - current backend wire-format selection is explicitly localized through `select_audio_wire_format(...)` and remains a temporary support boundary until an explicit runtime/signaling bit-depth axis is modeled.
+    - backend no longer contains a private `select_audio_wire_format(...)` that hardcodes `LinearPcm -> L24`;
+    - explicit audio wire-format selection now lives in the already-modeled signaling/runtime/packet-policy path.
 
 ### libs/st2110core/include/st2110/socket_runtime.hpp
 - Роль:

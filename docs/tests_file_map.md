@@ -89,7 +89,7 @@
         - `VideoPackingMode::Gpm` accepted;
         - `VideoPackingMode::Bpm` represented but rejected as `Unsupported` by current MVP runtime support;
         - invalid packing-mode enum rejected as `InvalidValue`.
-    - проверяет initial `RxAudioConfig` runtime validation:
+    - проверяет `RxAudioConfig` runtime validation:
         - Level A-oriented default runtime support;
         - channel count bounds;
         - sample rate / packet time validation through runtime support policy;
@@ -98,7 +98,8 @@
         - dynamic RTP payload type;
         - destination IP requirement;
         - local IP allowed to be empty;
-        - unsupported audio sample format rejection.
+        - unsupported audio sample format rejection;
+        - explicit `pcm_bit_depth` validation for `Bits16` / `Bits24` and rejection of invalid bit-depth enum values.
     - проверяет architecture property for audio runtime support:
         - `validate_rx_audio_config(...)` is a thin default-policy wrapper;
         - `validate_rx_audio_config_against_runtime_support(...)` can validate a custom support policy without rewriting default validation;
@@ -671,12 +672,15 @@
         - valid Level A stereo projection;
         - min/max Level A channel counts;
         - channel-order presence not leaking into runtime buffer layout yet;
+        - projection of signaled `pcm_bit_depth` into `RxAudioConfig::pcm_bit_depth`;
         - invalid signaling rejection;
         - bad UDP port;
         - bad RTP payload type;
         - empty destination IP;
-        - unsupported runtime audio sample format.
-    - фиксирует, что `samples_per_packet` выводится из `sampling_rate_hz` + `packet_time_us`, а не задается как hardcoded runtime constant.
+        - unsupported runtime audio sample format rejection.
+    - фиксирует, что:
+        - `samples_per_packet` выводится из `sampling_rate_hz` + `packet_time_us`, а не задается как hardcoded runtime constant;
+        - runtime audio bit depth is now carried explicitly from signaling instead of being inferred later inside the backend.
 
 ### tests/audio_signaling_model_test.cpp
 - Роль:
@@ -757,9 +761,10 @@
 - Роль:
     - проверяет adapter from raw parsed audio SDP media section to `AudioStreamSignaling`.
     - покрывает:
-        - valid Level A stereo raw SDP mapping;
+        - valid Level A raw SDP mapping;
         - valid Level A min/max channel counts;
         - mapping of `L24` / `L16` RTP encoding names to `AudioPcmEncoding::LinearPcm`;
+        - explicit mapping of `L24` / `L16` RTP encoding names to `AudioPcmBitDepth::{Bits24, Bits16}`;
         - rejection of unsupported encoding names through `Unsupported`;
         - rejection of missing `ptime`;
         - rejection of missing explicit channel count in selected `rtpmap`;
@@ -787,67 +792,32 @@
 
 ### tests/test_audio_packet.cpp
 - Роль:
-    - проверяет first audio RTP packet model boundary introduced for MVP audio packet/depacketize path.
-- Покрывает:
-    - `AudioPcmWireFormat` wire-format axis:
-        - `L16`;
-        - `L24`;
-        - invalid enum rejection.
-    - `audio_rtp_packet_policy_from_rx_audio_config(...)`:
-        - derives packet policy from validated `RxAudioConfig`;
-        - preserves sampling rate, channel count, samples per packet, payload type, and explicit wire format.
-    - `audio_rtp_packet_payload_size_bytes(...)`:
-        - derives payload byte size from `samples_per_packet * channel_count * wire_sample_bytes`;
-        - proves payload sizing is not hardcoded to `48`, stereo, or L24-only behavior.
-    - `make_audio_rtp_packet_view(...)`:
-        - accepts matching RTP payload type and exact payload size;
-        - preserves RTP timestamp/marker metadata without interpreting marker as an audio block boundary;
-        - returns a non-owning payload view;
-        - rejects payload type mismatch;
-        - rejects payload size mismatch.
-- Фиксирует:
-    - audio RTP packet model remains separate from:
-        - internal `AudioBuffer` / `AudioFrameView` storage;
-        - `InterleavedS32` layout;
-        - channel-order parsing / reordering;
-        - SDP ingestion;
-        - RTP timestamp mapping;
-        - jitter/reorder;
-        - socket / MTL backend behavior.
+    - проверяет audio RTP packet policy/view boundary.
+    - покрывает:
+        - explicit wire-sample byte sizes for `AudioPcmWireFormat::{L16, L24}`;
+        - derivation of `AudioPcmWireFormat` from `RxAudioConfig::pcm_bit_depth`;
+        - preservation of runtime axes in `AudioRtpPacketPolicy`;
+        - payload-size calculation for both `L24` and `L16`;
+        - rejection of inconsistent `samples_per_packet`;
+        - packet-view construction with matching RTP payload type and payload size;
+        - rejection of payload-type mismatch;
+        - rejection of payload-size mismatch.
+    - фиксирует:
+        - packet policy no longer takes a backend-supplied temporary wire-format override;
+        - runtime bit depth now drives RTP wire-format policy explicitly.
 
 ### tests/test_audio_rtp_parser.cpp
 - Роль:
-    - проверяет minimal audio RTP parser integration entry point.
-- Покрывает:
-    - `parse_audio_rtp_packet_view(...)` composition over existing RTP helpers:
-        - `parse_rtp_header(...)`;
-        - `rtp_payload_span(...)`;
-        - `make_audio_rtp_packet_view(...)`.
-    - valid L24 audio RTP packet parsing;
-    - valid L16 audio RTP packet parsing;
-    - RTP metadata preservation:
-        - marker;
-        - payload type;
-        - sequence number;
-        - timestamp;
-        - SSRC;
-        - payload offset.
-    - CSRC and RTP header-extension tolerance through the existing RTP parsing boundary;
-    - payload type mismatch rejection;
-    - payload size mismatch rejection;
-    - short RTP packet rejection;
-    - bad RTP version rejection.
-- Фиксирует:
-    - audio parser integration does not duplicate RTP parsing;
-    - payload type admission remains stream-specific policy, separate from generic RTP parsing;
-    - RTP marker and timestamp are preserved but not interpreted;
-    - parser integration remains separate from:
-        - jitter/reorder;
-        - audio block assembly;
-        - timestamp mapping to `TimestampNs`;
-        - `AudioBuffer` creation;
-        - channel-order mapping / reordering;
-        - socket / MTL backend behavior.
+    - проверяет full audio RTP parser path on top of `AudioRtpPacketPolicy`.
+    - покрывает:
+        - valid `L24` audio RTP packet parsing;
+        - valid `L16` audio RTP packet parsing;
+        - preservation of parsed `wire_format` in `AudioRtpPacketView`;
+        - RTP payload extraction with CSRC + header extension present;
+        - payload-type mismatch rejection;
+        - payload-size mismatch rejection;
+        - short RTP packet rejection;
+        - bad RTP version rejection before audio-payload policy acceptance.
 
 ## Audio reorder / jitter MVP
 
@@ -873,40 +843,17 @@
 
 ### tests/test_audio_frame_assembler.cpp
 - Роль:
-    - проверяет MVP audio frame/block assembly boundary over already-validated `AudioRtpPacketView`.
-- Покрывает:
-    - `AudioFrameAssembler` valid L16 packet assembly into `AudioBuffer`;
-    - `AudioFrameAssembler` valid L24 packet assembly into `AudioBuffer`;
-    - signed big-endian PCM decoding behavior:
-        - positive values;
-        - zero;
-        - negative L16 sign extension;
-        - negative L24 sign extension.
-    - interleaved sample placement by `(sample_index, channel)`;
-    - assembled block metadata preservation:
-        - RTP timestamp;
-        - RTP sequence number;
-        - RTP marker bit.
-    - exact payload-size validation;
-    - invalid packet dimensions rejection;
-    - invalid assembler storage-format rejection;
-    - invalid wire format rejection;
-    - assembler stats:
-        - packets used;
-        - packets rejected;
-        - blocks emitted;
-        - reset clears stats.
-- Фиксирует:
-    - audio frame/block assembly consumes validated audio RTP packet views rather than parsing RTP itself;
-    - payload sizing is derived from packet dimensions and wire-format bytes per sample, not from hardcoded `48`, stereo-only, or L24-only assumptions;
-    - RTP marker is preserved as metadata but not interpreted as an audio block boundary;
-    - assembly remains separate from:
-        - RTP parsing;
-        - reorder/jitter;
-        - RTP timestamp mapping;
-        - playout/release policy;
-        - channel-order mapping / reordering;
-        - socket / MTL backend behavior.
+    - проверяет audio packet-to-block assembly into current MVP storage layout `InterleavedS32`.
+    - покрывает:
+        - `L24` wire-sample decode into signed 32-bit interleaved storage;
+        - `L16` wire-sample decode into signed 32-bit interleaved storage;
+        - non-stereo / non-48-sample block handling without hardcoded assumptions;
+        - payload-size mismatch rejection;
+        - invalid packet-shape rejection;
+        - stats accounting and `reset()` reusability.
+    - фиксирует:
+        - current storage layout remains separate from RTP wire-format width;
+        - explicit `AudioPcmWireFormat` survives far enough to drive actual sample decoding.
 
 ### tests/test_audio_stats.cpp
 - Роль:
