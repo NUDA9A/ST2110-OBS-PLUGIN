@@ -274,6 +274,8 @@ class LinuxSocketRxPort final : public ISocketRxPort {
     }
 
     static Error close_native_socket(const int native_socket) noexcept {
+        (void)::shutdown(native_socket, SHUT_RDWR);
+
         if (::close(native_socket) != 0) {
             return Error::SystemFailure;
         }

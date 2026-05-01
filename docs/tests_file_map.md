@@ -945,7 +945,7 @@
 
 ### tests/test_socket_rx_video_backend.cpp
 - Роль:
-    - проверяет lifecycle, config projection, and default-factory behavior of socket video backend through injected and real Linux socket-port paths.
+    - проверяет lifecycle, config projection, datagram receive composition, and default-factory behavior of socket video backend through injected and real Linux socket-port paths.
 - Покрывает:
     - injected-factory path:
         - IPv4 multicast projection;
@@ -956,15 +956,21 @@
         - null created port rejection;
         - close-failure behavior during `stop()`;
         - restart after successful stop.
+    - backend receive-path composition:
+        - reordered packet delivery into the existing video receive pipeline;
+        - explicit RTCP-like/control datagram ignore behavior;
+        - explicit RTP payload-type admission;
+        - malformed media datagram drop behavior;
+        - RTP timestamp mapping before sink delivery.
     - factory/default path:
         - descriptor and backend-creation shape;
         - Linux default backend bind-failure path on real Linux socket port;
-        - Linux default backend successful IPv4 multicast start/stop path;
-        - Linux default backend recovery after real multicast join failure.
+        - Linux default backend recovery after multicast join failure;
+        - Linux default backend successful IPv4 unicast frame receive path.
 - Фиксирует:
-    - default Linux `SocketRxVideoBackend` is now usable with IPv4 multicast RX configs through the real Linux socket runtime implementation;
-    - multicast join failure is surfaced through backend lifecycle results without corrupting backend stopped/retryable state;
-    - injected-factory constructor remains the explicit test/runtime seam.
+    - `SocketRxVideoBackend` now feeds the existing packet/reorder/video-receive pipeline from socket datagrams;
+    - datagram classification and stream admission are explicit local backend boundaries rather than parser-side accidents;
+    - timestamp mapping remains a separate layer from socket runtime and separate from playout timing.
 
 ### tests/test_socket_runtime_interface.cpp
 - Роль:

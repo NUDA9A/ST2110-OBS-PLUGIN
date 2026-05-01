@@ -2176,48 +2176,83 @@
 ### libs/st2110core/include/st2110/socket_rx_video_backend.hpp
 - Роль:
     - socket video backend поверх OS-neutral socket runtime boundary;
-    - задает backend-facing lifecycle/open-config path без зашивания concrete Linux/stub port headers в public header.
+    - теперь не только открывает socket receive-port, но и композиционно соединяет socket receive path, packet admission/parsing, reorder, video receive pipeline, RTP timestamp mapping и final sink delivery.
 - Связи:
-    - использует `backend.hpp`, `backend_factory.hpp`, `socket_runtime.hpp`;
-    - default port-factory selection делегируется в localized helper `make_default_port_factory()`;
-    - concrete platform selection реализуется в `libs/st2110core/src/socket_rx_video_backend.cpp`;
-    - injected `ISocketRxPortFactory` ctor остается explicit seam для тестов и будущих runtime/platform variants.
+    - использует `backend.hpp`, `backend_factory.hpp`, `bytes.hpp`, `socket_runtime.hpp`;
+    - использует `packet_parse.hpp` для packet-size policy и `PacketView` parsing;
+    - использует `fixed_reorder_buffer.hpp` / `IReorderBuffer` как reorder boundary;
+    - использует `video_receive_pipeline.hpp` для depacketizer + reconstructor composition;
+    - использует `video_timestamp_mapping.hpp` для RTP timestamp -> `TimestampNs` mapping;
+    - default factory selection локализована в `libs/st2110core/src/socket_rx_video_backend.cpp`.
 - Сущности:
     - `SocketRxVideoBackend`
         - `SocketRxVideoBackend()`
             - default ctor;
-            - инициализирует backend через `make_default_port_factory()`.
+            - инициализирует backend через localized `make_default_port_factory()`.
         - `SocketRxVideoBackend(std::unique_ptr<ISocketRxPortFactory>)`
-            - injected-factory seam.
+            - injected-factory seam для тестов и future runtime/platform variants.
         - `backend_name()`
         - `stop()`
+            - closes socket runtime, joins receive thread, then clears backend-local runtime objects.
         - `capabilities()`
         - `start_video(const RxVideoConfig&, IVideoFrameSink&)`
+            - validates config/runtime dependencies;
+            - creates port;
+            - delegates transactional runtime startup to `start_video_runtime(...)`.
         - `state()`
-        - `make_default_port_factory()`
-            - private helper;
-            - localized default runtime dependency selection boundary.
+        - private startup/runtime helpers:
+            - `build_packet_parse_policy(...)`
+            - `build_video_receive_pipeline_config(...)`
+            - `make_reorder_buffer()`
+            - `make_receive_buffer(...)`
+            - `start_video_runtime(...)`
+            - `run_video_receive_loop(...)`
+            - `process_received_datagram(...)`
+            - `drain_reorder_buffer_to_sink()`
+            - `deliver_reconstructed_frame(...)`
+            - `map_frame_timestamp_ns(...)`
+            - `make_default_port_factory()`
     - `SocketRxVideoBackendFactory`
         - advertises socket video backend descriptor;
         - `create_backend()` constructs default `SocketRxVideoBackend`.
 - Примечание:
-    - backend public API unchanged;
-    - platform selection no longer leaks through public-header includes;
-    - default backend path now uses a localized factory-selection helper instead of hardwired stub construction.
+    - explicit local datagram classification and payload-type admission now live in backend implementation instead of being buried inside parser failures;
+    - socket runtime, packet parsing, reorder/pipeline reconstruction, and timestamp mapping remain separate layers.
 
 ### libs/st2110core/src/socket_rx_video_backend.cpp
 - Роль:
-    - implementation-side localization point для default socket RX port factory selection.
+    - implementation-side composition point for default socket RX port factory selection and backend-local socket video receive runtime.
 - Связи:
     - включает `st2110/socket_rx_video_backend.hpp`;
     - включает `st2110/socket_stub_rx_port.hpp`;
     - на Linux build’ах conditionally включает `st2110/linux_socket_rx_port.hpp`.
 - Сущности:
     - `SocketRxVideoBackend::make_default_port_factory()`
-        - возвращает `make_linux_socket_rx_port_factory()` на `__linux__`;
-        - иначе возвращает `make_socket_stub_rx_port_factory()`.
+        - returns Linux socket port factory on `__linux__`;
+        - otherwise returns stub factory.
+    - `SocketRxVideoBackend::build_packet_parse_policy(...)`
+        - localized backend packet-parse policy boundary.
+    - `SocketRxVideoBackend::build_video_receive_pipeline_config(...)`
+        - projects `RxVideoConfig` into runtime pipeline config;
+        - keeps `PartialFramePolicy::Drop` at backend delivery boundary.
+    - `SocketRxVideoBackend::make_reorder_buffer()`
+        - constructs fixed-window reorder implementation.
+    - `SocketRxVideoBackend::make_receive_buffer(...)`
+        - allocates UDP-payload receive buffer from packet-size policy.
+    - `SocketRxVideoBackend::start_video_runtime(...)`
+        - transactional runtime startup for socket port + reorder + pipeline + timestamp mapper + receive thread.
+    - `SocketRxVideoBackend::run_video_receive_loop(...)`
+        - blocking datagram receive loop over `ISocketRxPort::receive(...)`.
+    - backend-local helpers for explicit datagram handling:
+        - RTCP-like datagram classification;
+        - payload-type admission;
+        - `process_received_datagram(...)`;
+        - `drain_reorder_buffer_to_sink()`;
+        - `deliver_reconstructed_frame(...)`;
+        - `map_frame_timestamp_ns(...)`.
 - Примечание:
-    - concrete platform branching локализован в `.cpp`, а не в public header и не в app/bootstrap code.
+    - backend now feeds the existing packet/reorder/video-receive pipeline from real socket datagrams without collapsing socket/runtime failures into parser failures;
+    - RTP timestamp mapping remains separate from socket receive and separate from playout timing policy.
 
 ### libs/st2110core/include/st2110/socket_runtime.hpp
 - Роль:
@@ -2347,4 +2382,5 @@
 - Примечание:
     - IPv4 unicast and IPv4 multicast are supported through the existing runtime boundary;
     - IPv6 unicast remains supported;
-    - IPv6 multicast remains explicitly localized as `Unsupported` in the Linux runtime implementation rather than being erased from the boundary or pushed upward into backend/app code.
+    - IPv6 multicast remains explicitly localized as `Unsupported`;
+    - native close path now uses shutdown-before-close so backend stop can reliably unblock a blocking receive loop.

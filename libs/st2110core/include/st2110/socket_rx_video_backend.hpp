@@ -3,9 +3,17 @@
 
 #include "backend.hpp"
 #include "backend_factory.hpp"
+#include "bytes.hpp"
+#include "fixed_reorder_buffer.hpp"
+#include "packet_parse.hpp"
 #include "socket_runtime.hpp"
+#include "video_receive_pipeline.hpp"
+#include "video_timestamp_mapping.hpp"
 
 #include <memory>
+#include <optional>
+#include <thread>
+#include <vector>
 
 namespace st2110 {
 class SocketRxVideoBackend final : public IRxVideoBackend {
@@ -22,15 +30,14 @@ class SocketRxVideoBackend final : public IRxVideoBackend {
             return state_;
         }
 
-        if (port_ != nullptr) {
-            if (port_->is_open()) {
-                if (Error err = port_->close(); err != Error::Ok) {
-                    return std::unexpected(err);
-                }
+        if (port_ != nullptr && port_->is_open()) {
+            if (Error err = port_->close(); err != Error::Ok) {
+                return std::unexpected(err);
             }
-
-            clear_runtime_objects();
         }
+
+        receive_thread_ = std::jthread{};
+        clear_runtime_objects();
 
         return state_;
     }
@@ -59,13 +66,27 @@ class SocketRxVideoBackend final : public IRxVideoBackend {
             return std::unexpected(Error::InvalidValue);
         }
 
-        (void)sink;
-        return open_port_for_video(*open_cfg, std::move(port));
+        return start_video_runtime(cfg, sink, *open_cfg, std::move(port));
     }
 
     [[nodiscard]] RxBackendState state() const override { return state_; }
 
   private:
+    [[nodiscard]] static PacketParsePolicy build_packet_parse_policy(const RxVideoConfig &cfg) noexcept;
+    [[nodiscard]] static VideoReceivePipelineConfig build_video_receive_pipeline_config(const RxVideoConfig &cfg);
+    [[nodiscard]] static std::unique_ptr<IReorderBuffer> make_reorder_buffer();
+    [[nodiscard]] static std::vector<std::uint8_t> make_receive_buffer(const PacketParsePolicy &policy);
+
+    RxBackendLifecycleResult start_video_runtime(const RxVideoConfig &cfg, IVideoFrameSink &sink,
+                                                 const SocketRxOpenConfig &open_cfg,
+                                                 std::unique_ptr<ISocketRxPort> port);
+
+    void run_video_receive_loop(std::stop_token stop_token) noexcept;
+    void process_received_datagram(ByteSpan udp_payload) noexcept;
+    void drain_reorder_buffer_to_sink() noexcept;
+    void deliver_reconstructed_frame(ReconstructedVideoFrame &&frame) noexcept;
+    [[nodiscard]] TimestampNs map_frame_timestamp_ns(uint32_t rtp_timestamp) noexcept;
+
     [[nodiscard]] static std::unique_ptr<ISocketRxPortFactory> make_default_port_factory();
 
     [[nodiscard]] Error validate_runtime_dependencies() const noexcept {
@@ -87,25 +108,30 @@ class SocketRxVideoBackend final : public IRxVideoBackend {
 
     [[nodiscard]] std::unique_ptr<ISocketRxPort> create_port() const { return port_factory_->create_port(); }
 
-    RxBackendLifecycleResult open_port_for_video(const SocketRxOpenConfig &open_cfg,
-                                                 std::unique_ptr<ISocketRxPort> port) {
-        if (Error err = port->open(open_cfg); err != Error::Ok) {
-            return std::unexpected(err);
-        }
-        port_ = std::move(port);
-        state_.video_active = true;
-
-        return state_;
-    }
-
     void clear_runtime_objects() noexcept {
+        receive_thread_ = std::jthread{};
         port_.reset();
+        reorder_buffer_.reset();
+        video_receive_pipeline_.reset();
+        video_timestamp_mapper_.reset();
+        packet_parse_policy_ = {};
+        receive_buffer_.clear();
+        video_sink_ = nullptr;
+        configured_video_payload_type_.reset();
         state_ = {};
     }
 
     std::unique_ptr<ISocketRxPortFactory> port_factory_{};
     std::unique_ptr<ISocketRxPort> port_{};
     RxBackendState state_{};
+    std::unique_ptr<IReorderBuffer> reorder_buffer_{};
+    std::unique_ptr<VideoReceivePipeline> video_receive_pipeline_{};
+    std::optional<VideoRtpTimestampMapper> video_timestamp_mapper_{};
+    PacketParsePolicy packet_parse_policy_{};
+    std::vector<std::uint8_t> receive_buffer_{};
+    IVideoFrameSink *video_sink_ = nullptr;
+    std::jthread receive_thread_{};
+    std::optional<std::uint8_t> configured_video_payload_type_{};
 };
 
 class SocketRxVideoBackendFactory final : public IRxBackendFactory {
