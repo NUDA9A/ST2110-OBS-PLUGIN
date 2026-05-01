@@ -1183,7 +1183,19 @@
 - [x] 120: Implement `SocketRxAudioBackend` skeleton + smoke test
 - [x] 121: Implement UDP socket open/bind for audio
 - [x] 121A: Implement multicast join/leave (Linux) for socket audio receive path
-- [ ] 122: Connect audio parser/reorder/assembler pipeline
+- [x] 122: Connect audio parser/reorder/assembler pipeline
+  - current `SocketRxAudioBackend` now connects:
+    - audio RTP packet parsing;
+    - audio reorder buffering;
+    - audio block assembly;
+    - audio RTP timestamp mapping;
+    - sink delivery for assembled audio blocks;
+  - before marking this task done, keep `record_rejected_packet(...)` stats mutation fully synchronized in the common socket single-media base;
+  - keep temporary audio wire-format support localized through the explicit backend helper boundary.
+- [ ] 122A: Model explicit audio RTP wire-format / bit-depth axis through signaling/runtime/backend path
+  - current audio packet model already distinguishes `AudioPcmWireFormat::{L16, L24}`;
+  - current socket audio RX runtime still selects a temporary backend wire format from `RxAudioConfig` through `select_audio_wire_format(...)`;
+  - extend signaling/runtime/backend boundaries so wire format / bit depth is modeled explicitly rather than remaining a localized `LinearPcm -> L24` temporary assumption.
 - [ ] 123: Add periodic stats print (pps, drops, audio blocks/s)
 - [x] 124: Add graceful stop and cleanup reuse
 

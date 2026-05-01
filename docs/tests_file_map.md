@@ -1062,7 +1062,7 @@
 
 ### tests/test_socket_rx_audio_backend.cpp
 - Роль:
-    - regression / architecture test для `SocketRxAudioBackend` skeleton поверх общего `SocketRxSingleMediaBackendBase`.
+    - regression / architecture test для `SocketRxAudioBackend` поверх общего `SocketRxSingleMediaBackendBase`.
 - Покрывает:
     - interface / type shape:
         - `SocketRxAudioBackend` final;
@@ -1085,13 +1085,23 @@
         - projection failure;
         - null created port;
         - port open failure.
+    - audio receive-path integration:
+        - reordered RTP audio packets are delivered to the sink in sequence order;
+        - audio RTP timestamps are mapped to `TimestampNs`;
+        - RTCP-like datagrams are ignored before media delivery;
+        - wrong RTP payload type is ignored before media delivery;
+        - malformed audio media packet is rejected without stopping later delivery.
+    - backend stats behavior for the audio path:
+        - `packets_parsed_ok`;
+        - `packets_rejected`;
+        - `control_datagrams_ignored`;
+        - `nonmedia_datagrams_ignored`;
+        - `datagrams_dropped`;
+        - `media_units_delivered`;
+        - `frames_delivered` remains zero for audio delivery.
     - default runtime path:
         - Linux build opens/closes one real IPv4 unicast socket port;
         - unsupported build uses the stub factory path.
-    - current skeleton audio behavior:
-        - no audio frame delivery yet;
-        - sink call count remains zero;
-        - stats remain zero for delivered frames/media units in the skeleton phase.
 - Фиксирует:
-    - `SocketRxAudioBackend` already reuses the existing shared socket lifecycle/runtime boundary rather than duplicating open/bind/multicast/stop logic in audio-specific code;
-    - remaining missing work is the audio packet/depacketize/delivery pipeline, not the socket runtime boundary itself.
+    - `SocketRxAudioBackend` now reuses the shared socket lifecycle/runtime boundary while also connecting the existing audio packet/reorder/assembler/timestamp helpers into one backend receive path;
+    - remaining follow-up work is not basic audio socket runtime integration anymore, but explicit wire-format modeling and future observability/policy extensions.

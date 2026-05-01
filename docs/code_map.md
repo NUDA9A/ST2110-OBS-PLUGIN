@@ -2277,38 +2277,62 @@
 
 ### libs/st2110core/include/st2110/socket_rx_audio_backend.hpp
 - Роль:
-    - final socket audio RX backend skeleton поверх общего `SocketRxSingleMediaBackendBase`.
-    - current scope is backend/lifecycle/runtime/socket integration, not audio packet/depacketize/delivery pipeline.
+    - final socket audio RX backend поверх общего `SocketRxSingleMediaBackendBase`.
+    - current scope now includes real audio packet/runtime integration:
+        - audio RTP packet parsing;
+        - audio reorder buffering;
+        - audio block assembly;
+        - audio RTP timestamp mapping;
+        - sink delivery of assembled audio blocks.
 - Связи:
     - наследует общий socket lifecycle/runtime/state/stats from `SocketRxSingleMediaBackendBase`;
-    - использует `socket_rx_open_config_from_audio_config(...)` as the typed adapter from `RxAudioConfig` to the common family-aware socket open config.
+    - использует:
+        - `audio_packet.hpp`;
+        - `audio_reorder_buffer.hpp`;
+        - `audio_frame_assembler.hpp`;
+        - `audio_timestamp_mapping.hpp`;
+        - `socket_rx_open_config_from_audio_config(...)`.
 - Сущности:
     - `SocketRxAudioBackend`
         - `start_audio(const RxAudioConfig&, IAudioFrameSink&)`
             - validates common lifecycle preconditions;
             - projects `RxAudioConfig` to `SocketRxOpenConfig`;
             - creates socket port through the common factory boundary;
-            - caches audio runtime config axes and starts the shared socket runtime.
-        - current cached audio runtime axes:
+            - builds audio-specific runtime objects and starts shared socket runtime.
+        - audio-specific runtime state:
             - `packet_parse_policy_`;
+            - `audio_packet_policy_`;
+            - `audio_wire_format_`;
+            - `reorder_buffer_`;
+            - `audio_frame_assembler_`;
+            - `audio_timestamp_mapper_`;
             - `audio_sink_`;
             - `configured_audio_payload_type_`;
             - `configured_sampling_rate_hz_`;
             - `configured_packet_time_us_`;
             - `configured_samples_per_packet_`;
             - `configured_channel_count_`.
-        - audio-specific hooks:
+        - audio-specific helpers/hooks:
             - `clear_media_runtime_objects()`;
             - `process_received_datagram(ByteSpan)`;
             - `build_packet_parse_policy(const RxAudioConfig&)`;
             - `build_open_config(const RxAudioConfig&)`;
-            - `start_audio_runtime(...)`.
+            - `build_audio_packet_policy(...)`;
+            - `build_audio_frame_assembler_config(...)`;
+            - `select_audio_wire_format(...)`;
+            - `build_audio_reorder_buffer_config(...)`;
+            - `build_audio_timestamp_mapper_config(...)`;
+            - `start_audio_runtime(...)`;
+            - `drain_reorder_buffer_to_sink()`;
+            - `deliver_assembled_audio_block(...)`;
+            - `map_block_timestamp_ns(...)`.
     - `SocketRxAudioBackendFactory`
         - advertises `Socket` + `video_rx=false` + `audio_rx=true`;
         - creates one `SocketRxAudioBackend`.
 - Примечание:
-    - tasks `121`, `121A`, and `124` are satisfied through the already-shared socket runtime boundary plus the existing Linux socket port implementation, not through duplicated audio-only open/bind/multicast/stop code;
-    - audio packet parsing / reorder / assembly / sink delivery remains future work through task `122`.
+    - RTCP tolerance and configured RTP payload-type admission are localized in the socket audio datagram receive path before audio parser/reorder/assembler use;
+    - audio delivery increments backend `media_units_delivered` but does not use `frames_delivered`;
+    - current backend wire-format selection is explicitly localized through `select_audio_wire_format(...)` and remains a temporary support boundary until an explicit runtime/signaling bit-depth axis is modeled.
 
 ### libs/st2110core/include/st2110/socket_runtime.hpp
 - Роль:
@@ -2463,11 +2487,13 @@
             - `record_ignored_control_datagram()`;
             - `record_ignored_nonmedia_datagram()`;
             - `record_rejected_packet(...)`;
+            - `record_accepted_media_packet()`;
+            - `record_rejected_media_packet()`;
             - `record_parsed_packet_ok()`;
             - `record_delivered_video_frame()`;
             - `record_delivered_media_unit()`;
             - `build_base_stats_snapshot_locked()`.
-        - common socket receive helpers now shared by video/audio:
+        - common socket receive helpers shared by video/audio:
             - `make_receive_buffer(const PacketParsePolicy&)`;
             - `is_rtcp_like_datagram(ByteSpan)`;
             - `datagram_matches_configured_payload_type(ByteSpan, uint8_t)`.
@@ -2476,7 +2502,7 @@
             - `clear_media_runtime_objects()`;
             - `augment_stats_snapshot_locked(BackendStats&)`.
 - Примечание:
-    - `RxMediaKind` remains explicit modeled axis inside the base;
+    - `RxMediaKind` remains an explicit modeled axis inside the base;
     - common runtime owns:
         - `port_factory_`;
         - `port_`;
@@ -2484,7 +2510,8 @@
         - `receive_thread_`;
         - `state_`;
         - `stats_`;
-    - concrete backend’ы добавляют only media-specific runtime state above this boundary.
+    - concrete backend’ы add only media-specific runtime state above this boundary;
+    - generic media-packet accounting now exists separately from the video-specific stage-aware packet-parse accounting path.
 
 ### libs/st2110core/src/socket_rx_single_media_backend_base.cpp
 - Роль:

@@ -191,6 +191,7 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
 
     void record_rejected_packet(Error err, PacketParseStage stage) noexcept {
         record_rejected_media_packet();
+        std::lock_guard lock(stats_mutex_);
         record_packet_parse_result(stats_.packet_parse, err, stage);
     }
 
