@@ -310,17 +310,13 @@ struct SocketRxOpenConfig {
 }
 
 [[nodiscard]] inline std::expected<SocketRxOpenConfig, Error>
-socket_rx_open_config_from_video_config(const RxVideoConfig &cfg) {
-    if (Error err = validate_rx_video_config(cfg); err != Error::Ok) {
-        return std::unexpected(err);
-    }
-
+build_socket_rx_open_config(uint16_t udp_port, const std::string& local_ip, const std::string& dest_ip) noexcept {
     SocketRxOpenConfig res{};
-    res.bind_endpoint.port = cfg.udp_port;
+    res.bind_endpoint.port = udp_port;
 
-    auto address_to_id_family = cfg.local_ip;
-    if (cfg.local_ip.empty()) {
-        address_to_id_family = cfg.dest_ip;
+    auto address_to_id_family = local_ip;
+    if (local_ip.empty()) {
+        address_to_id_family = dest_ip;
     }
 
     if (is_valid_ipv4_address(address_to_id_family)) {
@@ -331,13 +327,13 @@ socket_rx_open_config_from_video_config(const RxVideoConfig &cfg) {
         return std::unexpected(Error::InvalidValue);
     }
 
-    if (!is_valid_address(cfg.dest_ip, res.bind_endpoint.family)) {
+    if (!is_valid_address(dest_ip, res.bind_endpoint.family)) {
         return std::unexpected(Error::InvalidValue);
     }
 
-    res.bind_endpoint.address = cfg.local_ip;
+    res.bind_endpoint.address = local_ip;
 
-    if (cfg.local_ip.empty()) {
+    if (local_ip.empty()) {
         switch (res.bind_endpoint.family) {
         case SocketAddressFamily::IPv4:
             res.bind_endpoint.address = "0.0.0.0";
@@ -348,23 +344,23 @@ socket_rx_open_config_from_video_config(const RxVideoConfig &cfg) {
         }
     }
 
-    if (is_ipv4_multicast_address(cfg.dest_ip)) {
+    if (is_ipv4_multicast_address(dest_ip)) {
         res.bind_endpoint.address = "0.0.0.0";
         res.multicast_membership = SocketMulticastMembership{
             .family = SocketAddressFamily::IPv4,
-            .group_address = cfg.dest_ip,
+            .group_address = dest_ip,
         };
-        if (!cfg.local_ip.empty()) {
-            res.multicast_membership->interface_address = cfg.local_ip;
+        if (!local_ip.empty()) {
+            res.multicast_membership->interface_address = local_ip;
         }
-    } else if (is_ipv6_multicast_address(cfg.dest_ip)) {
+    } else if (is_ipv6_multicast_address(dest_ip)) {
         res.bind_endpoint.address = "::";
         res.multicast_membership = SocketMulticastMembership{
             .family = SocketAddressFamily::IPv6,
-            .group_address = cfg.dest_ip,
+            .group_address = dest_ip,
         };
-        if (!cfg.local_ip.empty()) {
-            res.multicast_membership->interface_address = cfg.local_ip;
+        if (!local_ip.empty()) {
+            res.multicast_membership->interface_address = local_ip;
         }
     }
 
@@ -373,6 +369,24 @@ socket_rx_open_config_from_video_config(const RxVideoConfig &cfg) {
     }
 
     return res;
+}
+
+[[nodiscard]] inline std::expected<SocketRxOpenConfig, Error>
+socket_rx_open_config_from_video_config(const RxVideoConfig &cfg) {
+    if (Error err = validate_rx_video_config(cfg); err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
+    return build_socket_rx_open_config(cfg.udp_port, cfg.local_ip, cfg.dest_ip);
+}
+
+[[nodiscard]] inline std::expected<SocketRxOpenConfig, Error>
+socket_rx_open_config_from_audio_config(const RxAudioConfig &cfg) {
+    if (Error err = validate_rx_audio_config(cfg); err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
+    return build_socket_rx_open_config(cfg.udp_port, cfg.local_ip, cfg.dest_ip);
 }
 
 struct SocketReceiveResult {
