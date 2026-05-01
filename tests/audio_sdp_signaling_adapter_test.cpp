@@ -38,6 +38,7 @@ int main() {
         assert(signaling->channel_order.has_value());
         assert(signaling->channel_order->convention == AudioChannelOrderConvention::Smpte2110);
         assert(signaling->channel_order->raw_value == "SMPTE2110.(ST)");
+        assert(signaling->media.pcm_bit_depth == AudioPcmBitDepth::Bits24);
 
         assert(validate_audio_stream_signaling(*signaling) == Error::Ok);
     }
@@ -62,6 +63,25 @@ int main() {
             assert(signaling->media.packet_time_us == 1000);
             assert(signaling->media.channel_count == channel_count);
             assert(!signaling->channel_order.has_value());
+            assert(validate_audio_stream_signaling(*signaling) == Error::Ok);
+        }
+        {
+            const std::string sdp = "v=0\r\n"
+                                    "m=audio 5004 RTP/AVP 111\r\n"
+                                    "a=rtpmap:111 L16/48000/2\r\n"
+                                    "a=ptime:1\r\n";
+
+            auto raw = select_raw_audio_sdp_media_section(sdp, 111);
+            assert(raw.has_value());
+
+            auto signaling = audio_stream_signaling_from_raw_audio_sdp_media_section(*raw);
+            assert(signaling.has_value());
+
+            assert(signaling->media.pcm_encoding == AudioPcmEncoding::LinearPcm);
+            assert(signaling->media.pcm_bit_depth == AudioPcmBitDepth::Bits16);
+            assert(signaling->media.sampling_rate_hz == 48000);
+            assert(signaling->media.packet_time_us == 1000);
+            assert(signaling->media.channel_count == 2);
             assert(validate_audio_stream_signaling(*signaling) == Error::Ok);
         }
     }

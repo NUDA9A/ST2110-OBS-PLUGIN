@@ -41,6 +41,7 @@ st2110::RxAudioConfig make_valid_level_a_audio_config(std::uint16_t channels = 2
     cfg.dest_ip = "239.1.1.2";
     cfg.local_ip = "0.0.0.0";
     cfg.format = st2110::AudioSampleFormat::LinearPcm;
+    cfg.pcm_bit_depth = st2110::AudioPcmBitDepth::Bits24;
     return cfg;
 }
 } // namespace
@@ -138,6 +139,18 @@ int main() {
 
         st2110::RxAudioConfig max_channels = make_valid_level_a_audio_config(8);
         assert(max_channels.is_valid());
+
+        st2110::RxAudioConfig valid_l16 = make_valid_level_a_audio_config(2);
+        valid_l16.pcm_bit_depth = st2110::AudioPcmBitDepth::Bits16;
+        assert(valid_l16.is_valid());
+
+        st2110::RxAudioConfig valid_l24 = make_valid_level_a_audio_config(2);
+        valid_l24.pcm_bit_depth = st2110::AudioPcmBitDepth::Bits24;
+        assert(valid_l24.is_valid());
+
+        st2110::RxAudioConfig invalid_bit_depth = make_valid_level_a_audio_config(2);
+        invalid_bit_depth.pcm_bit_depth = static_cast<st2110::AudioPcmBitDepth>(255);
+        assert(!invalid_bit_depth.is_valid());
 
         st2110::RxAudioConfig zero_channels = make_valid_level_a_audio_config(0);
         assert(!zero_channels.is_valid());

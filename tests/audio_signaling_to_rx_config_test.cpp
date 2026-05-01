@@ -17,6 +17,7 @@ st2110::AudioStreamSignaling make_level_a_stream(std::uint16_t channels = 2) {
     signaling.media.sampling_rate_hz = 48000;
     signaling.media.packet_time_us = 1000;
     signaling.media.channel_count = channels;
+    signaling.media.pcm_bit_depth = st2110::AudioPcmBitDepth::Bits24;
     return signaling;
 }
 } // namespace
@@ -44,6 +45,7 @@ int main() {
     assert(projected->local_ip == "0.0.0.0");
     assert(projected->dest_ip == "239.1.1.2");
     assert(projected->format == AudioSampleFormat::LinearPcm);
+    assert(projected->pcm_bit_depth == AudioPcmBitDepth::Bits24);
     assert(projected->is_valid());
 
     AudioStreamSignaling min_channels = make_level_a_stream(1);
@@ -69,6 +71,16 @@ int main() {
     assert(projected_with_channel_order.has_value());
     assert(projected_with_channel_order->channel_count == 8);
     assert(projected_with_channel_order->is_valid());
+
+    AudioStreamSignaling l16_stream = make_level_a_stream(2);
+    l16_stream.media.pcm_bit_depth = AudioPcmBitDepth::Bits16;
+
+    auto projected_l16 =
+        rx_audio_config_from_audio_stream_signaling(l16_stream, 30000, 111, "0.0.0.0", "239.1.1.2");
+
+    assert(projected_l16.has_value());
+    assert(projected_l16->pcm_bit_depth == AudioPcmBitDepth::Bits16);
+    assert(projected_l16->is_valid());
 
     AudioStreamSignaling wrong_sampling_rate = make_level_a_stream(2);
     wrong_sampling_rate.media.sampling_rate_hz = 96000;

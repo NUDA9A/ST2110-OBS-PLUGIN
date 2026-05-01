@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -20,7 +21,8 @@ void write_be32(std::vector<uint8_t> &bytes, std::size_t offset, uint32_t value)
     bytes[offset + 3] = static_cast<uint8_t>(value & 0xFF);
 }
 
-RxAudioConfig make_level_a_rx_audio_config(uint8_t payload_type = 96, uint16_t channel_count = 2) {
+RxAudioConfig make_level_a_rx_audio_config(uint8_t payload_type = 96, uint16_t channel_count = 2,
+                                           AudioPcmBitDepth pcm_bit_depth = AudioPcmBitDepth::Bits24) {
     RxAudioConfig cfg{};
     cfg.sampling_rate_hz = 48000;
     cfg.packet_time_us = 1000;
@@ -31,13 +33,14 @@ RxAudioConfig make_level_a_rx_audio_config(uint8_t payload_type = 96, uint16_t c
     cfg.local_ip = "";
     cfg.dest_ip = "239.1.1.1";
     cfg.format = AudioSampleFormat::LinearPcm;
+    cfg.pcm_bit_depth = pcm_bit_depth;
     return cfg;
 }
 
-AudioRtpPacketPolicy make_policy(AudioPcmWireFormat wire_format = AudioPcmWireFormat::L24, uint8_t payload_type = 96,
+AudioRtpPacketPolicy make_policy(AudioPcmBitDepth pcm_bit_depth = AudioPcmBitDepth::Bits24, uint8_t payload_type = 96,
                                  uint16_t channel_count = 2) {
     auto policy = audio_rtp_packet_policy_from_rx_audio_config(
-        make_level_a_rx_audio_config(payload_type, channel_count), wire_format);
+        make_level_a_rx_audio_config(payload_type, channel_count, pcm_bit_depth));
     assert(policy.has_value());
     return *policy;
 }
@@ -103,7 +106,7 @@ std::vector<uint8_t> make_rtp_packet_with_csrc_and_extension(uint8_t payload_typ
 }
 
 void parses_valid_l24_audio_rtp_packet() {
-    const auto policy = make_policy(AudioPcmWireFormat::L24, 96, 2);
+    const auto policy = make_policy(AudioPcmBitDepth::Bits24, 96, 2);
     const auto payload = make_payload(policy, 0x20);
     const auto packet = make_rtp_packet(policy.payload_type, true, 0x1234, 0x01020304, 0xAABBCCDD, payload);
 
@@ -129,7 +132,7 @@ void parses_valid_l24_audio_rtp_packet() {
 }
 
 void parses_valid_l16_audio_rtp_packet() {
-    const auto policy = make_policy(AudioPcmWireFormat::L16, 97, 1);
+    const auto policy = make_policy(AudioPcmBitDepth::Bits16, 97, 1);
     const auto payload = make_payload(policy, 0x30);
     const auto packet = make_rtp_packet(policy.payload_type, false, 7, 48000, 0x01010101, payload);
 
@@ -145,7 +148,7 @@ void parses_valid_l16_audio_rtp_packet() {
 }
 
 void tolerates_csrc_and_rtp_header_extension() {
-    const auto policy = make_policy(AudioPcmWireFormat::L24, 98, 2);
+    const auto policy = make_policy(AudioPcmBitDepth::Bits24, 98, 2);
     const auto payload = make_payload(policy, 0x40);
     const auto packet = make_rtp_packet_with_csrc_and_extension(policy.payload_type, true, 100, 123456, 0x11111111,
                                                                 0x22222222, payload);
@@ -162,7 +165,7 @@ void tolerates_csrc_and_rtp_header_extension() {
 }
 
 void rejects_payload_type_mismatch() {
-    const auto policy = make_policy(AudioPcmWireFormat::L24, 96, 2);
+    const auto policy = make_policy(AudioPcmBitDepth::Bits24, 96, 2);
     const auto payload = make_payload(policy);
     const auto packet = make_rtp_packet(97, false, 1, 2, 3, payload);
 
@@ -172,7 +175,7 @@ void rejects_payload_type_mismatch() {
 }
 
 void rejects_payload_size_mismatch() {
-    const auto policy = make_policy(AudioPcmWireFormat::L24, 96, 2);
+    const auto policy = make_policy(AudioPcmBitDepth::Bits24, 96, 2);
     auto payload = make_payload(policy);
     assert(!payload.empty());
     payload.pop_back();
@@ -185,7 +188,7 @@ void rejects_payload_size_mismatch() {
 }
 
 void rejects_short_rtp_packet() {
-    const auto policy = make_policy(AudioPcmWireFormat::L24, 96, 2);
+    const auto policy = make_policy(AudioPcmBitDepth::Bits24, 96, 2);
     const std::vector<uint8_t> packet(11, 0);
 
     const auto parsed = parse_audio_rtp_packet_view(ByteSpan{packet.data(), packet.size()}, policy);
@@ -193,7 +196,7 @@ void rejects_short_rtp_packet() {
 }
 
 void rejects_bad_rtp_version_before_audio_payload_policy() {
-    const auto policy = make_policy(AudioPcmWireFormat::L24, 96, 2);
+    const auto policy = make_policy(AudioPcmBitDepth::Bits24, 96, 2);
     const auto payload = make_payload(policy);
     auto packet = make_rtp_packet(policy.payload_type, false, 1, 2, 3, payload);
 

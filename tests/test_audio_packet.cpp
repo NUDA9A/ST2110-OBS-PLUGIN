@@ -28,6 +28,7 @@ st2110::RxAudioConfig make_level_a_rx_config(uint16_t channels, uint8_t payload_
     cfg.local_ip = "0.0.0.0";
     cfg.dest_ip = "239.0.0.1";
     cfg.format = st2110::AudioSampleFormat::LinearPcm;
+    cfg.pcm_bit_depth = st2110::AudioPcmBitDepth::Bits24;
     return cfg;
 }
 
@@ -63,9 +64,10 @@ void test_wire_format_sample_sizes_are_explicit() {
 
 void test_policy_from_rx_audio_config_preserves_runtime_axes() {
     auto cfg = make_level_a_rx_config(2, 111);
+    cfg.pcm_bit_depth = st2110::AudioPcmBitDepth::Bits24;
     assert(cfg.is_valid());
 
-    auto policy = st2110::audio_rtp_packet_policy_from_rx_audio_config(cfg, st2110::AudioPcmWireFormat::L24);
+    auto policy = st2110::audio_rtp_packet_policy_from_rx_audio_config(cfg);
 
     assert(policy.has_value());
     assert(policy->sampling_rate_hz == 48000);
@@ -81,9 +83,10 @@ void test_policy_from_rx_audio_config_preserves_runtime_axes() {
 
 void test_policy_rejects_inconsistent_samples_per_packet() {
     auto cfg = make_level_a_rx_config(2, 111);
+    cfg.pcm_bit_depth = st2110::AudioPcmBitDepth::Bits24;
     cfg.samples_per_packet = 47;
 
-    auto policy = st2110::audio_rtp_packet_policy_from_rx_audio_config(cfg, st2110::AudioPcmWireFormat::L24);
+    auto policy = st2110::audio_rtp_packet_policy_from_rx_audio_config(cfg);
 
     assert(!policy.has_value());
     assert(policy.error() == st2110::Error::InvalidValue);
@@ -91,10 +94,12 @@ void test_policy_rejects_inconsistent_samples_per_packet() {
 
 void test_l16_payload_size_is_not_hardcoded_to_l24_or_stereo() {
     auto cfg = make_level_a_rx_config(1, 110);
+    cfg.pcm_bit_depth = st2110::AudioPcmBitDepth::Bits16;
 
-    auto policy = st2110::audio_rtp_packet_policy_from_rx_audio_config(cfg, st2110::AudioPcmWireFormat::L16);
+    auto policy = st2110::audio_rtp_packet_policy_from_rx_audio_config(cfg);
 
     assert(policy.has_value());
+    assert(policy->wire_format == st2110::AudioPcmWireFormat::L16);
 
     auto payload_bytes = st2110::audio_rtp_packet_payload_size_bytes(*policy);
     assert(payload_bytes.has_value());
@@ -104,7 +109,8 @@ void test_l16_payload_size_is_not_hardcoded_to_l24_or_stereo() {
 void test_make_audio_packet_view_accepts_matching_payload() {
     auto cfg = make_level_a_rx_config(2, 111);
 
-    auto policy = st2110::audio_rtp_packet_policy_from_rx_audio_config(cfg, st2110::AudioPcmWireFormat::L24);
+    cfg.pcm_bit_depth = st2110::AudioPcmBitDepth::Bits24;
+    auto policy = st2110::audio_rtp_packet_policy_from_rx_audio_config(cfg);
     assert(policy.has_value());
 
     constexpr std::size_t expected_payload_size = 48u * 2u * 3u;
@@ -130,7 +136,8 @@ void test_make_audio_packet_view_accepts_matching_payload() {
 void test_make_audio_packet_view_rejects_payload_type_mismatch() {
     auto cfg = make_level_a_rx_config(2, 111);
 
-    auto policy = st2110::audio_rtp_packet_policy_from_rx_audio_config(cfg, st2110::AudioPcmWireFormat::L24);
+    cfg.pcm_bit_depth = st2110::AudioPcmBitDepth::Bits24;
+    auto policy = st2110::audio_rtp_packet_policy_from_rx_audio_config(cfg);
     assert(policy.has_value());
 
     std::array<uint8_t, 48u * 2u * 3u> payload{};
@@ -147,7 +154,8 @@ void test_make_audio_packet_view_rejects_payload_type_mismatch() {
 void test_make_audio_packet_view_rejects_payload_size_mismatch() {
     auto cfg = make_level_a_rx_config(2, 111);
 
-    auto policy = st2110::audio_rtp_packet_policy_from_rx_audio_config(cfg, st2110::AudioPcmWireFormat::L24);
+    cfg.pcm_bit_depth = st2110::AudioPcmBitDepth::Bits24;
+    auto policy = st2110::audio_rtp_packet_policy_from_rx_audio_config(cfg);
     assert(policy.has_value());
 
     std::array<uint8_t, (48u * 2u * 3u) - 1u> payload{};

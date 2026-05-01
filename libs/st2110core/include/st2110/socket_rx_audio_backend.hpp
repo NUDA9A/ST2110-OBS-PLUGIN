@@ -133,9 +133,6 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public
         if (!audio_packet_policy) {
             return std::unexpected(audio_packet_policy.error());
         }
-        if (!audio_packet_policy) {
-            return std::unexpected(audio_packet_policy.error());
-        }
 
         const AudioFrameAssemblerConfig audio_frame_assembler_cfg = build_audio_frame_assembler_config(cfg);
         const AudioReorderBufferConfig audio_reorder_cfg = build_audio_reorder_buffer_config(cfg);
