@@ -1180,12 +1180,12 @@
     - retry after failed start.
 
 ### C2. Socket audio RX
-- [ ] 120: Implement `SocketRxAudioBackend` skeleton + smoke test
-- [ ] 121: Implement UDP socket open/bind for audio
-- [ ] 121A: Implement multicast join/leave (Linux) for socket audio receive path
+- [x] 120: Implement `SocketRxAudioBackend` skeleton + smoke test
+- [x] 121: Implement UDP socket open/bind for audio
+- [x] 121A: Implement multicast join/leave (Linux) for socket audio receive path
 - [ ] 122: Connect audio parser/reorder/assembler pipeline
 - [ ] 123: Add periodic stats print (pps, drops, audio blocks/s)
-- [ ] 124: Add graceful stop and cleanup reuse
+- [x] 124: Add graceful stop and cleanup reuse
 
 ### C3. MTL video RX
 - [ ] 130: CMake option `ST2110_WITH_MTL` + build guard

@@ -14,6 +14,8 @@
 
 ## Build integration
 
+## Build integration
+
 ### tests/CMakeLists.txt
 - Роль:
     - объявляет helper `add_st2110_test(name ...)`;
@@ -22,7 +24,7 @@
     - каждому test target явно задается `cxx_std_23`, чтобы IDE/test-target compilation model не расходился с project/toolchain requirements.
 - Сущности:
     - `add_st2110_test(...)`
-    - targets for smoke/base tests, RTP/ST2110 packet parsing, reorder, frame assembly, depacketizer, video signaling, SDP ingestion, timing, playout, audio signaling model tests, audio SDP ingestion tests, audio receiver bootstrap tests, backend interface tests, backend factory tests, audio frame storage tests, and audio packet model tests.
+    - targets for smoke/base tests, RTP/ST2110 packet parsing, reorder, frame assembly, depacketizer, video signaling, SDP ingestion, timing, playout, audio signaling model tests, audio SDP ingestion tests, audio receiver bootstrap tests, backend interface tests, backend factory tests, audio frame storage tests, audio packet model tests, socket runtime tests, Linux socket receive-port tests, socket video backend tests, and socket audio backend tests.
 
 ## Smoke / common foundations
 
@@ -1057,3 +1059,39 @@
     - multicast join/leave is implemented in the Linux socket runtime layer, not in backend code;
     - failed multicast join remains transactional and does not leak an already-bound native socket into later opens;
     - unsupported family branches stay localized in Linux runtime behavior.
+
+### tests/test_socket_rx_audio_backend.cpp
+- Роль:
+    - regression / architecture test для `SocketRxAudioBackend` skeleton поверх общего `SocketRxSingleMediaBackendBase`.
+- Покрывает:
+    - interface / type shape:
+        - `SocketRxAudioBackend` final;
+        - `IRxAudioBackend` / `IRxBackend` convertibility;
+        - constructor shape with default and injected socket port factory;
+        - `SocketRxAudioBackendFactory` descriptor/creation shape.
+    - lifecycle/runtime policy through the common socket single-media base:
+        - stop before successful start;
+        - repeated stop;
+        - repeated start on already-active audio backend;
+        - failed start remains stopped and retryable;
+        - stop propagates close failure without losing active state;
+        - successful stop allows restart.
+    - socket-open projection for audio configs:
+        - IPv4 multicast;
+        - IPv4 multicast with interface address;
+        - IPv4 unicast;
+        - IPv6 multicast.
+    - explicit failure mapping:
+        - projection failure;
+        - null created port;
+        - port open failure.
+    - default runtime path:
+        - Linux build opens/closes one real IPv4 unicast socket port;
+        - unsupported build uses the stub factory path.
+    - current skeleton audio behavior:
+        - no audio frame delivery yet;
+        - sink call count remains zero;
+        - stats remain zero for delivered frames/media units in the skeleton phase.
+- Фиксирует:
+    - `SocketRxAudioBackend` already reuses the existing shared socket lifecycle/runtime boundary rather than duplicating open/bind/multicast/stop logic in audio-specific code;
+    - remaining missing work is the audio packet/depacketize/delivery pipeline, not the socket runtime boundary itself.

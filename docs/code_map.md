@@ -25,6 +25,19 @@
 > - не дублируем полную реализацию;
 > - после принятия задачи обновляем этот раздел вместе с кодом.
 
+### libs/st2110core/CMakeLists.txt
+- Роль:
+    - build integration для `st2110core`.
+    - теперь собирает общий socket single-media runtime implementation отдельно от header-only concrete socket backend’ов.
+- Связи:
+    - собирает:
+        - `src/stub.cpp`;
+        - `src/socket_rx_single_media_backend_base.cpp`.
+    - public headers concrete socket backend’ов (`socket_rx_video_backend.hpp`, `socket_rx_audio_backend.hpp`) остаются header-only и линкуются через `st2110core` include surface.
+- Примечание:
+    - platform-default socket port factory selection больше не живет в concrete video backend `.cpp`;
+    - общий runtime/default-factory слой локализован в `socket_rx_single_media_backend_base.cpp`.
+
 ### apps/st2110_rx_dump/main.cpp
 - Роль:
     - минимальный CLI entry point для будущего dump/tool-приложения.
@@ -2224,114 +2237,78 @@
 
 ### libs/st2110core/include/st2110/socket_rx_video_backend.hpp
 - Роль:
-    - socket video backend поверх OS-neutral socket runtime boundary;
-    - композиционно соединяет socket receive path, packet admission/parsing, reorder, video receive pipeline, RTP timestamp mapping и final sink delivery;
-    - держит backend-local periodic stats snapshot;
-    - содержит explicit graceful stop / cleanup boundary для socket video RX lifecycle.
+    - final socket video RX backend поверх общего `SocketRxSingleMediaBackendBase`.
+    - держит только video-specific runtime pipeline и video-specific datagram processing.
 - Связи:
-    - использует `backend.hpp`, `backend_factory.hpp`, `bytes.hpp`, `socket_runtime.hpp`, `stats.hpp`;
-    - использует `packet_parse.hpp` для packet-size policy и `PacketView` parsing;
-    - использует `fixed_reorder_buffer.hpp` / `IReorderBuffer` как reorder boundary;
-    - использует `video_receive_pipeline.hpp` для depacketizer + reconstructor composition;
-    - использует `video_timestamp_mapping.hpp` для RTP timestamp -> `TimestampNs` mapping;
-    - default factory selection локализована в `libs/st2110core/src/socket_rx_video_backend.cpp`.
+    - наследует общий socket lifecycle/runtime/state/stats from `SocketRxSingleMediaBackendBase`;
+    - использует:
+        - `FixedWindowReorderBuffer`;
+        - `VideoReceivePipeline`;
+        - `VideoRtpTimestampMapper`;
+        - `socket_rx_open_config_from_video_config(...)`.
 - Сущности:
     - `SocketRxVideoBackend`
-        - `SocketRxVideoBackend()`
-            - default ctor;
-            - инициализирует backend через localized `make_default_port_factory()`.
-        - `SocketRxVideoBackend(std::unique_ptr<ISocketRxPortFactory>)`
-            - injected-factory seam для тестов и future runtime/platform variants.
-        - `backend_name()`
-        - `stop()`
-            - graceful backend stop path;
-            - если runtime не поднят, возвращает stopped state без ошибок;
-            - закрывает socket port только через runtime boundary;
-            - при успешном close освобождает/сбрасывает backend-owned runtime objects;
-            - сохраняет lifecycle guarantees для stop-before-start, repeated stop и retry-after-failed-start.
-        - `capabilities()`
         - `start_video(const RxVideoConfig&, IVideoFrameSink&)`
-            - validates config/runtime dependencies;
-            - creates port;
-            - delegates transactional runtime startup to `start_video_runtime(...)`.
-        - `state()`
-        - `stats()`
-            - returns backend-local snapshot including nested parser/reorder/depacketizer counters.
-        - private startup/runtime/helpers:
-            - `build_packet_parse_policy(...)`
-            - `build_video_receive_pipeline_config(...)`
-            - `make_reorder_buffer()`
-            - `make_receive_buffer(...)`
-            - `start_video_runtime(...)`
-            - `run_video_receive_loop(...)`
-            - `process_received_datagram(...)`
-            - `drain_reorder_buffer_to_sink()`
-            - `deliver_reconstructed_frame(...)`
-            - `map_frame_timestamp_ns(...)`
-            - `record_received_datagram(...)`
-            - `record_ignored_control_datagram()`
-            - `record_ignored_nonmedia_datagram()`
-            - `record_rejected_packet(...)`
-            - `record_parsed_packet_ok()`
-            - `record_delivered_frame()`
-            - `build_stats_snapshot_locked()`
-            - `make_default_port_factory()`
-            - `clear_runtime_objects()`
-                - pure backend-owned runtime cleanup/reset helper;
-                - does not perform socket close on its own.
+            - validates common lifecycle preconditions;
+            - projects `RxVideoConfig` to `SocketRxOpenConfig`;
+            - creates socket port through the common factory boundary;
+            - builds video-specific runtime objects and then starts common runtime.
+        - video-specific runtime state:
+            - `reorder_buffer_`;
+            - `video_receive_pipeline_`;
+            - `video_timestamp_mapper_`;
+            - `packet_parse_policy_`;
+            - `video_sink_`;
+            - `configured_video_payload_type_`.
+        - video-specific hooks:
+            - `clear_media_runtime_objects()`;
+            - `process_received_datagram(ByteSpan)`;
+            - `augment_stats_snapshot_locked(BackendStats&)`;
+            - `start_video_runtime(...)`;
+            - `drain_reorder_buffer_to_sink()`;
+            - `deliver_reconstructed_frame(...)`;
+            - `map_frame_timestamp_ns(...)`.
     - `SocketRxVideoBackendFactory`
-        - advertises socket video backend descriptor;
-        - `create_backend()` constructs default `SocketRxVideoBackend`.
+        - advertises `Socket` + `video_rx=true` + `audio_rx=false`;
+        - creates one `SocketRxVideoBackend`.
 - Примечание:
-    - explicit local datagram classification and payload-type admission remain backend-local;
-    - graceful stop/cleanup remains localized in the backend and uses the runtime boundary instead of leaking socket details into callers;
-    - stats collection remains localized in the backend and not spread into sink code.
+    - RTCP tolerance and configured RTP payload-type admission are now localized in the socket video datagram receive path before reorder/pipeline ingestion;
+    - open/bind/multicast/receive-thread/stop/restart behavior is now shared through `SocketRxSingleMediaBackendBase`.
 
-### libs/st2110core/src/socket_rx_video_backend.cpp
+### libs/st2110core/include/st2110/socket_rx_audio_backend.hpp
 - Роль:
-    - implementation-side composition point for default socket RX port factory selection and backend-local socket video receive runtime.
+    - final socket audio RX backend skeleton поверх общего `SocketRxSingleMediaBackendBase`.
+    - current scope is backend/lifecycle/runtime/socket integration, not audio packet/depacketize/delivery pipeline.
 - Связи:
-    - включает `st2110/socket_rx_video_backend.hpp`;
-    - включает `st2110/socket_stub_rx_port.hpp`;
-    - на Linux build’ах conditionally включает `st2110/linux_socket_rx_port.hpp`.
+    - наследует общий socket lifecycle/runtime/state/stats from `SocketRxSingleMediaBackendBase`;
+    - использует `socket_rx_open_config_from_audio_config(...)` as the typed adapter from `RxAudioConfig` to the common family-aware socket open config.
 - Сущности:
-    - `SocketRxVideoBackend::make_default_port_factory()`
-        - returns Linux socket port factory on `__linux__`;
-        - otherwise returns stub factory.
-    - `SocketRxVideoBackend::build_packet_parse_policy(...)`
-        - localized backend packet-parse policy boundary.
-    - `SocketRxVideoBackend::build_video_receive_pipeline_config(...)`
-        - projects `RxVideoConfig` into runtime pipeline config;
-        - keeps `PartialFramePolicy::Drop` at backend delivery boundary.
-    - `SocketRxVideoBackend::make_reorder_buffer()`
-        - constructs fixed-window reorder implementation.
-    - `SocketRxVideoBackend::make_receive_buffer(...)`
-        - allocates UDP-payload receive buffer from packet-size policy.
-    - `SocketRxVideoBackend::start_video_runtime(...)`
-        - transactional runtime startup for socket port + reorder + pipeline + timestamp mapper + receive thread;
-        - resets per-run backend stats before runtime start.
-    - `SocketRxVideoBackend::run_video_receive_loop(...)`
-        - blocking datagram receive loop over `ISocketRxPort::receive(...)`;
-        - updates received-datagram counters on successful receives.
-    - backend-local helpers for explicit datagram handling:
-        - RTCP-like datagram classification;
-        - payload-type admission;
-        - staged parse failure accounting;
-        - `process_received_datagram(...)`;
-        - `drain_reorder_buffer_to_sink()`;
-        - `deliver_reconstructed_frame(...)`;
-        - `map_frame_timestamp_ns(...)`.
-    - backend-local stats helpers:
-        - `stats()`
-        - `record_received_datagram(...)`
-        - `record_ignored_control_datagram()`
-        - `record_ignored_nonmedia_datagram()`
-        - `record_rejected_packet(...)`
-        - `record_parsed_packet_ok()`
-        - `record_delivered_frame()`
-        - `build_stats_snapshot_locked()`
+    - `SocketRxAudioBackend`
+        - `start_audio(const RxAudioConfig&, IAudioFrameSink&)`
+            - validates common lifecycle preconditions;
+            - projects `RxAudioConfig` to `SocketRxOpenConfig`;
+            - creates socket port through the common factory boundary;
+            - caches audio runtime config axes and starts the shared socket runtime.
+        - current cached audio runtime axes:
+            - `packet_parse_policy_`;
+            - `audio_sink_`;
+            - `configured_audio_payload_type_`;
+            - `configured_sampling_rate_hz_`;
+            - `configured_packet_time_us_`;
+            - `configured_samples_per_packet_`;
+            - `configured_channel_count_`.
+        - audio-specific hooks:
+            - `clear_media_runtime_objects()`;
+            - `process_received_datagram(ByteSpan)`;
+            - `build_packet_parse_policy(const RxAudioConfig&)`;
+            - `build_open_config(const RxAudioConfig&)`;
+            - `start_audio_runtime(...)`.
+    - `SocketRxAudioBackendFactory`
+        - advertises `Socket` + `video_rx=false` + `audio_rx=true`;
+        - creates one `SocketRxAudioBackend`.
 - Примечание:
-    - backend now exposes periodic backend/runtime-oriented stats without collapsing socket/runtime failures into parser failures and without pushing observability into sinks.
+    - tasks `121`, `121A`, and `124` are satisfied through the already-shared socket runtime boundary plus the existing Linux socket port implementation, not through duplicated audio-only open/bind/multicast/stop code;
+    - audio packet parsing / reorder / assembly / sink delivery remains future work through task `122`.
 
 ### libs/st2110core/include/st2110/socket_runtime.hpp
 - Роль:
@@ -2453,3 +2430,69 @@
     - `make_linux_socket_rx_port_factory()`
 - Примечание:
     - native close path is the runtime-side mechanism that allows backend graceful stop to terminate blocked receive work cleanly without exposing Linux socket details above the runtime boundary.
+
+### libs/st2110core/include/st2110/socket_rx_single_media_backend_base.hpp
+- Роль:
+    - общий single-media socket receive backend runtime boundary для `SocketRxVideoBackend` и `SocketRxAudioBackend`.
+    - централизует общий socket lifecycle/runtime/state/stats слой без смешивания с essence-specific parser/depacketizer/delivery logic.
+- Связи:
+    - реализует `IRxBackend`;
+    - использует `ISocketRxPortFactory` / `ISocketRxPort` из `socket_runtime.hpp`;
+    - используется concrete final backend’ами:
+        - `socket_rx_video_backend.hpp`;
+        - `socket_rx_audio_backend.hpp`.
+- Сущности:
+    - `SocketRxSingleMediaBackendBase`
+        - public/common backend API:
+            - `backend_name()`;
+            - `capabilities()`;
+            - `state()`;
+            - `stats()`;
+            - `stop()`.
+        - common lifecycle/runtime helpers:
+            - `validate_common_start_preconditions()`;
+            - `create_port()`;
+            - `media_active()`;
+            - `set_media_active(bool)`;
+            - `start_common_runtime(...)`;
+            - `run_receive_loop(std::stop_token)`;
+            - `clear_common_runtime_objects()`;
+            - `reset_stats()`.
+        - common stats helpers:
+            - `record_received_datagram(...)`;
+            - `record_ignored_control_datagram()`;
+            - `record_ignored_nonmedia_datagram()`;
+            - `record_rejected_packet(...)`;
+            - `record_parsed_packet_ok()`;
+            - `record_delivered_video_frame()`;
+            - `record_delivered_media_unit()`;
+            - `build_base_stats_snapshot_locked()`.
+        - common socket receive helpers now shared by video/audio:
+            - `make_receive_buffer(const PacketParsePolicy&)`;
+            - `is_rtcp_like_datagram(ByteSpan)`;
+            - `datagram_matches_configured_payload_type(ByteSpan, uint8_t)`.
+        - virtual hooks for essence-specific behavior:
+            - `process_received_datagram(ByteSpan)`;
+            - `clear_media_runtime_objects()`;
+            - `augment_stats_snapshot_locked(BackendStats&)`.
+- Примечание:
+    - `RxMediaKind` remains explicit modeled axis inside the base;
+    - common runtime owns:
+        - `port_factory_`;
+        - `port_`;
+        - `receive_buffer_`;
+        - `receive_thread_`;
+        - `state_`;
+        - `stats_`;
+    - concrete backend’ы добавляют only media-specific runtime state above this boundary.
+
+### libs/st2110core/src/socket_rx_single_media_backend_base.cpp
+- Роль:
+    - platform-local default socket receive-port factory selection for the common single-media socket runtime boundary.
+- Связи:
+    - реализует `SocketRxSingleMediaBackendBase::make_default_port_factory()`;
+    - использует:
+        - `make_linux_socket_rx_port_factory()` на поддерживаемых Linux build’ах;
+        - `make_socket_stub_rx_port_factory()` на неподдерживаемых build’ах.
+- Примечание:
+    - platform selection локализован здесь и не размазан по app/bootstrap code или concrete backend constructors.
