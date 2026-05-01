@@ -22,8 +22,24 @@ struct AudioConformanceRange {
 
 enum class AudioPcmEncoding { LinearPcm };
 
+enum class AudioPcmBitDepth {
+    Bits16,
+    Bits24,
+};
+
+[[nodiscard]] inline constexpr Error validate_audio_pcm_bit_depth(AudioPcmBitDepth bit_depth) {
+    switch (bit_depth) {
+    case AudioPcmBitDepth::Bits16:
+    case AudioPcmBitDepth::Bits24:
+        return Error::Ok;
+    }
+
+    return Error::InvalidValue;
+}
+
 struct AudioMediaDescription {
     AudioPcmEncoding pcm_encoding = AudioPcmEncoding::LinearPcm;
+    AudioPcmBitDepth pcm_bit_depth = AudioPcmBitDepth::Bits24;
     uint32_t sampling_rate_hz = 0;
     uint32_t packet_time_us = 0;
     uint16_t channel_count = 0;
@@ -104,6 +120,10 @@ validate_audio_media_description_against_conformance_range(const AudioMediaDescr
         break;
     default:
         return Error::InvalidValue;
+    }
+
+    if (Error err = validate_audio_pcm_bit_depth(media.pcm_bit_depth); err != Error::Ok) {
+        return err;
     }
 
     if (Error err = validate_audio_conformance_range(range); err != Error::Ok) {

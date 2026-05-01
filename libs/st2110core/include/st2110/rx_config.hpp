@@ -50,6 +50,7 @@ struct RxAudioConfig {
     std::string dest_ip;
 
     AudioSampleFormat format = AudioSampleFormat::LinearPcm;
+    AudioPcmBitDepth pcm_bit_depth = AudioPcmBitDepth::Bits24;
 
     [[nodiscard]] bool is_valid() const { return validate_rx_audio_config(*this) == Error::Ok; }
 };
@@ -86,7 +87,13 @@ audio_media_description_from_rx_audio_config(const RxAudioConfig &cfg) {
         return std::unexpected(Error::Unsupported);
     }
 
-    return AudioMediaDescription{pcmEncoding, cfg.sampling_rate_hz, cfg.packet_time_us, cfg.channel_count};
+    return AudioMediaDescription{
+        .pcm_encoding = pcmEncoding,
+        .pcm_bit_depth = cfg.pcm_bit_depth,
+        .sampling_rate_hz = cfg.sampling_rate_hz,
+        .packet_time_us = cfg.packet_time_us,
+        .channel_count = cfg.channel_count,
+    };
 }
 
 [[nodiscard]] inline bool rx_audio_config_matches_any_conformance_range(const RxAudioConfig &cfg,
@@ -109,6 +116,10 @@ audio_media_description_from_rx_audio_config(const RxAudioConfig &cfg) {
                                                                             const AudioRuntimeSupportPolicy &support) {
     if (!audio_sample_format_supported(cfg.format, support.sample_formats)) {
         return Error::Unsupported;
+    }
+
+    if (Error err = validate_audio_pcm_bit_depth(cfg.pcm_bit_depth); err != Error::Ok) {
+        return err;
     }
 
     if (!rx_audio_config_matches_any_conformance_range(cfg, support.conformance_ranges)) {

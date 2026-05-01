@@ -44,14 +44,36 @@ struct AudioRtpPacketView {
     }
 }
 
+[[nodiscard]] inline std::expected<AudioPcmWireFormat, Error>
+audio_pcm_wire_format_from_bit_depth(AudioPcmBitDepth bit_depth) {
+    switch (bit_depth) {
+    case AudioPcmBitDepth::Bits16:
+        return AudioPcmWireFormat::L16;
+    case AudioPcmBitDepth::Bits24:
+        return AudioPcmWireFormat::L24;
+    }
+
+    return std::unexpected(Error::InvalidValue);
+}
+
 [[nodiscard]] inline std::expected<AudioRtpPacketPolicy, Error>
-audio_rtp_packet_policy_from_rx_audio_config(const RxAudioConfig &cfg, AudioPcmWireFormat wire_format) {
+audio_rtp_packet_policy_from_rx_audio_config(const RxAudioConfig &cfg) {
     if (Error err = validate_rx_audio_config(cfg); err != Error::Ok) {
         return std::unexpected(err);
     }
 
-    return AudioRtpPacketPolicy{cfg.sampling_rate_hz, cfg.channel_count, cfg.samples_per_packet, cfg.payload_type,
-                                wire_format};
+    auto wire_format = audio_pcm_wire_format_from_bit_depth(cfg.pcm_bit_depth);
+    if (!wire_format) {
+        return std::unexpected(wire_format.error());
+    }
+
+    return AudioRtpPacketPolicy{
+        .sampling_rate_hz = cfg.sampling_rate_hz,
+        .channel_count = cfg.channel_count,
+        .samples_per_packet = cfg.samples_per_packet,
+        .payload_type = cfg.payload_type,
+        .wire_format = *wire_format,
+    };
 }
 
 [[nodiscard]] inline std::expected<std::size_t, Error>

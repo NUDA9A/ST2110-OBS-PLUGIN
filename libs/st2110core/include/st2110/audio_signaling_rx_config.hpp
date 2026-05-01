@@ -34,6 +34,7 @@ rx_audio_config_from_audio_stream_signaling(const AudioStreamSignaling &signalin
     res.local_ip = local_ip;
     res.dest_ip = dest_ip;
     res.format = format;
+    res.pcm_bit_depth = signaling.media.pcm_bit_depth;
 
     if (Error err = validate_rx_audio_config(res); err != Error::Ok) {
         return std::unexpected(err);

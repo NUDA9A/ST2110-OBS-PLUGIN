@@ -23,13 +23,11 @@ namespace st2110 {
 class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public IRxAudioBackend {
   public:
     SocketRxAudioBackend()
-        : SocketRxSingleMediaBackendBase(RxMediaKind::Audio,
-                                         RxBackendCapabilities{.video_rx = false, .audio_rx = true},
+        : SocketRxSingleMediaBackendBase(RxMediaKind::Audio, RxBackendCapabilities{.video_rx = false, .audio_rx = true},
                                          make_default_port_factory()) {}
 
     explicit SocketRxAudioBackend(std::unique_ptr<ISocketRxPortFactory> port_factory)
-        : SocketRxSingleMediaBackendBase(RxMediaKind::Audio,
-                                         RxBackendCapabilities{.video_rx = false, .audio_rx = true},
+        : SocketRxSingleMediaBackendBase(RxMediaKind::Audio, RxBackendCapabilities{.video_rx = false, .audio_rx = true},
                                          std::move(port_factory)) {}
 
     RxBackendLifecycleResult start_audio(const RxAudioConfig &cfg, IAudioFrameSink &sink) override {
@@ -55,7 +53,6 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public
         clear_common_runtime_objects();
 
         audio_packet_policy_.reset();
-        audio_wire_format_.reset();
         reorder_buffer_.reset();
         audio_frame_assembler_.reset();
         audio_timestamp_mapper_.reset();
@@ -116,11 +113,12 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public
     }
 
     [[nodiscard]] static std::expected<AudioRtpPacketPolicy, Error>
-    build_audio_packet_policy(const RxAudioConfig &cfg, AudioPcmWireFormat wire_format) {
-        return audio_rtp_packet_policy_from_rx_audio_config(cfg, wire_format);
+    build_audio_packet_policy(const RxAudioConfig &cfg) {
+        return audio_rtp_packet_policy_from_rx_audio_config(cfg);
     }
 
-    [[nodiscard]] static AudioFrameAssemblerConfig build_audio_frame_assembler_config(const RxAudioConfig &cfg) noexcept {
+    [[nodiscard]] static AudioFrameAssemblerConfig
+    build_audio_frame_assembler_config(const RxAudioConfig &cfg) noexcept {
         (void)cfg;
         return AudioFrameAssemblerConfig{.storage_format = AudioSampleStorageFormat::InterleavedS32};
     }
@@ -131,12 +129,10 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public
         PacketParsePolicy packet_parse_policy = build_packet_parse_policy(cfg);
         auto receive_buffer = make_receive_buffer(packet_parse_policy);
 
-        auto wire_format = select_audio_wire_format(cfg);
-        if (!wire_format) {
-            return std::unexpected(wire_format.error());
+        auto audio_packet_policy = build_audio_packet_policy(cfg);
+        if (!audio_packet_policy) {
+            return std::unexpected(audio_packet_policy.error());
         }
-
-        auto audio_packet_policy = build_audio_packet_policy(cfg, *wire_format);
         if (!audio_packet_policy) {
             return std::unexpected(audio_packet_policy.error());
         }
@@ -153,7 +149,6 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public
 
         packet_parse_policy_ = packet_parse_policy;
         audio_packet_policy_ = std::move(*audio_packet_policy);
-        audio_wire_format_ = *wire_format;
         reorder_buffer_ = std::move(reorder_buffer);
         audio_frame_assembler_ = std::move(audio_frame_assembler);
         audio_timestamp_mapper_ = std::move(audio_timestamp_mapper);
@@ -217,16 +212,6 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public
         return *mapped;
     }
 
-    [[nodiscard]] static std::expected<AudioPcmWireFormat, Error>
-    select_audio_wire_format(const RxAudioConfig &cfg) noexcept {
-        switch (cfg.format) {
-        case AudioSampleFormat::LinearPcm:
-            return AudioPcmWireFormat::L24;
-        default:
-            return std::unexpected(Error::InvalidValue);
-        }
-    }
-
     [[nodiscard]] static AudioReorderBufferConfig build_audio_reorder_buffer_config(const RxAudioConfig &cfg) noexcept {
         (void)cfg;
         return AudioReorderBufferConfig{};
@@ -243,7 +228,6 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public
 
     PacketParsePolicy packet_parse_policy_{};
     std::optional<AudioRtpPacketPolicy> audio_packet_policy_{};
-    std::optional<AudioPcmWireFormat> audio_wire_format_{};
     std::unique_ptr<AudioFixedWindowReorderBuffer> reorder_buffer_{};
     std::unique_ptr<AudioFrameAssembler> audio_frame_assembler_{};
     std::optional<AudioRtpTimestampMapper> audio_timestamp_mapper_{};

@@ -32,6 +32,23 @@ namespace st2110 {
     return true;
 }
 
+[[nodiscard]] inline std::expected<AudioPcmBitDepth, Error>
+audio_pcm_bit_depth_from_raw_audio_sdp_rtpmap_encoding_name(std::string_view encoding_name) {
+    if (encoding_name.empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (audio_sdp_ascii_iequals(encoding_name, "L16")) {
+        return AudioPcmBitDepth::Bits16;
+    }
+
+    if (audio_sdp_ascii_iequals(encoding_name, "L24")) {
+        return AudioPcmBitDepth::Bits24;
+    }
+
+    return std::unexpected(Error::Unsupported);
+}
+
 [[nodiscard]] inline std::expected<AudioPcmEncoding, Error>
 audio_pcm_encoding_from_raw_audio_sdp_rtpmap_encoding_name(std::string_view encoding_name) {
     if (encoding_name.empty()) {
@@ -83,8 +100,14 @@ audio_stream_signaling_from_raw_audio_sdp_media_section(const RawAudioSdpMediaSe
         return std::unexpected(encoding.error());
     }
 
+    auto bit_depth = audio_pcm_bit_depth_from_raw_audio_sdp_rtpmap_encoding_name(raw.parsed_rtpmap.encoding_name);
+    if (!bit_depth.has_value()) {
+        return std::unexpected(bit_depth.error());
+    }
+
     AudioStreamSignaling signaling{};
     signaling.media.pcm_encoding = *encoding;
+    signaling.media.pcm_bit_depth = *bit_depth;
     signaling.media.sampling_rate_hz = raw.parsed_rtpmap.sampling_rate_hz;
     signaling.media.packet_time_us = *raw.packet_time_us;
     signaling.media.channel_count = *raw.parsed_rtpmap.channel_count;
