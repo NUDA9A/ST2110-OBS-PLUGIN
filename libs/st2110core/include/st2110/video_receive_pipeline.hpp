@@ -57,6 +57,8 @@ class VideoReceivePipeline {
         reconstructor_->reset();
     }
 
+    [[nodiscard]] const DepacketizerStats &depacketizer_stats() const { return depacketizer_.stats(); }
+
   private:
     Depacketizer depacketizer_;
     std::unique_ptr<IVideoUnitReconstructor> reconstructor_;

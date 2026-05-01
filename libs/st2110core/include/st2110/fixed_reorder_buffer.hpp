@@ -69,7 +69,7 @@ class FixedWindowReorderBuffer final : public IReorderBuffer {
         missing_head_accounted_ = false;
     }
 
-    [[nodiscard]] const ReorderBufferStats &stats() const { return stats_; }
+    [[nodiscard]] ReorderBufferStats stats() const override { return stats_; }
 
     [[nodiscard]] bool flush_missing_once() {
         if (!initialized_ || packets_.empty() || packets_.find(next_expected_seq_) != packets_.end()) {

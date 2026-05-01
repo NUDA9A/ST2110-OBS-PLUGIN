@@ -10,6 +10,8 @@
 static_assert(std::is_abstract_v<st2110::IReorderBuffer>);
 static_assert(
     std::is_same_v<decltype(std::declval<st2110::IReorderBuffer &>().pop_next()), std::optional<st2110::StoredPacket>>);
+static_assert(
+    std::is_same_v<decltype(std::declval<const st2110::IReorderBuffer &>().stats()), st2110::ReorderBufferStats>);
 
 namespace {
 
@@ -29,7 +31,11 @@ st2110::StoredPacket copy_packet(const st2110::PacketView &src) {
 
 class FakeReorderBuffer final : public st2110::IReorderBuffer {
   public:
-    void push(const st2110::PacketView &packet) override { stored_ = copy_packet(packet); }
+    void push(const st2110::PacketView &packet) override {
+        ++stats_.packets_pushed;
+        stored_ = copy_packet(packet);
+        ++stats_.packets_stored;
+    }
 
     std::optional<st2110::StoredPacket> pop_next() override {
         if (!stored_.has_value()) {
@@ -38,13 +44,20 @@ class FakeReorderBuffer final : public st2110::IReorderBuffer {
 
         auto out = std::move(stored_);
         stored_.reset();
+        ++stats_.packets_popped;
         return out;
     }
 
-    void reset() override { stored_.reset(); }
+    [[nodiscard]] st2110::ReorderBufferStats stats() const override { return stats_; }
+
+    void reset() override {
+        stored_.reset();
+        stats_ = {};
+    }
 
   private:
     std::optional<st2110::StoredPacket> stored_{};
+    st2110::ReorderBufferStats stats_{};
 };
 
 void test_stored_packet_view_reconstructs_segments() {
@@ -98,7 +111,7 @@ void test_stored_packet_view_reconstructs_segments() {
     assert(view.segments[1].data[5] == 0x25);
 }
 
-void test_fake_reorder_buffer_push_pop_and_reset() {
+void test_fake_reorder_buffer_push_pop_reset_and_stats() {
     const uint8_t payload_bytes[] = {0xAA, 0xBB, 0xCC, 0xDD};
 
     st2110::PacketView src{};
@@ -120,12 +133,27 @@ void test_fake_reorder_buffer_push_pop_and_reset() {
 
     FakeReorderBuffer buf{};
 
+    const auto empty_stats = buf.stats();
+    assert(empty_stats.packets_pushed == 0);
+    assert(empty_stats.packets_stored == 0);
+    assert(empty_stats.packets_popped == 0);
+
     assert(!buf.pop_next().has_value());
 
     buf.push(src);
 
+    const auto after_push = buf.stats();
+    assert(after_push.packets_pushed == 1);
+    assert(after_push.packets_stored == 1);
+    assert(after_push.packets_popped == 0);
+
     auto stored = buf.pop_next();
     assert(stored.has_value());
+
+    const auto after_pop = buf.stats();
+    assert(after_pop.packets_pushed == 1);
+    assert(after_pop.packets_stored == 1);
+    assert(after_pop.packets_popped == 1);
 
     const st2110::PacketView out = stored->view();
     assert(out.extended_seq == 0x10022u);
@@ -139,14 +167,29 @@ void test_fake_reorder_buffer_push_pop_and_reset() {
     assert(!buf.pop_next().has_value());
 
     buf.push(src);
+    const auto before_reset = buf.stats();
+    assert(before_reset.packets_pushed == 2);
+    assert(before_reset.packets_stored == 2);
+    assert(before_reset.packets_popped == 1);
+
     buf.reset();
     assert(!buf.pop_next().has_value());
+
+    const auto after_reset = buf.stats();
+    assert(after_reset.packets_pushed == 0);
+    assert(after_reset.packets_stored == 0);
+    assert(after_reset.packets_popped == 0);
+    assert(after_reset.duplicates == 0);
+    assert(after_reset.out_of_window == 0);
+    assert(after_reset.late_packets == 0);
+    assert(after_reset.missing_seq == 0);
+    assert(after_reset.missing_seq_flushed == 0);
 }
 
 } // namespace
 
 int main() {
     test_stored_packet_view_reconstructs_segments();
-    test_fake_reorder_buffer_push_pop_and_reset();
+    test_fake_reorder_buffer_push_pop_reset_and_stats();
     return 0;
 }

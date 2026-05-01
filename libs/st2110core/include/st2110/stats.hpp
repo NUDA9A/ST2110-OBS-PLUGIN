@@ -6,6 +6,17 @@
 #include "error.hpp"
 
 namespace st2110 {
+struct ReorderBufferStats {
+    uint64_t packets_pushed = 0;
+    uint64_t packets_stored = 0;
+    uint64_t packets_popped = 0;
+
+    uint64_t duplicates = 0;
+    uint64_t out_of_window = 0;
+    uint64_t late_packets = 0;
+    uint64_t missing_seq = 0;
+    uint64_t missing_seq_flushed = 0;
+};
 
 enum class PacketParseStage {
     RtpHeader,
@@ -84,8 +95,20 @@ struct DepacketizerStats {
 struct BackendStats {
     uint64_t datagrams_received = 0;
     uint64_t bytes_received = 0;
+
+    uint64_t control_datagrams_ignored = 0;
+    uint64_t nonmedia_datagrams_ignored = 0;
+
+    uint64_t packets_parsed_ok = 0;
+    uint64_t packets_rejected = 0;
+
+    uint64_t frames_delivered = 0;
     uint64_t datagrams_dropped = 0;
     uint64_t media_units_delivered = 0;
+
+    PacketParseStats packet_parse{};
+    ReorderBufferStats reorder{};
+    DepacketizerStats depacketizer{};
 };
 
 inline void record_packet_parse_result(PacketParseStats &stats, Error err, PacketParseStage stage) {

@@ -41,6 +41,9 @@ static_assert(
     std::is_same_v<decltype(std::declval<const st2110::SocketRxVideoBackend &>().state()), st2110::RxBackendState>);
 
 static_assert(
+    std::is_same_v<decltype(std::declval<const st2110::SocketRxVideoBackend &>().stats()), st2110::BackendStats>);
+
+static_assert(
     std::is_same_v<decltype(std::declval<st2110::SocketRxVideoBackend &>().stop()), st2110::RxBackendLifecycleResult>);
 
 static_assert(
@@ -152,6 +155,7 @@ class FakeSocketRxPort final : public st2110::ISocketRxPort {
         }
 
         state_->is_open = true;
+        state_->cv_.notify_all();
         return st2110::Error::Ok;
     }
 
@@ -187,6 +191,7 @@ class FakeSocketRxPort final : public st2110::ISocketRxPort {
                 auto datagram = std::move(state_->queued_datagrams.front());
                 state_->queued_datagrams.pop_front();
                 ++state_->receive_count;
+                state_->cv_.notify_all();
                 lock.unlock();
 
                 if (buffer.size() < datagram.size()) {
@@ -227,12 +232,35 @@ class FakeSocketRxPortFactory final : public st2110::ISocketRxPortFactory {
     std::shared_ptr<FakeSocketRxPortState> state_;
 };
 
+template <class Predicate>
+bool wait_until(Predicate &&predicate, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return predicate();
+}
+
 void enqueue_datagram(const std::shared_ptr<FakeSocketRxPortState> &state, std::vector<std::uint8_t> datagram) {
     {
         std::lock_guard lock(state->mutex_);
         state->queued_datagrams.push_back(std::move(datagram));
     }
     state->cv_.notify_all();
+}
+
+std::size_t current_receive_count(const std::shared_ptr<FakeSocketRxPortState> &state) {
+    std::lock_guard lock(state->mutex_);
+    return static_cast<std::size_t>(state->receive_count);
+}
+
+bool wait_for_receive_count_at_least(const std::shared_ptr<FakeSocketRxPortState> &state,
+                                     std::size_t target,
+                                     std::chrono::milliseconds timeout) {
+    return wait_until([&] { return current_receive_count(state) >= target; }, timeout);
 }
 
 #if defined(__linux__)
@@ -480,6 +508,11 @@ void test_socket_rx_video_backend_uses_injected_socket_port_factory_for_ipv4_pro
         assert(state->last_open_config->multicast_membership->interface_address.empty());
     }
 
+    const auto initial_stats = backend.stats();
+    assert(initial_stats.datagrams_received == 0);
+    assert(initial_stats.frames_delivered == 0);
+    assert(initial_stats.packets_parsed_ok == 0);
+
     auto started_again = backend.start_video(cfg, sink);
     assert(!started_again.has_value());
     assert(started_again.error() == st2110::Error::InvalidBackendState);
@@ -494,6 +527,10 @@ void test_socket_rx_video_backend_uses_injected_socket_port_factory_for_ipv4_pro
         assert(state->close_count == 1);
         assert(!state->is_open);
     }
+
+    const auto stats_after_stop = backend.stats();
+    assert(stats_after_stop.datagrams_received == 0);
+    assert(stats_after_stop.frames_delivered == 0);
 }
 
 void test_socket_rx_video_backend_uses_injected_socket_port_factory_for_ipv4_multicast_interface_projection() {
@@ -576,6 +613,10 @@ void test_socket_rx_video_backend_propagates_projection_failure_and_stays_stoppe
         assert(state->create_count == 0);
         assert(state->open_count == 0);
     }
+
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 0);
+    assert(stats.frames_delivered == 0);
 }
 
 void test_socket_rx_video_backend_propagates_port_open_failure_and_allows_retry() {
@@ -598,6 +639,10 @@ void test_socket_rx_video_backend_propagates_port_open_failure_and_allows_retry(
         assert(state->open_count == 1);
         assert(!state->is_open);
     }
+
+    const auto stats_after_failed_start = backend.stats();
+    assert(stats_after_failed_start.datagrams_received == 0);
+    assert(stats_after_failed_start.frames_delivered == 0);
 
     state->open_error = st2110::Error::Ok;
 
@@ -636,6 +681,10 @@ void test_socket_rx_video_backend_rejects_null_created_port() {
         assert(state->create_count == 1);
         assert(state->open_count == 0);
     }
+
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 0);
+    assert(stats.frames_delivered == 0);
 }
 
 void test_socket_rx_video_backend_stop_propagates_close_failure_without_losing_active_state() {
@@ -712,6 +761,10 @@ void test_socket_rx_video_backend_can_restart_after_successful_stop() {
         assert(!state->is_open);
     }
 
+    const auto stats_after_first_stop = backend.stats();
+    assert(stats_after_first_stop.datagrams_received == 0);
+    assert(stats_after_first_stop.frames_delivered == 0);
+
     auto second_start = backend.start_video(cfg, sink);
     assert(second_start.has_value());
     assert(st2110::backend_media_active(*second_start, st2110::RxMediaKind::Video));
@@ -735,7 +788,7 @@ void test_socket_rx_video_backend_can_restart_after_successful_stop() {
     }
 }
 
-void test_socket_rx_video_backend_delivers_reordered_video_frame_from_injected_port() {
+void test_socket_rx_video_backend_delivers_reordered_video_frame_from_injected_port_and_reports_stats() {
     auto state = std::make_shared<FakeSocketRxPortState>();
     st2110::SocketRxVideoBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
 
@@ -746,6 +799,12 @@ void test_socket_rx_video_backend_delivers_reordered_video_frame_from_injected_p
     assert(started.has_value());
     assert(st2110::backend_media_active(*started, st2110::RxMediaKind::Video));
 
+    const auto initial_stats = backend.stats();
+    assert(initial_stats.datagrams_received == 0);
+    assert(initial_stats.bytes_received == 0);
+    assert(initial_stats.packets_parsed_ok == 0);
+    assert(initial_stats.frames_delivered == 0);
+
     const std::array<std::uint8_t, 4> left{0, 1, 2, 3};
     const std::array<std::uint8_t, 4> middle{4, 5, 6, 7};
     const std::array<std::uint8_t, 4> right{8, 9, 10, 11};
@@ -754,7 +813,10 @@ void test_socket_rx_video_backend_delivers_reordered_video_frame_from_injected_p
     enqueue_datagram(state, build_single_segment_video_datagram(112, 3, 1000, right, true, 0, 4));
     enqueue_datagram(state, build_single_segment_video_datagram(112, 2, 1000, middle, false, 0, 2));
 
+    assert(wait_for_receive_count_at_least(state, 3, std::chrono::milliseconds(500)));
     assert(sink.wait_for_frame_count(1, std::chrono::milliseconds(500)));
+    assert(wait_until([&] { return backend.stats().frames_delivered == 1; }, std::chrono::milliseconds(500)));
+
     const auto frame = sink.frame_at(0);
 
     assert(frame.width == 6);
@@ -764,12 +826,42 @@ void test_socket_rx_video_backend_delivers_reordered_video_frame_from_injected_p
     const std::array<std::uint8_t, 12> expected{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
     assert_bytes_equal(frame.bytes, expected);
 
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 3);
+    assert(stats.bytes_received == 72);
+    assert(stats.control_datagrams_ignored == 0);
+    assert(stats.nonmedia_datagrams_ignored == 0);
+    assert(stats.packets_parsed_ok == 3);
+    assert(stats.packets_rejected == 0);
+    assert(stats.datagrams_dropped == 0);
+    assert(stats.frames_delivered == 1);
+    assert(stats.media_units_delivered == 1);
+
+    assert(stats.packet_parse.parser_stats.packets_total == 3);
+    assert(stats.packet_parse.parser_stats.packets_ok == 3);
+    assert(stats.packet_parse.parser_stats.packets_failed == 0);
+
+    assert(stats.reorder.packets_pushed == 3);
+    assert(stats.reorder.packets_stored == 3);
+    assert(stats.reorder.packets_popped == 3);
+    assert(stats.reorder.duplicates == 0);
+    assert(stats.reorder.out_of_window == 0);
+    assert(stats.reorder.late_packets == 0);
+    assert(stats.reorder.missing_seq == 1);
+    assert(stats.reorder.missing_seq_flushed == 0);
+
+    assert(stats.depacketizer.packets_in == 3);
+    assert(stats.depacketizer.packets_used == 3);
+    assert(stats.depacketizer.units_ok == 1);
+    assert(stats.depacketizer.units_partial == 0);
+    assert(stats.depacketizer.units_dropped == 0);
+
     auto stopped = backend.stop();
     assert(stopped.has_value());
     assert(st2110::backend_is_stopped(*stopped));
 }
 
-void test_socket_rx_video_backend_ignores_control_admission_and_parse_failures_before_delivering_media() {
+void test_socket_rx_video_backend_ignores_control_admission_and_parse_failures_before_delivering_media_and_reports_stats() {
     auto state = std::make_shared<FakeSocketRxPortState>();
     st2110::SocketRxVideoBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
 
@@ -780,14 +872,19 @@ void test_socket_rx_video_backend_ignores_control_admission_and_parse_failures_b
     assert(started.has_value());
 
     enqueue_datagram(state, build_rtcp_like_datagram());
-    enqueue_datagram(state, build_single_segment_video_datagram(113, 1, 1000, std::array<std::uint8_t, 8>{0, 1, 2, 3, 4, 5, 6, 7}, true, 0, 0));
+    enqueue_datagram(state,
+                     build_single_segment_video_datagram(
+                         113, 1, 1000, std::array<std::uint8_t, 8>{0, 1, 2, 3, 4, 5, 6, 7}, true, 0, 0));
     enqueue_datagram(state, build_short_malformed_media_datagram());
 
     const std::array<std::uint8_t, 8> good_bytes{10, 11, 12, 13, 14, 15, 16, 17};
     enqueue_datagram(state, build_single_segment_video_datagram(112, 2, 1000, good_bytes, true, 0, 0));
 
+    assert(wait_for_receive_count_at_least(state, 4, std::chrono::milliseconds(500)));
     assert(sink.wait_for_frame_count(1, std::chrono::milliseconds(500)));
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    assert(wait_until([&] { return backend.stats().frames_delivered == 1; }, std::chrono::milliseconds(500)));
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
     assert(sink.frame_count() == 1);
 
     const auto frame = sink.frame_at(0);
@@ -795,12 +892,40 @@ void test_socket_rx_video_backend_ignores_control_admission_and_parse_failures_b
     assert(frame.height == 1);
     assert_bytes_equal(frame.bytes, good_bytes);
 
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 4);
+    assert(stats.bytes_received == 67);
+    assert(stats.control_datagrams_ignored == 1);
+    assert(stats.nonmedia_datagrams_ignored == 1);
+    assert(stats.packets_parsed_ok == 1);
+    assert(stats.packets_rejected == 1);
+    assert(stats.datagrams_dropped == 3);
+    assert(stats.frames_delivered == 1);
+    assert(stats.media_units_delivered == 1);
+
+    assert(stats.packet_parse.parser_stats.packets_total == 2);
+    assert(stats.packet_parse.parser_stats.packets_ok == 1);
+    assert(stats.packet_parse.parser_stats.packets_failed == 1);
+    assert(stats.packet_parse.rtp_header_fail == 1);
+    assert(stats.packet_parse.st2110_header_parse_fail == 0);
+    assert(stats.packet_parse.parser_stats.short_packet == 1);
+
+    assert(stats.reorder.packets_pushed == 1);
+    assert(stats.reorder.packets_stored == 1);
+    assert(stats.reorder.packets_popped == 1);
+
+    assert(stats.depacketizer.packets_in == 1);
+    assert(stats.depacketizer.packets_used == 1);
+    assert(stats.depacketizer.units_ok == 1);
+    assert(stats.depacketizer.units_partial == 0);
+    assert(stats.depacketizer.units_dropped == 0);
+
     auto stopped = backend.stop();
     assert(stopped.has_value());
     assert(st2110::backend_is_stopped(*stopped));
 }
 
-void test_socket_rx_video_backend_maps_rtp_timestamps_before_sink_delivery() {
+void test_socket_rx_video_backend_maps_rtp_timestamps_before_sink_delivery_and_reports_stats() {
     auto state = std::make_shared<FakeSocketRxPortState>();
     st2110::SocketRxVideoBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
 
@@ -816,7 +941,9 @@ void test_socket_rx_video_backend_maps_rtp_timestamps_before_sink_delivery() {
     enqueue_datagram(state, build_single_segment_video_datagram(112, 1, 0, frame0_bytes, true, 0, 0));
     enqueue_datagram(state, build_single_segment_video_datagram(112, 2, 90000, frame1_bytes, true, 0, 0));
 
+    assert(wait_for_receive_count_at_least(state, 2, std::chrono::milliseconds(500)));
     assert(sink.wait_for_frame_count(2, std::chrono::milliseconds(500)));
+    assert(wait_until([&] { return backend.stats().frames_delivered == 2; }, std::chrono::milliseconds(500)));
 
     const auto frame0 = sink.frame_at(0);
     const auto frame1 = sink.frame_at(1);
@@ -826,9 +953,102 @@ void test_socket_rx_video_backend_maps_rtp_timestamps_before_sink_delivery() {
     assert_bytes_equal(frame0.bytes, frame0_bytes);
     assert_bytes_equal(frame1.bytes, frame1_bytes);
 
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 2);
+    assert(stats.bytes_received == 56);
+    assert(stats.packets_parsed_ok == 2);
+    assert(stats.packets_rejected == 0);
+    assert(stats.frames_delivered == 2);
+    assert(stats.media_units_delivered == 2);
+    assert(stats.datagrams_dropped == 0);
+
+    assert(stats.packet_parse.parser_stats.packets_total == 2);
+    assert(stats.packet_parse.parser_stats.packets_ok == 2);
+    assert(stats.packet_parse.parser_stats.packets_failed == 0);
+
+    assert(stats.reorder.packets_pushed == 2);
+    assert(stats.reorder.packets_stored == 2);
+    assert(stats.reorder.packets_popped == 2);
+
+    assert(stats.depacketizer.packets_in == 2);
+    assert(stats.depacketizer.packets_used == 2);
+    assert(stats.depacketizer.units_ok == 2);
+    assert(stats.depacketizer.units_partial == 0);
+    assert(stats.depacketizer.units_dropped == 0);
+
     auto stopped = backend.stop();
     assert(stopped.has_value());
     assert(st2110::backend_is_stopped(*stopped));
+}
+
+void test_socket_rx_video_backend_stats_reset_after_stop_and_restart() {
+    auto state = std::make_shared<FakeSocketRxPortState>();
+    st2110::SocketRxVideoBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
+
+    FakeVideoSink sink;
+    const auto cfg = make_receive_ipv4_unicast_video_config(5018, 4, 112);
+
+    auto first_start = backend.start_video(cfg, sink);
+    assert(first_start.has_value());
+
+    const std::array<std::uint8_t, 8> first_frame_bytes{1, 2, 3, 4, 5, 6, 7, 8};
+    enqueue_datagram(state, build_single_segment_video_datagram(112, 1, 0, first_frame_bytes, true, 0, 0));
+
+    assert(wait_for_receive_count_at_least(state, 1, std::chrono::milliseconds(500)));
+    assert(sink.wait_for_frame_count(1, std::chrono::milliseconds(500)));
+    assert(wait_until([&] { return backend.stats().frames_delivered == 1; }, std::chrono::milliseconds(500)));
+
+    const auto first_run_stats = backend.stats();
+    assert(first_run_stats.datagrams_received == 1);
+    assert(first_run_stats.frames_delivered == 1);
+    assert(first_run_stats.packets_parsed_ok == 1);
+    assert(first_run_stats.datagrams_dropped == 0);
+
+    auto first_stop = backend.stop();
+    assert(first_stop.has_value());
+    assert(st2110::backend_is_stopped(*first_stop));
+
+    const auto stats_after_stop = backend.stats();
+    assert(stats_after_stop.datagrams_received == 0);
+    assert(stats_after_stop.bytes_received == 0);
+    assert(stats_after_stop.control_datagrams_ignored == 0);
+    assert(stats_after_stop.nonmedia_datagrams_ignored == 0);
+    assert(stats_after_stop.packets_parsed_ok == 0);
+    assert(stats_after_stop.packets_rejected == 0);
+    assert(stats_after_stop.datagrams_dropped == 0);
+    assert(stats_after_stop.frames_delivered == 0);
+    assert(stats_after_stop.media_units_delivered == 0);
+    assert(stats_after_stop.packet_parse.parser_stats.packets_total == 0);
+    assert(stats_after_stop.reorder.packets_pushed == 0);
+    assert(stats_after_stop.depacketizer.packets_in == 0);
+
+    const std::size_t receive_baseline = current_receive_count(state);
+
+    auto second_start = backend.start_video(cfg, sink);
+    assert(second_start.has_value());
+
+    const std::array<std::uint8_t, 8> second_frame_bytes{9, 10, 11, 12, 13, 14, 15, 16};
+    enqueue_datagram(state, build_rtcp_like_datagram());
+    enqueue_datagram(state, build_single_segment_video_datagram(112, 2, 0, second_frame_bytes, true, 0, 0));
+
+    assert(wait_for_receive_count_at_least(state, receive_baseline + 2, std::chrono::milliseconds(500)));
+    assert(sink.wait_for_frame_count(2, std::chrono::milliseconds(500)));
+    assert(wait_until([&] { return backend.stats().frames_delivered == 1; }, std::chrono::milliseconds(500)));
+
+    const auto second_run_stats = backend.stats();
+    assert(second_run_stats.datagrams_received == 2);
+    assert(second_run_stats.bytes_received == 36);
+    assert(second_run_stats.control_datagrams_ignored == 1);
+    assert(second_run_stats.nonmedia_datagrams_ignored == 0);
+    assert(second_run_stats.packets_parsed_ok == 1);
+    assert(second_run_stats.packets_rejected == 0);
+    assert(second_run_stats.datagrams_dropped == 1);
+    assert(second_run_stats.frames_delivered == 1);
+    assert(second_run_stats.media_units_delivered == 1);
+
+    auto second_stop = backend.stop();
+    assert(second_stop.has_value());
+    assert(st2110::backend_is_stopped(*second_stop));
 }
 
 void test_socket_rx_video_backend_factory_descriptor_and_creation_shape() {
@@ -846,6 +1066,10 @@ void test_socket_rx_video_backend_factory_descriptor_and_creation_shape() {
     assert(backend != nullptr);
     assert(std::string_view(backend->backend_name()) == "socket");
     assert(st2110::backend_is_stopped(backend->state()));
+
+    const auto stats = backend->stats();
+    assert(stats.datagrams_received == 0);
+    assert(stats.frames_delivered == 0);
 
     auto *video_backend = dynamic_cast<st2110::IRxVideoBackend *>(backend.get());
     assert(video_backend != nullptr);
@@ -873,6 +1097,10 @@ void test_socket_rx_video_backend_default_backend_uses_linux_port_factory_on_lin
     assert(!first_start.has_value());
     assert(first_start.error() == st2110::Error::BindFailed);
     assert(st2110::backend_is_stopped(backend->state()));
+
+    const auto stats_after_failed_start = backend->stats();
+    assert(stats_after_failed_start.datagrams_received == 0);
+    assert(stats_after_failed_start.frames_delivered == 0);
 
     reserved.close_now();
 
@@ -925,7 +1153,7 @@ void test_socket_rx_video_backend_default_backend_recovers_after_multicast_join_
     assert(st2110::backend_is_stopped(backend->state()));
 }
 
-void test_socket_rx_video_backend_default_backend_receives_one_ipv4_unicast_frame_on_linux() {
+void test_socket_rx_video_backend_default_backend_receives_one_ipv4_unicast_frame_on_linux_and_reports_stats() {
     auto reserved = reserve_ipv4_loopback_udp_socket();
     assert(reserved.valid());
     const uint16_t port = reserved.port();
@@ -950,12 +1178,39 @@ void test_socket_rx_video_backend_default_backend_receives_one_ipv4_unicast_fram
     send_ipv4_loopback_datagram(port, datagram);
 
     assert(sink.wait_for_frame_count(1, std::chrono::milliseconds(500)));
+    assert(wait_until([&] { return backend->stats().frames_delivered == 1; }, std::chrono::milliseconds(500)));
+
     const auto frame = sink.frame_at(0);
 
     assert(frame.width == 4);
     assert(frame.height == 1);
     assert(frame.timestamp_ns == 0);
     assert_bytes_equal(frame.bytes, frame_bytes);
+
+    const auto stats = backend->stats();
+    assert(stats.datagrams_received == 1);
+    assert(stats.bytes_received == 28);
+    assert(stats.control_datagrams_ignored == 0);
+    assert(stats.nonmedia_datagrams_ignored == 0);
+    assert(stats.packets_parsed_ok == 1);
+    assert(stats.packets_rejected == 0);
+    assert(stats.datagrams_dropped == 0);
+    assert(stats.frames_delivered == 1);
+    assert(stats.media_units_delivered == 1);
+
+    assert(stats.packet_parse.parser_stats.packets_total == 1);
+    assert(stats.packet_parse.parser_stats.packets_ok == 1);
+    assert(stats.packet_parse.parser_stats.packets_failed == 0);
+
+    assert(stats.reorder.packets_pushed == 1);
+    assert(stats.reorder.packets_stored == 1);
+    assert(stats.reorder.packets_popped == 1);
+
+    assert(stats.depacketizer.packets_in == 1);
+    assert(stats.depacketizer.packets_used == 1);
+    assert(stats.depacketizer.units_ok == 1);
+    assert(stats.depacketizer.units_partial == 0);
+    assert(stats.depacketizer.units_dropped == 0);
 
     auto stopped = backend->stop();
     assert(stopped.has_value());
@@ -978,6 +1233,10 @@ void test_socket_rx_video_backend_default_backend_uses_stub_factory_on_unsupport
     assert(started.has_value());
     assert(st2110::backend_media_active(*started, st2110::RxMediaKind::Video));
 
+    const auto stats_before_stop = backend->stats();
+    assert(stats_before_stop.datagrams_received == 0);
+    assert(stats_before_stop.frames_delivered == 0);
+
     auto stopped = backend->stop();
     assert(stopped.has_value());
     assert(st2110::backend_is_stopped(*stopped));
@@ -995,14 +1254,15 @@ int main() {
     test_socket_rx_video_backend_rejects_null_created_port();
     test_socket_rx_video_backend_stop_propagates_close_failure_without_losing_active_state();
     test_socket_rx_video_backend_can_restart_after_successful_stop();
-    test_socket_rx_video_backend_delivers_reordered_video_frame_from_injected_port();
-    test_socket_rx_video_backend_ignores_control_admission_and_parse_failures_before_delivering_media();
-    test_socket_rx_video_backend_maps_rtp_timestamps_before_sink_delivery();
+    test_socket_rx_video_backend_delivers_reordered_video_frame_from_injected_port_and_reports_stats();
+    test_socket_rx_video_backend_ignores_control_admission_and_parse_failures_before_delivering_media_and_reports_stats();
+    test_socket_rx_video_backend_maps_rtp_timestamps_before_sink_delivery_and_reports_stats();
+    test_socket_rx_video_backend_stats_reset_after_stop_and_restart();
     test_socket_rx_video_backend_factory_descriptor_and_creation_shape();
 #if defined(__linux__)
     test_socket_rx_video_backend_default_backend_uses_linux_port_factory_on_linux_bind_failure();
     test_socket_rx_video_backend_default_backend_recovers_after_multicast_join_failure_on_linux();
-    test_socket_rx_video_backend_default_backend_receives_one_ipv4_unicast_frame_on_linux();
+    test_socket_rx_video_backend_default_backend_receives_one_ipv4_unicast_frame_on_linux_and_reports_stats();
 #else
     test_socket_rx_video_backend_default_backend_uses_stub_factory_on_unsupported_build();
 #endif

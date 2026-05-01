@@ -7,20 +7,9 @@
 #include <vector>
 
 #include "packet_view.hpp"
+#include "stats.hpp"
 
 namespace st2110 {
-struct ReorderBufferStats {
-    uint64_t packets_pushed = 0;
-    uint64_t packets_stored = 0;
-    uint64_t packets_popped = 0;
-
-    uint64_t duplicates = 0;
-    uint64_t out_of_window = 0;
-    uint64_t late_packets = 0;
-    uint64_t missing_seq = 0;
-    uint64_t missing_seq_flushed = 0;
-};
-
 struct StoredPacket {
     RtpHeaderView rtp{};
     uint32_t extended_seq = 0;
@@ -68,6 +57,8 @@ class IReorderBuffer {
     [[nodiscard]] virtual std::optional<StoredPacket> pop_next() = 0;
 
     virtual void reset() = 0;
+
+    [[nodiscard]] virtual ReorderBufferStats stats() const = 0;
 
     virtual ~IReorderBuffer() = default;
 };

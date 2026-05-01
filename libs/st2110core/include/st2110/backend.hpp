@@ -5,6 +5,7 @@
 #include "error.hpp"
 #include "rx_config.hpp"
 #include "video_frame.hpp"
+#include "stats.hpp"
 
 #include <expected>
 
@@ -72,6 +73,8 @@ class IRxBackend {
     virtual ~IRxBackend() = default;
 
     [[nodiscard]] virtual RxBackendCapabilities capabilities() const = 0;
+
+    [[nodiscard]] virtual BackendStats stats() const = 0;
 };
 
 class IRxVideoBackend : public virtual IRxBackend {

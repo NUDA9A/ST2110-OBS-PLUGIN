@@ -9,11 +9,13 @@
 #include "socket_runtime.hpp"
 #include "video_receive_pipeline.hpp"
 #include "video_timestamp_mapping.hpp"
+#include "stats.hpp"
 
 #include <memory>
 #include <optional>
 #include <thread>
 #include <vector>
+#include <mutex>
 
 namespace st2110 {
 class SocketRxVideoBackend final : public IRxVideoBackend {
@@ -71,6 +73,8 @@ class SocketRxVideoBackend final : public IRxVideoBackend {
 
     [[nodiscard]] RxBackendState state() const override { return state_; }
 
+    [[nodiscard]] BackendStats stats() const override;
+
   private:
     [[nodiscard]] static PacketParsePolicy build_packet_parse_policy(const RxVideoConfig &cfg) noexcept;
     [[nodiscard]] static VideoReceivePipelineConfig build_video_receive_pipeline_config(const RxVideoConfig &cfg);
@@ -86,6 +90,14 @@ class SocketRxVideoBackend final : public IRxVideoBackend {
     void drain_reorder_buffer_to_sink() noexcept;
     void deliver_reconstructed_frame(ReconstructedVideoFrame &&frame) noexcept;
     [[nodiscard]] TimestampNs map_frame_timestamp_ns(uint32_t rtp_timestamp) noexcept;
+
+    void record_received_datagram(std::size_t size_bytes) noexcept;
+    void record_ignored_control_datagram() noexcept;
+    void record_ignored_nonmedia_datagram() noexcept;
+    void record_rejected_packet(Error err, PacketParseStage stage) noexcept;
+    void record_parsed_packet_ok() noexcept;
+    void record_delivered_frame() noexcept;
+    [[nodiscard]] BackendStats build_stats_snapshot_locked() const noexcept;
 
     [[nodiscard]] static std::unique_ptr<ISocketRxPortFactory> make_default_port_factory();
 
@@ -119,6 +131,7 @@ class SocketRxVideoBackend final : public IRxVideoBackend {
         video_sink_ = nullptr;
         configured_video_payload_type_.reset();
         state_ = {};
+        stats_ = {};
     }
 
     std::unique_ptr<ISocketRxPortFactory> port_factory_{};
@@ -132,6 +145,8 @@ class SocketRxVideoBackend final : public IRxVideoBackend {
     IVideoFrameSink *video_sink_ = nullptr;
     std::jthread receive_thread_{};
     std::optional<std::uint8_t> configured_video_payload_type_{};
+    mutable std::mutex stats_mutex_{};
+    BackendStats stats_{};
 };
 
 class SocketRxVideoBackendFactory final : public IRxBackendFactory {

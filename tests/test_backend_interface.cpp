@@ -46,6 +46,8 @@ static_assert(
 
 static_assert(std::is_same_v<decltype(std::declval<const st2110::IRxBackend &>().state()), st2110::RxBackendState>);
 
+static_assert(std::is_same_v<decltype(std::declval<const st2110::IRxBackend &>().stats()), st2110::BackendStats>);
+
 static_assert(std::is_same_v<decltype(std::declval<st2110::IRxBackend &>().stop()), st2110::RxBackendLifecycleResult>);
 
 static_assert(
@@ -136,6 +138,8 @@ class FakeVideoBackend final : public st2110::IRxVideoBackend {
 
     st2110::RxBackendState state() const override { return state_; }
 
+    st2110::BackendStats stats() const override { return stats_; }
+
     st2110::RxBackendLifecycleResult start_video(const st2110::RxVideoConfig &cfg,
                                                  st2110::IVideoFrameSink &sink) override {
         if (state_.video_active) {
@@ -147,6 +151,9 @@ class FakeVideoBackend final : public st2110::IRxVideoBackend {
         st2110::VideoFrame frame(cfg.width, cfg.height, cfg.format);
         sink.on_video_frame(frame.view(123456789));
 
+        ++stats_.frames_delivered;
+        ++stats_.media_units_delivered;
+
         return state_;
     }
 
@@ -157,6 +164,7 @@ class FakeVideoBackend final : public st2110::IRxVideoBackend {
 
   private:
     st2110::RxBackendState state_{};
+    st2110::BackendStats stats_{};
 };
 
 class FakeAudioBackend final : public st2110::IRxAudioBackend {
@@ -170,6 +178,8 @@ class FakeAudioBackend final : public st2110::IRxAudioBackend {
     }
 
     st2110::RxBackendState state() const override { return state_; }
+
+    st2110::BackendStats stats() const override { return stats_; }
 
     st2110::RxBackendLifecycleResult start_audio(const st2110::RxAudioConfig &cfg,
                                                  st2110::IAudioFrameSink &sink) override {
@@ -185,6 +195,8 @@ class FakeAudioBackend final : public st2110::IRxAudioBackend {
 
         sink.on_audio_frame(buffer.view(987654321));
 
+        ++stats_.media_units_delivered;
+
         return state_;
     }
 
@@ -195,6 +207,7 @@ class FakeAudioBackend final : public st2110::IRxAudioBackend {
 
   private:
     st2110::RxBackendState state_{};
+    st2110::BackendStats stats_{};
 };
 
 class FakeCombinedBackend final : public st2110::IRxVideoBackend, public st2110::IRxAudioBackend {
@@ -210,6 +223,8 @@ class FakeCombinedBackend final : public st2110::IRxVideoBackend, public st2110:
 
     st2110::RxBackendState state() const override { return state_; }
 
+    st2110::BackendStats stats() const override { return stats_; }
+
     st2110::RxBackendLifecycleResult start_video(const st2110::RxVideoConfig &cfg,
                                                  st2110::IVideoFrameSink &sink) override {
         if (state_.video_active) {
@@ -220,6 +235,9 @@ class FakeCombinedBackend final : public st2110::IRxVideoBackend, public st2110:
 
         st2110::VideoFrame frame(cfg.width, cfg.height, cfg.format);
         sink.on_video_frame(frame.view(222222222));
+
+        ++stats_.frames_delivered;
+        ++stats_.media_units_delivered;
 
         return state_;
     }
@@ -238,6 +256,8 @@ class FakeCombinedBackend final : public st2110::IRxVideoBackend, public st2110:
 
         sink.on_audio_frame(buffer.view(333333333));
 
+        ++stats_.media_units_delivered;
+
         return state_;
     }
 
@@ -248,6 +268,7 @@ class FakeCombinedBackend final : public st2110::IRxVideoBackend, public st2110:
 
   private:
     st2110::RxBackendState state_{};
+    st2110::BackendStats stats_{};
 };
 
 class FlakyVideoBackend final : public st2110::IRxVideoBackend {
@@ -262,6 +283,8 @@ class FlakyVideoBackend final : public st2110::IRxVideoBackend {
 
     st2110::RxBackendState state() const override { return state_; }
 
+    st2110::BackendStats stats() const override { return stats_; }
+
     st2110::RxBackendLifecycleResult start_video(const st2110::RxVideoConfig &cfg,
                                                  st2110::IVideoFrameSink &sink) override {
         (void)cfg;
@@ -273,6 +296,7 @@ class FlakyVideoBackend final : public st2110::IRxVideoBackend {
 
         if (fail_next_start_) {
             fail_next_start_ = false;
+            ++stats_.datagrams_dropped;
             return std::unexpected(st2110::Error::SystemFailure);
         }
 
@@ -288,6 +312,7 @@ class FlakyVideoBackend final : public st2110::IRxVideoBackend {
   private:
     bool fail_next_start_ = true;
     st2110::RxBackendState state_{};
+    st2110::BackendStats stats_{};
 };
 
 static_assert(std::is_convertible_v<FakeCombinedBackend *, st2110::IRxBackend *>);
@@ -389,6 +414,11 @@ void test_fake_video_backend_lifecycle_and_delivery() {
     assert(st2110::supports_media(capabilities, st2110::RxMediaKind::Video));
     assert(!st2110::supports_media(capabilities, st2110::RxMediaKind::Audio));
 
+    const auto stats_before_start = backend_base_view.stats();
+    assert(stats_before_start.frames_delivered == 0);
+    assert(stats_before_start.media_units_delivered == 0);
+    assert(stats_before_start.datagrams_received == 0);
+
     assert(st2110::backend_is_stopped(backend.state()));
     assert(!sink.called);
 
@@ -410,6 +440,12 @@ void test_fake_video_backend_lifecycle_and_delivery() {
     assert(sink.last_data0 != nullptr);
     assert(sink.last_stride0 == 1920u * 2u);
 
+    const auto stats_after_start = backend_base_view.stats();
+    assert(stats_after_start.frames_delivered == 1);
+    assert(stats_after_start.media_units_delivered == 1);
+    assert(stats_after_start.datagrams_received == 0);
+    assert(stats_after_start.packets_parsed_ok == 0);
+
     auto started_again = backend.start_video(cfg, sink);
     assert(!started_again.has_value());
     assert(started_again.error() == st2110::Error::InvalidBackendState);
@@ -428,6 +464,10 @@ void test_fake_video_backend_lifecycle_and_delivery() {
     auto restarted = backend.start_video(cfg, sink);
     assert(restarted.has_value());
     assert(st2110::backend_media_active(*restarted, st2110::RxMediaKind::Video));
+
+    const auto stats_after_restart = backend_base_view.stats();
+    assert(stats_after_restart.frames_delivered == 2);
+    assert(stats_after_restart.media_units_delivered == 2);
 }
 
 void test_fake_audio_backend_lifecycle_and_delivery() {
@@ -442,6 +482,10 @@ void test_fake_audio_backend_lifecycle_and_delivery() {
     const auto capabilities = backend_base_view.capabilities();
     assert(!st2110::supports_media(capabilities, st2110::RxMediaKind::Video));
     assert(st2110::supports_media(capabilities, st2110::RxMediaKind::Audio));
+
+    const auto stats_before_start = backend_base_view.stats();
+    assert(stats_before_start.media_units_delivered == 0);
+    assert(stats_before_start.frames_delivered == 0);
 
     assert(st2110::backend_is_stopped(backend.state()));
     assert(!sink.called);
@@ -464,6 +508,10 @@ void test_fake_audio_backend_lifecycle_and_delivery() {
     assert(sink.last_samples != nullptr);
     assert(sink.first_sample == 11);
     assert(sink.second_sample == 22);
+
+    const auto stats_after_start = backend_base_view.stats();
+    assert(stats_after_start.media_units_delivered == 1);
+    assert(stats_after_start.frames_delivered == 0);
 
     auto started_again = backend.start_audio(cfg, sink);
     assert(!started_again.has_value());
@@ -495,6 +543,10 @@ void test_combined_backend_has_single_common_backend_base_and_combined_state() {
     assert(st2110::supports_media(capabilities, st2110::RxMediaKind::Audio));
     assert(st2110::backend_is_stopped(backend_base.state()));
 
+    const auto stats_before_start = backend_base.stats();
+    assert(stats_before_start.frames_delivered == 0);
+    assert(stats_before_start.media_units_delivered == 0);
+
     auto video_started = video_backend.start_video(video_cfg, video_sink);
     assert(video_started.has_value());
     assert(st2110::backend_media_active(*video_started, st2110::RxMediaKind::Video));
@@ -519,6 +571,10 @@ void test_combined_backend_has_single_common_backend_base_and_combined_state() {
     assert(audio_sink.last_ts_ns == 333333333);
     assert(audio_sink.first_sample == 33);
     assert(audio_sink.second_sample == 44);
+
+    const auto stats_after_start = backend_base.stats();
+    assert(stats_after_start.frames_delivered == 1);
+    assert(stats_after_start.media_units_delivered == 2);
 
     auto video_started_again = video_backend.start_video(video_cfg, video_sink);
     assert(!video_started_again.has_value());
@@ -546,6 +602,10 @@ void test_failed_start_leaves_backend_stopped_and_retryable() {
     assert(!first_start.has_value());
     assert(first_start.error() == st2110::Error::SystemFailure);
     assert(st2110::backend_is_stopped(backend.state()));
+
+    const auto stats_after_failed_start = backend.stats();
+    assert(stats_after_failed_start.datagrams_dropped == 1);
+    assert(stats_after_failed_start.frames_delivered == 0);
 
     auto stop_after_failed_start = backend.stop();
     assert(stop_after_failed_start.has_value());

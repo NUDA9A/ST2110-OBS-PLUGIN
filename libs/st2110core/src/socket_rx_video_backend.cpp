@@ -39,6 +39,62 @@ std::vector<std::uint8_t> SocketRxVideoBackend::make_receive_buffer(const Packet
     return std::vector<std::uint8_t>(size_bytes);
 }
 
+BackendStats SocketRxVideoBackend::stats() const {
+    std::lock_guard lock(stats_mutex_);
+    return build_stats_snapshot_locked();
+}
+
+void SocketRxVideoBackend::record_received_datagram(std::size_t size_bytes) noexcept {
+    std::lock_guard lock(stats_mutex_);
+    ++stats_.datagrams_received;
+    stats_.bytes_received += size_bytes;
+}
+
+void SocketRxVideoBackend::record_ignored_control_datagram() noexcept {
+    std::lock_guard lock(stats_mutex_);
+    ++stats_.control_datagrams_ignored;
+    ++stats_.datagrams_dropped;
+}
+
+void SocketRxVideoBackend::record_ignored_nonmedia_datagram() noexcept {
+    std::lock_guard lock(stats_mutex_);
+    ++stats_.nonmedia_datagrams_ignored;
+    ++stats_.datagrams_dropped;
+}
+
+void SocketRxVideoBackend::record_rejected_packet(Error err, PacketParseStage stage) noexcept {
+    std::lock_guard lock(stats_mutex_);
+    ++stats_.packets_rejected;
+    ++stats_.datagrams_dropped;
+    record_packet_parse_result(stats_.packet_parse, err, stage);
+}
+
+void SocketRxVideoBackend::record_parsed_packet_ok() noexcept {
+    std::lock_guard lock(stats_mutex_);
+    ++stats_.packets_parsed_ok;
+    record_packet_parse_result(stats_.packet_parse, Error::Ok, PacketParseStage::RtpHeader);
+}
+
+void SocketRxVideoBackend::record_delivered_frame() noexcept {
+    std::lock_guard lock(stats_mutex_);
+    ++stats_.frames_delivered;
+    ++stats_.media_units_delivered;
+}
+
+BackendStats SocketRxVideoBackend::build_stats_snapshot_locked() const noexcept {
+    BackendStats snapshot = stats_;
+
+    if (reorder_buffer_ != nullptr) {
+        snapshot.reorder = reorder_buffer_->stats();
+    }
+
+    if (video_receive_pipeline_ != nullptr) {
+        snapshot.depacketizer = video_receive_pipeline_->depacketizer_stats();
+    }
+
+    return snapshot;
+}
+
 RxBackendLifecycleResult SocketRxVideoBackend::start_video_runtime(const RxVideoConfig &cfg, IVideoFrameSink &sink,
                                                                    const SocketRxOpenConfig &open_cfg,
                                                                    std::unique_ptr<ISocketRxPort> port) {
@@ -76,6 +132,11 @@ RxBackendLifecycleResult SocketRxVideoBackend::start_video_runtime(const RxVideo
         video_timestamp_mapper_ = std::move(video_timestamp_mapper);
         video_sink_ = &sink;
         configured_video_payload_type_ = cfg.payload_type;
+
+        {
+            std::lock_guard lock(stats_mutex_);
+            stats_ = {};
+        }
 
         receive_thread_ = std::jthread([this](std::stop_token stop_token) {
             run_video_receive_loop(stop_token);
@@ -121,6 +182,8 @@ void SocketRxVideoBackend::run_video_receive_loop(std::stop_token stop_token) no
             }
         }
 
+        record_received_datagram(received->size_bytes);
+
         process_received_datagram(
             ByteSpan(receive_buffer_.data(), received->size_bytes));
     }
@@ -161,18 +224,22 @@ void SocketRxVideoBackend::process_received_datagram(ByteSpan udp_payload) noexc
     }
 
     if (is_rtcp_like_datagram(udp_payload)) {
+        record_ignored_control_datagram();
         return;
     }
 
     if (!datagram_matches_configured_payload_type(udp_payload, *configured_video_payload_type_)) {
+        record_ignored_nonmedia_datagram();
         return;
     }
 
-    auto packet = parse_packet_view(ByteSpan(udp_payload.data(), udp_payload.size()), packet_parse_policy_);
+    auto packet = parse_packet_view_staged(udp_payload);
     if (!packet) {
+        record_rejected_packet(packet.error().error, packet.error().stage);
         return;
     }
 
+    record_parsed_packet_ok();
     reorder_buffer_->push(*packet);
     drain_reorder_buffer_to_sink();
 }
@@ -202,6 +269,7 @@ void SocketRxVideoBackend::deliver_reconstructed_frame(ReconstructedVideoFrame &
 
     const TimestampNs timestamp_ns = map_frame_timestamp_ns(frame.rtp_timestamp);
     video_sink_->on_video_frame(frame.frame.view(timestamp_ns));
+    record_delivered_frame();
 }
 
 TimestampNs SocketRxVideoBackend::map_frame_timestamp_ns(uint32_t rtp_timestamp) noexcept {

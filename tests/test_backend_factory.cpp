@@ -28,13 +28,15 @@ static_assert(
     std::is_same_v<decltype(st2110::validate_rx_backend_selection(std::declval<const st2110::RxBackendSelection &>())),
                    st2110::Error>);
 
-static_assert(std::is_abstract_v<st2110::IRxBackendFactory>);
+static_assert(std::is_abstract_v<st2110::IRxBackend>);
 
 static_assert(std::is_same_v<decltype(std::declval<const st2110::IRxBackendFactory &>().descriptor()),
                              st2110::RxBackendDescriptor>);
 
 static_assert(std::is_same_v<decltype(std::declval<const st2110::IRxBackendFactory &>().create_backend()),
                              std::unique_ptr<st2110::IRxBackend>>);
+
+static_assert(std::is_same_v<decltype(std::declval<const st2110::IRxBackend &>().stats()), st2110::BackendStats>);
 
 static_assert(std::is_same_v<
               decltype(st2110::select_rx_backend_factory(std::declval<std::span<st2110::IRxBackendFactory *const>>(),
@@ -58,6 +60,8 @@ class FakeBackend final : public st2110::IRxBackend {
 
     st2110::RxBackendState state() const override { return state_; }
 
+    st2110::BackendStats stats() const override { return stats_; }
+
     st2110::RxBackendLifecycleResult stop() override {
         stopped = true;
         state_ = {};
@@ -70,6 +74,7 @@ class FakeBackend final : public st2110::IRxBackend {
     std::string_view name_;
     st2110::RxBackendCapabilities capabilities_;
     st2110::RxBackendState state_{};
+    st2110::BackendStats stats_{};
 };
 
 class FakeBackendFactory final : public st2110::IRxBackendFactory {
@@ -268,6 +273,17 @@ void test_create_backend_uses_selected_factory() {
     assert(st2110::supports_media((*backend)->capabilities(), st2110::RxMediaKind::Video));
     assert(!st2110::supports_media((*backend)->capabilities(), st2110::RxMediaKind::Audio));
     assert(st2110::backend_is_stopped((*backend)->state()));
+
+    const auto stats = (*backend)->stats();
+    assert(stats.datagrams_received == 0);
+    assert(stats.bytes_received == 0);
+    assert(stats.control_datagrams_ignored == 0);
+    assert(stats.nonmedia_datagrams_ignored == 0);
+    assert(stats.packets_parsed_ok == 0);
+    assert(stats.packets_rejected == 0);
+    assert(stats.datagrams_dropped == 0);
+    assert(stats.frames_delivered == 0);
+    assert(stats.media_units_delivered == 0);
 
     assert(socket_factory.create_count == 0);
     assert(mtl_factory.create_count == 1);
