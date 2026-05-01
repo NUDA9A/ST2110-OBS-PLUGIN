@@ -1162,7 +1162,7 @@
   - deliver reconstructed video frames to `IVideoFrameSink`;
   - keep socket runtime, packet parsing, pipeline reconstruction, and timing/playout as separate layers;
   - add focused tests/smoke coverage where practical.
-- [ ] 114: Add periodic socket video RX stats
+- [x] 114: Add periodic socket video RX stats
   - report backend/runtime-oriented stats such as:
     - received datagrams;
     - parsed/rejected packets;

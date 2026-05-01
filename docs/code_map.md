@@ -40,11 +40,13 @@
     - базовые backend/sink интерфейсы для receive path.
     - текущая точка расширения для socket/MTL video и audio backend’ов.
     - задает media-facing delivery contracts без смешивания с packet parsing, SDP ingestion, channel-order mapping, timing/playout policy или конкретным socket/MTL runtime behavior.
-    - теперь также задает explicit lifecycle result/state boundary для backend runtime before real socket/MTL work.
+    - задает explicit lifecycle result/state boundary для backend runtime.
+    - теперь также задает backend-local stats snapshot boundary.
 - Связи:
     - использует `VideoFrameView` и `RxVideoConfig` для video receive path;
     - использует `AudioFrameView` и `RxAudioConfig` для audio receive path;
     - использует `Error` через `RxBackendLifecycleResult`;
+    - использует `BackendStats` из `stats.hpp`;
     - используется `backend_factory.hpp` как media-capability/source interface для backend selection/creation boundary.
 - Сущности:
     - `RxMediaKind`
@@ -77,6 +79,7 @@
             - `backend_name()`;
             - `stop() -> RxBackendLifecycleResult`;
             - `state() -> RxBackendState`;
+            - `stats() -> BackendStats`;
             - `capabilities()`.
     - `IRxVideoBackend`
         - video receive capability interface;
@@ -87,10 +90,8 @@
         - uses virtual inheritance from `IRxBackend` so combined video+audio backends have a single common backend base;
         - `start_audio(const RxAudioConfig&, IAudioFrameSink&) -> RxBackendLifecycleResult`.
 - Примечание:
-    - lifecycle/state policy is now explicit instead of relying on silent no-op behavior;
-    - repeated start of already-active media is expected to report `InvalidBackendState`;
-    - `stop()` is modeled as an idempotent state-clearing operation;
-    - future real runtime implementations should keep failed-start behavior transactional through this boundary rather than reporting operational failures via sinks.
+    - lifecycle/state policy remains explicit instead of relying on silent no-op behavior;
+    - backend observability now remains inside backend/runtime boundary through `stats()` and is not routed through sinks.
 
 ### libs/st2110core/include/st2110/backend_factory.hpp
 - Роль:
@@ -271,12 +272,13 @@
     - `FixedWindowReorderBuffer`
         - `push(const PacketView&)`
         - `pop_next() -> std::optional<StoredPacket>`
+        - `stats() -> ReorderBufferStats`
         - `reset()`
-        - `stats()`
         - `flush_missing_once()`
     - Поведение:
         - хранит пакеты в `std::map<uint32_t, StoredPacket>`;
-        - учитывает duplicates / out_of_window / late / missing_seq / missing_seq_flushed.
+        - учитывает `duplicates`, `out_of_window`, `late_packets`, `missing_seq`, `missing_seq_flushed`;
+        - теперь отдает reorder snapshot через интерфейсный `stats()` override.
 
 ### libs/st2110core/include/st2110/frame_assembler.hpp
 - Роль:
@@ -399,9 +401,9 @@
     - абстракция reorder layer и owning stored-packet representation.
 - Связи:
     - используется `FixedWindowReorderBuffer`;
-    - отделяет packet ownership от `PacketView` с non-owning spans.
+    - отделяет packet ownership от `PacketView` с non-owning spans;
+    - использует `ReorderBufferStats` из `stats.hpp` как explicit stats snapshot boundary.
 - Сущности:
-    - `ReorderBufferStats`
     - `StoredPacket`
         - owning-копия packet content;
         - хранит полный packet payload;
@@ -409,7 +411,10 @@
     - `IReorderBuffer`
         - `push(const PacketView&)`
         - `pop_next()`
+        - `stats() -> ReorderBufferStats`
         - `reset()`
+- Примечание:
+    - reorder stats now flow through the interface boundary, so backends do not need concrete-type knowledge for observability.
 
 ### libs/st2110core/include/st2110/rtp.hpp
 - Роль:
@@ -541,19 +546,63 @@
     - generic ST 2110-20 payload-header validation теперь остается structural и не содержит progressive-only запрета на `field_id`;
     - mode-specific acceptance/rejection `F` должна жить выше, в explicit scan-mode-aware runtime boundaries.
 
-### libs/st2110core/include/st2110/stats.hpp
+### libs/st2110core/include/st2110/backend.hpp
 - Роль:
-    - общие stats/counters для parser/depacketizer/backend слоев.
+    - базовые backend/sink интерфейсы для receive path.
+    - текущая точка расширения для socket/MTL video и audio backend’ов.
+    - задает media-facing delivery contracts без смешивания с packet parsing, SDP ingestion, channel-order mapping, timing/playout policy или конкретным socket/MTL runtime behavior.
+    - задает explicit lifecycle result/state boundary для backend runtime.
+    - теперь также задает backend-local stats snapshot boundary.
 - Связи:
-    - используется packet parsing, depacketizer и будущими backend’ами.
+    - использует `VideoFrameView` и `RxVideoConfig` для video receive path;
+    - использует `AudioFrameView` и `RxAudioConfig` для audio receive path;
+    - использует `Error` через `RxBackendLifecycleResult`;
+    - использует `BackendStats` из `stats.hpp`;
+    - используется `backend_factory.hpp` как media-capability/source interface для backend selection/creation boundary.
 - Сущности:
-    - `PacketParseStage`
-    - `ParserStats`
-    - `PacketParseStats`
-    - `DepacketizerStats`
-    - `BackendStats`
-    - `record_parse_result(ParserStats&, Error)`
-    - `record_packet_parse_result(PacketParseStats&, Error, PacketParseStage)`
+    - `RxMediaKind`
+        - modeled media capability axis:
+            - `Video`;
+            - `Audio`.
+    - `RxBackendCapabilities`
+        - declares which receive media kinds a backend supports:
+            - `video_rx`;
+            - `audio_rx`.
+    - `RxBackendState`
+        - explicit per-media lifecycle state:
+            - `video_active`;
+            - `audio_active`.
+    - `RxBackendLifecycleResult = std::expected<RxBackendState, Error>`
+        - common backend lifecycle result type for start/stop operations.
+    - `backend_is_stopped(const RxBackendState&) -> bool`
+        - helper for full stopped-state detection.
+    - `backend_media_active(const RxBackendState&, RxMediaKind) -> bool`
+        - helper for per-media activity query.
+    - `supports_media(const RxBackendCapabilities&, RxMediaKind) -> bool`
+        - helper for querying media support;
+        - returns `false` for unknown enum values.
+    - `IVideoFrameSink::on_video_frame(const VideoFrameView&)`
+        - прием готового video frame/view.
+    - `IAudioFrameSink::on_audio_frame(const AudioFrameView&)`
+        - прием готового audio frame/block view.
+    - `IRxBackend`
+        - общий lifecycle/base интерфейс backend’а:
+            - `backend_name()`;
+            - `stop() -> RxBackendLifecycleResult`;
+            - `state() -> RxBackendState`;
+            - `stats() -> BackendStats`;
+            - `capabilities()`.
+    - `IRxVideoBackend`
+        - video receive capability interface;
+        - uses virtual inheritance from `IRxBackend` so combined video+audio backends have a single common backend base;
+        - `start_video(const RxVideoConfig&, IVideoFrameSink&) -> RxBackendLifecycleResult`.
+    - `IRxAudioBackend`
+        - audio receive capability interface;
+        - uses virtual inheritance from `IRxBackend` so combined video+audio backends have a single common backend base;
+        - `start_audio(const RxAudioConfig&, IAudioFrameSink&) -> RxBackendLifecycleResult`.
+- Примечание:
+    - lifecycle/state policy remains explicit instead of relying on silent no-op behavior;
+    - backend observability now remains inside backend/runtime boundary through `stats()` and is not routed through sinks.
 
 ### libs/st2110core/include/st2110/timestamp.hpp
 - Роль:
@@ -597,21 +646,21 @@
 
 ### libs/st2110core/include/st2110/video_receive_pipeline.hpp
 - Роль:
-    - composition layer: depacketizer + video unit reconstructor.
-    - текущий public receive pipeline для video.
+    - composition layer над depacketizer + unit reconstructor для video receive path.
 - Связи:
-    - использует `Depacketizer` и `IVideoUnitReconstructor`.
+    - использует `Depacketizer` и `IVideoUnitReconstructor`;
+    - используется backend receive runtime как pipeline boundary between packet/reorder and sink delivery.
 - Сущности:
     - `VideoReceivePipelineConfig`
         - `depacketizer`
         - `reconstructor`
     - `VideoReceivePipeline`
-        - ctor `(const VideoReceivePipelineConfig&)`
+        - `VideoReceivePipeline(const VideoReceivePipelineConfig&)`
         - `push(const PacketView&) -> std::vector<ReconstructedVideoFrame>`
         - `reset()`
+        - `depacketizer_stats() -> const DepacketizerStats&`
 - Примечание:
-    - signaling-driven bootstrap и receiver-timing interaction должны быть доведены сюда как explicit boundaries уже на уровне MVP architecture;
-    - более поздние фазы должны в основном заполнять behavior в существующих adapters/policies, а не менять shape pipeline.
+    - depacketizer observability now stays available through the pipeline boundary without exposing sink-side stats coupling.
 
 ### libs/st2110core/include/st2110/video_receive_semantics.hpp
 - Роль:
@@ -2176,9 +2225,10 @@
 ### libs/st2110core/include/st2110/socket_rx_video_backend.hpp
 - Роль:
     - socket video backend поверх OS-neutral socket runtime boundary;
-    - теперь не только открывает socket receive-port, но и композиционно соединяет socket receive path, packet admission/parsing, reorder, video receive pipeline, RTP timestamp mapping и final sink delivery.
+    - композиционно соединяет socket receive path, packet admission/parsing, reorder, video receive pipeline, RTP timestamp mapping и final sink delivery;
+    - теперь также держит backend-local periodic stats snapshot.
 - Связи:
-    - использует `backend.hpp`, `backend_factory.hpp`, `bytes.hpp`, `socket_runtime.hpp`;
+    - использует `backend.hpp`, `backend_factory.hpp`, `bytes.hpp`, `socket_runtime.hpp`, `stats.hpp`;
     - использует `packet_parse.hpp` для packet-size policy и `PacketView` parsing;
     - использует `fixed_reorder_buffer.hpp` / `IReorderBuffer` как reorder boundary;
     - использует `video_receive_pipeline.hpp` для depacketizer + reconstructor composition;
@@ -2193,14 +2243,16 @@
             - injected-factory seam для тестов и future runtime/platform variants.
         - `backend_name()`
         - `stop()`
-            - closes socket runtime, joins receive thread, then clears backend-local runtime objects.
+            - closes socket runtime, joins receive thread, then clears backend-local runtime objects and stats.
         - `capabilities()`
         - `start_video(const RxVideoConfig&, IVideoFrameSink&)`
             - validates config/runtime dependencies;
             - creates port;
             - delegates transactional runtime startup to `start_video_runtime(...)`.
         - `state()`
-        - private startup/runtime helpers:
+        - `stats()`
+            - returns backend-local snapshot including nested parser/reorder/depacketizer counters.
+        - private startup/runtime/helpers:
             - `build_packet_parse_policy(...)`
             - `build_video_receive_pipeline_config(...)`
             - `make_reorder_buffer()`
@@ -2211,13 +2263,20 @@
             - `drain_reorder_buffer_to_sink()`
             - `deliver_reconstructed_frame(...)`
             - `map_frame_timestamp_ns(...)`
+            - `record_received_datagram(...)`
+            - `record_ignored_control_datagram()`
+            - `record_ignored_nonmedia_datagram()`
+            - `record_rejected_packet(...)`
+            - `record_parsed_packet_ok()`
+            - `record_delivered_frame()`
+            - `build_stats_snapshot_locked()`
             - `make_default_port_factory()`
     - `SocketRxVideoBackendFactory`
         - advertises socket video backend descriptor;
         - `create_backend()` constructs default `SocketRxVideoBackend`.
 - Примечание:
-    - explicit local datagram classification and payload-type admission now live in backend implementation instead of being buried inside parser failures;
-    - socket runtime, packet parsing, reorder/pipeline reconstruction, and timestamp mapping remain separate layers.
+    - explicit local datagram classification and payload-type admission remain backend-local;
+    - stats collection is localized in the backend and not spread into sink code.
 
 ### libs/st2110core/src/socket_rx_video_backend.cpp
 - Роль:
@@ -2240,19 +2299,30 @@
     - `SocketRxVideoBackend::make_receive_buffer(...)`
         - allocates UDP-payload receive buffer from packet-size policy.
     - `SocketRxVideoBackend::start_video_runtime(...)`
-        - transactional runtime startup for socket port + reorder + pipeline + timestamp mapper + receive thread.
+        - transactional runtime startup for socket port + reorder + pipeline + timestamp mapper + receive thread;
+        - resets per-run backend stats before runtime start.
     - `SocketRxVideoBackend::run_video_receive_loop(...)`
-        - blocking datagram receive loop over `ISocketRxPort::receive(...)`.
+        - blocking datagram receive loop over `ISocketRxPort::receive(...)`;
+        - updates received-datagram counters on successful receives.
     - backend-local helpers for explicit datagram handling:
         - RTCP-like datagram classification;
         - payload-type admission;
+        - staged parse failure accounting;
         - `process_received_datagram(...)`;
         - `drain_reorder_buffer_to_sink()`;
         - `deliver_reconstructed_frame(...)`;
         - `map_frame_timestamp_ns(...)`.
+    - backend-local stats helpers:
+        - `stats()`
+        - `record_received_datagram(...)`
+        - `record_ignored_control_datagram()`
+        - `record_ignored_nonmedia_datagram()`
+        - `record_rejected_packet(...)`
+        - `record_parsed_packet_ok()`
+        - `record_delivered_frame()`
+        - `build_stats_snapshot_locked()`
 - Примечание:
-    - backend now feeds the existing packet/reorder/video-receive pipeline from real socket datagrams without collapsing socket/runtime failures into parser failures;
-    - RTP timestamp mapping remains separate from socket receive and separate from playout timing policy.
+    - backend now exposes periodic backend/runtime-oriented stats without collapsing socket/runtime failures into parser failures and without pushing observability into sinks.
 
 ### libs/st2110core/include/st2110/socket_runtime.hpp
 - Роль:

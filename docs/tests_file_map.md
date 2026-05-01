@@ -108,7 +108,8 @@
     - покрывает FakeVideoBackend -> FakeVideoSink delivery path;
     - покрывает FakeAudioBackend -> FakeAudioSink delivery path;
     - покрывает combined video+audio backend shape over one common `IRxBackend` base;
-    - теперь также фиксирует explicit backend lifecycle result/state boundary.
+    - фиксирует explicit backend lifecycle result/state boundary;
+    - теперь также фиксирует generic backend stats snapshot boundary.
 - Покрывает:
     - abstract/interface shape:
         - `IRxBackend`;
@@ -130,6 +131,7 @@
         - `backend_name()`;
         - `stop() -> RxBackendLifecycleResult`;
         - `state() -> RxBackendState`;
+        - `stats() -> BackendStats`;
         - `capabilities()`.
     - media-specific start API:
         - `IRxVideoBackend::start_video(...) -> RxBackendLifecycleResult`;
@@ -140,11 +142,14 @@
         - repeated start on already-active media returns `InvalidBackendState`;
         - failed start can leave backend stopped and retryable;
         - combined backend can hold video and audio active simultaneously.
-    - video/audio delivery:
-        - successful start still delivers video/audio frames through sinks in fake backends.
+    - stats behavior in fake backends:
+        - zero snapshot before delivery;
+        - video frame delivery increments `frames_delivered` / `media_units_delivered`;
+        - audio delivery increments `media_units_delivered`;
+        - failed-start path can expose backend-local stats changes without using sinks.
 - Фиксирует:
     - backend lifecycle/runtime failures remain inside backend boundary and are not routed through sinks;
-    - combined backend extensibility remains explicit through per-media state instead of a single global running flag.
+    - backend observability is available through `stats()` and remains separate from sink code.
 
 ### tests/test_backend_factory.cpp
 - Роль:
@@ -164,6 +169,12 @@
         - `IRxBackendFactory`;
         - `descriptor()`;
         - `create_backend()`.
+    - common backend API from created backends:
+        - `backend_name()`;
+        - `capabilities()`;
+        - `state()`;
+        - `stats()`;
+        - `stop()`.
     - factory selection:
         - `select_rx_backend_factory(...)`;
         - selection by requested backend kind;
@@ -176,10 +187,11 @@
         - uses the selected factory only;
         - rejects null backend results from a factory;
         - created backend starts in a stopped `RxBackendState`;
+        - created backend `stats()` starts from a zero snapshot;
         - created backend `stop()` returns a lifecycle result.
 - Фиксирует:
     - backend selection/creation remains separate from backend lifecycle semantics;
-    - factory-created backends expose the new explicit lifecycle/state boundary immediately after construction.
+    - factory-created backends expose both lifecycle/state and stats snapshot boundaries immediately after construction.
 
 ## RTP / ST 2110-20 packet parsing
 
@@ -264,7 +276,24 @@
 
 ### tests/test_reorder_buffer_interface.cpp
 - Роль:
-    - проверяет `IReorderBuffer` abstraction и `StoredPacket` ownership/view restoration.
+    - проверяет `IReorderBuffer` abstraction, `StoredPacket` ownership/view restoration, и reorder stats snapshot boundary.
+- Покрывает:
+    - abstract/interface shape:
+        - `push(...)`;
+        - `pop_next()`;
+        - `stats() -> ReorderBufferStats`;
+        - `reset()`.
+    - `StoredPacket::view()`:
+        - RTP header field restoration;
+        - extended sequence restoration;
+        - SRD header restoration;
+        - payload segment view reconstruction.
+    - fake reorder buffer behavior:
+        - push/pop lifecycle;
+        - reset behavior;
+        - basic `ReorderBufferStats` accounting and zero-after-reset behavior.
+- Фиксирует:
+    - reorder stats are available through the interface boundary and do not require concrete-type access from backend code.
 
 ### tests/test_fixed_reorder_buffer.cpp
 - Роль:
@@ -945,7 +974,7 @@
 
 ### tests/test_socket_rx_video_backend.cpp
 - Роль:
-    - проверяет lifecycle, config projection, datagram receive composition, and default-factory behavior of socket video backend through injected and real Linux socket-port paths.
+    - проверяет lifecycle, config projection, datagram receive composition, periodic stats snapshot behavior, and default-factory behavior of socket video backend through injected and real Linux socket-port paths.
 - Покрывает:
     - injected-factory path:
         - IPv4 multicast projection;
@@ -960,17 +989,25 @@
         - reordered packet delivery into the existing video receive pipeline;
         - explicit RTCP-like/control datagram ignore behavior;
         - explicit RTP payload-type admission;
-        - malformed media datagram drop behavior;
+        - malformed media datagram reject behavior;
         - RTP timestamp mapping before sink delivery.
+    - backend stats snapshot behavior:
+        - zero snapshot on idle/stopped backend;
+        - received datagram / byte counters;
+        - ignored control / non-media counters;
+        - parsed/rejected packet counters;
+        - delivered frame counters;
+        - nested packet-parse / reorder / depacketizer stats;
+        - reset of per-run stats after stop and restart.
     - factory/default path:
         - descriptor and backend-creation shape;
         - Linux default backend bind-failure path on real Linux socket port;
         - Linux default backend recovery after multicast join failure;
-        - Linux default backend successful IPv4 unicast frame receive path.
+        - Linux default backend successful IPv4 unicast frame receive path with stats snapshot.
 - Фиксирует:
-    - `SocketRxVideoBackend` now feeds the existing packet/reorder/video-receive pipeline from socket datagrams;
-    - datagram classification and stream admission are explicit local backend boundaries rather than parser-side accidents;
-    - timestamp mapping remains a separate layer from socket runtime and separate from playout timing.
+    - `SocketRxVideoBackend` now exposes periodic backend/runtime-oriented observability through `stats()` without spreading counters into sink code;
+    - datagram classification and stream admission remain explicit local backend boundaries;
+    - nested reorder/depacketizer counters are surfaced through existing pipeline boundaries rather than concrete-type coupling in tests or runtime code.
 
 ### tests/test_socket_runtime_interface.cpp
 - Роль:
