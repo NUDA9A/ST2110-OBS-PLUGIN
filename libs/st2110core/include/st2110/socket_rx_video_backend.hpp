@@ -38,7 +38,6 @@ class SocketRxVideoBackend final : public IRxVideoBackend {
             }
         }
 
-        receive_thread_ = std::jthread{};
         clear_runtime_objects();
 
         return state_;
