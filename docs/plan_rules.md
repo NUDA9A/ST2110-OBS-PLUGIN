@@ -346,11 +346,11 @@ Otherwise it MUST be recorded in `Spec notes / deviations` and backlog.
 
 ## 14. References
 
-- SMPTE ST 2110-10:2022
-- SMPTE ST 2110-20:2022
-- SMPTE ST 2110-21:2022
-- SMPTE ST 2110-30:2025
-- SMPTE RP 2110-25:2023
+- SMPTE ST 2110-10:2022 (Имя в памяти: st2110-10-2022.pdf)
+- SMPTE ST 2110-20:2022 (Имя в памяти: st2110-20-2022 (1).pdf)
+- SMPTE ST 2110-21:2022 (Имя в памяти: st2110-21-2022.pdf)
+- SMPTE ST 2110-30:2025 (Имя в памяти: st2110-30-2025.pdf)
+- SMPTE RP 2110-25:2023 (Имя в памяти: rp2110-25-2023.pdf)
 - RFC 3550
 - RFC 4175
 - Wireshark dissector ST2110-20
