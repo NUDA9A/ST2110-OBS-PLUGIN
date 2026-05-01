@@ -2226,7 +2226,8 @@
 - Роль:
     - socket video backend поверх OS-neutral socket runtime boundary;
     - композиционно соединяет socket receive path, packet admission/parsing, reorder, video receive pipeline, RTP timestamp mapping и final sink delivery;
-    - теперь также держит backend-local periodic stats snapshot.
+    - держит backend-local periodic stats snapshot;
+    - содержит explicit graceful stop / cleanup boundary для socket video RX lifecycle.
 - Связи:
     - использует `backend.hpp`, `backend_factory.hpp`, `bytes.hpp`, `socket_runtime.hpp`, `stats.hpp`;
     - использует `packet_parse.hpp` для packet-size policy и `PacketView` parsing;
@@ -2243,7 +2244,11 @@
             - injected-factory seam для тестов и future runtime/platform variants.
         - `backend_name()`
         - `stop()`
-            - closes socket runtime, joins receive thread, then clears backend-local runtime objects and stats.
+            - graceful backend stop path;
+            - если runtime не поднят, возвращает stopped state без ошибок;
+            - закрывает socket port только через runtime boundary;
+            - при успешном close освобождает/сбрасывает backend-owned runtime objects;
+            - сохраняет lifecycle guarantees для stop-before-start, repeated stop и retry-after-failed-start.
         - `capabilities()`
         - `start_video(const RxVideoConfig&, IVideoFrameSink&)`
             - validates config/runtime dependencies;
@@ -2271,12 +2276,16 @@
             - `record_delivered_frame()`
             - `build_stats_snapshot_locked()`
             - `make_default_port_factory()`
+            - `clear_runtime_objects()`
+                - pure backend-owned runtime cleanup/reset helper;
+                - does not perform socket close on its own.
     - `SocketRxVideoBackendFactory`
         - advertises socket video backend descriptor;
         - `create_backend()` constructs default `SocketRxVideoBackend`.
 - Примечание:
     - explicit local datagram classification and payload-type admission remain backend-local;
-    - stats collection is localized in the backend and not spread into sink code.
+    - graceful stop/cleanup remains localized in the backend and uses the runtime boundary instead of leaking socket details into callers;
+    - stats collection remains localized in the backend and not spread into sink code.
 
 ### libs/st2110core/src/socket_rx_video_backend.cpp
 - Роль:
@@ -2417,40 +2426,30 @@
 
 ### libs/st2110core/include/st2110/linux_socket_rx_port.hpp
 - Роль:
-    - concrete Linux UDP receive-port implementation of the existing socket runtime boundary;
-    - handles native socket create/configure/bind/receive plus localized multicast membership lifecycle.
+    - Linux-specific реализация OS-neutral socket receive-port boundary.
 - Связи:
-    - реализует `ISocketRxPort` / `ISocketRxPortFactory` from `socket_runtime.hpp`;
-    - используется default Linux path of `SocketRxVideoBackend`.
+    - реализует `ISocketRxPort` и `ISocketRxPortFactory` из `socket_runtime.hpp`;
+    - используется socket backend’ом через abstract runtime boundary.
 - Сущности:
     - `LinuxSocketRxPort`
         - `is_open()`
         - `open(const SocketRxOpenConfig&)`
             - validates config/platform support;
-            - creates/configures/binds native UDP socket;
-            - performs IPv4 multicast join when `multicast_membership` is present;
-            - on join failure closes the bound native socket and leaves the object stopped/retryable.
+            - creates native UDP socket;
+            - configures/binds it;
+            - joins multicast membership where configured.
         - `close()`
-            - performs IPv4 multicast leave before native socket close when multicast was in use;
-            - preserves open state if multicast leave fails;
-            - clears open state only after successful leave + close.
-        - `receive(...)`
-            - raw UDP receive boundary with explicit runtime error mapping.
-        - localized private helpers:
-            - `validate_open_request(...)`
-            - `validate_current_platform_support(...)`
-            - `create_native_socket(...)`
-            - `configure_native_socket_before_bind(...)`
-            - `bind_native_socket(...)`
-            - `join_multicast_membership(...)`
-            - `leave_multicast_membership(...)`
-            - `close_native_socket(...)`
-            - `clear_open_state()`
+            - leaves multicast membership where configured;
+            - performs native socket shutdown/close sequence;
+            - clears open state only after successful runtime close.
+        - `receive(std::span<std::uint8_t>)`
+            - blocking datagram receive;
+            - maps interrupted/aborted/failed I/O into explicit runtime errors.
+        - helpers:
+            - multicast join/leave;
+            - native socket creation/configuration/bind/close;
+            - platform-support validation.
     - `LinuxSocketRxPortFactory`
-        - `create_port()`
     - `make_linux_socket_rx_port_factory()`
 - Примечание:
-    - IPv4 unicast and IPv4 multicast are supported through the existing runtime boundary;
-    - IPv6 unicast remains supported;
-    - IPv6 multicast remains explicitly localized as `Unsupported`;
-    - native close path now uses shutdown-before-close so backend stop can reliably unblock a blocking receive loop.
+    - native close path is the runtime-side mechanism that allows backend graceful stop to terminate blocked receive work cleanly without exposing Linux socket details above the runtime boundary.

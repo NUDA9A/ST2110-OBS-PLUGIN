@@ -1170,7 +1170,7 @@
     - frames delivered;
     - drops / loss-related counters exposed by existing pipeline stats.
   - keep stats collection localized and avoid spreading backend observability across sink code.
-- [ ] 115: Add graceful stop and cleanup for socket video RX
+- [x] 115: Add graceful stop and cleanup for socket video RX
   - stop the receive path cleanly;
   - close the socket port through the runtime boundary;
   - release/reset backend-owned runtime objects;

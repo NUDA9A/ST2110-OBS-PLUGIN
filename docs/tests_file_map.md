@@ -974,9 +974,11 @@
 
 ### tests/test_socket_rx_video_backend.cpp
 - Роль:
-    - проверяет lifecycle, config projection, datagram receive composition, periodic stats snapshot behavior, and default-factory behavior of socket video backend through injected and real Linux socket-port paths.
+    - проверяет lifecycle, config projection, datagram receive composition, periodic stats snapshot behavior, graceful stop/cleanup behavior, and default-factory behavior of socket video backend through injected and real Linux socket-port paths.
 - Покрывает:
     - injected-factory path:
+        - stop before successful start;
+        - repeated stop after clean shutdown;
         - IPv4 multicast projection;
         - IPv4 multicast projection with explicit interface/local address;
         - IPv6 multicast projection;
@@ -999,15 +1001,20 @@
         - delivered frame counters;
         - nested packet-parse / reorder / depacketizer stats;
         - reset of per-run stats after stop and restart.
+    - graceful stop / cleanup guarantees:
+        - `stop()` before successful `start_video()` succeeds and keeps backend stopped;
+        - repeated `stop()` after successful shutdown remains a no-op/success without extra close calls;
+        - close failure does not falsely clear active backend state;
+        - retry after failed start remains valid.
     - factory/default path:
         - descriptor and backend-creation shape;
         - Linux default backend bind-failure path on real Linux socket port;
         - Linux default backend recovery after multicast join failure;
         - Linux default backend successful IPv4 unicast frame receive path with stats snapshot.
 - Фиксирует:
-    - `SocketRxVideoBackend` now exposes periodic backend/runtime-oriented observability through `stats()` without spreading counters into sink code;
-    - datagram classification and stream admission remain explicit local backend boundaries;
-    - nested reorder/depacketizer counters are surfaced through existing pipeline boundaries rather than concrete-type coupling in tests or runtime code.
+    - `SocketRxVideoBackend` keeps graceful stop and runtime cleanup localized inside backend/runtime boundaries;
+    - socket close is performed through `ISocketRxPort`, not by leaking native-socket handling into backend callers;
+    - datagram classification, receive/runtime cleanup, and sink delivery remain separate concerns.
 
 ### tests/test_socket_runtime_interface.cpp
 - Роль:
