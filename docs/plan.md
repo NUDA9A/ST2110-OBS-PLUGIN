@@ -1196,8 +1196,7 @@
   - current audio packet model already distinguishes `AudioPcmWireFormat::{L16, L24}`;
   - current socket audio RX runtime no longer relies on a localized `LinearPcm -> L24` assumption;
   - signaling/runtime/backend path now carries explicit PCM bit depth via `AudioMediaDescription::pcm_bit_depth`, `RxAudioConfig::pcm_bit_depth`, SDP `L16`/`L24` mapping, and `audio_rtp_packet_policy_from_rx_audio_config(...)`.
-- [ ] 123: Add periodic stats print (pps, drops, audio blocks/s)
-- [x] 124: Add graceful stop and cleanup reuse
+- [x] 123: Add graceful stop and cleanup reuse
 
 ### C3. MTL video RX
 - [ ] 130: CMake option `ST2110_WITH_MTL` + build guard
