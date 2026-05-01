@@ -1,5 +1,10 @@
+#include <algorithm>
+#include <array>
 #include <cassert>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <expected>
 #include <memory>
 #include <mutex>
@@ -8,6 +13,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include <st2110/backend.hpp>
 #include <st2110/backend_factory.hpp>
@@ -50,6 +56,15 @@ static_assert(std::is_base_of_v<st2110::IRxBackendFactory, st2110::SocketRxAudio
 
 namespace {
 constexpr std::string_view kNonLocalIpv4Interface = "203.0.113.10";
+constexpr std::uint8_t kDefaultPayloadType = 111;
+constexpr std::uint32_t kDefaultSamplingRateHz = 48'000;
+constexpr std::uint32_t kDefaultPacketTimeUs = 1'000;
+constexpr std::uint32_t kDefaultSamplesPerPacket = 48;
+constexpr std::uint16_t kDefaultChannelCount = 2;
+constexpr std::size_t kL24BytesPerSample = 3;
+constexpr std::size_t kDefaultPayloadBytes =
+    static_cast<std::size_t>(kDefaultSamplesPerPacket) * static_cast<std::size_t>(kDefaultChannelCount) *
+    kL24BytesPerSample;
 
 class DummyAudioSink final : public st2110::IAudioFrameSink {
   public:
@@ -59,6 +74,54 @@ class DummyAudioSink final : public st2110::IAudioFrameSink {
     }
 
     int call_count = 0;
+};
+
+struct CapturedAudioFrame {
+    st2110::TimestampNs timestamp_ns = 0;
+    std::uint32_t sampling_rate_hz = 0;
+    std::uint16_t channel_count = 0;
+    std::uint32_t samples_per_channel = 0;
+    std::size_t total_sample_count = 0;
+    std::size_t sample_frame_stride = 0;
+    std::size_t size_bytes = 0;
+    std::vector<std::int32_t> samples{};
+};
+
+class CapturingAudioSink final : public st2110::IAudioFrameSink {
+  public:
+    void on_audio_frame(const st2110::AudioFrameView &frame) override {
+        CapturedAudioFrame captured{};
+        captured.timestamp_ns = frame.timestamp_ns;
+        captured.sampling_rate_hz = frame.sampling_rate_hz;
+        captured.channel_count = frame.channel_count;
+        captured.samples_per_channel = frame.samples_per_channel;
+        captured.total_sample_count = frame.total_sample_count;
+        captured.sample_frame_stride = frame.sample_frame_stride;
+        captured.size_bytes = frame.size_bytes;
+        captured.samples.assign(frame.samples, frame.samples + frame.total_sample_count);
+
+        {
+            std::lock_guard lock(mutex_);
+            frames_.push_back(std::move(captured));
+        }
+        cv_.notify_all();
+    }
+
+    [[nodiscard]] bool wait_for_frame_count(std::size_t expected,
+                                            std::chrono::milliseconds timeout = std::chrono::milliseconds(500)) const {
+        std::unique_lock lock(mutex_);
+        return cv_.wait_for(lock, timeout, [&] { return frames_.size() >= expected; });
+    }
+
+    [[nodiscard]] std::vector<CapturedAudioFrame> snapshot() const {
+        std::lock_guard lock(mutex_);
+        return frames_;
+    }
+
+  private:
+    mutable std::mutex mutex_{};
+    mutable std::condition_variable cv_{};
+    std::vector<CapturedAudioFrame> frames_{};
 };
 
 struct FakeSocketRxPortState {
@@ -75,6 +138,9 @@ struct FakeSocketRxPortState {
 
     st2110::Error open_error = st2110::Error::Ok;
     st2110::Error close_error = st2110::Error::Ok;
+    st2110::Error receive_error_when_empty = st2110::Error::ReceiveAborted;
+
+    std::deque<std::vector<std::uint8_t>> queued_datagrams{};
 };
 
 class FakeSocketRxPort final : public st2110::ISocketRxPort {
@@ -124,15 +190,33 @@ class FakeSocketRxPort final : public st2110::ISocketRxPort {
 
     [[nodiscard]] std::expected<st2110::SocketReceiveResult, st2110::Error>
     receive(std::span<std::uint8_t> buffer) override {
-        if (!is_open()) {
-            return std::unexpected(st2110::Error::InvalidBackendState);
+        std::vector<std::uint8_t> datagram;
+
+        {
+            std::lock_guard lock(state_->mutex_);
+
+            if (!state_->is_open) {
+                return std::unexpected(st2110::Error::InvalidBackendState);
+            }
+
+            if (buffer.empty()) {
+                return std::unexpected(st2110::Error::InvalidValue);
+            }
+
+            if (state_->queued_datagrams.empty()) {
+                return std::unexpected(state_->receive_error_when_empty);
+            }
+
+            datagram = std::move(state_->queued_datagrams.front());
+            state_->queued_datagrams.pop_front();
         }
 
-        if (buffer.empty()) {
-            return std::unexpected(st2110::Error::InvalidValue);
+        if (datagram.size() > buffer.size()) {
+            return std::unexpected(st2110::Error::BufferTooSmall);
         }
 
-        return std::unexpected(st2110::Error::Unsupported);
+        std::copy(datagram.begin(), datagram.end(), buffer.begin());
+        return st2110::SocketReceiveResult{.size_bytes = datagram.size()};
     }
 
   private:
@@ -226,10 +310,10 @@ ReservedUdpSocket reserve_ipv4_loopback_udp_socket() {
 
 st2110::RxAudioConfig make_valid_ipv4_multicast_audio_config() {
     st2110::RxAudioConfig cfg{};
-    cfg.sampling_rate_hz = 48000;
-    cfg.packet_time_us = 1000;
-    cfg.samples_per_packet = 48;
-    cfg.channel_count = 2;
+    cfg.sampling_rate_hz = kDefaultSamplingRateHz;
+    cfg.packet_time_us = kDefaultPacketTimeUs;
+    cfg.samples_per_packet = kDefaultSamplesPerPacket;
+    cfg.channel_count = kDefaultChannelCount;
     cfg.udp_port = 5004;
     cfg.payload_type = 96;
     cfg.local_ip = "";
@@ -240,10 +324,10 @@ st2110::RxAudioConfig make_valid_ipv4_multicast_audio_config() {
 
 st2110::RxAudioConfig make_valid_ipv6_multicast_audio_config() {
     st2110::RxAudioConfig cfg{};
-    cfg.sampling_rate_hz = 48000;
-    cfg.packet_time_us = 1000;
-    cfg.samples_per_packet = 48;
-    cfg.channel_count = 2;
+    cfg.sampling_rate_hz = kDefaultSamplingRateHz;
+    cfg.packet_time_us = kDefaultPacketTimeUs;
+    cfg.samples_per_packet = kDefaultSamplesPerPacket;
+    cfg.channel_count = kDefaultChannelCount;
     cfg.udp_port = 5006;
     cfg.payload_type = 97;
     cfg.local_ip = "";
@@ -254,16 +338,89 @@ st2110::RxAudioConfig make_valid_ipv6_multicast_audio_config() {
 
 st2110::RxAudioConfig make_valid_ipv4_unicast_audio_config() {
     st2110::RxAudioConfig cfg{};
-    cfg.sampling_rate_hz = 48000;
-    cfg.packet_time_us = 1000;
-    cfg.samples_per_packet = 48;
-    cfg.channel_count = 2;
+    cfg.sampling_rate_hz = kDefaultSamplingRateHz;
+    cfg.packet_time_us = kDefaultPacketTimeUs;
+    cfg.samples_per_packet = kDefaultSamplesPerPacket;
+    cfg.channel_count = kDefaultChannelCount;
     cfg.udp_port = 5008;
     cfg.payload_type = 98;
     cfg.local_ip = "10.0.0.15";
     cfg.dest_ip = "10.0.0.50";
     cfg.format = st2110::AudioSampleFormat::LinearPcm;
     return cfg;
+}
+
+void enqueue_datagram(const std::shared_ptr<FakeSocketRxPortState> &state, std::vector<std::uint8_t> datagram) {
+    std::lock_guard lock(state->mutex_);
+    state->queued_datagrams.push_back(std::move(datagram));
+}
+
+std::vector<std::uint8_t> make_l24_audio_payload(std::uint32_t samples_per_channel,
+                                                 std::uint16_t channel_count,
+                                                 std::int32_t first_sample_value) {
+    const std::size_t total_samples =
+        static_cast<std::size_t>(samples_per_channel) * static_cast<std::size_t>(channel_count);
+
+    std::vector<std::uint8_t> payload(total_samples * kL24BytesPerSample);
+
+    for (std::size_t i = 0; i < total_samples; ++i) {
+        const std::int32_t value = first_sample_value + static_cast<std::int32_t>(i);
+        assert(value >= -0x800000 && value <= 0x7fffff);
+
+        const std::uint32_t raw =
+            (value < 0) ? static_cast<std::uint32_t>(value + 0x1000000) : static_cast<std::uint32_t>(value);
+
+        payload[i * 3 + 0] = static_cast<std::uint8_t>((raw >> 16) & 0xffu);
+        payload[i * 3 + 1] = static_cast<std::uint8_t>((raw >> 8) & 0xffu);
+        payload[i * 3 + 2] = static_cast<std::uint8_t>(raw & 0xffu);
+    }
+
+    return payload;
+}
+
+std::vector<std::uint8_t> make_audio_rtp_datagram(std::uint16_t seq_number,
+                                                  std::uint32_t timestamp,
+                                                  std::uint8_t payload_type,
+                                                  std::int32_t first_sample_value,
+                                                  bool marker = true) {
+    auto payload =
+        make_l24_audio_payload(kDefaultSamplesPerPacket, kDefaultChannelCount, first_sample_value);
+
+    std::vector<std::uint8_t> datagram(12 + payload.size(), 0);
+    datagram[0] = 0x80u;
+    datagram[1] = static_cast<std::uint8_t>((marker ? 0x80u : 0x00u) | (payload_type & 0x7fu));
+
+    datagram[2] = static_cast<std::uint8_t>((seq_number >> 8) & 0xffu);
+    datagram[3] = static_cast<std::uint8_t>(seq_number & 0xffu);
+
+    datagram[4] = static_cast<std::uint8_t>((timestamp >> 24) & 0xffu);
+    datagram[5] = static_cast<std::uint8_t>((timestamp >> 16) & 0xffu);
+    datagram[6] = static_cast<std::uint8_t>((timestamp >> 8) & 0xffu);
+    datagram[7] = static_cast<std::uint8_t>(timestamp & 0xffu);
+
+    const std::uint32_t ssrc = 0x11223344u;
+    datagram[8] = static_cast<std::uint8_t>((ssrc >> 24) & 0xffu);
+    datagram[9] = static_cast<std::uint8_t>((ssrc >> 16) & 0xffu);
+    datagram[10] = static_cast<std::uint8_t>((ssrc >> 8) & 0xffu);
+    datagram[11] = static_cast<std::uint8_t>(ssrc & 0xffu);
+
+    std::copy(payload.begin(), payload.end(), datagram.begin() + 12);
+    return datagram;
+}
+
+std::vector<std::uint8_t> make_wrong_size_audio_rtp_datagram(std::uint16_t seq_number,
+                                                             std::uint32_t timestamp,
+                                                             std::uint8_t payload_type) {
+    auto datagram = make_audio_rtp_datagram(seq_number, timestamp, payload_type, 3000);
+    datagram.pop_back();
+    return datagram;
+}
+
+std::vector<std::uint8_t> make_rtcp_like_datagram(std::uint8_t payload_type = 200) {
+    std::vector<std::uint8_t> datagram(8, 0);
+    datagram[0] = 0x80u;
+    datagram[1] = payload_type;
+    return datagram;
 }
 
 void test_socket_rx_audio_backend_stop_before_successful_start_is_ok_and_keeps_backend_stopped() {
@@ -694,6 +851,137 @@ void test_socket_rx_audio_backend_factory_descriptor_and_creation_shape() {
     assert(audio_backend != nullptr);
 }
 
+void test_socket_rx_audio_backend_delivers_reordered_audio_blocks_and_maps_timestamps() {
+    auto state = std::make_shared<FakeSocketRxPortState>();
+    st2110::SocketRxAudioBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
+
+    enqueue_datagram(state, make_audio_rtp_datagram(10, 0, kDefaultPayloadType, 1000));
+    enqueue_datagram(state, make_audio_rtp_datagram(12, 96, kDefaultPayloadType, 1200));
+    enqueue_datagram(state, make_audio_rtp_datagram(11, 48, kDefaultPayloadType, 1100));
+
+    CapturingAudioSink sink;
+    auto cfg = make_valid_ipv4_multicast_audio_config();
+    cfg.payload_type = kDefaultPayloadType;
+
+    auto started = backend.start_audio(cfg, sink);
+    assert(started.has_value());
+    assert(st2110::backend_media_active(*started, st2110::RxMediaKind::Audio));
+
+    const bool delivered = sink.wait_for_frame_count(3);
+    assert(delivered);
+
+    const auto frames = sink.snapshot();
+    assert(frames.size() == 3);
+
+    assert(frames[0].timestamp_ns == 0);
+    assert(frames[1].timestamp_ns == 1'000'000);
+    assert(frames[2].timestamp_ns == 2'000'000);
+
+    for (const auto &frame : frames) {
+        assert(frame.sampling_rate_hz == kDefaultSamplingRateHz);
+        assert(frame.channel_count == kDefaultChannelCount);
+        assert(frame.samples_per_channel == kDefaultSamplesPerPacket);
+        assert(frame.total_sample_count == kDefaultSamplesPerPacket * kDefaultChannelCount);
+        assert(frame.sample_frame_stride == kDefaultChannelCount);
+        assert(frame.size_bytes == kDefaultSamplesPerPacket * kDefaultChannelCount * sizeof(std::int32_t));
+    }
+
+    assert(frames[0].samples.front() == 1000);
+    assert(frames[1].samples.front() == 1100);
+    assert(frames[2].samples.front() == 1200);
+
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 3);
+    assert(stats.control_datagrams_ignored == 0);
+    assert(stats.nonmedia_datagrams_ignored == 0);
+    assert(stats.packets_parsed_ok == 3);
+    assert(stats.packets_rejected == 0);
+    assert(stats.frames_delivered == 0);
+    assert(stats.media_units_delivered == 3);
+    assert(stats.datagrams_dropped == 0);
+
+    auto stopped = backend.stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+}
+
+void test_socket_rx_audio_backend_ignores_rtcp_and_wrong_payload_type_before_delivery() {
+    auto state = std::make_shared<FakeSocketRxPortState>();
+    st2110::SocketRxAudioBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
+
+    enqueue_datagram(state, make_rtcp_like_datagram());
+    enqueue_datagram(state, make_audio_rtp_datagram(10, 0, static_cast<std::uint8_t>(kDefaultPayloadType + 1u), 2100));
+    enqueue_datagram(state, make_audio_rtp_datagram(11, 48, kDefaultPayloadType, 2200));
+
+    CapturingAudioSink sink;
+    auto cfg = make_valid_ipv4_multicast_audio_config();
+    cfg.payload_type = kDefaultPayloadType;
+
+    auto started = backend.start_audio(cfg, sink);
+    assert(started.has_value());
+    assert(st2110::backend_media_active(*started, st2110::RxMediaKind::Audio));
+
+    const bool delivered = sink.wait_for_frame_count(1);
+    assert(delivered);
+
+    const auto frames = sink.snapshot();
+    assert(frames.size() == 1);
+    assert(frames[0].timestamp_ns == 1'000'000);
+    assert(frames[0].samples.front() == 2200);
+
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 3);
+    assert(stats.control_datagrams_ignored == 1);
+    assert(stats.nonmedia_datagrams_ignored == 1);
+    assert(stats.packets_parsed_ok == 1);
+    assert(stats.packets_rejected == 0);
+    assert(stats.frames_delivered == 0);
+    assert(stats.media_units_delivered == 1);
+    assert(stats.datagrams_dropped == 2);
+
+    auto stopped = backend.stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+}
+
+void test_socket_rx_audio_backend_rejects_malformed_audio_packet_and_continues_to_deliver_next_packet() {
+    auto state = std::make_shared<FakeSocketRxPortState>();
+    st2110::SocketRxAudioBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
+
+    enqueue_datagram(state, make_wrong_size_audio_rtp_datagram(10, 0, kDefaultPayloadType));
+    enqueue_datagram(state, make_audio_rtp_datagram(11, 48, kDefaultPayloadType, 3100));
+
+    CapturingAudioSink sink;
+    auto cfg = make_valid_ipv4_multicast_audio_config();
+    cfg.payload_type = kDefaultPayloadType;
+
+    auto started = backend.start_audio(cfg, sink);
+    assert(started.has_value());
+    assert(st2110::backend_media_active(*started, st2110::RxMediaKind::Audio));
+
+    const bool delivered = sink.wait_for_frame_count(1);
+    assert(delivered);
+
+    const auto frames = sink.snapshot();
+    assert(frames.size() == 1);
+    assert(frames[0].timestamp_ns == 1'000'000);
+    assert(frames[0].samples.front() == 3100);
+
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 2);
+    assert(stats.control_datagrams_ignored == 0);
+    assert(stats.nonmedia_datagrams_ignored == 0);
+    assert(stats.packets_parsed_ok == 1);
+    assert(stats.packets_rejected == 1);
+    assert(stats.frames_delivered == 0);
+    assert(stats.media_units_delivered == 1);
+    assert(stats.datagrams_dropped == 1);
+
+    auto stopped = backend.stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+}
+
 #if defined(__linux__)
 void test_socket_rx_audio_backend_default_backend_opens_and_closes_one_ipv4_unicast_port_on_linux() {
     auto reserved = reserve_ipv4_loopback_udp_socket();
@@ -757,6 +1045,7 @@ void test_socket_rx_audio_backend_default_backend_uses_stub_factory_on_unsupport
     assert(st2110::backend_is_stopped(backend->state()));
 }
 #endif
+
 } // namespace
 
 int main() {
@@ -772,6 +1061,9 @@ int main() {
     test_socket_rx_audio_backend_stop_propagates_close_failure_without_losing_active_state();
     test_socket_rx_audio_backend_can_restart_after_successful_stop();
     test_socket_rx_audio_backend_factory_descriptor_and_creation_shape();
+    test_socket_rx_audio_backend_delivers_reordered_audio_blocks_and_maps_timestamps();
+    test_socket_rx_audio_backend_ignores_rtcp_and_wrong_payload_type_before_delivery();
+    test_socket_rx_audio_backend_rejects_malformed_audio_packet_and_continues_to_deliver_next_packet();
 #if defined(__linux__)
     test_socket_rx_audio_backend_default_backend_opens_and_closes_one_ipv4_unicast_port_on_linux();
 #else
