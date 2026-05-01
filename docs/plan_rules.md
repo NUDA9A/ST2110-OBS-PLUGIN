@@ -1,320 +1,302 @@
 # ST2110-OBS-PLUGIN — Plan rules
 
-> Этот файл задает обязательные правила работы ассистента в проекте ST2110-OBS-PLUGIN.
+## 0. Definitions
 
-Основные проектные файлы:
-- `plan.md` — backlog / status / `Spec notes / deviations`;
-- `plan_rules.md` — обязательные рабочие правила;
-- `code_map.md` — карта production-кода;
-- `tests_file_map.md` — карта test targets / test files;
-- `conventions.md` — компактные coding / validation / extensibility conventions.
+- **MUST** = обязательное требование без исключений, кроме явно записанных в этом файле.
+- **MUST NOT** = прямой запрет.
+- **MAY** = допустимое действие, но не обязательное.
+- **Current step** = текущее формулирование задачи, текущая приемка или текущий ответ, в котором ассистент утверждает, что изучил rules/work/context.
+- **Actually read** = открыть и прочитать актуальное содержимое файла для current step.  
+  This MUST NOT be replaced by:
+  - memory;
+  - earlier snippets;
+  - earlier turns;
+  - file maps;
+  - backlog wording;
+  - assumptions that files are unchanged.
+- **Relevant code** = production/test files, whose actual contents are needed to verify behavior, API, architecture, coverage, or whether a task is already implemented.
+- **Code check** = checking actual current code contents, not only plans, maps, or discussion.
+- **Already implemented** = the required behavior is already present in current code or in newer local code explicitly provided in chat.
+- **Fully grounded** = based on all required reading and checks for the current step.
+- **Copy-ready** = content can be copied into the repository without reconstructing it from scattered fragments.
 
-Источники контекста:
-1. подключенный репозиторий — production/test code, `plan.md`, `code_map.md`, `tests_file_map.md`;
-2. Project в ChatGPT — authoritative runtime copies `plan_rules.md`, `conventions.md`, а также загруженные ST 2110 / RP 2110 PDF;
-3. сообщения пользователя — более свежие локальные незакоммиченные изменения.
+## 1. Sources and authority
 
-Приоритет источников:
-- `plan_rules.md` и `conventions.md` authoritative берутся **из Project**, а не из репозитория;
-- `plan.md`, `code_map.md`, `tests_file_map.md` authoritative берутся **из репозитория**, если пользователь не прислал более свежую локальную версию;
-- production/test code authoritative берется **из репозитория**, если пользователь не прислал более свежие локальные изменения.
-
----
-
-## 1. Общая модель работы
-
-- 1 задача за раз.
-- Пока задача не принята, к следующей не переходить.
-- Реализацию по умолчанию пишет пользователь.
-- Ассистент **не должен** писать full implementation, если пользователь явно не попросил.
-
-По умолчанию ассистент обязан давать:
-- архитектурные требования;
-- exact scope of changes;
-- expected behavior;
-- готовые тесты;
-- готовый API skeleton, если задача меняет production API / headers / helper boundaries или добавляет production-файл.
-
----
-
-## 2. Что ассистент обязан сделать до формулирования задачи
-
-Перед task proposal ассистент обязан:
-
-1. реально прочитать актуальные:
+Assistant MUST use sources in this order:
+1. connected repository:
+  - production `.hpp` / `.cpp`;
+  - test files;
   - `plan.md`;
   - `code_map.md`;
-  - `tests_file_map.md`, если затрагиваются тесты / покрытие / выбор test file;
-  - Project copies `plan_rules.md` и `conventions.md`;
-  - релевантные production/test файлы;
-  - **все** загруженные в Project ST 2110 / RP 2110 PDF;
-  - более свежие локальные изменения из чата, если пользователь их прислал;
+  - `tests_file_map.md`;
+2. Project copies:
+  - `plan_rules.md`;
+  - `conventions.md`;
+3. all ST 2110 / RP 2110 PDFs uploaded in the Project;
+4. newer local changes explicitly provided in chat.
 
-2. проверить **по коду**, не реализована ли уже формулируемая задача.
+Authoritative source rules:
+- `plan_rules.md` and `conventions.md` MUST be taken from Project copies.
+- `plan.md`, `code_map.md`, `tests_file_map.md` MUST be taken from the repository unless newer local versions are provided in chat.
+- production/test code MUST be taken from the repository unless newer local code is provided in chat.
 
-Под “реально прочитать” понимается именно чтение актуального содержимого файлов для текущего шага, а не опора на память, старые сниппеты, старые ответы, карту файлов или предположение, что файл не менялся.
+Assistant MUST NOT ask the user to resend files already available in the repository or Project.
+Assistant MAY ask only for:
+- newer local uncommitted changes;
+- missing / inaccessible / insufficient standards excerpts;
+- clearly relevant unavailable files.
 
-Под “проверить, не реализована ли задача уже” понимается проверка именно по фактическому production/test коду, а не только по `plan.md`, `code_map.md`, `tests_file_map.md`, формулировке backlog-пункта или прошлым обсуждениям.
+## 2. One-task workflow
 
-Если задача уже реализована:
-- ассистент **не должен** предлагать лишнюю реализацию, новые обязательные API-изменения или новые обязательные тесты;
-- ассистент обязан явно сказать, что дополнительный production/test код для выполнения задачи писать не нужно;
-- ассистент может указать только оставшиеся действия вне реализации: приемка, обновление `plan.md` / карт, либо переход к следующему реально невыполненному пункту.
+- Assistant MUST work on one task at a time.
+- Assistant MUST NOT move to the next task before the current one is accepted.
+- By default, implementation is written by the user.
+- Assistant MUST NOT provide full implementation unless the user explicitly asks for it.
 
-Если реализована только часть задачи:
-- ассистент обязан явно отделить уже существующий scope от реально недостающего;
-- формулировать только оставшуюся работу.
-
----
-
-## 3. Полнота контекста и запрет на “формальную галочку”
-
-Перед task proposal и перед acceptance ассистент обязан убедиться, что текущего доступа достаточно для:
-- проверки соответствия правилам;
-- проверки архитектуры;
-- проверки стандартов;
-- выбора правильных production/test файлов;
-- проверки, не реализована ли задача уже;
-- выявления новых deviations.
-
-Если хотя бы один обязательный `.md` файл, обязательный PDF или релевантный код для проверки задачи:
-- не прочитан;
-- недоступен;
-- доступен только частично;
-- заменен лишь пересказом / памятью / старым фрагментом,
-
-ассистент **не должен**:
-- писать, что “изучил правила / работу / контекст / стандарты”;
-- выдавать следующий task proposal как fully grounded;
-- выполнять полную standards-aware acceptance.
-
-В этом случае ассистент обязан:
-- явно назвать, чего именно не хватает;
-- запросить только недостающие релевантные файлы / фрагменты.
-
-Ассистент **не должен** просить пользователя повторно прислать то, что уже доступно в репозитории или Project.
-Запрашивать можно только:
-- локальные незакоммиченные изменения, которых нет в репозитории;
-- отсутствующие / недоступные / недостаточные фрагменты стандартов;
-- явно релевантные, но недоступные файлы.
-
----
-
-## 4. Порядок использования источников
-
-Для task proposal и acceptance ассистент обязан использовать источники в таком порядке:
-1. релевантные production/test файлы из репозитория;
-2. project control docs:
-  - `plan.md`, `code_map.md`, `tests_file_map.md` — из репозитория;
-  - `plan_rules.md`, `conventions.md` — из Project;
-3. ST 2110 / RP 2110 PDF и другие материалы из Project;
-4. более свежие локальные изменения из чата.
-
-`code_map.md` и `tests_file_map.md` помогают выбрать нужные файлы, но **не заменяют** чтение фактических `.hpp` / `.cpp` / test files, если нужна точная проверка API, behavior или coverage.
-
-Если задача меняет существующий `.hpp`, ассистент обязан опираться на фактическое содержимое этого `.hpp`, а не только на карту или prose-описание.
-
----
-
-## 5. Правила формулирования задач
-
-Каждая задача должна быть сформулирована так, чтобы:
-- не закреплять архитектурные или стандартные отклонения;
-- не превращать MVP limitation в архитектурное решение;
-- не вводить hardcoded assumption там, где уже известна отдельная modeled axis / boundary / policy.
-
-Ассистент обязан проверять:
-- не конфликтует ли задача с ST 2110 / RP 2110 requirements;
-- не ломает ли existing standards-aware boundaries;
-- не требует ли она обновления `Spec notes / deviations`;
-- не требует ли она explicit support boundary вместо неявного ограничения.
-
-Если во время task proposal найдено новое расхождение со стандартом / архитектурой / правилами:
-- приоритет — исправить его в текущей задаче, если это не раздувает scope;
-- иначе ассистент обязан:
-  - явно назвать расхождение;
-  - добавить его в `Spec notes / deviations`;
-  - при необходимости оформить отдельную follow-up задачу.
-
-Но ассистент **не должен** создавать новый `Spec notes / deviations` пункт, если ограничение:
-- уже известно;
-- уже покрыто существующей задачей в `plan.md`;
-- текущая задача не создает нового ухудшения / нового класса риска.
-
-В этом случае нужно сослаться на existing backlog item и не дублировать deviation.
-
----
-
-## 6. Формат выдачи задачи
-
-### 6.1. По умолчанию
-Ассистент обязан дать:
-- архитектурные требования;
+Default output for a task:
+- architecture requirements;
 - exact scope of changes;
 - expected behavior;
-- готовые тесты.
+- tests;
+- copy-ready API skeletons when production API / headers / helper boundaries change or a new production file is added.
 
-### 6.2. Если задача меняет production API / headers / helper boundaries / production files
-Ассистент обязан дать copy-ready API skeleton.
+## 3. Mandatory reading before task proposal
 
-Это означает:
-- точные сигнатуры;
-- все нужные enums / structs / classes / methods / free helpers;
-- все нужные include’ы;
-- `namespace st2110`;
-- skeleton каждого нового production-файла целиком.
+Before proposing the next task, Assistant MUST actually read:
+- `plan.md`;
+- `code_map.md`;
+- `tests_file_map.md` when tests / coverage / test selection matter;
+- Project copies of `plan_rules.md` and `conventions.md`;
+- relevant code;
+- all ST 2110 / RP 2110 PDFs uploaded in the Project;
+- newer local chat changes, if they exist.
 
-Правила выдачи:
-- новый production `.hpp` / `.cpp` файл — присылать целиком;
-- существующий production `.hpp` — присылать **только** новые / измененные declaration blocks;
-- full replacement существующего production header — только если пользователь явно попросил полный файл;
-- неизмененные объявления и existing inline bodies повторно присылать нельзя;
-- если меняется behavior существующего метода / helper’а без смены сигнатуры, ассистент должен описать новое intended behavior, а не печатать весь файл.
+Before proposing the next task, Assistant MUST also perform a code check to determine whether the task is already implemented.
 
-Все методы и free helper’ы по умолчанию должны быть даны как declaration, оканчивающийся `;`, чтобы пользователь мог заменить `;` на `{ ... }`.
+This check MUST be grounded in code itself.
+It MUST NOT rely only on:
+- `plan.md`;
+- `code_map.md`;
+- `tests_file_map.md`;
+- backlog text;
+- earlier discussion;
+- assistant memory.
 
-Ассистент **не должен** оставлять реально нужные helper boundaries только в prose, если они являются частью intended API / architecture.
+If the task is already implemented:
+- Assistant MUST NOT propose redundant implementation.
+- Assistant MUST explicitly say that no additional production/test code is needed.
+- Assistant MAY point only to remaining non-implementation steps:
+  - acceptance;
+  - project `.md` updates;
+  - the next truly unfinished task.
 
-Для каждого нового или семантически измененного метода / helper’а ассистент обязан отдельно описать:
-- входные данные и validation boundary;
+If the task is only partially implemented:
+- Assistant MUST separate existing behavior from missing scope.
+- Assistant MUST propose only the remaining work.
+
+If required reading or code check was not completed for the current step, Assistant MUST NOT present the task proposal as fully grounded.
+
+## 4. Mandatory reading before acceptance
+
+Before accepting an implementation, Assistant MUST actually read:
+- `plan.md`;
+- `code_map.md`;
+- `tests_file_map.md` when relevant;
+- Project copies of `plan_rules.md` and `conventions.md`;
+- relevant code;
+- all ST 2110 / RP 2110 PDFs uploaded in the Project;
+- newer local chat changes, if they exist.
+
+Acceptance MUST verify:
+- compliance with the task;
+- compliance with `plan.md`;
+- compliance with `plan_rules.md`;
+- compliance with `conventions.md`;
+- compliance with relevant standards requirements;
+- absence of new undocumented deviations;
+- architecture extensibility;
+- adequate test coverage;
+- localization of temporary limits and presence of follow-up when needed.
+
+Acceptance MUST NOT be presented as standards-aware unless all uploaded ST 2110 / RP 2110 PDFs were actually read for the current step.
+
+If required reading was not completed for the current step, Assistant MUST NOT:
+- say that rules/work/context/standards were studied;
+- present acceptance as fully grounded.
+
+## 5. Incomplete context rule
+
+If any required `.md`, relevant code, or required standards PDF:
+- was not actually read;
+- is unavailable;
+- is incomplete;
+- is replaced only by prose, memory, map, or old snippet,
+
+Assistant MUST:
+- explicitly name what is missing;
+- request only that missing material;
+- limit the response to a partial answer.
+
+Assistant MUST NOT pretend that context was fully checked.
+
+## 6. Task formulation rules
+
+Every task proposal MUST be checked against:
+- current rules;
+- current architecture;
+- current code state;
+- current standards context.
+
+Assistant MUST treat every task as potentially relevant to ST 2110 compliance and architecture extensibility.
+
+Assistant MUST NOT:
+- assume a task is too small to require standards reading;
+- lock in an avoidable standards deviation;
+- turn an MVP limit into architecture;
+- replace a known modeled axis / support boundary / validation boundary / derived value with a hardcoded assumption.
+
+If a new deviation is found during task proposal:
+- Assistant SHOULD fix it in the current task if scope remains reasonable.
+- Otherwise Assistant MUST:
+  - explicitly name it;
+  - add it to `Spec notes / deviations`;
+  - create or reference a follow-up task.
+
+Assistant MUST NOT add a new deviation if:
+- the limitation is already known;
+- it is already covered by an existing task in `plan.md`;
+- the current task does not worsen it or change its nature.
+
+In that case Assistant MUST reference the existing backlog item and MUST NOT duplicate the deviation.
+
+## 7. API/output rules
+
+If a task changes production API / headers / helper boundaries or adds a production file, Assistant MUST provide copy-ready API skeletons.
+
+Output rules:
+- new production file → full file;
+- existing production `.hpp` → only new / changed declaration blocks;
+- full replacement of an existing production header → only if explicitly requested by the user;
+- unchanged declarations MUST NOT be resent;
+- existing inline implementations MUST NOT be resent.
+
+All declarations intended for user implementation SHOULD end with `;`.
+
+Assistant MUST NOT leave required helper boundaries only in prose if they are part of the intended architecture or API.
+
+For every new or semantically changed method / helper, Assistant MUST describe:
+- inputs;
+- validation boundary;
 - success path;
 - state changes / side effects;
 - returned errors / failure behavior;
-- invariants после вызова;
-- временные support limits, если они есть.
+- invariants after the call;
+- temporary support limits, if any.
 
----
+Assistant MUST NOT provide implementation bodies by default.
 
-## 7. Правила тестов
+## 8. Test rules
 
-- Ассистент должен предпочитать обновление существующего test file, а не создание нового.
-- Для выбора test file нужно использовать `tests_file_map.md`.
-- Новый test target / test `.cpp` допустим только если:
-  - нет подходящего existing file;
-  - появляется отдельный subsystem / boundary;
-  - добавление в существующий файл ухудшит структуру покрытия.
+Assistant MUST prefer extending an existing test file over creating a new one.
+Assistant MUST use `tests_file_map.md` to choose the target test file.
 
-Когда задача требует тесты, ассистент обязан присылать:
-- точную строку `add_st2110_test(...)`, если реально нужен новый target;
-- полный copy-ready `.cpp` каждого нового теста;
-- полный copy-ready `.cpp` каждого существующего теста, если его нужно заменить целиком.
+A new test target / new `.cpp` test is allowed only if:
+- no suitable existing file exists;
+- a separate subsystem / boundary is introduced;
+- using an existing file would make coverage less maintainable.
 
-Одних “идей для тестов” недостаточно.
+When tests are required, Assistant MUST provide:
+- the exact `add_st2110_test(...)` line if a new target is actually needed;
+- the full `.cpp` for every new test;
+- the full `.cpp` for every existing test file that must be replaced.
 
-Если пользователь не сообщил изменений в тестах, ранее присланных ассистентом целиком, по умолчанию считается, что эти тесты и соответствующие `add_st2110_test(...)` строки были скопированы без изменений.
+Test ideas alone are insufficient.
 
-При acceptance пользователь не обязан повторно присылать test files, если:
-- они уже доступны в репозитории;
-- или были ранее даны ассистентом целиком и не менялись.
+If the user does not report changes to tests previously provided in full, those tests and corresponding `add_st2110_test(...)` lines are assumed copied unchanged.
 
----
+At acceptance, the user MUST NOT be required to resend tests if they are already available in the repository or were previously provided in full and unchanged.
 
-## 8. Правила приемки
+## 9. Project `.md` update rules
 
-Перед acceptance ассистент обязан заново реально прочитать:
-- все обязательные актуальные project control `.md` files;
-- релевантные production/test files;
-- **все** загруженные ST 2110 / RP 2110 PDF.
+A task is NOT fully accepted until:
+1. implementation and tests are checked;
+2. required project `.md` updates are checked.
 
-Acceptance обязана проверять:
-- соответствие задаче;
-- соответствие `plan.md`;
-- соответствие `plan_rules.md` и `conventions.md`;
-- соответствие релевантным требованиям стандарта;
-- отсутствие новых незадокументированных deviations;
-- архитектурную расширяемость;
-- качество тестового покрытия;
-- локализацию временных ограничений и наличие follow-up, если ограничение неизбежно.
+After implementation, Assistant MUST determine whether updates are needed for:
+- `plan.md`;
+- `code_map.md`;
+- `tests_file_map.md`;
+- `plan_rules.md`;
+- `conventions.md`.
 
-Acceptance **не может** считаться standards-aware, если ассистент:
-- прочитал только один “наиболее релевантный” PDF;
-- не прочитал один из доступных PDF;
-- опирался на старую память вместо актуального чтения.
+Update triggers:
+- `plan.md` → task status, backlog, or `Spec notes / deviations` changed;
+- `code_map.md` → production files / roles / APIs / relationships changed;
+- `tests_file_map.md` → test files / targets changed;
+- `plan_rules.md` → working rules changed;
+- `conventions.md` → stable conventions changed.
 
-Если на acceptance найдено расхождение:
-- приоритет — исправить сейчас в рамках текущей задачи;
-- если это объективно отдельная большая работа или пользователь явно выносит это отдельно, нужно:
-  - зафиксировать deviation;
-  - оформить follow-up задачу;
-  - явно объяснить, почему не исправлено сейчас.
+Assistant MUST provide replaceable blocks, not scattered line fragments:
+- `plan.md` → full task block / subsection;
+- `code_map.md` → full file block;
+- `tests_file_map.md` → full test-file block / subsection;
+- `plan_rules.md` and `conventions.md` → full updated file by default when their behavior changes.
 
-Если ограничение уже известно и уже покрыто существующей follow-up задачей, новый deviation создавать нельзя.
+Line-level edits are allowed only if the user explicitly asks for a diff.
 
----
+After the user updates project `.md` files, Assistant MUST verify:
+- only completed tasks were marked completed;
+- nothing unfinished was closed;
+- `plan.md` status is reflected in the correct place;
+- maps match actual code/tests;
+- new limits / deviations were not lost.
 
-## 9. Обновление проектных `.md` файлов после принятой задачи
+Only then MAY the task be treated as fully accepted.
 
-Задача **не считается полностью принятой**, пока:
-1. не проверены реализация и тесты;
-2. не обновлены и не проверены все нужные project `.md` files.
+## 10. Plan/status rules
 
-После завершения реализации ассистент обязан определить, что нужно обновить:
-- `plan.md` — если изменился статус задач, backlog или `Spec notes / deviations`;
-- `code_map.md` — если изменились production files / API / роли / связи;
-- `tests_file_map.md` — если изменились test files / targets;
-- `plan_rules.md` — если изменились рабочие правила;
-- `conventions.md` — если изменились устойчивые conventions.
+Default `plan.md` workflow:
+- completed tasks are marked `[x]` where declared;
+- tasks are NOT moved to `## Done` by default;
+- the same task is NOT duplicated both in place and in `## Done`.
 
-Ассистент обязан дать **заменяемые блоки целиком**:
-- для `plan.md` — целый task / subsection;
-- для `code_map.md` — целый file block;
-- для `tests_file_map.md` — целый test file block / subsection;
-- для `plan_rules.md` и `conventions.md` — по умолчанию полный обновленный файл, если затронуто рабочее поведение.
+A historical `## Done` section does NOT change this default by itself.
 
-Точечные вставки допустимы только если пользователь явно попросил diff.
+## 11. Map rules
 
-После этого пользователь вносит изменения и присылает обновленные блоки / файлы.
-Ассистент обязан проверить, что:
-- закрыты именно завершенные задачи;
-- не закрыто ничего лишнего;
-- статус в `plan.md` отражен в правильном месте;
-- карты не расходятся с фактическим кодом;
-- новые limits / deviations не потеряны.
+`code_map.md` MUST describe actual production code structure:
+- architectural role;
+- major dependencies / connections;
+- key enums / structs / classes / functions / methods.
 
-Только после этой проверки можно считать задачу полностью принятой.
+`tests_file_map.md` MUST describe actual test targets / test files.
 
----
+If a map conflicts with actual code/tests, actual code/tests win and the map MUST be updated.
 
-## 10. Правила ведения `plan.md`, `code_map.md`, `tests_file_map.md`
+Maps help select files but MUST NOT replace reading actual relevant files.
 
-### `plan.md`
-- Это backlog / status файл.
-- По умолчанию выполненная задача отмечается как `[x]` **по месту объявления**.
-- Ассистент **не должен** по умолчанию переносить задачу в `## Done` и не должен этого требовать.
-- Наличие исторического `## Done` не меняет это правило автоматически.
+## 12. Architecture rules
 
-### `code_map.md`
-- Должен описывать актуальные production files:
-  - архитектурную роль;
-  - связи / зависимости;
-  - ключевые enums / structs / classes / functions / methods.
-- Если карта расходится с кодом, приоритет у кода; карту нужно обновить.
+Code MUST remain extensible.
 
-### `tests_file_map.md`
-- Должен описывать актуальные test targets / test files.
-- Если карта расходится с тестами, приоритет у фактических тестов; карту нужно обновить.
+Typical future support SHOULD require:
+- adding enum/value coverage;
+- adding switch / adapter / mapper branches;
+- adding tests;
+- not rewriting the pipeline.
 
----
+Assistant MUST NOT lock the architecture to:
+- one pixel format only;
+- video-only forever;
+- one backend only;
+- console-only pipeline forever;
+- progressive-only semantics forever.
 
-## 11. Правила проектирования
-
-Код должен оставаться расширяемым:
-- добавление нового формата / режима / backend’а / типа потока должно по возможности сводиться к добавлению enum/value, case/adapter/mapper и тестов;
-- не должно требоваться переписывание существующего pipeline.
-
-Запрещено жестко зашивать архитектуру только под:
-- один pixel format;
-- только video без будущего audio;
-- только один backend;
-- только консольный pipeline без дальнейшей OBS-интеграции;
-- только progressive semantics.
-
-### Обязательные явные оси / boundaries
-Должны быть представлены явно, а не захардкожены:
+The following MUST be explicit modeled axes / boundaries / derived values where relevant:
 - media kind;
 - backend kind;
 - pixel/storage format;
-- `VideoScanMode` (`Progressive | Interlaced | PsF`);
+- `VideoScanMode`;
 - packing mode;
 - RTP payload type admission;
 - completion semantics;
@@ -327,54 +309,42 @@ Acceptance **не может** считаться standards-aware, если ас
 - audio channel count / order / mapping;
 - receiver capability / support policy.
 
-Этот список не закрытый: любой известный меняемый параметр стандарта / signaling / runtime / backend capability / future support должен трактоваться как modeled axis или derived value, пока не доказано обратное.
+This list is not exhaustive.
+Any known variable standard / signaling / runtime / backend parameter MUST be treated as a modeled axis or derived value unless clearly proven otherwise.
 
-### MVP restrictions
-MVP limitation допустима только как:
-- explicit modeled axis / support boundary / validation boundary / policy / helper;
-- локализованный `Unsupported` / `InvalidValue` branch;
-- named constant / named helper;
-- backlog follow-up, если ограничение должно быть снято позже.
+MVP limitations are allowed only as explicit:
+- modeled axes;
+- support / validation boundaries;
+- named policies / helpers / constants;
+- localized `Unsupported` / `InvalidValue` branches;
+- follow-up-backed temporary limits.
 
-MVP limitation **не должна** становиться архитектурным решением через:
+MVP limitations MUST NOT be encoded as:
 - magic constants;
-- неименованные literals;
-- ad hoc branch без named boundary;
-- фиксированное число там, где значение должно вычисляться из signaled/runtime параметров;
-- отсутствие уже известной modeled axis.
+- unnamed literals;
+- ad hoc branches without named boundaries;
+- fixed values that should be derived from signaled/runtime inputs;
+- omission of already-known architectural axes.
 
-Пример: audio `samples_per_packet` должен выводиться из `sampling_rate_hz` и `packet_time_us`, а не фиксироваться как `48`, даже если текущий baseline дает 48.
+Example: audio `samples_per_packet` MUST be derived from `sampling_rate_hz` and `packet_time_us`, not hardcoded as `48`.
 
-### Late implementation rule
-Если ось / boundary / dispatch уже заложены архитектурно, их полная реализация может быть отложена в later phase.
-Поздняя задача должна по возможности сводиться к заполнению уже заложенной ветки, а не к переписыванию архитектуры.
+If an axis / boundary / dispatch already exists architecturally, fuller support MAY be implemented later.
+Later tasks SHOULD fill existing branches, not redesign architecture.
 
-### Временные упрощения
-Любое временное упрощение должно быть:
-- явно зафиксировано;
-- локализовано;
-- оформлено через named support boundary / policy / helper / adapter;
-- иметь follow-up, если ограничение должно быть снято.
+Avoidable standards deviations MUST NOT be accumulated intentionally.
+If a standards deviation can be fixed now without unreasonable scope growth, it SHOULD be fixed now.
+Otherwise it MUST be recorded in `Spec notes / deviations` and backlog.
 
-### Отклонения от стандарта
-MVP **не должен** сознательно накапливать avoidable deviations.
-Если deviation найден и его можно исправить без взрывного роста сложности — исправлять в текущей задаче.
-Иначе — сразу фиксировать в `Spec notes / deviations` и backlog.
+## 13. Phase goals
 
----
+- **MVP** = minimal viable ST 2110 video/audio receive on Linux, two backends, basic OBS integration, manual E2E readiness.
+- **Medium** = broader format coverage, robustness, edge-cases, UX/observability, testing readiness.
+- **Plugin** = stable and usable OBS plugin behavior.
+- **Tests** = systematic regression and coverage.
+- **Hardening** = performance, recovery, correctness polish.
+- **Windows** = optional port of own socket backend without MTL.
 
-## 12. Цели этапов
-
-- **MVP** — минимально полноценный прием ST 2110 video/audio на Linux, два backend’а, базовая OBS-интеграция, готовность к ручному E2E.
-- **Medium** — расширение coverage, robustness, edge-cases, UX/observability, подготовка к полноценному тестированию.
-- **Plugin** — доведение OBS plugin UX / stability до повседневного использования.
-- **Tests** — систематический regression / coverage набор.
-- **Hardening** — performance, recovery, correctness polishing.
-- **Windows** — опциональный перенос собственного socket backend без MTL.
-
----
-
-## 13. Референсы
+## 14. References
 
 - SMPTE ST 2110-10:2022
 - SMPTE ST 2110-20:2022

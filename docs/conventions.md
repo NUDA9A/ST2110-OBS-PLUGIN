@@ -1,50 +1,56 @@
 # ST2110-OBS-PLUGIN — Conventions
 
-> Этот файл дополняет `plan_rules.md`.  
-> При конфликте приоритет у `plan_rules.md`.  
-> Версия этого файла в Project является authoritative runtime copy.
+## 0. Definitions
 
-## 1. Validation and parsing
+- Project copy of this file = authoritative runtime copy.
+- If this file conflicts with `plan_rules.md`, `plan_rules.md` wins.
+- Terms such as **MUST**, **MUST NOT**, **Actually read**, **Code check**, **Already implemented**, and **Copy-ready** inherit the meanings defined in `plan_rules.md`.
 
-- Parse strictly: malformed wire data must yield an explicit error, not silent coercion.
-- Configs must be explicitly validated before use/start.
-- Fallbacks/defaults must be explicit at the call site or config construction layer, not hidden in parsers/validators.
-- `Unsupported` = input is recognizable but not supported by this implementation yet.
-- `InvalidValue` = input/config violates required constraints.
-- `is_valid()` is only a wrapper around `validate_*() == Error::Ok`; it must not contain divergent logic.
+## 1. Validation
+
+- Parsing MUST be strict.
+- Malformed wire data MUST return an explicit error.
+- Silent coercion MUST NOT be used.
+- Configs MUST be explicitly validated before use/start.
+- Fallbacks/defaults MUST be explicit at the call site or config-construction layer.
+- Fallbacks/defaults MUST NOT be hidden inside parsers or validators.
+- `Unsupported` MUST mean “recognized but not supported yet”.
+- `InvalidValue` MUST mean “violates required constraints”.
+- `is_valid()` MUST be only a wrapper over `validate_*() == Error::Ok` and MUST NOT contain divergent logic.
 
 ## 2. Extensibility
 
-- Format-specific constraints should stay localized in helpers or explicit format switches.
-- Adding a new format should usually require:
+- Format-specific constraints SHOULD stay localized in helpers or explicit switches.
+- Adding a new format SHOULD usually require:
   - extending enum values;
-  - adding a validation / dispatch case;
+  - adding validation / dispatch cases;
   - adding tests;
-  - not rewriting the existing validation flow.
+  - not rewriting existing validation flow.
 
-## 3. API and header shaping
+## 3. API shaping
 
-- Public and architectural headers must make modeled axes and support boundaries explicit.
-- Helper boundaries affecting validation, dispatch, lifecycle, runtime support, or derived values must not remain implicit only in prose.
-- If a helper is needed for a clean architectural boundary, it should exist as a named function / method / policy / adapter.
-- Temporary support limits must be expressed through explicit modeled / validation / support boundaries, not by silently omitting already-known API surface.
+- Public and architectural headers MUST make modeled axes and support boundaries explicit.
+- Important helper boundaries MUST NOT exist only in prose.
+- If a helper is needed for a clean boundary, it SHOULD exist as a named function / method / policy / adapter.
+- Temporary support limits MUST be expressed through explicit modeled / validation / support boundaries.
 
-## 4. Assistant output format for API-bearing tasks
+## 4. Assistant output rules
 
-If a task changes production API / headers / helper boundaries or adds a production file, the assistant must provide copy-ready API skeletons.
+If a task changes production API / headers / helper boundaries or adds a production file, Assistant MUST provide copy-ready API skeletons.
 
 Rules:
-- new production file → provide the whole file;
-- existing production `.hpp` → provide only new / changed declaration blocks;
-- do not resend unchanged declarations or existing inline bodies;
-- full replacement of an existing production header is allowed only if the user explicitly asks for it;
-- declarations should end with `;` so the user can replace `;` with `{ ... }`;
-- do not omit helper declarations that are part of the intended boundary;
-- tests are always sent in full copy-ready form;
-- implementation bodies stay absent by default unless the user explicitly asks for full implementation code.
+- new production file → full file;
+- existing production `.hpp` → only new / changed declaration blocks;
+- full existing header replacement → only if explicitly requested;
+- unchanged declarations MUST NOT be resent;
+- existing inline bodies MUST NOT be resent;
+- declarations intended for user implementation SHOULD end with `;`;
+- required helper declarations MUST NOT be omitted;
+- tests MUST be sent in full;
+- implementation bodies MUST stay absent by default unless explicitly requested.
 
-For every declared or semantically changed method/helper, the assistant must describe:
-- input and validation expectations;
+For every new or semantically changed method/helper, Assistant MUST describe:
+- input / validation expectations;
 - success result / state changes / side effects;
 - failure behavior / returned errors;
 - invariants after the call.
@@ -52,44 +58,45 @@ For every declared or semantically changed method/helper, the assistant must des
 ## 5. Planning and status hygiene
 
 Default `plan.md` workflow:
-- completed tasks are marked `[x]` where they are declared;
-- tasks are not moved to `## Done` by default;
-- the same task must not be duplicated both in place and in `## Done` unless the user explicitly wants that workflow.
+- completed task → `[x]` where declared;
+- no default move to `## Done`;
+- no duplicate completion marking.
 
-Before proposing `plan.md` updates, the assistant must first determine the actual workflow from the file state and the user’s recent instructions.
+Before proposing status updates, Assistant MUST infer the actual workflow from the current file state and recent user instructions.
 
-## 6. Context discipline for task proposal and acceptance
+## 6. Context discipline
 
-Before proposing the next task, before accepting an implementation, and before saying that rules/work/context were studied, the assistant must actually read the current versions of:
-- `plan.md`;
-- `code_map.md`;
-- `tests_file_map.md` when tests / coverage / test selection matter;
-- Project copies of `plan_rules.md` and `conventions.md`;
-- relevant production/test code;
-- all ST 2110 / RP 2110 PDFs uploaded in the Project.
+Before proposing the next task, before accepting an implementation, and before saying that rules/work/context were studied, Assistant MUST:
+- actually read all required project control `.md` files;
+- actually read relevant code;
+- actually read all uploaded ST 2110 / RP 2110 PDFs.
 
-The assistant must not rely only on memory, earlier snippets, earlier turns, backlog text, maps, or assumptions about unchanged content.
+Assistant MUST NOT rely only on:
+- memory;
+- earlier snippets;
+- earlier turns;
+- backlog text;
+- maps;
+- unchanged-file assumptions.
 
-Before proposing the next task, the assistant must also check the actual code and any newer local code from chat to determine whether the task is already implemented.
+Before proposing the next task, Assistant MUST also perform a code check to determine whether the task is already implemented.
 
 If the task is already implemented:
-- the assistant must not propose redundant implementation;
-- the assistant must explicitly say that no additional production/test code is needed for that task.
+- Assistant MUST NOT propose redundant implementation;
+- Assistant MUST explicitly say that no additional production/test code is needed.
 
-If any required `.md`, relevant code, or standards PDF was not actually read for the current step, the assistant must not claim that the context was fully checked.
+If required `.md`, relevant code, or uploaded standards PDF was not actually read for the current step, Assistant MUST NOT claim that context was fully checked.
 
 ## 7. Deviations hygiene
 
-Do not add a new `Spec notes / deviations` item if the missing behavior:
-- is already known;
-- is already covered by an existing task in `plan.md`;
-- is not worsened or changed in nature by the current task.
+Assistant MUST NOT add a new `Spec notes / deviations` item when:
+- the limitation is already known;
+- it is already covered by an existing task in `plan.md`;
+- the current task does not worsen it or change its nature.
 
-In that case:
-- reference the existing follow-up task;
-- do not duplicate the deviation.
+In that case Assistant MUST reference the existing follow-up task and MUST NOT duplicate the deviation.
 
-Add a new deviation only when the mismatch is genuinely new:
-- not reflected in `plan.md`;
-- not covered by an existing backlog item;
-- or introduced as a new architectural / standards risk by the current change.
+A new deviation SHOULD be added only when the mismatch is genuinely new:
+- not already reflected in `plan.md`;
+- not already covered by backlog;
+- or newly introduced by the current change.
