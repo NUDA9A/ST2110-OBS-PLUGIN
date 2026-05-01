@@ -190,10 +190,19 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
     }
 
     void record_rejected_packet(Error err, PacketParseStage stage) noexcept {
+        record_rejected_media_packet();
+        record_packet_parse_result(stats_.packet_parse, err, stage);
+    }
+
+    void record_accepted_media_packet() noexcept {
+        std::lock_guard lock(stats_mutex_);
+        ++stats_.packets_parsed_ok;
+    }
+
+    void record_rejected_media_packet() noexcept {
         std::lock_guard lock(stats_mutex_);
         ++stats_.packets_rejected;
         ++stats_.datagrams_dropped;
-        record_packet_parse_result(stats_.packet_parse, err, stage);
     }
 
     void record_parsed_packet_ok() noexcept {
