@@ -1,4 +1,4 @@
-#include "st2110/socket_rx_audio_backend.hpp"
+#include "st2110/socket_rx_single_media_backend_base.hpp"
 #include "st2110/socket_stub_rx_port.hpp"
 
 #if defined(__linux__)
@@ -6,7 +6,7 @@
 #endif
 
 namespace st2110 {
-std::unique_ptr<ISocketRxPortFactory> SocketRxAudioBackend::make_default_port_factory() {
+std::unique_ptr<ISocketRxPortFactory> SocketRxSingleMediaBackendBase::make_default_port_factory() {
 #if defined(__linux__)
     return make_linux_socket_rx_port_factory();
 #else

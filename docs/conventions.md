@@ -4,7 +4,7 @@
 
 - Project copy of this file = authoritative runtime copy.
 - If this file conflicts with `plan_rules.md`, `plan_rules.md` wins.
-- Terms such as **MUST**, **MUST NOT**, **Actually read**, **Code check**, **Already implemented**, and **Copy-ready** inherit the meanings defined in `plan_rules.md`.
+- Terms such as **MUST**, **MUST NOT**, **Actually read**, **Code check**, **Already implemented**, **Copy-ready**, **MTL task**, and **MTL reference files** inherit the meanings defined in `plan_rules.md`.
 
 ## 1. Validation
 
@@ -71,6 +71,10 @@ Before proposing the next task, before accepting an implementation, and before s
 - actually read relevant code;
 - actually read all uploaded ST 2110 / RP 2110 PDFs.
 
+If the current step is an MTL task, Assistant MUST also actually read all MTL reference files.
+
+If the current step is NOT an MTL task, Assistant MUST NOT read MTL reference files and SHOULD NOT mention them.
+
 Assistant MUST NOT rely only on:
 - memory;
 - earlier snippets;
@@ -85,7 +89,7 @@ If the task is already implemented:
 - Assistant MUST NOT propose redundant implementation;
 - Assistant MUST explicitly say that no additional production/test code is needed.
 
-If required `.md`, relevant code, or uploaded standards PDF was not actually read for the current step, Assistant MUST NOT claim that context was fully checked.
+If required `.md`, relevant code, uploaded standards PDF, or required MTL reference file for an MTL task was not actually read for the current step, Assistant MUST NOT claim that context was fully checked.
 
 ## 7. Deviations hygiene
 

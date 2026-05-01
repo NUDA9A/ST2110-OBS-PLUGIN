@@ -1,7 +1,6 @@
 add_library(st2110core STATIC
         src/stub.cpp
-        src/socket_rx_video_backend.cpp
-        src/socket_rx_audio_backend.cpp
+        src/socket_rx_single_media_backend_base.cpp
 )
 
 target_include_directories(st2110core PUBLIC
