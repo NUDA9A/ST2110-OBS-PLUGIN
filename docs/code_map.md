@@ -112,54 +112,74 @@
     - отделяет выбор backend implementation (`socket` / `mtl`) от media runtime config, packet pipeline, SDP/signaling parsing и concrete backend implementation details.
     - задает extendable registration/selection layer поверх `IRxBackend`.
 - Связи:
-    - использует `backend.hpp` для `IRxBackend`, `RxMediaKind` и `RxBackendCapabilities`;
-    - использует `error.hpp` для validation/result reporting;
-    - должен потребляться будущими CLI / app / OBS bootstrap слоями при выборе backend’а;
-    - concrete socket/MTL implementations later should provide `IRxBackendFactory` instances rather than hardcoding creation branches directly in app/plugin code.
+    - использует `backend.hpp` для:
+        - `IRxBackend`;
+        - `RxMediaKind`;
+        - `RxBackendCapabilities`;
+        - `supports_media(...)`.
+    - использует `error.hpp` для validation/result reporting.
+    - должен потребляться app/bootstrap слоями при выборе backend’а.
+    - concrete socket/MTL implementations should provide `IRxBackendFactory` instances instead of hardcoded backend construction branches in app/plugin code.
+    - тестируется `tests/test_backend_factory.cpp`.
 - Сущности:
     - `RxBackendKind`
         - modeled backend axis:
-            - `Socket`;
+            - `Socket`
             - `Mtl`.
     - `validate_rx_backend_kind(RxBackendKind) -> Error`
         - validates known backend-kind enum values.
     - `rx_backend_kind_name(RxBackendKind) -> std::string_view`
-        - stable string mapping for known backend kinds.
+        - stable lowercase string mapping for known backend kinds:
+            - `Socket` -> `"socket"`
+            - `Mtl` -> `"mtl"`.
     - `parse_rx_backend_kind(std::string_view) -> std::expected<RxBackendKind, Error>`
-        - strict parser for backend-kind selection tokens.
+        - strict parser for backend-kind selection tokens;
+        - currently accepts only exact lowercase `"socket"` / `"mtl"`.
+    - `validate_rx_media_kind(RxMediaKind) -> Error`
+        - validates known media-kind enum values used by backend selection.
     - `RxBackendDescriptor`
         - backend-factory-advertised descriptor:
-            - `kind`;
-            - `name`;
-            - `capabilities`;
+            - `kind`
+            - `name`
+            - `capabilities`
             - `available`.
-    - `validate_rx_backend_descriptor(const RxBackendDescriptor&) -> Error`
-        - validates descriptor shape;
-        - rejects invalid backend kind, empty backend name, and descriptors with no media capability.
     - `RxBackendSelection`
         - requested backend selection:
-            - `backend_kind`;
+            - `backend_kind`
             - `media_kind`.
-    - `validate_rx_backend_selection(const RxBackendSelection&) -> Error`
-        - validates requested backend kind and requested media kind.
     - `IRxBackendFactory`
         - abstract backend-factory contract:
-            - `descriptor()`;
+            - `descriptor()`
             - `create_backend()`.
+    - `validate_rx_backend_descriptor(const RxBackendDescriptor&) -> Error`
+        - validates descriptor shape;
+        - rejects:
+            - invalid backend kind;
+            - empty backend name;
+            - descriptors with no media capability.
+        - `available=false` remains structurally valid and is handled by selection, not descriptor validation.
+    - `validate_rx_backend_selection(const RxBackendSelection&) -> Error`
+        - validates requested backend kind and requested media kind.
     - `select_rx_backend_factory(std::span<IRxBackendFactory* const>, const RxBackendSelection&) -> std::expected<IRxBackendFactory*, Error>`
-        - validates the selection request and registered factories;
-        - selects a factory by requested backend kind plus required media capability;
-        - rejects unavailable or missing factories through explicit result codes.
+        - validates selection request first;
+        - validates every registered factory entry and every returned descriptor before selection;
+        - rejects null factory entries and invalid descriptors;
+        - selects a factory by:
+            - requested backend kind;
+            - `available==true`;
+            - required media capability via `supports_media(...)`;
+        - returns `Unsupported` when no matching available backend exists.
     - `create_rx_backend(std::span<IRxBackendFactory* const>, const RxBackendSelection&) -> std::expected<std::unique_ptr<IRxBackend>, Error>`
-        - selects a factory and creates one backend instance;
-        - rejects null backend results from a factory as invalid.
+        - selects one factory through `select_rx_backend_factory(...)`;
+        - creates one backend instance from the selected factory only;
+        - rejects null backend results as `InvalidValue`.
 - Примечание:
-    - backend kind is now a first-class architecture axis separate from media kind;
-    - descriptors advertise backend capabilities instead of assuming that backend kind implies a fixed media set;
-    - localized `available=false` keeps temporary runtime/build availability explicit without reshaping the API;
+    - backend kind is a first-class architecture axis separate from media kind.
+    - descriptors advertise capabilities instead of assuming that backend kind implies a fixed media set.
+    - localized `available=false` keeps temporary runtime/build availability explicit without reshaping the API.
     - future backend additions should mainly require:
         - adding a new `RxBackendKind` value;
-        - adding its parse/name/validation case;
+        - extending kind validation/name/parser coverage;
         - providing a new concrete `IRxBackendFactory`;
         - adding tests.
 
@@ -283,20 +303,66 @@
 ### libs/st2110core/include/st2110/fixed_reorder_buffer.hpp
 - Роль:
     - MVP-реализация reorder buffer’а с фиксированным окном по `extended_seq`.
+    - хранит owning `StoredPacket` objects и отдает их строго в порядке ожидаемого 32-bit extended sequence.
+    - локализует базовую политику для:
+        - in-order / out-of-order acceptance within a fixed window;
+        - duplicate rejection;
+        - late vs out-of-window accounting;
+        - one-step missing-sequence flush.
 - Связи:
-    - реализует `IReorderBuffer`;
-    - использует `StoredPacket`/`PacketView`.
+    - реализует `IReorderBuffer` из `reorder_buffer.hpp`;
+    - использует `StoredPacket` / `PacketView` из `reorder_buffer.hpp`;
+    - использует `ReorderBufferStats` из `stats.hpp`;
+    - покрывается тестами:
+        - `tests/test_fixed_reorder_buffer.cpp`;
+        - `tests/test_fixed_reorder_buffer_stats.cpp`;
+        - `tests/test_fixed_reorder_buffer_flush.cpp`.
 - Сущности:
     - `FixedWindowReorderBuffer`
+        - `explicit FixedWindowReorderBuffer(uint32_t window_size)`
+            - требует `window_size > 0`;
+            - при `window_size == 0` бросает `std::invalid_argument`.
         - `push(const PacketView&)`
+            - всегда увеличивает `stats_.packets_pushed`;
+            - при первом accepted flow initializes `next_expected_seq_` from the first packet sequence;
+            - вычисляет forward modular distance как `packet.extended_seq - next_expected_seq_`;
+            - если `dist >= window_size_`:
+                - `dist > 0x7FFFFFFF` трактуется как late packet и увеличивает `late_packets`;
+                - иначе packet считается out-of-window и увеличивает `out_of_window`;
+            - duplicate packet по тому же `extended_seq` не перезаписывает stored packet и увеличивает `duplicates`;
+            - accepted packet сохраняется как `StoredPacket(packet)` в `std::map<uint32_t, StoredPacket>` и увеличивает `packets_stored`.
         - `pop_next() -> std::optional<StoredPacket>`
-        - `stats() -> ReorderBufferStats`
+            - до инициализации reorder state returns `std::nullopt`;
+            - если packet with `next_expected_seq_` present:
+                - moves packet out;
+                - erases it from storage;
+                - increments `next_expected_seq_`;
+                - increments `packets_popped`;
+                - clears `missing_head_accounted_`;
+                - returns the stored packet.
+            - если expected packet отсутствует:
+                - returns `std::nullopt`;
+                - when pending packets exist, increments `missing_seq` only once for the current missing head until progress/flush happens.
         - `reset()`
-        - `flush_missing_once()`
-    - Поведение:
-        - хранит пакеты в `std::map<uint32_t, StoredPacket>`;
-        - учитывает `duplicates`, `out_of_window`, `late_packets`, `missing_seq`, `missing_seq_flushed`;
-        - теперь отдает reorder snapshot через интерфейсный `stats()` override.
+            - clears stored packets;
+            - clears initialization/next-sequence state;
+            - resets stats to zero;
+            - clears missing-head accounting state.
+        - `stats() const -> ReorderBufferStats`
+            - returns stats snapshot by value.
+        - `flush_missing_once() -> bool`
+            - public fixed-window-specific helper not present in `IReorderBuffer`;
+            - advances `next_expected_seq_` by one only when:
+                - buffer is initialized;
+                - pending packets exist;
+                - the currently expected packet is missing;
+            - clears `missing_head_accounted_`;
+            - increments `missing_seq_flushed`;
+            - returns `true` only when a gap was actually flushed.
+- Примечание:
+    - reorder logic uses 32-bit unsigned arithmetic on `extended_seq`, so wraparound behavior is intentional and covered by tests.
+    - `packets_pushed` and `packets_stored` are intentionally different counters: rejected duplicates / late / out-of-window packets still count as pushed attempts.
+    - `flush_missing_once()` remains a concrete-type helper; it is not part of the generic `IReorderBuffer` abstraction.
 
 ### libs/st2110core/include/st2110/frame_assembler.hpp
 - Роль:
@@ -392,30 +458,61 @@
 ### libs/st2110core/include/st2110/packet_view.hpp
 - Роль:
     - нормализованное представление уже распарсенного video RTP/ST2110-20 packet.
+    - explicit boundary between low-level RTP/ST 2110-20 wire parsing and downstream reorder/depacketizer logic.
+    - хранит non-owning views на RTP payload и SRD segment data, включая отдельно выделенные trailing padding bytes.
 - Связи:
-    - объединяет `RtpHeaderView`, extended seq, SRD segment headers, segment payload spans и trailing payload bytes.
-    - основной вход для reorder/depacketizer pipeline.
+    - использует `ByteSpan` из `bytes.hpp`;
+    - использует `Error` из `error.hpp`;
+    - использует `RtpHeaderView`, `parse_rtp_header(...)`, `rtp_payload_span(...)` из `rtp.hpp`;
+    - использует `St2110PayloadHeaderView`, `SrdHeader`, `parse_st2110_20_payload_header(...)`, `validate_st2110_20_payload_header(...)`, `combine_extended_seq(...)` из `st2110_20.hpp`;
+    - использует `PacketParseStage` из `stats.hpp` для staged parse-failure reporting;
+    - является основным входом для reorder / depacketizer pipeline.
 - Сущности:
     - `maxPacketSrdSegments = 3`
+        - explicit upper bound for SRD segment views stored in one parsed packet.
     - `SrdSegmentView`
-        - `header`
-        - `data`
+        - normalized one-segment view:
+            - `header`
+            - `data`.
     - `PacketViewParseFailure`
-        - `error`
-        - `stage`
+        - staged parse failure summary:
+            - `error`
+            - `stage`.
     - `PacketView`
-        - `rtp`
-        - `extended_seq`
-        - `segments[3]`
-        - `segment_count`
-        - `payload_data` — весь RTP payload после ST 2110-20 payload header
-        - `trailing_padding` — trailing bytes после байтов, покрытых суммой `SRD Length`
-        - `static from_udp_datagram(ByteSpan)`
-    - `parse_packet_view_staged(ByteSpan)`
-        - поэтапно парсит RTP header, ST 2110-20 payload header, split’ит payload по SRD segments и отдельно выделяет trailing padding.
+        - normalized parsed packet representation:
+            - `rtp`
+            - `extended_seq`
+            - `segments[3]`
+            - `segment_count`
+            - `payload_data` — весь RTP payload после ST 2110-20 payload header;
+            - `trailing_padding` — trailing bytes after the bytes covered by summed SRD lengths.
+        - `static from_udp_datagram(ByteSpan) -> std::expected<PacketView, Error>`
+            - convenience entry point returning only final `Error`, without staged failure metadata.
+    - `parse_packet_view_staged(ByteSpan) -> std::expected<PacketView, PacketViewParseFailure>`
+        - staged packet parse entry point.
+        - behavior:
+            - parses RTP header;
+            - derives RTP payload span;
+            - parses ST 2110-20 payload header;
+            - validates structural ST 2110-20 payload-header constraints;
+            - combines RTP low 16-bit sequence number with ST 2110-20 ext-seq hi16 into `extended_seq`;
+            - sets `payload_data` to the RTP payload bytes after the ST 2110-20 payload header;
+            - copies parsed SRD headers into `segments[i].header`;
+            - validates the special case:
+                - one SRD header with `length == 0` is allowed only when `payload_data` is empty;
+            - rejects when SRD-covered payload length exceeds available payload bytes;
+            - splits SRD payload subspans into `segments[i].data`;
+            - assigns leftover bytes after summed SRD lengths to `trailing_padding`;
+            - sets final `segment_count`.
+        - staged failure mapping:
+            - RTP header parse failure -> `PacketParseStage::RtpHeader`;
+            - ST 2110-20 payload-header parse failure -> `PacketParseStage::St2110PayloadHeaderParse`;
+            - ST 2110-20 payload-header validation failure -> `PacketParseStage::St2110PayloadHeaderValidate`;
+            - SRD payload split / zero-length special-case failure -> `PacketParseStage::SrdPayloadSplit`.
 - Примечание:
-    - generic parse слой только выделяет trailing bytes, но не принимает mode-aware решение об их допустимости.
-    - tolerance to RTP header extensions должна оставаться локализованной в RTP/payload extraction path, а не размазываться по `PacketView` consumers.
+    - generic parse слой intentionally extracts trailing payload bytes but does not decide whether those bytes are semantically permitted padding for the active packing/scan-mode path;
+    - `from_udp_datagram(...)` is a thin wrapper over `parse_packet_view_staged(...)` that drops stage metadata and returns only `Error`;
+    - this file remains non-owning: consumers must not outlive the underlying UDP payload buffer referenced by the stored `ByteSpan`s.
 
 ### libs/st2110core/include/st2110/pixel_format.hpp
 - Роль:
@@ -429,22 +526,58 @@
 ### libs/st2110core/include/st2110/reorder_buffer.hpp
 - Роль:
     - абстракция reorder layer и owning stored-packet representation.
+    - explicit ownership bridge between parsed non-owning `PacketView` packets and reorder-buffer-local packet storage.
+    - keeps packet ownership / payload lifetime handling separate from concrete reorder policy implementations such as `FixedWindowReorderBuffer`.
 - Связи:
-    - используется `FixedWindowReorderBuffer`;
-    - отделяет packet ownership от `PacketView` с non-owning spans;
-    - использует `ReorderBufferStats` из `stats.hpp` как explicit stats snapshot boundary.
+    - использует `packet_view.hpp` for:
+        - `PacketView`;
+        - `RtpHeaderView`;
+        - `SrdHeader`;
+        - `maxPacketSrdSegments`;
+        - `ByteSpan`.
+    - использует `stats.hpp` for `ReorderBufferStats` as an explicit interface-level stats snapshot boundary.
+    - реализуется concrete reorder implementations such as `fixed_reorder_buffer.hpp`.
+    - покрывается `tests/test_reorder_buffer_interface.cpp`.
 - Сущности:
     - `StoredPacket`
-        - owning-копия packet content;
-        - хранит полный packet payload;
-        - `view() -> PacketView` — восстанавливает non-owning `PacketView` поверх внутреннего буфера, включая `segments[i].data` и `trailing_padding`.
+        - owning packet copy for reorder storage.
+        - хранит:
+            - `rtp`
+            - `extended_seq`
+            - `segment_headers[maxPacketSrdSegments]`
+            - `segment_count`
+            - owning `payload_data`
+        - `StoredPacket() = default`
+        - `explicit StoredPacket(const PacketView&)`
+            - copies RTP header fields;
+            - copies extended sequence number;
+            - copies segment headers for the active `segment_count`;
+            - deep-copies full `payload_data` bytes from the source `PacketView`.
+        - `view() const -> PacketView`
+            - reconstructs a non-owning `PacketView` over the internally owned payload bytes;
+            - restores:
+                - `rtp`
+                - `extended_seq`
+                - `segment_count`
+                - `segments[i].header`
+                - `segments[i].data`
+            - reconstructs segment payload spans by walking segment lengths in order;
+            - exposes leftover bytes after summed segment lengths as `trailing_padding`.
     - `IReorderBuffer`
+        - abstract reorder-buffer contract.
         - `push(const PacketView&)`
-        - `pop_next()`
-        - `stats() -> ReorderBufferStats`
+            - admits/stores one parsed packet according to concrete reorder policy.
+        - `pop_next() -> std::optional<StoredPacket>`
+            - returns the next available in-order stored packet when ready.
         - `reset()`
+            - clears concrete reorder state.
+        - `stats() const -> ReorderBufferStats`
+            - returns reorder stats snapshot through the interface boundary.
+        - virtual destructor.
 - Примечание:
-    - reorder stats now flow through the interface boundary, so backends do not need concrete-type knowledge for observability.
+    - `StoredPacket` preserves only the normalized packet model needed by the receive pipeline; it does not keep the original raw UDP datagram bytes.
+    - `view()` returns non-owning spans tied to `StoredPacket::payload_data`, so the reconstructed `PacketView` remains valid only while the owning `StoredPacket` object remains alive.
+    - reorder stats intentionally flow through the abstract interface, so higher backend/runtime layers do not need concrete reorder-buffer type knowledge for observability.
 
 ### libs/st2110core/include/st2110/rtp.hpp
 - Роль:
@@ -533,29 +666,74 @@
 
 ### libs/st2110core/include/st2110/st2110_20.hpp
 - Роль:
-    - low-level parsing/validation helpers для ST 2110-20 payload header.
+    - low-level structural parsing/validation boundary for the ST 2110-20 RTP payload header.
+    - models and validates only the wire/header layer:
+        - Extended Sequence Number;
+        - 1..3 Sample Row Data headers;
+        - structural SRD ordering/continuation invariants.
+    - intentionally keeps scan-mode-specific and format-specific behavior out of this file.
 - Связи:
-    - используется `PacketView` parser’ом и format-aware validation слоями.
+    - использует:
+        - `bytes.hpp` for `ByteSpan`;
+        - `endian.hpp` for big-endian field reads;
+        - `error.hpp` for explicit parse/validation failures.
+    - используется `packet_view.hpp` для packet-level parse pipeline.
+    - используется higher layers such as segment placement / depacketizer / scan-mode-aware validation through parsed `SrdHeader` semantics.
+    - покрывается как минимум:
+        - `tests/test_st2110_20_parse.cpp`;
+        - `tests/test_st2110_20_types.cpp`.
 - Сущности:
     - `ExtendedSequenceNumber`
+        - carries the high 16 bits of the extended 32-bit RTP sequence number:
+            - `hi16`.
     - `SrdHeader`
-        - `length`
-        - `row_number`
-        - `offset`
-        - `field_id`
-        - `continuation`
+        - one parsed Sample Row Data header:
+            - `length`
+            - `row_number`
+            - `offset`
+            - `field_id`
+            - `continuation`.
     - `St2110PayloadHeaderView`
-        - `ext_seq`
-        - `srd[3]`
-        - `srd_count`
-        - `header_bytes`
-    - `parse_st2110_20_payload_header(ByteSpan)`
-    - `validate_st2110_20_srd_ordering(const St2110PayloadHeaderView&)`
-    - `validate_st2110_20_payload_header(const St2110PayloadHeaderView&)`
-    - `combine_extended_seq(const ExtendedSequenceNumber&, uint16_t lo16)`
+        - parsed structural view of the ST 2110-20 payload header:
+            - `ext_seq`
+            - `srd[3]`
+            - `srd_count`
+            - `header_bytes`.
+    - `parse_st2110_20_payload_header(ByteSpan) -> std::expected<St2110PayloadHeaderView, Error>`
+        - parses:
+            - 16-bit extended-sequence high part;
+            - one, two, or three SRD headers;
+            - `field_id`, `row_number`, `continuation`, and `offset` bit fields from each SRD header.
+        - rejects:
+            - payload shorter than the minimum header;
+            - truncated later SRD header when `continuation` requires another header;
+            - `continuation=true` on the third SRD header.
+    - `validate_st2110_20_srd_ordering(const St2110PayloadHeaderView&) -> Error`
+        - structural ordering validation across parsed SRD headers:
+            - `row_number` must not go backwards;
+            - within the same row, `offset` must strictly increase.
+    - `validate_st2110_20_payload_header(const St2110PayloadHeaderView&) -> Error`
+        - validates:
+            - `srd_count` is in `1..3`;
+            - single-SRD case must not set `continuation`;
+            - multi-SRD case must have non-zero `length` for every SRD;
+            - continuation chain consistency:
+                - non-final SRD must continue;
+                - final SRD must not continue;
+            - SRD ordering through `validate_st2110_20_srd_ordering(...)`;
+            - `header_bytes == 2 + 6 * srd_count`.
+        - notable boundary behavior:
+            - zero `length` is structurally allowed only in the special single-SRD case;
+            - this file does not validate pgroup alignment, packing mode, pixel format, or progressive/interlaced/PsF runtime support.
+    - `combine_extended_seq(const ExtendedSequenceNumber&, uint16_t lo16) -> uint32_t`
+        - combines:
+            - payload-header high 16 bits;
+            - RTP header low 16 bits;
+        - into one 32-bit extended RTP sequence number.
 - Примечание:
-    - generic ST 2110-20 payload-header validation теперь остается structural и не содержит progressive-only запрета на `field_id`;
-    - mode-specific acceptance/rejection `F` должна жить выше, в explicit scan-mode-aware runtime boundaries.
+    - this file is intentionally structural, not mode-aware policy.
+    - generic validation must not reject non-zero `field_id` merely because current MVP runtime behavior is mostly progressive-oriented.
+    - scan-mode-specific acceptance/rejection of `F` and deeper segment semantics must remain in explicit higher boundaries such as `video_receive_semantics.hpp`, depacketizer logic, and format-aware placement/validation helpers.
 
 ### libs/st2110core/include/st2110/backend.hpp
 - Роль:
@@ -626,207 +804,624 @@
 
 ### libs/st2110core/include/st2110/video_frame.hpp
 - Роль:
-    - owning storage object для assembled video frame/unit и соответствующий non-owning view.
+    - owning video frame storage boundary for the current runtime receive path.
+    - отделяет:
+        - internal frame storage/layout;
+        - mutable row/plane write access for assembly/reconstruction;
+        - non-owning presentation view for sinks/consumers.
+    - current implementation models storage/layout per pixel format, while keeping the public frame/view contract format-agnostic enough for future extensions.
 - Связи:
-    - используется assembler/reconstructor/backend sink path.
+    - использует `pixel_format.hpp` for `PixelFormat`.
+    - использует `timestamp.hpp` for `TimestampNs`.
+    - используется:
+        - `frame_assembler.hpp` as the owning assembled-frame storage target;
+        - `frame_write_coverage.hpp` for expected plane geometry / completeness accounting;
+        - sink/backend delivery path through `VideoFrameView`;
+        - tests `test_video_frame.cpp` and `test_video_frame_mutable_access.cpp`.
 - Сущности:
     - `VideoFrameView`
-        - `format`
-        - `width`, `height`
-        - `data[4]`
-        - `stride[4]`
-        - `timestamp_ns`
+        - non-owning presentation/view type:
+            - `format`
+            - `width`
+            - `height`
+            - `data[4]`
+            - `stride[4]`
+            - `timestamp_ns`
+        - exposes up to 4 plane pointers/strides, with inactive planes left as `nullptr` / `0`.
     - `Plane`
-        - `offset_bytes`
-        - `stride_bytes`
-        - `active_row_bytes`
-        - `height_rows`
+        - internal plane geometry/storage description:
+            - `offset_bytes`
+            - `stride_bytes`
+            - `active_row_bytes`
+            - `height_rows`
     - `VideoFrame`
-        - ctor `(width, height, format)`
-        - `view(TimestampNs = 0)`
-        - `size_bytes()`
-        - `width()`, `height()`, `format()`
-        - `stride_bytes(plane)`
-        - `data(plane)`
-        - `row_data(row, plane)`
-        - `plane_count()`
-        - `active_row_bytes(plane)`
-        - `plane_height_rows(plane)`
-    - Текущий MVP format:
-        - `UYVY`, single-plane, `active_row_bytes = width * 2`.
+        - owning frame-storage object.
+        - constructor:
+            - `VideoFrame(uint32_t w, uint32_t h, PixelFormat fmt)`
+            - fills format-specific plane layout via `fill_planes()`;
+            - computes total required storage from plane geometry;
+            - allocates contiguous owning `frame_data`.
+        - `view(TimestampNs timestamp_ns = 0) const -> VideoFrameView`
+            - returns a non-owning view over internal storage;
+            - fills active plane pointers/strides from current plane layout;
+            - leaves unused planes null/zero;
+            - carries provided timestamp separately from storage.
+        - basic metadata accessors:
+            - `size_bytes() const`
+            - `width() const`
+            - `height() const`
+            - `format() const`
+        - plane/storage accessors:
+            - `stride_bytes(std::size_t plane = 0) const`
+            - `data(std::size_t plane = 0)`
+            - `data(std::size_t plane = 0) const`
+            - `row_data(uint32_t row, std::size_t plane = 0)`
+            - `row_data(uint32_t row, std::size_t plane = 0) const`
+            - `plane_count() const`
+            - `active_row_bytes(std::size_t plane = 0) const`
+            - `plane_height_rows(std::size_t plane = 0) const`
+        - failure behavior of accessors:
+            - invalid plane index throws `std::out_of_range`;
+            - invalid row index throws `std::out_of_range`.
+    - format-specific layout behavior:
+        - `fill_planes()`
+            - current supported format:
+                - `PixelFormat::UYVY`
+            - current UYVY layout:
+                - single plane
+                - `active_row_bytes = width * 2`
+                - `stride_bytes = active_row_bytes`
+                - `height_rows = height`
+                - `offset_bytes = 0`
+            - rejects invalid UYVY dimensions:
+                - odd width
+                - zero width
+                - zero height
+                  via `std::invalid_argument`.
+            - rejects unknown/unsupported pixel formats via `std::invalid_argument`.
+- Примечание:
+    - current storage is contiguous and plane-based even though only single-plane UYVY is supported today.
+    - `VideoFrameView` is intentionally non-owning and remains valid only while the source `VideoFrame` storage lives.
+    - runtime/storage constraints such as even-width UYVY remain localized here and in runtime validation/projection layers, rather than being mixed into signaling/media-description validation.
 
 ### libs/st2110core/include/st2110/video_receive_pipeline.hpp
 - Роль:
-    - composition layer над depacketizer + unit reconstructor для video receive path.
+    - composition layer над `Depacketizer` + `IVideoUnitReconstructor` для video receive path.
+    - отделяет packet-to-unit assembly semantics от final reconstructed-frame emission.
+    - задает локальную boundary, где runtime config consistency между depacketizer и reconstructor проверяется до старта packet flow.
 - Связи:
-    - использует `Depacketizer` и `IVideoUnitReconstructor`;
-    - используется backend receive runtime как pipeline boundary between packet/reorder and sink delivery.
+    - использует:
+        - `depacketizer.hpp` для `Depacketizer` и `DepacketizerConfig`;
+        - `packet_view.hpp` для `PacketView`;
+        - `video_unit_reconstructor.hpp` для:
+            - `ReconstructedVideoFrame`;
+            - `VideoUnitReconstructorConfig`;
+            - `IVideoUnitReconstructor`;
+            - `make_video_unit_reconstructor(...)`.
+    - используется backend receive runtime как pipeline boundary between reorder output and sink delivery.
+    - покрывается `tests/test_video_receive_pipeline.cpp`.
 - Сущности:
     - `VideoReceivePipelineConfig`
         - `depacketizer`
         - `reconstructor`
     - `VideoReceivePipeline`
-        - `VideoReceivePipeline(const VideoReceivePipelineConfig&)`
+        - `explicit VideoReceivePipeline(const VideoReceivePipelineConfig&)`
+            - constructs `Depacketizer` first from `cfg.depacketizer`;
+            - validates that:
+                - `cfg.reconstructor.format == cfg.depacketizer.format`
+                - `cfg.reconstructor.scan_mode == cfg.depacketizer.scan_mode`
+            - then creates the reconstructor through `make_video_unit_reconstructor(cfg.reconstructor)`;
+            - error mapping:
+                - reconstructor config mismatch -> `std::invalid_argument`
+                - reconstructor factory returns `Error::InvalidValue` -> `std::invalid_argument`
+                - reconstructor factory returns `Error::Unsupported` -> `std::logic_error`
+                - other unexpected reconstructor construction failure -> `std::logic_error`
         - `push(const PacketView&) -> std::vector<ReconstructedVideoFrame>`
+            - passes packet into `depacketizer_.push(...)`;
+            - for each produced `AssembledVideoUnit`, pushes it into `reconstructor_->push(...)`;
+            - flattens all produced reconstructed frames into one result vector.
         - `reset()`
-        - `depacketizer_stats() -> const DepacketizerStats&`
+            - resets both:
+                - `depacketizer_`
+                - `reconstructor_`
+        - `depacketizer_stats() const -> const DepacketizerStats&`
+            - exposes depacketizer observability through the pipeline boundary.
 - Примечание:
-    - depacketizer observability now stays available through the pipeline boundary without exposing sink-side stats coupling.
+    - current pipeline is explicitly a composition boundary, not a place for packet parsing, RTP timestamp mapping, or sink delivery.
+    - non-progressive runtime limits are currently localized through reconstructor construction and propagated here as constructor failure, not hidden by removing `scan_mode` from the model.
+    - config consistency is checked explicitly at this layer so depacketizer and reconstructor cannot silently diverge on `format` or `scan_mode`.
 
 ### libs/st2110core/include/st2110/video_receive_semantics.hpp
 - Роль:
-    - mode-aware receive semantics boundary above generic packet parsing and below depacketizer/frame assembly.
-    - defines:
+    - mode-aware receive-semantics boundary between generic packet parsing / segment placement and depacketizer assembly state.
+    - моделирует:
         - assembly-unit kind;
         - completion policy;
         - packet-to-assembly-key mapping;
-        - scan-mode-specific packet semantic validation;
-        - assembly-unit-local cross-packet write-order validation.
+        - scan-mode-specific packet semantic admission;
+        - assembly-unit-local cross-packet / cross-segment ordering cursor.
+    - keeps scan-mode behavior out of low-level `st2110_20.hpp` structural parsing.
 - Связи:
-    - uses `PacketView`, `VideoScanMode`, and `VideoSegmentPlacement`.
-    - consumed by `depacketizer.hpp`.
-    - keeps progressive/interlaced/PsF semantics out of low-level `st2110_20.hpp` parsing.
+    - использует:
+        - `error.hpp` for explicit `Error` results;
+        - `packet_view.hpp` for `PacketView` and `SrdSegmentView`;
+        - `video_scan_mode.hpp` for `VideoScanMode`;
+        - `video_segment_placement.hpp` for `VideoFrameWriteOp`.
+    - напрямую используется `depacketizer.hpp`:
+        - `video_receive_completion_policy(...)` задает completion behavior;
+        - `video_packet_assembly_key(...)` и `same_video_assembly_key(...)` задают packet grouping;
+        - `validate_video_packet_scan_mode_semantics(...)` выполняет mode-local packet admission;
+        - `validate_and_advance_video_assembly_cursor(...)` выполняет assembly-unit-local cross-packet ordering validation.
+    - покрывается тестами:
+        - `tests/test_video_receive_semantics.cpp`;
+        - `tests/test_video_assembly_key.cpp`.
 - Сущности:
     - `VideoAssemblyUnitKind`
-        - `Frame`
-        - `Field`
-        - `Segment`
+        - modeled assembly-unit axis:
+            - `Frame`;
+            - `Field`;
+            - `Segment`.
     - `VideoReceiveCompletionPolicy`
-        - `unit_kind`
-        - `marker_terminates_current_unit`
-        - `key_change_terminates_previous_unit`
+        - per-scan-mode completion policy:
+            - `unit_kind`;
+            - `marker_terminates_current_unit`;
+            - `key_change_terminates_previous_unit`.
     - `VideoAssemblyKey`
-        - `unit_kind`
-        - `rtp_timestamp`
-        - `sub_unit_index`
-        - equality-comparable.
+        - packet-to-assembly-unit grouping key:
+            - `unit_kind`;
+            - `rtp_timestamp`;
+            - `sub_unit_index`.
+        - equality-comparable via defaulted `operator==`.
     - `VideoAssemblyCursor`
-        - localized per-assembly-unit ordering cursor for the current MVP write path:
-            - `last_srd_row_number`
-            - `last_srd_offset`
-            - `last_write_row`
-            - `last_write_end_byte_offset`
-    - `video_assembly_unit_kind(VideoScanMode)`
-    - `video_receive_completion_policy(VideoScanMode)`
-    - `video_packet_assembly_key(VideoScanMode, const PacketView&)`
-    - `same_video_assembly_key(const VideoAssemblyKey&, const VideoAssemblyKey&)`
-    - `validate_video_packet_scan_mode_semantics(VideoScanMode, const PacketView&)`
-        - keeps mode-specific acceptance of packet fields such as progressive `F=0` outside generic payload-header validation.
-    - `validate_and_advance_video_assembly_cursor(VideoScanMode, std::optional<VideoAssemblyCursor>&, const SrdSegmentView&, const VideoFrameWriteOp&)`
-        - localized cross-packet / cross-segment assembly-unit ordering boundary;
-        - for current `Progressive` path:
-            - rejects row-number regression;
-            - rejects same-row non-increasing offset;
-            - rejects write overlap/regression before frame mutation;
-        - non-progressive branches remain explicitly localized for future work.
+        - assembly-unit-local write-order cursor for the current receive path:
+            - `last_srd_row_number`;
+            - `last_srd_offset`;
+            - `last_write_row`;
+            - `last_write_end_byte_offset`.
+    - `validate_and_advance_video_assembly_cursor(VideoScanMode, std::optional<VideoAssemblyCursor>&, const SrdSegmentView&, const VideoFrameWriteOp&) -> Error`
+        - localized cross-packet / cross-segment ordering boundary.
+        - current behavior:
+            - `Progressive`:
+                - initializes cursor from the first accepted segment/write;
+                - rejects `SRD Row Number` regression;
+                - rejects same-row non-increasing `SRD Offset`;
+                - rejects write-row regression;
+                - rejects same-row write overlap/regression when `byte_offset < last_write_end_byte_offset`;
+                - advances cursor on success;
+            - `Interlaced` / `PsF` -> `Unsupported`;
+            - unknown scan mode -> `InvalidValue`.
+    - `video_assembly_unit_kind(VideoScanMode) -> std::expected<VideoAssemblyUnitKind, Error>`
+        - scan-mode to unit-kind mapping:
+            - `Progressive` -> `Frame`;
+            - `Interlaced` -> `Field`;
+            - `PsF` -> `Segment`;
+            - unknown scan mode -> `InvalidValue`.
+    - `video_receive_completion_policy(VideoScanMode) -> std::expected<VideoReceiveCompletionPolicy, Error>`
+        - current completion-policy mapping:
+            - `Progressive` -> `{Frame, marker_terminates_current_unit=true, key_change_terminates_previous_unit=true}`;
+            - `Interlaced` / `PsF` -> `Unsupported`;
+            - unknown scan mode -> `InvalidValue`.
+    - `video_packet_assembly_key(VideoScanMode, const PacketView&) -> std::expected<VideoAssemblyKey, Error>`
+        - current packet-grouping mapping:
+            - `Progressive` -> `{Frame, packet.rtp.timestamp, 0}`;
+            - `Interlaced` / `PsF` -> `Unsupported`;
+            - unknown scan mode -> `InvalidValue`.
+    - `same_video_assembly_key(const VideoAssemblyKey&, const VideoAssemblyKey&) -> bool`
+        - equality helper over all key fields.
+    - `validate_video_packet_scan_mode_semantics(VideoScanMode, const PacketView&) -> Error`
+        - scan-mode-local packet semantic admission boundary.
+        - current behavior:
+            - `Progressive`:
+                - every SRD must have `field_id == 0`;
+                - otherwise returns `InvalidValue`;
+            - `Interlaced` / `PsF`:
+                - currently returns `Ok` at this boundary;
+                - deeper non-progressive grouping/completion/order support remains separate and is not yet implemented here;
+            - unknown scan mode -> `InvalidValue`.
 - Примечание:
-    - cross-packet SRD monotonicity is now modeled as assembly-unit/mode-aware validation, not as generic ST 2110-20 wire parsing.
+    - this file explicitly models `VideoScanMode`, assembly-unit kind, completion policy, and grouping key separately, so progressive-only MVP behavior remains localized as `Unsupported` in selected helpers rather than hardcoded into the whole depacketizer architecture.
+    - current fully materialized receive semantics are only for the progressive path:
+        - completion policy;
+        - packet-to-key mapping;
+        - cross-packet ordering cursor.
+    - interlaced / PsF distinctions remain architecturally explicit and can be implemented by filling existing branches instead of rewriting generic parsing or depacketizer state.
 
 ### libs/st2110core/include/st2110/video_scan_mode.hpp
 - Роль:
-    - enum transport/assembly scan mode, независимый от `PixelFormat`.
+    - минимальный public header для explicit modeling of video scan-mode axis.
+    - отделяет способ temporal/spatial organization video essence от `PixelFormat` и от конкретной runtime support policy.
+    - задает общий enum, через который progressive / interlaced / PsF distinctions проходят через signaling, runtime config, depacketizer, receive semantics и reconstructor boundaries.
 - Связи:
-    - используется в config, semantics, depacketizer, placement, reconstructor и future signaling.
+    - используется `rx_config.hpp`, где `RxVideoConfig` несет `scan_mode` как runtime axis.
+    - используется `config_validation.hpp`, где unknown `VideoScanMode` values explicitly rejected by validation helper.
+    - используется `depacketizer.hpp`, где `DepacketizerConfig` carries `scan_mode`, defaulting to `Progressive`, and `Depacketizer::scan_mode()` exposes configured value.
+    - используется `video_receive_semantics.hpp` как key mode axis for:
+        - assembly-unit kind;
+        - completion policy;
+        - packet grouping key;
+        - mode-local packet semantic admission;
+        - cross-packet ordering cursor behavior.
+    - используется `video_segment_placement.hpp`, `video_packet_padding.hpp`, `video_unit_reconstructor.hpp` для mode-aware runtime branching.
+    - используется `signaling_structs.hpp`, `video_signaling.hpp`, `video_sdp_signaling_adapter.hpp` для standards-aware signaling representation and runtime projection.
+    - покрывается тестом `tests/test_video_scan_mode.cpp`, а также косвенно множеством mode-aware video tests.
 - Сущности:
     - `enum class VideoScanMode`
         - `Progressive`
+            - progressive transport / assembly mode.
         - `Interlaced`
+            - interlaced transport / assembly mode.
         - `PsF`
+            - progressive segmented frame transport / assembly mode.
+- Примечание:
+    - файл intentionally contains only the modeled enum and no helper logic.
+    - validation, support policy, and behavior differences are intentionally localized in other headers instead of being hidden inside the enum definition itself.
+    - this keeps architecture extensible:
+        - the axis exists even where current MVP runtime still supports only the progressive path end-to-end;
+        - non-progressive modes remain representable in config/signaling/state without forcing parser or runtime rewrites later.
 
 ### libs/st2110core/include/st2110/video_segment_constraints.hpp
 - Роль:
-    - формат-специфичная валидация packet segment constraints.
+    - localized format-aware validation boundary for one ST 2110-20 Sample Row Data segment.
+    - задает минимальные format-specific constraints, которые нужны до placement/mapping:
+        - pgroup size in octets;
+        - `SRD Offset` alignment in full-bandwidth samples.
+    - keeps these rules separate from:
+        - generic ST 2110-20 payload-header parsing/validation in `st2110_20.hpp`;
+        - scan-mode-aware segment placement in `video_segment_placement.hpp`.
 - Связи:
-    - используется segment placement layer;
-    - отделяет generic ST2110-20 parsing от format-specific receive constraints.
+    - использует:
+        - `bytes.hpp` for `ByteSpan`;
+        - `error.hpp` for explicit validation result;
+        - `pixel_format.hpp` for `PixelFormat`;
+        - `st2110_20.hpp` for `SrdHeader`.
+    - используется `video_segment_placement.hpp`:
+        - `map_progressive_segment_to_frame_write(...)` сначала вызывает `validate_video_segment_for_format(...)`, а затем уже вычисляет byte placement.
+    - покрывается тестом:
+        - `tests/test_video_segment_constraints.cpp`.
 - Сущности:
     - `VideoSegmentConstraints`
-        - `pgroup_bytes`
-        - `offset_alignment_samples`
-    - `video_segment_constraints(PixelFormat)`
-    - `validate_video_segment_for_format(PixelFormat, const SrdHeader&, ByteSpan)`
-    - Текущий MVP format:
-        - `UYVY`: `pgroup_bytes = 4`, `offset_alignment_samples = 2`.
+        - modeled per-format segment constraints:
+            - `pgroup_bytes`;
+            - `offset_alignment_samples`.
+    - `video_segment_constraints(PixelFormat format) -> std::expected<VideoSegmentConstraints, Error>`
+        - returns explicit segment rules for the requested runtime/storage format.
+        - current mapping:
+            - `PixelFormat::UYVY`:
+                - `pgroup_bytes = 4`;
+                - `offset_alignment_samples = 2`.
+            - unknown/unsupported format -> `Error::Unsupported`.
+    - `validate_video_segment_for_format(PixelFormat format, const SrdHeader& header, ByteSpan data) -> Error`
+        - validates one SRD segment against the selected format-specific rules.
+        - current `UYVY` behavior:
+            - `data.size()` must equal `header.length`;
+            - `header.length` must be a multiple of `pgroup_bytes`;
+            - `header.offset` must be aligned to `offset_alignment_samples`;
+            - otherwise returns `Error::InvalidValue`.
+        - unknown/unsupported format -> `Error::Unsupported`.
+        - notable current behavior:
+            - zero-length segment with empty `data` is accepted by this format helper;
+            - special-case legality of zero-length SRD at the packet/header level remains outside this file.
+- Примечание:
+    - this file models `SRD Offset` alignment in full-bandwidth sample units, not in bytes.
+    - for the current MVP UYVY path, the helper is intentionally minimal:
+        - it checks per-segment structural/alignment rules;
+        - it does not decide frame row placement or scan-mode-specific reconstruction behavior.
 
 ### libs/st2110core/include/st2110/video_segment_placement.hpp
 - Роль:
-    - packing-aware + mode-aware + format-aware mapping от semantics packet segment’а к byte-oriented frame write operation.
+    - mode-aware и packing-aware boundary для преобразования одного `SrdSegmentView` в byte-oriented `VideoFrameWriteOp`.
+    - отделяет:
+        - format-specific segment validation;
+        - scan-mode-specific placement policy;
+        - packing-mode-specific dispatch
+          от самого `FrameAssembler`, который получает уже готовые row/byte coordinates.
+    - локализует текущую ST 2110-20 mapping semantics для progressive `GPM` path, не превращая progressive-only MVP в архитектурное ограничение всего pipeline.
 - Связи:
-    - используется `Depacketizer`;
-    - держит локализованную связь между `SrdHeader` semantics и `FrameAssembler::write_segment(...)`.
-    - использует `VideoPackingMode` как explicit runtime axis.
+    - использует:
+        - `bytes.hpp` для `ByteSpan`;
+        - `error.hpp` для explicit mapping/validation result;
+        - `packet_view.hpp` для `SrdSegmentView`;
+        - `pixel_format.hpp` для `PixelFormat`;
+        - `video_packing_mode.hpp` для `VideoPackingMode`;
+        - `video_scan_mode.hpp` для `VideoScanMode`;
+        - `video_segment_constraints.hpp` для format-specific validation перед placement.
+    - используется `depacketizer.hpp`:
+        - `Depacketizer` вызывает `map_video_segment_to_frame_write(...)` до записи сегмента в `FrameAssembler`.
+    - покрывается тестами:
+        - `tests/test_video_segment_placement.cpp`;
+        - косвенно `tests/test_depacketizer_segment_mapping.cpp` и `tests/test_depacketizer_writes.cpp`.
 - Сущности:
     - `VideoFrameWriteOp`
-        - `plane`
-        - `row`
-        - `byte_offset`
-        - `bytes`
-    - `map_progressive_segment_to_frame_write(PixelFormat, const SrdSegmentView&)`
-    - `map_interlaced_segment_to_frame_write(...)`
-    - `map_psf_segment_to_frame_write(...)`
-    - `map_video_segment_to_frame_write(VideoPackingMode, PixelFormat, VideoScanMode, const SrdSegmentView&)`
-        - packing-aware dispatcher boundary перед mode/format-specific mapping.
-    - `map_gpm_video_segment_to_frame_write(PixelFormat, VideoScanMode, const SrdSegmentView&)`
-        - explicit GPM behavior branch; внутри dispatch по scan mode
-    - `map_bpm_video_segment_to_frame_write(PixelFormat, VideoScanMode, const SrdSegmentView&)`
-        - explicit BPM behavior branch; пока локализованно `Unsupported`
-- Текущий runtime status:
-    - explicit packing-mode dispatch materialized:
-        - `GPM` branch dispatches further by scan mode
-        - `BPM` branch exists explicitly and currently returns localized `Unsupported`
-    - реализован `GPM + Progressive + UYVY`
-    - `Interlaced` / `PsF` пока локализованно `Unsupported`
+        - byte-oriented write description для `FrameAssembler`:
+            - `plane`;
+            - `row`;
+            - `byte_offset`;
+            - `bytes`.
+    - `map_progressive_segment_to_frame_write(PixelFormat format, const SrdSegmentView& segment) -> std::expected<VideoFrameWriteOp, Error>`
+        - progressive placement helper.
+        - сначала валидирует segment через `validate_video_segment_for_format(...)`.
+        - текущее поведение:
+            - `PixelFormat::UYVY`:
+                - `plane = 0`;
+                - `row = segment.header.row_number`;
+                - `byte_offset = segment.header.offset * 2`;
+                - `bytes = segment.data`.
+            - unknown/unsupported format -> `Error::Unsupported`.
+        - тем самым `SRD Offset` трактуется как horizontal position in full-bandwidth samples, а не как готовый byte offset.
+    - `map_interlaced_segment_to_frame_write(PixelFormat format, const SrdSegmentView& segment) -> std::expected<VideoFrameWriteOp, Error>`
+        - explicit extension point для future interlaced placement logic.
+        - current behavior -> `Error::Unsupported`.
+    - `map_psf_segment_to_frame_write(PixelFormat format, const SrdSegmentView& segment) -> std::expected<VideoFrameWriteOp, Error>`
+        - explicit extension point для future PsF placement logic.
+        - current behavior -> `Error::Unsupported`.
+    - `map_gpm_video_segment_to_frame_write(PixelFormat format, VideoScanMode scan_mode, const SrdSegmentView& segment) -> std::expected<VideoFrameWriteOp, Error>`
+        - packing-mode-local dispatcher for `GPM`.
+        - dispatch:
+            - `Progressive` -> `map_progressive_segment_to_frame_write(...)`;
+            - `Interlaced` -> `map_interlaced_segment_to_frame_write(...)`;
+            - `PsF` -> `map_psf_segment_to_frame_write(...)`;
+            - unknown scan mode -> `Error::InvalidValue`.
+    - `map_bpm_video_segment_to_frame_write(PixelFormat format, VideoScanMode scan_mode, const SrdSegmentView& segment) -> std::expected<VideoFrameWriteOp, Error>`
+        - explicit extension point для future `BPM` placement logic.
+        - current behavior -> `Error::Unsupported`.
+    - `map_video_segment_to_frame_write(VideoPackingMode packing_mode, PixelFormat format, VideoScanMode scan_mode, const SrdSegmentView& segment) -> std::expected<VideoFrameWriteOp, Error>`
+        - public top-level placement entry point.
+        - dispatch:
+            - `VideoPackingMode::Gpm` -> `map_gpm_video_segment_to_frame_write(...)`;
+            - `VideoPackingMode::Bpm` -> `map_bpm_video_segment_to_frame_write(...)`;
+            - unknown packing mode -> `Error::InvalidValue`.
+- Примечание:
+    - файл intentionally keeps three axes explicit:
+        - packing mode;
+        - scan mode;
+        - pixel/storage format.
+    - current implemented receive placement path is only `GPM + Progressive + UYVY`.
+    - `Interlaced`, `PsF`, и `BPM` уже имеют named helper boundaries и остаются локализованно `Unsupported`, поэтому future support должен добавляться заполнением существующих веток, а не переписыванием `Depacketizer` или `FrameAssembler`.
 
 ### libs/st2110core/include/st2110/video_signaling.hpp
 - Роль:
-    - structural validation and runtime projection boundary for modeled `VideoStreamSignaling`;
-    - keeps standards-aware signaling validation separate from runtime support/projection limits.
+    - standards-aware signaling validation and signaling-to-runtime projection boundary for `VideoStreamSignaling`.
+    - отделяет:
+        - структурную / cross-field validation modeled video signaling;
+        - sender/timing/reference-clock validation;
+        - runtime support / projection limits;
+        - composition of packet-parse / RX / pipeline / bootstrap configs
+          от raw SDP parsing/ingestion и от packet/depacketizer runtime implementation.
+    - keeps structurally valid signaling separate from current MVP runtime support limits such as:
+        - supported `PixelFormat`;
+        - supported `VideoPackingMode`;
+        - concrete runtime `RxVideoConfig` constraints.
 - Связи:
-    - validates modeled signaling produced manually or by SDP ingestion;
-    - feeds runtime projection/helpers for RX config, depacketizer, receive pipeline, and bootstrap.
+    - использует:
+        - `signaling_structs.hpp` for `VideoStreamSignaling`, `VideoMediaDescription`, timing/reference-clock structs, `VideoReceiverBootstrapConfig`;
+        - `config_validation.hpp` for generic config/frame-rate/scan-mode validation;
+        - `packet_parse.hpp` for `PacketParsePolicy` and `MAXUDP` policy validation/projection;
+        - `rx_config.hpp` for `RxVideoConfig`;
+        - `pixel_format.hpp` for runtime pixel-format projection;
+        - `depacketizer.hpp` for `DepacketizerConfig` and `PartialFramePolicy`;
+        - `video_receive_pipeline.hpp` for `VideoReceivePipelineConfig`;
+        - `video_unit_reconstructor.hpp` for `VideoUnitReconstructorConfig`;
+        - `video_scan_mode.hpp` for modeled scan-mode axis.
+    - используется:
+        - `video_sdp_signaling_adapter.hpp` / `video_sdp_ingestion.hpp` как final validation/projection layer above raw SDP parsing;
+        - receiver bootstrap layers, including `video_receiver_timing_signaling.hpp`, which reuse generic signaling/bootstrap projection from this file and add receiver-timing policy above it.
+    - покрывается тестами:
+        - `tests/test_video_signaling.cpp`;
+        - `tests/test_video_signaled_media_properties.cpp`;
+        - `tests/test_video_reference_clock.cpp`;
+        - `tests/test_video_sender_signaling.cpp`;
+        - `tests/test_video_signaling_rx_match.cpp`;
+        - `tests/test_video_signaling_to_rx_config.cpp`;
+        - `tests/test_video_signaling_to_pipeline_config.cpp`;
+        - `tests/test_video_receiver_bootstrap.cpp`.
 - Сущности:
-    - sender/timing validation:
-        - `validate_video_sender_signaling(...)`
-        - `validate_video_timing_signaling(...)`
-        - `validate_video_stream_signaling(...)`
-    - runtime projection helpers:
-        - `pixel_format_from_video_stream_signaling(...)`
-        - `rx_video_config_from_video_stream_signaling(...)`
-        - `depacketizer_config_from_video_stream_signaling(...)`
-        - `video_receive_pipeline_config_from_video_stream_signaling(...)`
-        - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
+    - sender / timing / reference-clock validation:
+        - `validate_video_sender_signaling(VideoSenderType sender_type, const std::optional<uint32_t>& troff_us, const std::optional<uint32_t>& cmax) -> Error`
+            - validates sender timing fields by modeled structural policy.
+            - current behavior:
+                - `Narrow`, `NarrowLinear`, `Wide` are recognized;
+                - present `troff_us == 0` -> `InvalidValue`;
+                - present `cmax == 0` -> `InvalidValue`;
+                - absent optional sender parameters are accepted;
+                - unknown sender-type enum -> `InvalidValue`.
+            - does not impose stricter receiver/conformance policy; that remains outside this file.
+        - `validate_reference_clock(const ReferenceClock&) -> Error`
+            - validates modeled `ReferenceClock`.
+            - current behavior:
+                - `Ptp`:
+                    - requires `ptp`;
+                    - rejects simultaneous `local_mac` or `raw_token`;
+                    - rejects all-zero clock identity unless `traceable=true`;
+                - `LocalMac`:
+                    - requires `local_mac`;
+                    - rejects simultaneous `ptp` or `raw_token`;
+                    - rejects all-zero MAC;
+                - `Other`:
+                    - requires non-empty `raw_token`;
+                    - rejects simultaneous typed payloads.
+        - `validate_media_clock_mode(MediaClockMode) -> Error`
+        - `validate_timestamp_mode(TimestampMode) -> Error`
+        - `validate_video_timing_signaling(MediaClockMode media_clock_mode, TimestampMode timestamp_mode, uint32_t ts_delay_sender_ticks) -> Error`
+            - validates modeled timing-mode enums;
+            - currently `ts_delay_sender_ticks` is carried structurally but has no extra numeric rule here beyond type/range of the model.
+    - media-description field validation:
+        - `validate_video_sampling(const VideoSampling&) -> Error`
+        - `validate_video_colorimetry(const VideoColorimetry&) -> Error`
+        - `validate_video_transfer_characteristic_system(const VideoTransferCharacteristicSystem&) -> Error`
+        - `validate_video_signal_standard(const VideoSignalStandard&) -> Error`
+        - `validate_required_video_signal_standard(const std::optional<VideoSignalStandard>&) -> Error`
+        - `validate_video_range(const VideoRange&) -> Error`
+        - `validate_video_pixel_aspect_ratio(const VideoPixelAspectRatio&) -> Error`
+        - `validate_video_media_description_dimensions(uint32_t width, uint32_t height) -> Error`
+            - signaled-dimensions boundary;
+            - currently accepts only `1..32767` for both width and height.
+        - `validate_video_bit_depth(const VideoBitDepth&) -> Error`
+            - accepts:
+                - integer depths `8`, `10`, `12`, `16`;
+                - floating-point only `16f` as `{bits=16, floating_point=true}`;
+            - rejects unsupported structural combinations.
+        - `validate_video_media_description(const VideoMediaDescription&) -> Error`
+            - aggregate media-description validation entry point;
+            - validates token-backed fields, required `SSN`, `PAR`, dimensions, and frame rate.
+    - media cross-field constraints:
+        - `is_420_video_sampling(const VideoSampling&) -> bool`
+            - helper for progressive-only `4:2:0` signaling rule.
+        - `validate_video_media_description_cross_field_constraints(const VideoMediaDescription&, VideoScanMode scan_mode) -> Error`
+            - validates modeled cross-field constraints that belong to signaling/model layer.
+            - current behavior includes:
+                - `4:2:0` sampling variants accepted only with `VideoScanMode::Progressive`;
+                - `KEY` sampling requires:
+                    - `colorimetry=ALPHA`;
+                    - no `TCS`;
+                - `ALPHA` colorimetry or `ST2115LOGS3` TCS require `SSN=ST2110-20:2022`;
+                - normal non-`ALPHA` / non-`ST2115LOGS3` streams reject `SSN=ST2110-20:2022`;
+                - `RANGE` cross-field rule:
+                    - with `BT2100`, only `NARROW` or `FULL` accepted;
+                    - outside `BT2100`, `NARROW`, `FULLPROTECT`, and `FULL` accepted;
+                - unknown enum cases or invalid combinations -> `InvalidValue`.
+    - runtime format / support projection:
+        - `pixel_format_from_video_stream_signaling(const VideoStreamSignaling&) -> std::expected<PixelFormat, Error>`
+            - projects structurally valid signaling into current runtime/storage pixel format.
+            - current behavior:
+                - only `YCbCr422 + 8-bit integer` maps to `PixelFormat::UYVY`;
+                - recognized but unsupported structurally valid media -> `Unsupported`;
+                - invalid structural media -> propagated validation error.
+            - keeps runtime support separate from signaling validity.
+    - full signaling validation:
+        - `validate_video_stream_signaling(const VideoStreamSignaling&) -> Error`
+            - main standards-aware signaling validation entry point.
+            - validates:
+                - media-description structure;
+                - `VideoScanMode`;
+                - media cross-field constraints;
+                - timing-mode enums;
+                - sender timing fields;
+                - reference clock;
+                - `MAXUDP` policy through `PacketParsePolicy`.
+            - rejects structurally invalid signaling before any runtime projection.
+    - packet-parse policy projection:
+        - `packet_parse_policy_from_video_stream_signaling(const VideoStreamSignaling&) -> PacketParsePolicy`
+            - projects `VideoStreamSignaling::max_udp_datagram_bytes` into `PacketParsePolicy`.
+            - absent signaling override remains absent policy override.
+    - signaling vs manual runtime-config consistency:
+        - `validate_video_stream_signaling_against_rx_video_config(const VideoStreamSignaling&, const RxVideoConfig&) -> Error`
+            - validates both signaling and runtime config first;
+            - projects runtime `PixelFormat` from signaling;
+            - then checks exact match for:
+                - `format`;
+                - `scan_mode`;
+                - `width`;
+                - `height`;
+                - `fps_num`;
+                - `fps_den`;
+                - `packing_mode`.
+    - signaling-to-runtime projection helpers:
+        - `depacketizer_config_from_video_stream_signaling(const VideoStreamSignaling&, PartialFramePolicy) -> std::expected<DepacketizerConfig, Error>`
+            - validates signaling;
+            - validates current runtime packing-mode support;
+            - projects runtime pixel format;
+            - returns `DepacketizerConfig` with explicit `scan_mode` and `packing_mode`.
+        - `video_unit_reconstructor_config_from_video_stream_signaling(const VideoStreamSignaling&) -> std::expected<VideoUnitReconstructorConfig, Error>`
+            - validates signaling;
+            - projects runtime pixel format;
+            - preserves modeled `scan_mode`.
+        - `video_receive_pipeline_config_from_video_stream_signaling(const VideoStreamSignaling&, PartialFramePolicy) -> std::expected<VideoReceivePipelineConfig, Error>`
+            - validates signaling;
+            - validates runtime packing-mode support;
+            - projects composed depacketizer + reconstructor configs.
+        - `rx_video_config_from_video_stream_signaling(const VideoStreamSignaling&, uint16_t udp_port, uint8_t payload_type, std::string local_ip, std::string dest_ip) -> std::expected<RxVideoConfig, Error>`
+            - validates signaling;
+            - projects runtime pixel format;
+            - builds manual/backend-facing `RxVideoConfig`;
+            - validates resulting transport/runtime config.
+        - `video_receiver_bootstrap_config_from_video_stream_signaling(const VideoStreamSignaling&, uint16_t udp_port, uint8_t payload_type, std::string local_ip, std::string dest_ip, PartialFramePolicy partial_frame_policy) -> std::expected<VideoReceiverBootstrapConfig, Error>`
+            - generic signaling-driven bootstrap composition;
+            - validates signaling and runtime packing-mode support;
+            - derives:
+                - `PacketParsePolicy`;
+                - `RxVideoConfig`;
+                - `VideoReceivePipelineConfig`;
+            - returns composed `VideoReceiverBootstrapConfig`.
 - Примечание:
-    - sender-type validation no longer rejects `TROFF` / `CMAX` for `Narrow` or `NarrowLinear` solely by sender class;
-    - `TROFF` and `CMAX` are treated as optional sender parameters, with validation applied only when they are present;
-    - `TROFF=0` remains rejected;
-    - invalid present `CMAX` remains rejected by the local modeled policy;
-    - stricter ST 2110-21 receiver/conformance policy remains outside this generic signaling-validation boundary.
+    - this file is both:
+        - the standards-aware validation boundary for modeled video signaling;
+        - the generic signaling-to-runtime projection boundary.
+    - it intentionally keeps “structurally valid signaling” distinct from “currently supported runtime mapping”:
+        - `BPM` can be structurally valid in signaling, while runtime support still rejects it through `validate_runtime_video_packing_mode_support(...)`;
+        - many valid media-description combinations remain representable even when `pixel_format_from_video_stream_signaling(...)` returns `Unsupported`.
+    - stricter receiver-side ST 2110-21 acceptance/conformance policy remains outside this file in the dedicated receiver-timing boundary, not inside generic signaling validation.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
-    - слой реконструкции final output frame из generic assembled video units.
-    - отделяет depacketizer unit semantics от final frame reconstruction policy.
+    - final unit-to-frame reconstruction boundary above `Depacketizer`.
+    - преобразует generic `AssembledVideoUnit` в sink-facing `ReconstructedVideoFrame`.
+    - отделяет:
+        - assembly-unit semantics from `depacketizer.hpp`;
+        - final reconstructed-frame shape;
+        - future field/segment pairing policy for `Interlaced` / `PsF`
+          от packet parsing, segment placement и frame assembly.
+    - current MVP behavior for the progressive path is intentionally minimal:
+        - assembled frame unit is passed through as one reconstructed frame;
+        - no additional buffering, pairing, or timing policy is implemented here.
 - Связи:
-    - используется `VideoReceivePipeline`;
-    - в будущем здесь должны жить field/segment pairing policies для interlaced/PsF.
+    - использует:
+        - `frame_assembler.hpp` for `AssembledVideoUnit` and `VideoAssemblyUnitKind`;
+        - `video_frame.hpp` for owning `VideoFrame` carried by reconstructed output;
+        - `pixel_format.hpp` for modeled runtime/storage format axis in config;
+        - `video_scan_mode.hpp` for reconstructor dispatch axis;
+        - `error.hpp` for factory result reporting.
+    - используется:
+        - `video_receive_pipeline.hpp`, где `VideoReceivePipeline` creates the reconstructor through `make_video_unit_reconstructor(...)` and feeds it completed `AssembledVideoUnit`s from the depacketizer;
+        - `video_playout_timing.hpp`, which consumes `ReconstructedVideoFrame` as the frame-level timing input;
+        - `video_signaling.hpp`, which projects `VideoUnitReconstructorConfig` from `VideoStreamSignaling`.
+    - покрывается тестами:
+        - `tests/test_video_unit_reconstructor.cpp`;
+        - косвенно:
+            - `tests/test_video_signaling_to_pipeline_config.cpp`;
+            - `tests/video_playout_timing_test.cpp`.
 - Сущности:
     - `ReconstructedVideoFrame`
-        - `frame`
-        - `rtp_timestamp`
-        - `complete`
-        - `partial()`
+        - final reconstructed-frame object:
+            - `frame`;
+            - `rtp_timestamp`;
+            - `complete`.
+        - `partial() const -> bool`
+            - convenience helper returning `!complete`.
     - `VideoUnitReconstructorConfig`
-        - `format`
-        - `scan_mode`
+        - reconstructor configuration:
+            - `format`;
+            - `scan_mode`.
+        - current behavior note:
+            - `scan_mode` is the actual factory dispatch axis;
+            - `format` is modeled and threaded through the config surface, but is currently not used by the factory/reconstructor logic.
     - `IVideoUnitReconstructor`
-        - `push(AssembledVideoUnit)`
-        - `reset()`
+        - abstract reconstructor interface:
+            - `push(AssembledVideoUnit) -> std::vector<ReconstructedVideoFrame>`;
+            - `reset()`;
+            - virtual destructor.
     - `ProgressiveVideoUnitReconstructor`
-        - MVP-реализация для assembled frame -> reconstructed frame.
-    - `make_video_unit_reconstructor(const VideoUnitReconstructorConfig&)`
-    - Текущий runtime status:
-        - `Progressive` реализован;
-        - `Interlaced` / `PsF` пока локализованно `Unsupported`.
+        - current MVP reconstructor for progressive assembled frame units.
+        - `push(AssembledVideoUnit unit) -> std::vector<ReconstructedVideoFrame>`
+            - accepts only `unit.unit_kind == VideoAssemblyUnitKind::Frame`;
+            - if `unit.unit_kind` is not `Frame`, throws `std::logic_error("Unsupported")`;
+            - on success returns exactly one `ReconstructedVideoFrame`:
+                - moves `unit.frame`;
+                - copies `unit.rtp_timestamp`;
+                - copies `unit.complete`.
+        - `reset()`
+            - current no-op.
+    - `make_video_unit_reconstructor(const VideoUnitReconstructorConfig&) -> std::expected<std::unique_ptr<IVideoUnitReconstructor>, Error>`
+        - factory for scan-mode-specific reconstructor selection.
+        - current behavior:
+            - `VideoScanMode::Progressive` -> creates `ProgressiveVideoUnitReconstructor`;
+            - `VideoScanMode::Interlaced` / `VideoScanMode::PsF` -> `Error::Unsupported`;
+            - invalid/unknown scan mode -> `Error::InvalidValue`.
+- Примечание:
+    - current runtime behavior is explicitly localized:
+        - progressive unit reconstruction exists;
+        - interlaced / PsF reconstruction remains `Unsupported` in the factory.
+    - this file already provides the named reconstructor boundary for future non-progressive support, so later work should add new reconstructor branches/policies here rather than rewriting `VideoReceivePipeline` or `Depacketizer`.
+    - current progressive reconstructor is a pure pass-through layer over `AssembledVideoUnit::Frame`; it does not yet perform any format-specific validation, field pairing, segment pairing, or timing decisions.
 
 ### libs/st2110core/src/stub.cpp
 - Роль:
@@ -839,571 +1434,1674 @@
 
 ### libs/st2110core/include/st2110/video_packet_padding.hpp
 - Роль:
-    - локализованная packing-aware + mode-aware boundary для валидации trailing payload padding после Sample Row Data segments.
+    - localized validation boundary for trailing payload padding after the bytes covered by SRD segments.
+    - отделяет:
+        - generic packet parsing, which only exposes `PacketView::trailing_padding`;
+          от:
+        - packing-mode-aware and scan-mode-aware acceptance/rejection policy for those trailing bytes.
+    - keeps padding policy out of `packet_view.hpp` and out of depacketizer write logic.
 - Связи:
-    - использует `PacketView`, `VideoPackingMode`, `VideoScanMode`, `Error`;
-    - вызывается из `Depacketizer`;
-    - отделяет generic packet parsing от packing/mode-aware решения о допустимости trailing bytes.
+    - использует:
+        - `error.hpp` for explicit validation results;
+        - `packet_view.hpp` for `PacketView` and access to `rtp.marker` plus `trailing_padding`;
+        - `video_packing_mode.hpp` for `VideoPackingMode`;
+        - `video_scan_mode.hpp` for `VideoScanMode`.
+    - используется `depacketizer.hpp` before frame mutation/write application.
+    - покрывается `tests/test_video_packet_trailing_padding.cpp`.
 - Сущности:
-    - `validate_progressive_video_packet_trailing_padding(const PacketView&)`
-        - для MVP progressive path:
-            - `trailing_padding.empty()` => `Ok`
-            - trailing padding в non-marker packet => `InvalidValue`
-            - non-zero trailing padding bytes => `InvalidValue`
-            - zero trailing padding in marker packet => `Ok`
-    - `validate_interlaced_video_packet_trailing_padding(const PacketView&)`
-        - пока `Unsupported`
-    - `validate_psf_video_packet_trailing_padding(const PacketView&)`
-        - пока `Unsupported`
-    - `validate_video_packet_trailing_padding(VideoPackingMode, VideoScanMode, const PacketView&)`
-        - сначала проходит через packing-mode runtime-support boundary;
-        - затем dispatch к mode-specific helper’ам.
-    - `validate_gpm_video_packet_trailing_padding(VideoScanMode, const PacketView&)`
-        - explicit GPM behavior branch; внутри dispatch по scan mode
-    - `validate_bpm_video_packet_trailing_padding(VideoScanMode, const PacketView&)`
-        - explicit BPM behavior branch; пока локализованно `Unsupported`
+    - `validate_psf_video_packet_trailing_padding(const PacketView&) -> Error`
+        - current PsF padding-policy branch;
+        - currently returns `Unsupported`.
+    - `validate_interlaced_video_packet_trailing_padding(const PacketView&) -> Error`
+        - current interlaced padding-policy branch;
+        - currently returns `Unsupported`.
+    - `validate_progressive_video_packet_trailing_padding(const PacketView&) -> Error`
+        - current progressive padding-policy implementation.
+        - behavior:
+            - if `trailing_padding` is empty, returns `Ok`;
+            - if `trailing_padding` is non-empty and RTP marker bit is not set, returns `InvalidValue`;
+            - if any trailing padding octet is non-zero, returns `InvalidValue`;
+            - otherwise returns `Ok`.
+    - `validate_gpm_video_packet_trailing_padding(VideoScanMode, const PacketView&) -> Error`
+        - dispatches GPM trailing-padding validation by scan mode:
+            - `Progressive` -> `validate_progressive_video_packet_trailing_padding(...)`
+            - `Interlaced` -> `validate_interlaced_video_packet_trailing_padding(...)`
+            - `PsF` -> `validate_psf_video_packet_trailing_padding(...)`
+            - unknown scan mode -> `InvalidValue`
+    - `validate_bpm_video_packet_trailing_padding(VideoScanMode, const PacketView&) -> Error`
+        - current BPM padding-policy branch;
+        - currently returns `Unsupported` for all scan modes.
+    - `validate_video_packet_trailing_padding(VideoPackingMode, VideoScanMode, const PacketView&) -> Error`
+        - top-level dispatch helper for packet trailing-padding policy:
+            - `Gpm` -> `validate_gpm_video_packet_trailing_padding(...)`
+            - `Bpm` -> `validate_bpm_video_packet_trailing_padding(...)`
+            - unknown packing mode -> `InvalidValue`
 - Примечание:
-    - current padding validation boundary теперь materializes explicit packing-mode branches, а не только support-check;
-    - поздняя BPM-реализация должна расширять `validate_bpm_video_packet_trailing_padding(...)`, не меняя shape остального receive pipeline.
+    - this file validates only trailing bytes after SRD-covered payload; it does not decide generic packet structure or SRD payload splitting.
+    - current implemented acceptance is localized to the `Gpm + Progressive` path:
+        - no trailing padding is always acceptable;
+        - non-empty trailing padding is acceptable only on marker packets and only when all bytes are zero.
+    - interlaced, PsF, and BPM coverage are architecturally explicit in the API and dispatch tree, but remain localized as `Unsupported` in the current MVP implementation rather than being hidden by the absence of modeled branches.
 
 ### libs/st2110core/include/st2110/video_packing_mode.hpp
 - Роль:
-    - отдельная runtime/signaling axis для video packing mode.
-    - фиксирует packing mode как самостоятельную ось модели, не сводимую к `PixelFormat` или `VideoScanMode`.
+    - explicit modeled packing-mode axis for the video receive/signaling/runtime path.
+    - отделяет:
+        - structural representation of signaled/runtime video packing mode;
+          от:
+        - current localized runtime support policy.
+    - keeps unsupported packing modes represented in the architecture instead of hiding them by absence of enum/model coverage.
 - Связи:
-    - используется signaling model (`VideoStreamSignaling`), runtime config (`DepacketizerConfig`), packet padding validation и segment placement.
-    - является локализованной точкой будущего расширения для `GPM | BPM`-specific runtime behavior.
+    - использует `error.hpp` for explicit runtime-support result reporting.
+    - используется:
+        - `rx_config.hpp` as an explicit runtime config axis;
+        - `signaling_structs.hpp` / `video_signaling.hpp` as a signaled stream property;
+        - `depacketizer.hpp`, `video_packet_padding.hpp`, and related runtime helpers as a packing-aware dispatch/input axis.
+    - behavior is covered by `tests/test_video_packing_mode_runtime_projection.cpp` and indirectly by `tests/test_rx_config.cpp`.
 - Сущности:
-    - `enum class VideoPackingMode`
-        - `Gpm`
-        - `Bpm`
-    - `validate_runtime_video_packing_mode_support(VideoPackingMode)`
-        - текущая localized runtime-support boundary:
-            - `Gpm` => `Ok`
-            - `Bpm` => `Unsupported`
-            - invalid enum => `InvalidValue`
+    - `VideoPackingMode`
+        - modeled packing-mode axis:
+            - `Gpm`
+            - `Bpm`
+    - `validate_runtime_video_packing_mode_support(VideoPackingMode) -> Error`
+        - localized current runtime-support boundary.
+        - behavior:
+            - `VideoPackingMode::Gpm` -> `Ok`
+            - `VideoPackingMode::Bpm` -> `Unsupported`
+            - unknown enum value -> `InvalidValue`
 - Примечание:
-    - в MVP этот файл уже заводит packing mode как explicit runtime axis;
-    - текущая реализация поведения остается только для `GPM`, но `BPM` теперь отвергается в локализованной boundary, а не игнорируется архитектурно.
+    - this file does not say that `Bpm` is invalid structurally; it says only that current runtime support for it is not implemented.
+    - that distinction is important and intentional:
+        - signaling/model layers may still carry `Bpm`;
+        - current depacketizer/runtime/bootstrap projection layers reject it through this explicit support boundary.
+    - future BPM implementation should extend the existing runtime branches rather than reshape the modeled packing-mode axis.
 
 ### libs/st2110core/include/st2110/signaling_structs.hpp
 - Роль:
-    - central standards-aware signaling data model for video receiver configuration/projection.
-    - keeps signaled SDP/media-description properties explicit and separate from runtime storage/depacketizer implementation details.
+    - aggregate modeled-types header для standards-aware video signaling / bootstrap domain.
+    - хранит shared enums/structs для:
+        - video media description;
+        - timing/reference-clock signaling fields;
+        - sender-type/timing fields;
+        - aggregated receiver bootstrap result.
+    - intentionally separates pure modeled data types from validation, projection, and SDP-ingestion logic.
 - Связи:
-    - используется `video_signaling.hpp`, `video_sdp_signaling_adapter.hpp`, receiver bootstrap/projection helpers, and SDP ingestion path;
-    - depends on runtime-facing config/pipeline types only where bootstrap composition requires them.
+    - использует:
+        - `packet_parse.hpp` for `PacketParsePolicy`;
+        - `rx_config.hpp` for `RxVideoConfig`;
+        - `video_packing_mode.hpp` for `VideoPackingMode`;
+        - `video_receive_pipeline.hpp` for `VideoReceivePipelineConfig`;
+        - `video_receiver_timing.hpp` for `VideoReceiverTimingConfig`;
+        - `video_scan_mode.hpp` for `VideoScanMode`.
+    - используется `video_signaling.hpp` как lower data-model layer for:
+        - validation;
+        - runtime projection;
+        - packet-parse-policy projection;
+        - bootstrap composition.
+    - не содержит SDP parsing, validation helpers, runtime support checks, or backend logic by itself.
 - Сущности:
-    - `MediaClockMode`
-    - `TimestampMode`
-    - `ReferenceClockKind`
-    - `PtpReferenceClock`
-    - `LocalMacReferenceClock`
-    - `ReferenceClock`
-    - `VideoSenderType`
-    - `VideoSampling`
-    - `VideoBitDepth`
-    - `VideoColorimetry`
-    - `VideoTransferCharacteristicSystem`
-    - `VideoSignalStandard`
-    - `VideoRange`
-        - `Known::Narrow`
-        - `Known::FullProtect`
-        - `Known::Full`
-        - `Known::Other`
-    - `VideoPixelAspectRatio`
-        - `width`
-        - `height`
-        - explicit modeled PAR / pixel-aspect-ratio signaling property.
-    - `VideoMediaDescription`
-        - `sampling`
-        - `width`, `height`
-        - `fps_num`, `fps_den`
-        - `depth`
-        - `colorimetry`
-        - `transfer_characteristic_system`
-        - `signal_standard`
-        - `range`
-        - `pixel_aspect_ratio`
-            - signaling/media-description axis only;
-            - defaults to `1:1` in the model;
-            - is not a runtime frame-storage axis.
-    - `VideoStreamSignaling`
-    - `VideoReceiverBootstrapConfig`
+    - timing/reference-clock enums:
+        - `MediaClockMode`
+            - `Direct`
+            - `Sender`
+        - `TimestampMode`
+            - `Samp`
+            - `New`
+            - `Pres`
+        - `ReferenceClockKind`
+            - `LocalMac`
+            - `Ptp`
+            - `Other`
+    - reference-clock payload structs:
+        - `PtpReferenceClock`
+            - `clock_identity`
+            - `domain_number`
+            - `traceable`
+        - `LocalMacReferenceClock`
+            - `mac`
+        - `ReferenceClock`
+            - `kind`
+            - optional `ptp`
+            - optional `local_mac`
+            - optional `raw_token`
+    - sender signaling:
+        - `VideoSenderType`
+            - `Narrow`
+            - `NarrowLinear`
+            - `Wide`
+    - modeled media-description token-backed types:
+        - `VideoSampling`
+            - nested `Known`:
+                - `YCbCr422`
+                - `YCbCr444`
+                - `YCbCr420`
+                - `RGB`
+                - `XYZ`
+                - `Key`
+                - `CLYCbCr444`
+                - `CLYCbCr422`
+                - `CLYCbCr420`
+                - `ICtCp444`
+                - `ICtCp422`
+                - `ICtCp420`
+                - `Other`
+            - fields:
+                - `known`
+                - optional `raw_token`
+        - `VideoBitDepth`
+            - `bits`
+            - `floating_point`
+        - `VideoColorimetry`
+            - nested `Known`:
+                - `Bt601`
+                - `Bt709`
+                - `Bt2020`
+                - `Bt2100`
+                - `St2065_1`
+                - `St2065_3`
+                - `Unspecified`
+                - `Xyz`
+                - `Alpha`
+                - `Other`
+            - fields:
+                - `known`
+                - optional `raw_token`
+        - `VideoTransferCharacteristicSystem`
+            - nested `Known`:
+                - `SDR`
+                - `PQ`
+                - `HLG`
+                - `Linear`
+                - `Bt2100LinPq`
+                - `Bt2100LinHlg`
+                - `St2065_1`
+                - `St428_1`
+                - `Density`
+                - `St2115LogS3`
+                - `Unspecified`
+                - `Other`
+            - fields:
+                - `known`
+                - optional `raw_token`
+        - `VideoSignalStandard`
+            - nested `Known`:
+                - `St2110_20_2017`
+                - `St2110_20_2022`
+                - `Other`
+            - fields:
+                - `known`
+                - optional `raw_token`
+        - `VideoRange`
+            - nested `Known`:
+                - `Narrow`
+                - `FullProtect`
+                - `Full`
+                - `Other`
+            - fields:
+                - `known`
+                - optional `raw_token`
+        - `VideoPixelAspectRatio`
+            - `width`
+            - `height`
+    - aggregate media/stream structs:
+        - `VideoMediaDescription`
+            - `sampling`
+            - `width`
+            - `height`
+            - `fps_num`
+            - `fps_den`
+            - `depth`
+            - `colorimetry`
+            - optional `transfer_characteristic_system`
+            - optional `signal_standard`
+            - optional `range`
+            - `pixel_aspect_ratio`
+        - `VideoStreamSignaling`
+            - `media`
+            - `scan_mode`
+            - `packing_mode`
+            - optional `max_udp_datagram_bytes`
+            - `media_clock_mode`
+            - `timestamp_mode`
+            - `reference_clock`
+            - `ts_delay_sender_ticks`
+            - `sender_type`
+            - optional `troff_us`
+            - optional `cmax`
+    - bootstrap aggregate:
+        - `VideoReceiverBootstrapConfig`
+            - `packet_parse_policy`
+            - `rx_config`
+            - `receive_pipeline_config`
+            - `timing_config`
 - Примечание:
-    - known SDP/media-description axes continue to be modeled explicitly in this header;
-    - `PAR` / pixel aspect ratio is now explicit in the signaling model without changing runtime video buffer/pixel layout behavior.
+    - this file is a data-model header, not the main logic boundary for video signaling behavior.
+    - validation/projection/bootstrap logic is layered above it in `video_signaling.hpp`.
+    - despite the presence of `VideoReceiverBootstrapConfig`, this file does not itself build/bootstrap anything; it only defines the aggregate result shape.
 
 ### libs/st2110core/include/st2110/video_receiver_timing.hpp
 - Роль:
-    - explicit receiver-side timing/capability boundary для video receive path.
-    - отделяет receiver timing assumptions/capabilities от `Depacketizer`/`ReorderBuffer`/packet parsing.
+    - receiver-side timing policy / capability boundary for ST 2110 video receiver bootstrap and signaling validation.
+    - моделирует:
+        - какие sender timing classes receiver готов принять;
+        - какие timing-related signaling fields receiver требует;
+        - какие sender timing parameters receiver обязан/готов учитывать.
+    - deliberately keeps this policy separate from:
+        - raw SDP parsing;
+        - `VideoStreamSignaling` structure itself;
+        - runtime packet buffering / playout / VRX behavior.
 - Связи:
-    - на текущем шаге зависит только от `Error`;
-    - дальше должен быть связан с `VideoStreamSignaling` и signaling-driven bootstrap path;
-    - является архитектурной точкой, куда позже будет добавляться ST 2110-21-related consistency/tolerance/buffering policy.
+    - использует `error.hpp` для explicit validation result.
+    - включается `signaling_structs.hpp`, где `VideoReceiverBootstrapConfig` хранит `timing_config`.
+    - используется `video_receiver_timing_signaling.hpp`:
+        - для sender-type compatibility check;
+        - для validation against `VideoStreamSignaling`;
+        - для timing-aware bootstrap composition.
+    - покрывается тестами:
+        - `tests/test_video_receiver_timing.cpp`;
+        - косвенно архитектурными / bootstrap tests через `video_receiver_timing_signaling.hpp`, включая:
+            - `tests/video_receiver_timing_architecture_test.cpp`;
+            - `tests/test_video_receiver_timing_signaling.cpp`;
+            - `tests/test_video_receiver_timing_bootstrap.cpp`.
 - Сущности:
     - `VideoReceiverTimingCapability`
-        - receiver-declared support for sender classes:
-            - `supports_type_n`
-            - `supports_type_nl`
-            - `supports_type_w`
+        - receiver-declared support policy for incoming video sender timing classes:
+            - `supports_type_n`;
+            - `supports_type_nl`;
+            - `supports_type_w`.
     - `VideoReceiverTimingRequirements`
-        - declares which timing/signaling inputs receiver expects/consumes:
-            - `require_reference_clock`
-            - `require_media_clock`
-            - `require_timestamp_mode`
-            - `consume_ts_delay`
-            - `consume_sender_troff`
-            - `consume_sender_cmax`
+        - receiver-declared signaling/timing requirements and consumption policy:
+            - `require_reference_clock`;
+            - `require_media_clock`;
+            - `require_timestamp_mode`;
+            - `consume_ts_delay`;
+            - `consume_sender_troff`;
+            - `consume_sender_cmax`.
     - `VideoReceiverTimingConfig`
-        - aggregates `capability` + `requirements`
-    - `has_any_supported_video_sender_type(...)`
-        - helper: receiver must support at least one sender type
-    - `validate_video_receiver_timing_capability(...)`
-        - structural validation of receiver timing capability
-    - `validate_video_receiver_timing_config(...)`
-        - structural validation entry point for receiver timing config
+        - aggregate receiver timing policy object:
+            - `capability`;
+            - `requirements`.
+    - `has_any_supported_video_sender_type(const VideoReceiverTimingCapability&) -> bool`
+        - helper that returns `true`, if at least one of:
+            - `supports_type_n`;
+            - `supports_type_nl`;
+            - `supports_type_w`
+              is enabled.
+    - `validate_video_receiver_timing_capability(const VideoReceiverTimingCapability&) -> Error`
+        - validates capability shape;
+        - returns:
+            - `Error::Ok`, if at least one supported sender type exists;
+            - `Error::InvalidValue`, if receiver declares no supported sender types at all.
+    - `validate_video_receiver_timing_config(const VideoReceiverTimingConfig&) -> Error`
+        - config-level validation entry point;
+        - currently delegates to capability validation only;
+        - requirement flags themselves are modeled explicitly and carried through the architecture, but are not cross-validated inside this file beyond capability validation.
 - Примечание:
-    - файл задает modeled receiver timing boundary и базовую structural validation;
-    - consistency-check against signaled timing properties now lives in `video_receiver_timing_signaling.hpp`;
-    - timing-aware bootstrap composition also lives in `video_receiver_timing_signaling.hpp`;
-    - future buffering/playout/tolerance behavior for fuller ST 2110-21 support should continue to extend this boundary rather than move into parser/reorder/depacketizer internals.
+    - this file models receiver timing support as a localized policy/config boundary, not as full ST 2110-21 receiver buffering/conformance runtime.
+    - current capability axis is intentionally expressed in terms of accepted sender timing types (`N`, `NL`, `W`) because it is consumed against `VideoStreamSignaling::sender_type` in the timing-aware signaling/bootstrap boundary.
+    - fuller ST 2110-21 receiver behavior such as VRX buffering / underflow-overflow behavior / release policy is not implemented here and should stay above this config boundary rather than being pushed into parsers or generic runtime config.
 
 ### libs/st2110core/include/st2110/video_receiver_timing_signaling.hpp
 - Роль:
-    - bridge/boundary между receiver timing model и standards-aware video signaling model.
-    - локализует consistency validation receiver-side timing assumptions against signaled sender/timing properties.
-    - добавляет timing-aware bootstrap composition как overlay над generic signaling bootstrap path.
+    - timing-aware adapter between generic video signaling/bootstrap projection and explicit receiver timing policy.
+    - локализует receiver-side consistency checks between:
+        - `VideoReceiverTimingConfig`;
+        - `VideoStreamSignaling`;
+        - final timing-aware `VideoReceiverBootstrapConfig`.
+    - keeps ST 2110-21 receiver capability/requirements policy separate from:
+        - raw SDP parsing;
+        - generic `VideoStreamSignaling` validation;
+        - packet parsing / depacketizer internals;
+        - runtime buffering / playout implementation.
 - Связи:
-    - использует `video_receiver_timing.hpp`, `video_signaling.hpp`, `signaling_structs.hpp`, `error.hpp`;
-    - не зависит от `Depacketizer`, `ReorderBuffer` и packet parsing internals;
-    - опирается на generic signaling/bootstrap adapters из `video_signaling.hpp`, а не дублирует их;
-    - является точкой дальнейшего расширения для ST 2110-21 receiver-side timing/conformance checks.
+    - использует:
+        - `video_receiver_timing.hpp` for receiver timing capability/requirements model;
+        - `video_signaling.hpp` for generic signaling validation helpers and base bootstrap projection;
+        - `signaling_structs.hpp` for `VideoStreamSignaling` and `VideoReceiverBootstrapConfig`;
+        - `rx_config.hpp`, `packet_parse.hpp`, `depacketizer.hpp`, `video_receive_pipeline.hpp`, `video_unit_reconstructor.hpp` through composed bootstrap types.
+    - расширяет generic bootstrap path из `video_signaling.hpp` дополнительной timing-aware overload-функцией с тем же именем:
+        - generic overload builds runtime/bootstrap config from signaling;
+        - this file first validates receiver timing policy against signaling, then reuses the generic projection, then injects `timing_config` into the resulting `VideoReceiverBootstrapConfig`.
+    - directly reflected in `signaling_structs.hpp`, where `VideoReceiverBootstrapConfig` contains:
+        - `packet_parse_policy`;
+        - `rx_config`;
+        - `receive_pipeline_config`;
+        - `timing_config`.
+    - покрывается тестами:
+        - `tests/test_video_receiver_timing_signaling.cpp`;
+        - `tests/test_video_receiver_timing_bootstrap.cpp`;
+        - `tests/video_receiver_timing_architecture_test.cpp`.
 - Сущности:
-    - `video_receiver_supports_sender_type(const VideoReceiverTimingCapability&, VideoSenderType)`
-        - helper для проверки, поддерживает ли receiver signaled sender type (`Narrow | NarrowLinear | Wide`).
-    - `validate_video_receiver_timing_against_video_stream_signaling(const VideoReceiverTimingConfig&, const VideoStreamSignaling&)`
-        - explicit consistency validation entry point между receiver timing config и signaling model;
-        - uses normal receiver-side structural sender validation, so optional `CMAX` for `Wide` sender type is not required here;
-        - stricter sender/conformance checks remain a future separate policy (`229B`).
-        - валидирует:
-            - receiver timing config;
-            - sender timing signaling;
-            - required `reference_clock` / `media_clock_mode` / `timestamp_mode`;
-            - совместимость receiver capability с signaled sender type;
-            - допустимость наличия `ts_delay_sender_ticks`, `troff_us`, `cmax` с точки зрения receiver requirements.
-    - `video_receiver_bootstrap_config_from_video_stream_signaling(const VideoStreamSignaling&, const VideoReceiverTimingConfig&, uint16_t, uint8_t, std::string, std::string, PartialFramePolicy)`
-        - timing-aware signaling-driven bootstrap wrapper;
-        - сначала выполняет receiver timing vs signaling validation;
-        - затем вызывает generic `video_receiver_bootstrap_config_from_video_stream_signaling(...)` из `video_signaling.hpp`;
-        - затем добавляет `timing_config` в `VideoReceiverBootstrapConfig`;
-        - intentionally reuses existing generic bootstrap assembly instead of duplicating parse/rx/pipeline projection logic.
+    - `video_receiver_supports_sender_type(const VideoReceiverTimingCapability&, VideoSenderType) -> bool`
+        - helper that maps sender timing class to receiver timing capability flags:
+            - `VideoSenderType::Narrow` -> `supports_type_n`;
+            - `VideoSenderType::NarrowLinear` -> `supports_type_nl`;
+            - `VideoSenderType::Wide` -> `supports_type_w`.
+        - returns `false` for unknown sender-type enum values.
+    - `validate_video_receiver_timing_against_video_stream_signaling(const VideoReceiverTimingConfig&, const VideoStreamSignaling&) -> Error`
+        - main receiver-vs-signaling timing compatibility check.
+        - validation flow:
+            - validates `VideoReceiverTimingConfig` first through `validate_video_receiver_timing_config(...)`;
+            - validates sender timing parameters through `validate_video_sender_signaling(...)`;
+            - conditionally validates signaled clock/timestamp fields depending on receiver requirements:
+                - `validate_reference_clock(...)` when `require_reference_clock`;
+                - `validate_media_clock_mode(...)` when `require_media_clock`;
+                - `validate_timestamp_mode(...)` when `require_timestamp_mode`.
+        - support-policy checks:
+            - rejects unsupported sender type with `Error::Unsupported`;
+            - rejects non-zero `ts_delay_sender_ticks` when `consume_ts_delay == false`;
+            - rejects present sender `troff_us` when `consume_sender_troff == false`;
+            - rejects present sender `cmax` when `consume_sender_cmax == false`.
+        - returns:
+            - `Error::Ok` when timing policy and signaling are compatible;
+            - `Error::InvalidValue` for invalid config / invalid required signaling fields / invalid sender timing values;
+            - `Error::Unsupported` for receiver-declared non-support of otherwise valid signaled timing behavior.
+    - `video_receiver_bootstrap_config_from_video_stream_signaling(const VideoStreamSignaling&, const VideoReceiverTimingConfig&, uint16_t udp_port, uint8_t payload_type, std::string local_ip, std::string dest_ip, PartialFramePolicy) -> std::expected<VideoReceiverBootstrapConfig, Error>`
+        - timing-aware bootstrap composition overload.
+        - behavior:
+            - first runs `validate_video_receiver_timing_against_video_stream_signaling(...)`;
+            - then calls the generic bootstrap overload from `video_signaling.hpp`;
+            - if generic projection succeeds, copies the resulting bootstrap config and writes `base.timing_config = timing_cfg`.
+        - preserves generic runtime projection for:
+            - packet parse policy;
+            - `RxVideoConfig`;
+            - `VideoReceivePipelineConfig`;
+              and adds only explicit timing policy.
+        - returns the same result type as the generic overload:
+            - `std::expected<VideoReceiverBootstrapConfig, Error>`.
 - Примечание:
-    - файл держит receiver-vs-signaling checks и timing-aware bootstrap composition отдельно от generic signaling validation и отдельно от receive pipeline internals;
-    - это позволяет позже наращивать ST 2110-21-related receiver logic локально, не меняя shape parser/reorder/depacketizer APIs и не дублируя generic bootstrap assembly.
+    - this file is intentionally a receiver-policy / bootstrap-consistency layer, not a full ST 2110-21 receiver runtime implementation.
+    - ST 2110-20 requires receivers to conform to one of the receiver types defined in ST 2110-21, while ST 2110-21 itself defines sender timing models and explicitly leaves practical receiver design, including network jitter/latency accommodation, outside its scope; this header matches that architecture by modeling timing capability/requirements and bootstrap compatibility separately from actual buffering/release behavior. :contentReference[oaicite:0]{index=0} :contentReference[oaicite:1]{index=1}
+    - the timing-aware bootstrap overload is intentionally additive:
+        - generic signaling projection remains reusable without receiver timing policy;
+        - tighter receiver timing acceptance is localized here instead of being pushed into generic signaling validation or packet pipeline layers. :contentReference[oaicite:2]{index=2} :contentReference[oaicite:3]{index=3}
+    - the current `timing_config` carried in `VideoReceiverBootstrapConfig` is architectural state for future receiver timing behavior and conformance-related runtime work; it does not by itself implement VRX / playout / underflow-overflow behavior, which remains a separate future layer. :contentReference[oaicite:4]{index=4} :contentReference[oaicite:5]{index=5}
 
 ### libs/st2110core/include/st2110/video_sdp_media_section.hpp
 - Роль:
-    - raw SDP video media-section selection and preservation boundary;
-    - keeps transport/redundancy/session-vs-media SDP metadata outside `VideoStreamSignaling`;
-    - now also performs tighter structural validation of raw SDP `c=` connection data while preserving parsed/raw transport metadata for later backend/bootstrap use.
+    - raw SDP video media-section parsing / selection boundary for one expected RTP payload type.
+    - отделяет raw SDP transport/session/media parsing от:
+        - `VideoStreamSignaling`;
+        - final SDP ingestion;
+        - runtime/bootstrap projection;
+        - backend/socket transport behavior.
+    - хранит и структурно парсит raw SDP metadata, нужные для последующих boundaries:
+        - selected `m=video` section;
+        - payload-bound `rtpmap` / `fmtp`;
+        - session/media timing-attribute raw values with explicit scope;
+        - `c=` connection data;
+        - `a=source-filter`;
+        - `a=mid`;
+        - `a=group:DUP`;
+        - duplicate matching video media sections for redundancy-aware raw preservation.
 - Связи:
-    - feeds:
-        - `video_sdp_rtpmap.hpp`;
-        - `video_sdp_fmtp.hpp`;
-        - `video_sdp_timing_attributes.hpp`;
-        - final SDP ingestion in `video_sdp_ingestion.hpp`.
-    - used directly by raw-SDP-focused tests and transport-boundary tests.
+    - зависит только от `error.hpp` и стандартных utility/container types.
+    - используется:
+        - `video_sdp_rtpmap.hpp` для raw `a=rtpmap` parsing over selected media-section;
+        - `video_sdp_fmtp.hpp` для strict raw `a=fmtp` parsing over selected media-section;
+        - `video_sdp_timing_attributes.hpp` для raw timing/reference-clock parsing and session/media scope resolution;
+        - `video_sdp_ingestion.hpp` как final SDP-to-`VideoStreamSignaling` ingestion entry point.
+    - покрывается тестами:
+        - `tests/video_sdp_media_section_test.cpp`;
+        - `tests/video_sdp_transport_boundary_test.cpp`;
+        - `tests/video_sdp_redundancy_boundary_test.cpp`;
+        - косвенно `tests/video_sdp_timing_scope_test.cpp`.
 - Сущности:
-    - raw SDP models:
+    - raw preserved SDP models:
         - `RawSdpAttribute`
+            - preserved unknown `a=` attribute:
+                - `name`;
+                - `value`.
         - `RawSdpConnectionData`
+            - parsed raw `c=` line:
+                - `network_type`;
+                - `address_type`;
+                - `connection_address`;
+                - parsed `base_address`;
+                - optional `ttl`;
+                - optional `address_count`.
+        - `RawSdpAttributeScope`
+            - generic scope axis for resolved timing attributes:
+                - `Session`;
+                - `Media`.
         - `RawSdpScopedAttributeValue`
+            - raw string value plus explicit `RawSdpAttributeScope`.
         - `RawSdpSourceFilter`
+            - parsed raw `a=source-filter`:
+                - nested `Scope`:
+                    - `Session`;
+                    - `Media`;
+                - `raw_value`;
+                - `scope`;
+                - `filter_mode`;
+                - `network_type`;
+                - `address_type`;
+                - `destination_address`;
+                - `source_addresses`.
         - `RawSdpGroup`
+            - parsed raw `a=group`:
+                - `semantics`;
+                - `mids`.
         - `RawVideoSdpDuplicateMediaCandidate`
+            - preserved duplicate matching video media-section candidate for redundancy-aware raw handling:
+                - `media_line`;
+                - selected `payload_type`;
+                - all `media_payload_types`;
+                - optional `mid`;
+                - optional `media_connection`;
+                - `source_filters`;
+                - raw `rtpmap`;
+                - raw `fmtp`.
         - `RawVideoSdpMediaSection`
-    - media-line / payload-bound helpers:
-        - `parse_video_m_line_payload_types(...)`
-        - `parse_payload_bound_attribute_value(...)`
-        - `parse_attribute_value(...)`
-        - `select_raw_video_sdp_media_section(...)`
-    - transport / connection-data helpers:
-        - `parse_connection_data(...)`
-        - `parse_connection_address_parameters(...)`
+            - selected raw video media-section summary:
+                - `media_line`;
+                - selected `payload_type`;
+                - all `media_payload_types`;
+                - raw `rtpmap`;
+                - raw `fmtp`;
+                - compatibility resolved timing fields:
+                    - optional `ts_refclk`;
+                    - optional `mediaclk`;
+                    - optional `tsmode`;
+                    - optional `tsdelay`;
+                    - optional `tp`;
+                    - optional `troff`;
+                    - optional `cmax`;
+                - explicit scoped timing/raw attribute slots:
+                    - `session_ts_refclk`, `media_ts_refclk`;
+                    - `session_mediaclk`, `media_mediaclk`;
+                    - `session_tsmode`, `media_tsmode`;
+                    - `session_tsdelay`, `media_tsdelay`;
+                    - `session_tp`, `media_tp`;
+                    - `session_troff`, `media_troff`;
+                    - `session_cmax`, `media_cmax`;
+                - optional `session_connection`;
+                - optional `media_connection`;
+                - optional `mid`;
+                - `source_filters`;
+                - `session_groups`;
+                - `duplicate_candidates`;
+                - preserved `unknown_session_attributes`;
+                - preserved media-level `unknown_attributes`.
+    - generic SDP/raw helper functions:
+        - `strip_cr(std::string_view)`
+        - `split_ws(std::string_view)`
+        - `parse_payload_type(std::string_view)`
+        - `parse_sdp_media_port_token(std::string_view)`
+        - `validate_video_sdp_media_protocol_token(std::string_view)`
+        - `validate_video_sdp_media_payload_type(uint8_t)`
+        - `parse_video_m_line_payload_types(std::string_view)`
+        - `contains_payload_type(const std::vector<uint8_t>&, uint8_t)`
+        - `parse_payload_bound_attribute_value(std::string_view, std::string_view prefix, uint8_t expected_payload_type)`
+        - `parse_attribute_value(std::string_view, std::string_view prefix)`
+        - `trim_left_ws(std::string_view)`
+        - `parse_unknown_sdp_attribute(std::string_view)`
+    - connection-data parsing helpers:
+        - `RawSdpConnectionAddressParameters`
         - `parse_sdp_connection_address_uint64(...)`
         - `parse_ipv4_address_octets(...)`
         - `is_ipv4_multicast_base_address(...)`
         - `is_ipv6_multicast_base_address(...)`
-    - source-filter / grouping helpers:
-        - `parse_source_filter_attribute_value(...)`
-        - `parse_group_attribute(...)`
+        - `parse_connection_address_parameters(std::string_view address_type, std::string_view connection_address)`
+        - `parse_connection_data(std::string_view)`
+        - behavior:
+            - validates known `c=` grammar for `IN IP4` and `IN IP6`;
+            - preserves original connection-address string;
+            - also derives parsed `base_address`, optional TTL, and optional address-count fields;
+            - rejects malformed slash-parameter forms locally in the raw SDP boundary.
+    - source-filter / group helpers:
+        - `source_filter_address_token_is_structurally_clean(...)`
+        - `is_known_source_filter_mode(...)`
+        - `validate_source_filter_attribute_tokens(...)`
+        - `parse_source_filter_attribute_value(std::string_view, RawSdpSourceFilter::Scope)`
+        - `parse_group_attribute(std::string_view)`
+        - `has_dup_session_group(...)`
+        - `raw_sdp_group_contains_mid(...)`
         - `has_dup_session_group_containing_both_mids(...)`
+    - scoped timing raw-value helper:
+        - `set_raw_sdp_scoped_timing_attribute(...)`
+            - stores session/media-scoped raw timing value;
+            - also updates the compatibility resolved field;
+            - media-level value overrides session-level resolved value;
+            - duplicate value in the same scoped slot is rejected.
+    - main entry point:
+        - `select_raw_video_sdp_media_section(std::string_view sdp, uint8_t expected_payload_type) -> std::expected<RawVideoSdpMediaSection, Error>`
+            - scans the SDP line-by-line and selects the matching `m=video` media section whose media-line payload types contain `expected_payload_type`;
+            - validates selected `m=video` line structurally:
+                - dynamic payload type range;
+                - valid media port token;
+                - currently supported protocol token `RTP/AVP`;
+            - requires selected payload-bound `a=rtpmap` and selected payload-bound `a=fmtp`;
+            - preserves session/media-scoped standalone timing attributes:
+                - `ts-refclk`;
+                - `mediaclk`;
+                - `tsmode`;
+                - `tsdelay`;
+                - `TP`;
+                - `TROFF`;
+                - `CMAX`;
+            - preserves session/media `c=` connection data;
+            - preserves media-level `mid`, `source-filter`, and session-level `group` attributes;
+            - preserves unknown session/media `a=` attributes separately;
+            - for additional matching `m=video` sections:
+                - rejects ambiguous duplicate matches by default;
+                - preserves them as `duplicate_candidates` only when they form a valid raw duplicate candidate tied to the selected section by `a=group:DUP` and distinct `a=mid` values.
+            - rejects:
+                - no matching selected video section;
+                - duplicate relevant selected attributes;
+                - malformed selected `m=video` line;
+                - malformed `c=` / `source-filter` / `group` data;
+                - duplicate candidate sections that do not satisfy the expected raw DUP-group relationship.
 - Примечание:
-    - raw SDP `c=` remains transport metadata and is not projected into `VideoStreamSignaling`;
-    - known `c=` forms are now validated more explicitly:
-        - `nettype=IN`;
-        - `addrtype=IP4` or `IP6`;
-        - non-empty base address;
-        - slash parameters only for structurally meaningful address-type/multicast forms;
-        - malformed TTL / address-count forms rejected locally;
-    - no socket bind/join/source-filter runtime behavior is introduced in this boundary.
+    - this is a raw SDP boundary only.
+    - it does not map tokens into `VideoStreamSignaling` enums and does not perform final standards-clean stream validation.
+    - it intentionally preserves raw transport/redundancy metadata outside `VideoStreamSignaling`, so future runtime/bootstrap work can consume:
+        - `c=` details;
+        - source filters;
+        - MID/DUP relationships;
+        - duplicate candidate sections
+          without redesigning the SDP ingestion architecture.
 
 ### libs/st2110core/include/st2110/video_sdp_fmtp.hpp
 - Роль:
-    - strict parser for ST 2110 video `a=fmtp` media type parameters;
-    - separates raw SDP media-parameter parsing from final signaling validation/ingestion;
-    - carries sender/timing fmtp parameters as explicit raw fields rather than leaving them in unknown parameters.
+    - strict raw parser for video `a=fmtp` payload-bound media parameters.
+    - converts one SDP `fmtp` attribute payload into an explicit raw ST 2110 video fmtp model without prematurely mapping tokens into signaling enums or runtime config.
+    - локализует:
+        - strict token grammar for video fmtp;
+        - parsing of required and optional ST 2110-20 / ST 2110-10 / ST 2110-21 media parameters carried in `a=fmtp`;
+        - preservation of unknown future parameters.
+    - intentionally does not:
+        - parse whole SDP media sections;
+        - resolve session/media scope;
+        - validate final standards-clean signaling model;
+        - project into runtime/bootstrap config.
 - Связи:
-    - uses `video_sdp_media_section.hpp` low-level SDP helpers;
-    - feeds `video_sdp_signaling_adapter.hpp` and final ingestion in `video_sdp_ingestion.hpp`.
+    - использует `video_sdp_media_section.hpp` for:
+        - `strip_cr(...)`;
+        - `parse_payload_type(...)`;
+        - shared raw SDP helpers needed by attribute-level binding.
+    - использует `error.hpp` for strict parse failure reporting.
+    - consumed by `video_sdp_signaling_adapter.hpp`:
+        - raw fmtp values are mapped there into `VideoStreamSignaling` enums/fields.
+    - consumed by `video_sdp_ingestion.hpp`:
+        - final SDP ingestion merges parsed fmtp parameters with raw media-section / standalone timing attributes and performs final signaling validation.
+    - покрывается тестами:
+        - `tests/video_sdp_fmtp_test.cpp`;
+        - `tests/video_sdp_fmtp_strict_parsing_test.cpp`;
+        - `tests/video_sdp_fmtp_timing_parameters_test.cpp`.
 - Сущности:
-    - `RawVideoSdpFmtpParameters`
-        - core media-description properties:
-            - `sampling`
-            - `width`
-            - `height`
-            - `exactframerate`
-            - `depth`
-            - `depth_floating_point`
-            - `colorimetry`
-            - `packing_mode`
-            - `signal_standard`
-            - optional `transfer_characteristic_system`
-            - optional `range`
-            - optional `pixel_aspect_ratio`
-            - `interlace`
-            - `segmented`
-        - timing/sender/media-parameter fields:
-            - optional `timestamp_mode`
-            - optional `ts_delay_sender_ticks`
-            - optional `sender_type`
-            - optional `troff_us`
-            - optional `cmax`
-            - optional `max_udp_datagram_bytes`
-        - `unknown_parameters`
-    - parsing helpers for:
-        - strict fmtp parameter splitting/tokenization;
-        - canonical `exactframerate`;
-        - `PAR`;
-        - `depth`, including `16f`;
-        - positive-only `TROFF` parsing at fmtp-parser boundary;
-        - raw numeric `CMAX` parsing, with sender/conformance policy kept for later signaling validation.
+    - raw value structs:
+        - `RawVideoSdpExactFrameRate`
+            - raw/canonical exact frame-rate pair:
+                - `numerator`;
+                - `denominator`.
+        - `RawVideoSdpPixelAspectRatio`
+            - raw/canonical pixel-aspect-ratio pair:
+                - `width`;
+                - `height`.
+        - `RawVideoSdpFmtpUnknownParameter`
+            - preserved unknown fmtp parameter:
+                - `name`;
+                - optional `value`.
+        - `RawVideoSdpFmtpParameters`
+            - full raw fmtp parse result.
+            - required modeled raw fields:
+                - `sampling`;
+                - `width`;
+                - `height`;
+                - `exactframerate`;
+                - `depth`;
+                - `depth_floating_point`;
+                - `colorimetry`;
+                - `packing_mode`;
+                - `signal_standard`.
+            - optional modeled raw fields:
+                - `transfer_characteristic_system`;
+                - `range`;
+                - `pixel_aspect_ratio`;
+                - `timestamp_mode`;
+                - `ts_delay_sender_ticks`;
+                - `sender_type`;
+                - `troff_us`;
+                - `cmax`;
+                - `max_udp_datagram_bytes`.
+            - flag fields:
+                - `interlace`;
+                - `segmented`.
+            - forward-compatibility storage:
+                - `unknown_parameters`.
+    - generic/raw helper layer:
+        - `split_part_to_string_view(...)`
+            - converts a split subrange into `std::string_view`.
+        - `trim_ascii_ws(std::string_view) -> std::string_view`
+            - trims leading/trailing ASCII space/tab.
+        - `parse_fmtp_uint64(...)`
+        - `parse_fmtp_uint32(...)`
+            - strict unsigned decimal parsing with no silent fallback.
+        - `RawVideoSdpFmtpParameterToken`
+            - one strict parameter token:
+                - `name`;
+                - optional `value`.
+        - `is_fmtp_ascii_ws(char) -> bool`
+        - `contains_fmtp_ascii_ws(std::string_view) -> bool`
+    - strict fmtp grammar helpers:
+        - `split_strict_video_sdp_fmtp_parameters(std::string_view) -> std::expected<std::vector<std::string_view>, Error>`
+            - splits fmtp payload into parameter tokens.
+            - rejects:
+                - empty payload;
+                - empty parameters;
+                - leading/trailing whitespace inside a parameter token;
+                - missing required whitespace after `;`;
+                - doubled/trailing separators.
+        - `parse_strict_video_sdp_fmtp_parameter_token(std::string_view) -> std::expected<RawVideoSdpFmtpParameterToken, Error>`
+            - parses one token into `name` or `name=value`.
+            - rejects:
+                - any whitespace inside token;
+                - empty name;
+                - empty value;
+                - multiple `=`.
+        - `require_fmtp_parameter_value(...) -> std::expected<std::string_view, Error>`
+            - requires non-empty `name=value` form for parameters that need a value.
+        - `parse_required_positive_fmtp_uint32(...) -> std::expected<uint32_t, Error>`
+            - strict positive integer helper used for fields that must be `> 0`.
+    - value-specific parsers:
+        - `gcd_u32(uint32_t, uint32_t) -> uint32_t`
+            - helper for canonical rational reduction checks.
+        - `parse_fmtp_exact_frame_rate(std::string_view) -> std::expected<RawVideoSdpExactFrameRate, Error>`
+            - parses `exactframerate`.
+            - accepts:
+                - canonical integer form `N`;
+                - canonical reduced rational form `N/D`.
+            - rejects:
+                - zero numerator/denominator;
+                - `N/1`;
+                - reducible fractions;
+                - malformed multi-slash/non-numeric forms.
+        - `parse_fmtp_pixel_aspect_ratio(std::string_view) -> std::expected<RawVideoSdpPixelAspectRatio, Error>`
+            - parses `PAR=W:H`.
+            - requires positive integer parts.
+            - canonicalizes ratio by dividing through GCD.
+        - `RawVideoSdpFmtpDepthValue`
+            - parsed depth result:
+                - `bits`;
+                - `floating_point`.
+        - `parse_fmtp_depth(std::string_view) -> std::expected<RawVideoSdpFmtpDepthValue, Error>`
+            - parses integer depth tokens and `16f`.
+            - rejects malformed/zero/out-of-range values.
+            - rejects non-standard floating-point forms such as `8f`, `10f`, `12f`.
+    - attribute binding helpers:
+        - `parse_fmtp_attribute_payload_for_pt(std::string_view, uint8_t expected_payload_type) -> std::expected<std::optional<std::string_view>, Error>`
+            - binds one `a=fmtp:<pt> ...` line to the expected payload type.
+            - returns:
+                - parsed payload text for matching payload type;
+                - `nullopt` for payload-type mismatch;
+                - `Error::InvalidValue` for malformed matching/non-matching `a=fmtp` syntax.
+    - main parse entry points:
+        - `parse_video_sdp_fmtp_payload(std::string_view) -> std::expected<RawVideoSdpFmtpParameters, Error>`
+            - main raw fmtp payload parser.
+            - recognizes known video fmtp parameter names:
+                - `sampling`;
+                - `width`;
+                - `height`;
+                - `exactframerate`;
+                - `depth`;
+                - `colorimetry`;
+                - `PM`;
+                - `SSN`;
+                - `TCS`;
+                - `RANGE`;
+                - `PAR`;
+                - `TSMODE`;
+                - `TSDELAY`;
+                - `TP`;
+                - `TROFF`;
+                - `CMAX`;
+                - `MAXUDP`;
+                - flag-only `interlace`;
+                - flag-only `segmented`.
+            - preserves unknown syntactically valid parameters in `unknown_parameters`.
+            - rejects:
+                - duplicate known parameters;
+                - duplicate flags;
+                - malformed numeric/token values;
+                - missing required known fields.
+            - finishes by materializing the final `RawVideoSdpFmtpParameters`.
+        - `parse_video_sdp_fmtp_attribute(std::string_view, uint8_t expected_payload_type) -> std::expected<std::optional<RawVideoSdpFmtpParameters>, Error>`
+            - full `a=fmtp` line entry point.
+            - first binds line to expected PT, then parses payload through `parse_video_sdp_fmtp_payload(...)`.
+            - returns:
+                - parsed raw fmtp object for matching PT;
+                - `nullopt` for PT mismatch;
+                - `Error::InvalidValue` for malformed syntax/content.
 - Примечание:
-    - `TP`, `TROFF`, `CMAX`, `TSMODE`, and `TSDELAY` from `a=fmtp` are modeled explicitly here;
-    - this file does not decide final SDP-ingestion requirements by itself;
-    - absence/presence rules and cross-source merge/conflict behavior stay in final ingestion.
+    - this file is the strict raw fmtp boundary, not the final signaling boundary.
+    - known parameters are parsed here as raw strings/integers/flags first; enum mapping and final cross-field validation remain in adjacent adapter/ingestion layers.
+    - unknown parameters are preserved only if they are syntactically clean; malformed syntax is rejected rather than tolerated.
+    - current parser intentionally keeps fmtp grammar stricter than a whitespace-tolerant generic tokenizer:
+        - `;` must be followed by WSP;
+        - whitespace around `=` is rejected;
+        - empty/doubled/trailing parameter separators are rejected.
 
 ### libs/st2110core/include/st2110/video_sdp_signaling_adapter.hpp
 - Роль:
-    - adapter from raw parsed video SDP/fmtp media-description fields to modeled `VideoStreamSignaling`.
-    - performs token-to-model mapping for known ST 2110-20 SDP values while preserving unknown future values through `Other + raw_token`.
+    - adapter between raw parsed video SDP `a=fmtp` parameters and the modeled `VideoStreamSignaling` / `VideoMediaDescription` representation.
+    - переводит raw string/int/flag values from `RawVideoSdpFmtpParameters` into explicit signaling-model enums and fields without mixing in raw SDP media-section selection, standalone timing/reference-clock parsing, or runtime/bootstrap projection.
+    - локализует:
+        - raw fmtp -> `VideoScanMode` mapping;
+        - raw fmtp -> `VideoPackingMode` mapping;
+        - raw fmtp -> `VideoMediaDescription` mapping;
+        - initial raw fmtp -> `VideoStreamSignaling` composition for media-description-related fields.
 - Связи:
-    - использует `signaling_structs.hpp`, `video_sdp_fmtp.hpp`, `video_signaling.hpp`, `video_scan_mode.hpp`, `video_packing_mode.hpp`, `error.hpp`;
-    - feeds final SDP ingestion and signaling validation flow.
+    - использует:
+        - `video_sdp_fmtp.hpp` for `RawVideoSdpFmtpParameters` and related raw fmtp value structs;
+        - `signaling_structs.hpp` for `VideoMediaDescription`, `VideoStreamSignaling`, and modeled signaling enums/structs;
+        - `video_scan_mode.hpp` for `VideoScanMode`;
+        - `video_packing_mode.hpp` for `VideoPackingMode`;
+        - `video_signaling.hpp` for signaling-model validation:
+            - `validate_video_media_description(...)`;
+            - `validate_video_media_description_cross_field_constraints(...)`.
+    - используется `video_sdp_ingestion.hpp`:
+        - builds the initial signaling object from raw fmtp before final timing/reference-clock/rtpmap ingestion is applied.
+    - покрывается тестами:
+        - `tests/video_sdp_signaling_adapter_test.cpp`;
+        - косвенно final SDP ingestion tests that depend on this mapping layer.
 - Сущности:
-    - `video_scan_mode_from_raw_video_sdp_fmtp(...)`
-    - `video_packing_mode_from_raw_video_sdp_fmtp(...)`
-    - `video_media_description_from_raw_video_sdp_fmtp(...)`
-        - maps known `sampling`, `colorimetry`, `TCS`, `SSN`, and `RANGE` tokens into explicit enums;
-        - maps optional raw `pixel_aspect_ratio` into `VideoMediaDescription::pixel_aspect_ratio`;
-        - keeps absent raw `PAR` as signaling-model default `1:1` via the default-initialized `VideoMediaDescription`.
-    - `video_stream_signaling_from_raw_video_sdp_fmtp(...)`
-        - runs existing media-description and cross-field validation after token mapping.
+    - `video_scan_mode_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters&) -> std::expected<VideoScanMode, Error>`
+        - maps fmtp `interlace` / `segmented` flags to modeled scan mode:
+            - no `interlace`, no `segmented` -> `VideoScanMode::Progressive`;
+            - `interlace` and no `segmented` -> `VideoScanMode::Interlaced`;
+            - `interlace` and `segmented` -> `VideoScanMode::PsF`;
+            - `segmented` without `interlace` -> `Error::InvalidValue`.
+    - `video_packing_mode_from_raw_video_sdp_fmtp(std::string_view raw_pm) -> std::expected<VideoPackingMode, Error>`
+        - maps SDP `PM` token:
+            - `2110GPM` -> `VideoPackingMode::Gpm`;
+            - `2110BPM` -> `VideoPackingMode::Bpm`;
+            - unknown token -> `Error::InvalidValue`.
+    - `video_media_description_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters&) -> std::expected<VideoMediaDescription, Error>`
+        - maps raw fmtp media-description fields into the modeled `VideoMediaDescription`.
+        - sampling mapping:
+            - known values map to `VideoSampling::Known`:
+                - `YCbCr-4:2:2`;
+                - `YCbCr-4:4:4`;
+                - `YCbCr-4:2:0`;
+                - `RGB`;
+                - `XYZ`;
+                - `KEY`;
+                - `CLYCbCr-4:4:4`;
+                - `CLYCbCr-4:2:2`;
+                - `CLYCbCr-4:2:0`;
+                - `ICtCp-4:4:4`;
+                - `ICtCp-4:2:2`;
+                - `ICtCp-4:2:0`.
+            - unknown sampling token maps to `VideoSampling::Known::Other` with `raw_token`.
+        - copies:
+            - `width`;
+            - `height`;
+            - `fps_num`;
+            - `fps_den`.
+        - maps optional `pixel_aspect_ratio` into `VideoPixelAspectRatio`;
+        - maps depth:
+            - rejects `raw.depth == 0` or `raw.depth > 255` because modeled signaling stores bit depth in `uint8_t`;
+            - copies `raw.depth_floating_point`.
+        - colorimetry mapping:
+            - known tokens map to `VideoColorimetry::Known`:
+                - `BT601`;
+                - `BT709`;
+                - `BT2020`;
+                - `BT2100`;
+                - `ST2065-1`;
+                - `ST2065-3`;
+                - `UNSPECIFIED`;
+                - `XYZ`;
+                - `ALPHA`.
+            - unknown token maps to `Other + raw_token`.
+        - optional `TCS` mapping:
+            - known tokens map to `VideoTransferCharacteristicSystem::Known`:
+                - `SDR`;
+                - `PQ`;
+                - `HLG`;
+                - `LINEAR` / `Linear`;
+                - `BT2100LINPQ`;
+                - `BT2100LINHLG`;
+                - `ST2065-1`;
+                - `ST428-1`;
+                - `DENSITY`;
+                - `ST2115LOGS3`;
+                - `UNSPECIFIED`;
+            - unknown token maps to `Other + raw_token`.
+        - `SSN` mapping:
+            - `ST2110-20:2017` -> `VideoSignalStandard::Known::St2110_20_2017`;
+            - `ST2110-20:2022` -> `VideoSignalStandard::Known::St2110_20_2022`;
+            - unknown token -> `Other + raw_token`.
+        - optional `RANGE` mapping:
+            - `NARROW` -> `VideoRange::Known::Narrow`;
+            - `FULLPROTECT` -> `VideoRange::Known::FullProtect`;
+            - `FULL` -> `VideoRange::Known::Full`;
+            - unknown token -> `Other + raw_token`.
+    - `video_stream_signaling_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters&) -> std::expected<VideoStreamSignaling, Error>`
+        - builds the initial `VideoStreamSignaling` from raw fmtp media-description-related fields.
+        - behavior:
+            - maps `media` through `video_media_description_from_raw_video_sdp_fmtp(...)`;
+            - maps `scan_mode` through `video_scan_mode_from_raw_video_sdp_fmtp(...)`;
+            - maps `packing_mode` through `video_packing_mode_from_raw_video_sdp_fmtp(...)`;
+            - copies optional `max_udp_datagram_bytes` from raw fmtp into signaling;
+            - validates resulting `VideoMediaDescription` through `validate_video_media_description(...)`;
+            - validates media-description cross-field constraints against the mapped scan mode through `validate_video_media_description_cross_field_constraints(...)`.
+        - intentionally does not map:
+            - `reference_clock`;
+            - `media_clock_mode`;
+            - `timestamp_mode`;
+            - `ts_delay_sender_ticks`;
+            - `sender_type`;
+            - `troff_us`;
+            - `cmax`.
+              those remain for the higher SDP ingestion layer.
 - Примечание:
-    - adapter remains responsible for raw-token mapping and structural conversion;
-    - `PAR` is now preserved through SDP-to-signaling mapping without affecting runtime pixel/storage/depacketizer behavior.
+    - this file is an adapter from raw fmtp syntax to the project’s modeled signaling representation, not the final SDP ingestion boundary.
+    - it preserves forward-compatible unknown SDP media-property tokens through `Other + raw_token` where the signaling model explicitly supports that extensibility.
+    - `BPM` is structurally representable here and maps successfully to `VideoPackingMode::Bpm`; runtime support rejection for `BPM` remains localized later in runtime projection/support boundaries rather than here.
+    - absence of `PAR` leaves the modeled `VideoPixelAspectRatio` at its struct default `1:1`, because this adapter only overwrites it when raw fmtp explicitly provides `PAR`.
 
 ### libs/st2110core/include/st2110/video_sdp_timing_attributes.hpp
 - Роль:
-    - parses standalone video SDP timing/reference-clock attributes into an explicit scoped raw model;
-    - preserves session-vs-media scope for timing attributes before final SDP ingestion.
+    - raw standalone SDP timing/reference-clock parsing layer for video streams.
+    - преобразует standalone SDP timing attributes into explicit raw typed model before final SDP ingestion.
+    - локализует:
+        - parsing of `ts-refclk`, `mediaclk`, `tsmode`, `tsdelay`, `TP`, `TROFF`, `CMAX`;
+        - explicit session-vs-media scope preservation;
+        - resolution order between session-level and media-level standalone attributes;
+        - compatibility bridge from legacy resolved string fields in `RawVideoSdpMediaSection`.
+    - intentionally does not:
+        - parse `a=fmtp` timing/media parameters;
+        - map timing values into final `VideoStreamSignaling` enums/structs;
+        - enforce final ST 2110 ingestion requirements such as mandatory media-level `mediaclk`.
 - Связи:
-    - consumes `RawVideoSdpMediaSection` from `video_sdp_media_section.hpp`;
-    - feeds final SDP ingestion in `video_sdp_ingestion.hpp`.
+    - использует `video_sdp_media_section.hpp` for:
+        - `RawVideoSdpMediaSection`;
+        - `RawSdpAttributeScope`;
+        - `RawSdpScopedAttributeValue`;
+        - raw resolved standalone timing fields stored in the selected media section.
+    - использует `error.hpp` for explicit parse failures.
+    - используется `video_sdp_ingestion.hpp`:
+        - parsed raw timing attributes are later mapped into `ReferenceClock`, `MediaClockMode`, `TimestampMode`, `VideoSenderType`, `troff_us`, `cmax`;
+        - final SDP ingestion also applies stricter standards-clean rules above this raw layer.
+    - покрывается косвенно тестами:
+        - `tests/video_sdp_timing_scope_test.cpp`;
+        - `tests/video_sdp_ingestion_test.cpp`;
+        - `tests/video_sdp_fmtp_timing_parameters_test.cpp`.
 - Сущности:
-    - raw timing/reference-clock models:
+    - raw timing/reference-clock data model:
+        - `RawVideoSdpPtpReferenceClock`
+            - raw parsed PTP reference-clock payload:
+                - `version`;
+                - `gmid`;
+                - optional `domain`.
         - `RawVideoSdpReferenceClock`
+            - raw parsed `ts-refclk` value.
+            - `Kind`:
+                - `Ptp`;
+                - `LocalMac`;
+                - `Other`.
+            - fields:
+                - `kind`;
+                - `raw_value`;
+                - optional `ptp`;
+                - optional `local_mac`.
         - `RawVideoSdpMediaClock`
+            - raw parsed `mediaclk` value.
+            - `Kind`:
+                - `Direct`;
+                - `Sender`;
+                - `Other`.
+            - fields:
+                - `kind`;
+                - `raw_value`;
+                - optional `direct_offset`.
         - `RawVideoSdpTimestampModeValue`
+            - raw `TSMODE` token:
+                - `raw_token`.
         - `RawVideoSdpSenderTypeValue`
+            - raw `TP` token:
+                - `raw_token`.
         - `RawVideoSdpScopedTimingValue<T>`
+            - typed timing value plus explicit `RawSdpAttributeScope`.
         - `RawVideoSdpTimingAttributes`
-    - parsers for standalone SDP attributes:
-        - `ts-refclk`
-        - `mediaclk`
-        - `tsmode`
-        - `tsdelay`
-        - `TP`
-        - `TROFF`
-        - `CMAX`
-    - `parse_video_sdp_timing_attributes(...)`
-        - resolves session/media override rules for standalone attributes only.
+            - aggregate standalone timing model:
+                - optional scoped `reference_clock`;
+                - optional scoped `media_clock`;
+                - optional scoped `timestamp_mode`;
+                - optional scoped `ts_delay_sender_ticks`;
+                - optional scoped `sender_type`;
+                - optional scoped `troff_us`;
+                - optional scoped `cmax`.
+    - low-level helpers and validation:
+        - `trim(std::string_view) -> std::string_view`
+            - trims ASCII whitespace around raw standalone timing values.
+        - `parse_video_sdp_decimal_uint8(std::string_view) -> std::expected<uint8_t, Error>`
+            - strict decimal parser for uint8-sized values such as PTP domain.
+        - `is_hex_digit_ascii(char) -> bool`
+        - `is_eui_with_dash_separators<N>(std::string_view) -> bool`
+            - structural checker for dashed EUI-48 / EUI-64 shapes.
+        - `validate_raw_video_sdp_ptp_gmid(std::string_view) -> Error`
+            - accepts:
+                - `traceable`;
+                - dashed 8-octet EUI form.
+        - `validate_raw_video_sdp_localmac(std::string_view) -> Error`
+            - accepts dashed 6-octet EUI form.
+        - `raw_video_sdp_has_reference_clock(const RawVideoSdpTimingAttributes&) -> bool`
+            - helper indicating whether parsed standalone timing carries `ts-refclk`.
+    - standalone attribute parsers:
+        - `parse_video_sdp_reference_clock(std::string_view) -> std::expected<RawVideoSdpReferenceClock, Error>`
+            - parses standalone `ts-refclk`.
+            - current recognized forms:
+                - `ptp=IEEE1588-2008:<gmid>`;
+                - `ptp=IEEE1588-2008:<gmid>:<domain>`;
+                - `localmac=<mac>`;
+                - other non-empty values preserved as `Kind::Other`.
+            - current raw-layer rules:
+                - PTP version must be `IEEE1588-2008`;
+                - `traceable` is allowed only without explicit domain;
+                - malformed GMID / MAC / domain forms are rejected.
+        - `parse_video_sdp_media_clock(std::string_view) -> std::expected<RawVideoSdpMediaClock, Error>`
+            - parses standalone `mediaclk`.
+            - current recognized forms:
+                - `sender`;
+                - `direct=<offset>`;
+                - other non-empty values preserved as `Kind::Other`.
+        - `parse_video_sdp_timestamp_mode(std::string_view) -> std::expected<RawVideoSdpTimestampModeValue, Error>`
+            - stores non-empty standalone `tsmode` token as raw value.
+        - `parse_video_sdp_sender_type(std::string_view) -> std::expected<RawVideoSdpSenderTypeValue, Error>`
+            - stores non-empty standalone `TP` token as raw value.
+        - `parse_video_sdp_ts_delay(std::string_view) -> std::expected<uint64_t, Error>`
+            - strict unsigned parser for standalone `tsdelay`.
+        - `parse_video_sdp_troff(std::string_view) -> std::expected<uint32_t, Error>`
+            - strict unsigned parser for standalone `TROFF`.
+            - structural/raw parser only; does not enforce final positive-only sender policy here.
+        - `parse_video_sdp_cmax(std::string_view) -> std::expected<uint32_t, Error>`
+            - strict unsigned parser for standalone `CMAX`.
+            - structural/raw parser only; final sender-policy validation remains above this layer.
+    - scope resolution helper:
+        - `resolve_raw_sdp_scoped_timing_attribute(const std::optional<RawSdpScopedAttributeValue>& session_value, const std::optional<RawSdpScopedAttributeValue>& media_value, const std::optional<std::string>& legacy_resolved_value) -> std::optional<RawSdpScopedAttributeValue>`
+            - resolution order:
+                - media-level value wins;
+                - otherwise session-level value;
+                - otherwise compatibility fallback from legacy resolved field.
+            - compatibility fallback is treated as media-scoped so older manually constructed raw models remain usable.
+    - main entry point:
+        - `parse_video_sdp_timing_attributes(const RawVideoSdpMediaSection&) -> std::expected<RawVideoSdpTimingAttributes, Error>`
+            - parses all standalone timing/reference-clock attributes from the selected raw media section.
+            - behavior:
+                - resolves each semantic field through session/media precedence and compatibility fallback;
+                - parses resolved raw value into the corresponding typed raw model;
+                - preserves final resolved scope for each parsed value;
+                - returns explicit `Error::InvalidValue` on malformed standalone timing syntax/value.
+            - covered fields:
+                - `ts-refclk`;
+                - `mediaclk`;
+                - `tsmode`;
+                - `tsdelay`;
+                - `TP`;
+                - `TROFF`;
+                - `CMAX`.
 - Примечание:
-    - this boundary intentionally does not merge `TP` / `TSMODE` / `TSDELAY` / `TROFF` / `CMAX` from `a=fmtp`;
-    - fmtp timing/sender media parameters remain separate in `RawVideoSdpFmtpParameters` and are merged only in final SDP ingestion.
+    - this file is intentionally limited to standalone timing attributes.
+    - `TSMODE`, `TSDELAY`, `TP`, `TROFF`, and `CMAX` from `a=fmtp` remain in `RawVideoSdpFmtpParameters` and are merged only in `video_sdp_ingestion.hpp`.
+    - final standards-aware constraints are layered above this raw boundary, for example:
+        - whether `ts-refclk` is required;
+        - whether `mediaclk` must be media-level;
+        - whether only certain raw `TSMODE` / `TP` tokens are accepted;
+        - whether `TROFF` or `CMAX` are valid for the modeled sender policy.
 
 ### libs/st2110core/include/st2110/video_sdp_rtpmap.hpp
 - Роль:
-    - pure SDP `a=rtpmap` parsing/binding layer для video payload type.
-    - отделяет raw parsing/binding `a=rtpmap` от `a=fmtp` parsing, signaling validation, signaling-model mapping и runtime/bootstrap projection.
+    - raw parser for video `a=rtpmap` payload-bound SDP attribute.
+    - отделяет:
+        - syntax-level parsing and payload-type binding of `a=rtpmap`;
+        - extraction of raw encoding name / clock rate / optional encoding parameters
+          от final ST 2110 video signaling validation.
+    - intentionally does not decide by itself that the parsed `rtpmap` is standards-clean for ST 2110-20 video; that stricter check lives above this raw layer.
 - Связи:
-    - использует `Error` и raw SDP helper’ы / raw media-section model из `video_sdp_media_section.hpp`;
-    - должен использоваться последующими ingestion/composition шагами, прежде всего `069D5`;
-    - не зависит от `VideoStreamSignaling`, depacketizer, reorder buffer и receive pipeline internals.
+    - использует `video_sdp_media_section.hpp` for:
+        - `strip_cr(...)`;
+        - `parse_payload_type(...)`;
+        - `contains_payload_type(...)`;
+        - `RawVideoSdpMediaSection`.
+    - использует `error.hpp` for strict parse failures.
+    - используется `video_sdp_ingestion.hpp`:
+        - `parse_video_sdp_rtpmap_from_media_section(...)` gives the selected raw `rtpmap`;
+        - final ingestion then validates that the selected `rtpmap` is acceptable for current ST 2110 video signaling:
+            - encoding name `raw`;
+            - clock rate `90000`;
+            - no encoding parameters.
+    - покрывается тестами:
+        - `tests/video_sdp_rtpmap_test.cpp`;
+        - косвенно через final-ingestion tests in `tests/video_sdp_ingestion_test.cpp`.
 - Сущности:
     - `RawVideoSdpRtpMap`
-        - raw parsed `a=rtpmap` representation:
-            - `encoding_name`
-            - `clock_rate`
-            - optional `encoding_parameters`
-    - helper functions:
-        - `trim_rtpmap_ascii_ws(...)`
-        - `parse_rtpmap_attribute_payload_for_pt(...)`
-    - main parsing/binding entry points:
-        - `parse_video_sdp_rtpmap_payload(...)`
-            - parses raw `encoding-name/clock-rate[/encoding-parameters]` payload
-        - `parse_video_sdp_rtpmap_attribute(...)`
-            - parses one full `a=rtpmap:<pt> ...` line for the selected payload type
-            - returns `nullopt` on payload-type mismatch
-        - `parse_video_sdp_rtpmap_from_media_section(...)`
-            - parses already bound `raw.rtpmap` from `RawVideoSdpMediaSection`
-            - explicitly checks that selected `payload_type` belongs to `media_payload_types`
+        - raw parsed `a=rtpmap` payload:
+            - `encoding_name`;
+            - `clock_rate`;
+            - optional `encoding_parameters`.
+    - `trim_rtpmap_ascii_ws(std::string_view) -> std::string_view`
+        - trims ASCII whitespace around raw `rtpmap` payload before parsing.
+    - `parse_video_sdp_rtpmap_payload(std::string_view payload) -> std::expected<RawVideoSdpRtpMap, Error>`
+        - parses raw `encoding-name/clock-rate[/encoding-parameters]`.
+        - current behavior:
+            - accepts basic form like `raw/90000`;
+            - accepts optional third component like `raw/90000/2`;
+            - requires non-empty encoding name;
+            - requires positive decimal clock rate;
+            - rejects empty clock rate;
+            - rejects zero clock rate;
+            - rejects empty encoding parameters;
+            - rejects more than one optional trailing `/...` component.
+        - this helper is raw-syntax-oriented and does not yet enforce ST 2110-specific `raw/90000` restrictions.
+    - `parse_rtpmap_attribute_payload_for_pt(std::string_view line, uint8_t expected_payload_type) -> std::expected<std::optional<std::string_view>, Error>`
+        - parses one full SDP `a=rtpmap:<pt> ...` line and binds it to the expected payload type.
+        - returns:
+            - payload text for matching PT;
+            - `nullopt` for PT mismatch;
+            - `Error::InvalidValue` for malformed syntax or malformed PT token.
+    - `parse_video_sdp_rtpmap_attribute(std::string_view line, uint8_t expected_payload_type) -> std::expected<std::optional<RawVideoSdpRtpMap>, Error>`
+        - full attribute-level entry point:
+            - binds line to expected PT;
+            - parses matching payload through `parse_video_sdp_rtpmap_payload(...)`.
+        - returns:
+            - parsed raw `rtpmap` for matching PT;
+            - `nullopt` for PT mismatch;
+            - `Error::InvalidValue` for malformed line/payload.
+    - `parse_video_sdp_rtpmap_from_media_section(const RawVideoSdpMediaSection&) -> std::expected<RawVideoSdpRtpMap, Error>`
+        - parses the already selected/bound raw `rtpmap` from `RawVideoSdpMediaSection`.
+        - validates:
+            - `raw.rtpmap` is present;
+            - selected `raw.payload_type` is actually listed in `raw.media_payload_types`.
+        - then parses the stored raw `rtpmap` payload through `parse_video_sdp_rtpmap_payload(...)`.
 - Примечание:
-    - это raw SDP `rtpmap` parsing/binding layer, а не signaling mapping layer;
-    - semantic interpretation of `encoding_name` and `clock_rate` should remain above this boundary;
-    - later SDP ingestion should compose this file with raw media-section selection, fmtp parsing/mapping and timing-attribute parsing rather than merging logic ad hoc.
+    - this file is intentionally a raw `rtpmap` boundary, not the final video signaling acceptance boundary.
+    - it preserves the distinction between:
+        - “syntactically valid SDP `rtpmap`”;
+        - “currently accepted ST 2110-20 video `rtpmap`”.
+    - current stricter ST 2110 video rule set is localized above this file in final SDP ingestion, so future SDP/raw parsing support does not require reshaping the raw parser.
 
 ### libs/st2110core/include/st2110/video_sdp_ingestion.hpp
 - Роль:
-    - final standards-aware SDP ingestion entry point for ST 2110 video;
-    - merges raw media-section parsing, fmtp media-parameter parsing, standalone timing/reference-clock parsing, and final signaling validation into `VideoStreamSignaling`.
+    - final standards-aware ingestion boundary from raw video SDP media section into `VideoStreamSignaling`.
+    - собирает вместе:
+        - raw selected video media section;
+        - raw fmtp parsing;
+        - raw rtpmap parsing;
+        - raw timing-attribute parsing/resolution;
+        - mapping of raw SDP timing/reference-clock tokens into modeled signaling enums/structs;
+        - final stream-level signaling validation.
+    - keeps this final ingestion step separate from:
+        - raw SDP media-section selection/parsing;
+        - raw fmtp token parsing;
+        - raw timing-attribute parsing;
+        - generic signaling/runtime projection helpers.
 - Связи:
-    - consumes:
-        - `video_sdp_media_section.hpp`
-        - `video_sdp_rtpmap.hpp`
-        - `video_sdp_fmtp.hpp`
-        - `video_sdp_timing_attributes.hpp`
-        - `video_sdp_signaling_adapter.hpp`
-        - `video_signaling.hpp`
+    - использует:
+        - `video_sdp_media_section.hpp` for selected raw media-section model and SDP helpers;
+        - `video_sdp_fmtp.hpp` for strict raw fmtp parsing;
+        - `video_sdp_rtpmap.hpp` for raw `a=rtpmap` parsing;
+        - `video_sdp_timing_attributes.hpp` for raw timing/reference-clock attribute parsing and session/media scope resolution;
+        - `video_sdp_signaling_adapter.hpp` for mapping raw fmtp media-description fields into `VideoStreamSignaling`;
+        - `video_signaling.hpp` for final modeled signaling validation;
+        - `signaling_structs.hpp` for final signaling model types.
+    - является final entry point above raw SDP layers:
+        - `select_raw_video_sdp_media_section(...)` -> `video_stream_signaling_from_raw_video_sdp_media_section(...)`;
+        - `parse_video_stream_signaling_from_sdp(...)` wraps full SDP selection + final ingestion.
+    - покрывается тестами:
+        - `tests/video_sdp_ingestion_test.cpp`;
+        - `tests/video_sdp_timing_scope_test.cpp`;
+        - `tests/video_sdp_optional_sender_timing_test.cpp`;
+        - also cooperates with fmtp-timing coverage in `tests/video_sdp_fmtp_timing_parameters_test.cpp`.
 - Сущности:
-    - mapping helpers for:
-        - reference clock
-        - media clock mode
-        - timestamp mode
-        - sender type
-    - `validate_no_duplicate_fmtp_and_standalone_timing_fields(...)`
-        - rejects conflicts only when a fmtp timing/sender field coexists with the same semantic field at media-level standalone SDP scope;
-        - still allows fmtp media parameters to override session-level standalone compatibility attributes.
-    - `video_stream_signaling_from_raw_video_sdp_media_section(...)`
-    - `parse_video_stream_signaling_from_sdp(...)`
+    - `ascii_iequals(std::string_view a, std::string_view b) -> bool`
+        - ASCII-only case-insensitive comparison helper.
+        - currently used for strict `rtpmap` encoding-name check.
+    - `validate_video_sdp_rtpmap_for_video_signaling(const RawVideoSdpRtpMap&) -> Error`
+        - final ingestion validation for the selected video `a=rtpmap`.
+        - current accepted shape:
+            - encoding name must be `raw` (case-insensitive);
+            - clock rate must be `90000`;
+            - encoding parameters must be absent.
+        - rejects extra `rtpmap` semantics instead of silently ignoring them.
+    - `hex_nibble(char) -> std::optional<uint8_t>`
+    - `parse_hex_byte(std::string_view) -> std::optional<uint8_t>`
+    - `parse_separated_hex_octets<N>(std::string_view) -> std::expected<std::array<uint8_t, N>, Error>`
+        - strict helpers for parsing dashed/colon-separated hex octets.
+        - used for final mapping of raw reference-clock payloads into modeled clock identity / MAC bytes.
+    - `reference_clock_from_raw_video_sdp_reference_clock(const RawVideoSdpReferenceClock&) -> std::expected<ReferenceClock, Error>`
+        - maps raw SDP reference-clock form into modeled `ReferenceClock`.
+        - behavior:
+            - `Ptp`:
+                - requires raw PTP payload;
+                - currently accepts only `IEEE1588-2008`;
+                - accepts either explicit GMID octets or `traceable`;
+                - maps optional domain to `domain_number`, defaulting to `0` when absent;
+            - `LocalMac`:
+                - parses 6-byte MAC octets into `LocalMacReferenceClock`;
+            - `Other`:
+                - preserves non-empty raw token in `ReferenceClock::raw_token`.
+    - `media_clock_mode_from_raw_video_sdp_media_clock(const RawVideoSdpMediaClock&) -> std::expected<MediaClockMode, Error>`
+        - maps raw SDP `mediaclk` form into modeled `MediaClockMode`.
+        - current behavior:
+            - `direct=0` -> `MediaClockMode::Direct`;
+            - `sender` -> `MediaClockMode::Sender`;
+            - non-zero `direct=` offset rejected at final ingestion boundary;
+            - `Other` rejected.
+    - `timestamp_mode_from_raw_video_sdp_timestamp_mode(const RawVideoSdpTimestampModeValue&) -> std::expected<TimestampMode, Error>`
+        - maps `SAMP` / `NEW` / `PRES` into modeled `TimestampMode`.
+    - `sender_type_from_raw_video_sdp_sender_type(const RawVideoSdpSenderTypeValue&) -> std::expected<VideoSenderType, Error>`
+        - maps:
+            - `2110TPN` -> `VideoSenderType::Narrow`;
+            - `2110TPNL` -> `VideoSenderType::NarrowLinear`;
+            - `2110TPW` -> `VideoSenderType::Wide`.
+    - `apply_video_sdp_timing_attributes_to_signaling(const RawVideoSdpTimingAttributes&, VideoStreamSignaling&) -> Error`
+        - applies standalone/session/media timing attributes into already-created `VideoStreamSignaling`.
+        - applies when present:
+            - `reference_clock`;
+            - `media_clock_mode`;
+            - `timestamp_mode`;
+            - `ts_delay_sender_ticks`;
+            - `sender_type`;
+            - `troff_us`;
+            - `cmax`.
+        - performs numeric narrowing checks where needed, especially for `ts_delay_sender_ticks`.
+    - `apply_video_sdp_fmtp_timing_sender_fields_to_signaling(const RawVideoSdpFmtpParameters&, VideoStreamSignaling&) -> Error`
+        - applies known timing/sender fields parsed from `a=fmtp` into signaling.
+        - handles:
+            - `TSMODE`;
+            - `TSDELAY`;
+            - `TP`;
+            - `TROFF`;
+            - `CMAX`.
+        - this is the media-level fmtp timing path that overrides session-level standalone compatibility attributes after conflict checks.
+    - `raw_video_sdp_timing_value_is_media_scoped(...) -> bool`
+        - helper for checking whether a resolved standalone timing value came from media scope.
+    - `raw_video_sdp_has_media_level_mediaclk(const RawVideoSdpTimingAttributes&) -> bool`
+        - helper for final ingestion requirement that `mediaclk` be present specifically at media scope.
+    - `validate_no_duplicate_fmtp_and_standalone_timing_fields(const RawVideoSdpFmtpParameters&, const RawVideoSdpTimingAttributes&) -> Error`
+        - enforces conflict policy between fmtp timing media parameters and standalone timing attributes.
+        - current rule:
+            - fmtp timing fields may coexist with session-level standalone values;
+            - fmtp timing fields must not coexist with media-level standalone values for the same semantic field.
+        - checked fields:
+            - `timestamp_mode`;
+            - `ts_delay_sender_ticks`;
+            - `sender_type`;
+            - `troff_us`;
+            - `cmax`.
+    - `video_stream_signaling_from_raw_video_sdp_media_section(const RawVideoSdpMediaSection&) -> std::expected<VideoStreamSignaling, Error>`
+        - main final-ingestion function from one selected raw video media section.
+        - flow:
+            - requires non-empty raw fmtp payload;
+            - parses raw fmtp with `parse_video_sdp_fmtp_payload(...)`;
+            - maps raw fmtp media-description fields into initial `VideoStreamSignaling` via `video_stream_signaling_from_raw_video_sdp_fmtp(...)`;
+            - parses and validates `rtpmap` through `parse_video_sdp_rtpmap_from_media_section(...)` and `validate_video_sdp_rtpmap_for_video_signaling(...)`;
+            - parses/resolves raw timing attributes with `parse_video_sdp_timing_attributes(...)`;
+            - requires `TP` to be present in fmtp;
+            - requires `ts-refclk` to be present;
+            - requires media-level `mediaclk`;
+            - rejects media-level conflicts between fmtp timing parameters and standalone timing attributes;
+            - applies standalone timing attributes;
+            - applies fmtp timing/sender fields;
+            - runs final `validate_video_stream_signaling(...)`.
+        - returns fully modeled `VideoStreamSignaling` or explicit `Error`.
+    - `parse_video_stream_signaling_from_sdp(std::string_view sdp, uint8_t expected_payload_type) -> std::expected<VideoStreamSignaling, Error>`
+        - full convenience entry point.
+        - first selects the raw video media section for the expected payload type using `select_raw_video_sdp_media_section(...)`;
+        - then delegates to `video_stream_signaling_from_raw_video_sdp_media_section(...)`.
 - Примечание:
-    - final SDP ingestion now requires explicit `TP` in video `a=fmtp`;
-    - absent `TP` is no longer silently treated as `2110TPN`;
-    - standalone timing attributes are applied first, then fmtp timing/sender fields are merged on top through an explicit final-ingestion boundary;
-    - media-level `mediaclk` remains mandatory for standards-clean final ingestion.
+    - this file is the final SDP-to-signaling acceptance boundary, so it intentionally rejects some shapes that lower raw layers preserve:
+        - unsupported `rtpmap` variants;
+        - missing `TP`;
+        - missing `ts-refclk`;
+        - session-level-only `mediaclk`;
+        - non-zero `direct=` media-clock offset;
+        - media-level conflicts between fmtp timing fields and standalone timing attributes.
+    - `VideoStreamSignaling` defaults still exist structurally, but final SDP ingestion does not rely on silent defaults for standards-required timing/sender fields.
+    - raw SDP transport metadata such as `c=`, `mid`, source-filter, and redundancy candidates remain outside `VideoStreamSignaling`; this file consumes the selected media section but does not mix transport/bootstrap runtime behavior into final signaling ingestion.
 
 ### libs/st2110core/include/st2110/video_timestamp_mapping.hpp
 - Роль:
-    - standards-aware boundary для преобразования RTP timestamp domain в internal `TimestampNs`.
-    - отделяет RTP-domain timing от depacketizer packet grouping, segment placement, frame assembly и synthetic/manual timestamp generation.
-    - вводит отдельный synthetic timestamp mapper только для тестов/scaffolding/offline tools, чтобы fps cadence не становился standards-facing timing model.
+    - explicit boundary для преобразования RTP timestamp domain в internal `TimestampNs`.
+    - отделяет:
+        - RTP-domain timestamp progression и wraparound handling;
+        - arithmetic conversion RTP ticks -> nanoseconds;
+        - synthetic/manual fps-based timestamp generation
+          от depacketizer packet grouping, frame assembly, reconstructor и receiver-side playout timing.
+    - keeps standards-facing RTP timestamp mapping separate from synthetic cadence helpers, чтобы fps-based scaffolding logic не становился заменой ST 2110 timestamp semantics.
 - Связи:
-    - использует `TimestampNs` из `timestamp.hpp`;
-    - использует `Error` для validation/result reporting;
-    - пока не подключен к `VideoReceivePipeline` / reconstructor / backend path;
-    - future integration should happen above depacketizer/reconstructor output boundaries, not inside packet parsing or segment placement.
+    - использует:
+        - `error.hpp` для explicit validation/result reporting;
+        - `timestamp.hpp` для `TimestampNs`.
+    - напрямую покрывается тестами:
+        - `tests/video_timestamp_mapping_test.cpp`;
+        - `tests/video_timestamp_mapping_invariants_test.cpp`.
+    - архитектурно сочетается с `video_playout_timing.hpp`:
+        - mapped media timestamps are intended to flow into receiver-side playout/reconstruction timing above reconstructed-frame boundaries;
+        - invariants coverage explicitly checks this layering through `video_reconstructed_frame_timing(...)`.
+    - пока не встроен в actual `VideoReceivePipeline` / backend runtime path;
+      future integration should remain above depacketizer/reconstructor output boundaries, not inside packet parsing or segment placement.
 - Сущности:
     - `videoTimestampNanosecondsPerSecond`
-        - common constant for timestamp conversion.
+        - common conversion constant:
+            - `1'000'000'000`.
     - `VideoRtpTimestampMapperConfig`
-        - `rtp_clock_rate`
-        - `anchor_rtp_timestamp`
-        - `anchor_timestamp_ns`
-    - `validate_video_rtp_timestamp_mapper_config(...)`
-        - rejects invalid RTP timestamp mapping config such as zero RTP clock rate.
-    - helper functions:
-        - `checked_video_timestamp_add_u64(...)`
-        - `checked_video_timestamp_mul_u64(...)`
-        - `forward_rtp_timestamp_delta(...)`
-            - computes forward RTP timestamp delta using 32-bit modulo arithmetic;
-            - accepts normal forward movement and wraparound;
-            - rejects backward / ambiguous jumps at or above half the 32-bit range.
-        - `rtp_ticks_to_timestamp_ns(...)`
-            - converts RTP ticks to nanoseconds relative to an anchor timestamp;
-            - uses integer arithmetic and overflow checks.
+        - config for standards-facing RTP timestamp mapping:
+            - `rtp_clock_rate`
+            - `anchor_rtp_timestamp`
+            - `anchor_timestamp_ns`
+    - `validate_video_rtp_timestamp_mapper_config(const VideoRtpTimestampMapperConfig&) -> Error`
+        - validates RTP timestamp mapper config;
+        - current rule:
+            - `rtp_clock_rate` must be non-zero.
+    - arithmetic helpers:
+        - `checked_video_timestamp_add_u64(uint64_t a, uint64_t b) -> std::expected<uint64_t, Error>`
+            - checked addition with overflow rejection.
+        - `checked_video_timestamp_mul_u64(uint64_t a, uint64_t b) -> std::expected<uint64_t, Error>`
+            - checked multiplication with overflow rejection.
+        - `forward_rtp_timestamp_delta(uint32_t previous, uint32_t current) -> std::expected<uint32_t, Error>`
+            - computes forward RTP timestamp delta in 32-bit modulo arithmetic.
+            - behavior:
+                - accepts normal forward movement;
+                - accepts normal wraparound;
+                - rejects backward or ambiguous jumps where raw delta is `>= 0x80000000`.
+        - `rtp_ticks_to_timestamp_ns(uint64_t ticks, uint32_t rtp_clock_rate, TimestampNs anchor_timestamp_ns) -> std::expected<TimestampNs, Error>`
+            - converts RTP ticks to absolute nanoseconds relative to an anchor timestamp;
+            - splits:
+                - whole seconds;
+                - remainder ticks;
+            - uses integer arithmetic and checked overflow handling;
+            - rejects zero RTP clock rate and nanosecond overflow.
     - `VideoRtpTimestampMapper`
-        - standards-facing RTP timestamp mapper.
+        - stateful standards-facing RTP timestamp mapper.
+        - constructor:
+            - `explicit VideoRtpTimestampMapper(VideoRtpTimestampMapperConfig cfg)`
+            - initializes through `reset(cfg)`.
         - `map(uint32_t rtp_timestamp) -> std::expected<TimestampNs, Error>`
-            - maps RTP timestamps to internal nanoseconds;
-            - preserves continuity across RTP timestamp wraparound;
-            - rejects invalid/backward/ambiguous timestamp movement.
-        - `reset(VideoRtpTimestampMapperConfig)`
-            - resets anchor and accumulated timestamp state.
+            - maps current RTP timestamp to internal nanoseconds.
+            - behavior:
+                - returns config error if mapper config is invalid;
+                - computes forward delta from `last_raw_rtp_timestamp_`;
+                - accumulates `ticks_since_anchor_`;
+                - preserves continuity across normal 32-bit wraparound;
+                - rejects backward / ambiguous movement;
+                - rejects tick accumulator overflow;
+                - returns absolute timestamp via `rtp_ticks_to_timestamp_ns(...)`.
+            - notable current behavior:
+                - mapping the anchor RTP timestamp returns `anchor_timestamp_ns`;
+                - repeated valid forward mapping is monotonic for monotonic RTP progression.
+        - `reset(VideoRtpTimestampMapperConfig cfg)`
+            - replaces mapper config;
+            - recomputes stored config validation result;
+            - resets:
+                - `last_raw_rtp_timestamp_` to `anchor_rtp_timestamp`;
+                - `ticks_since_anchor_` to `0`.
     - `SyntheticVideoTimestampMapperConfig`
-        - `fps_num`
-        - `fps_den`
-        - `anchor_timestamp_ns`
-    - `validate_synthetic_video_timestamp_mapper_config(...)`
-        - validates synthetic/manual timestamp mapper config.
-    - `synthetic_unit_index_to_timestamp_ns(...)`
+        - config for explicit fps-based synthetic/manual timestamp generation:
+            - `fps_num`
+            - `fps_den`
+            - `anchor_timestamp_ns`
+    - `validate_synthetic_video_timestamp_mapper_config(const SyntheticVideoTimestampMapperConfig&) -> Error`
+        - validates synthetic mapper config;
+        - current rule:
+            - `fps_num` and `fps_den` must both be non-zero.
+    - `synthetic_unit_index_to_timestamp_ns(uint64_t unit_index, const SyntheticVideoTimestampMapperConfig&) -> std::expected<TimestampNs, Error>`
         - maps a synthetic unit index to nanoseconds using explicit fps cadence.
+        - behavior:
+            - validates config first;
+            - when `__int128` is available, computes via wide intermediate arithmetic;
+            - otherwise uses checked 64-bit staged arithmetic;
+            - rejects overflow and invalid config.
     - `SyntheticVideoTimestampMapper`
-        - synthetic/manual mapper for tests and scaffolding only.
-        - `map_unit_index(uint64_t) -> std::expected<TimestampNs, Error>`
+        - stateless synthetic/manual mapper for tests, scaffolding, and other non-standards-facing cadence generation.
+        - constructor:
+            - `explicit SyntheticVideoTimestampMapper(SyntheticVideoTimestampMapperConfig cfg)`
+            - stores config and precomputes config validation result.
+        - `map_unit_index(uint64_t unit_index) const -> std::expected<TimestampNs, Error>`
+            - returns config error if invalid;
+            - otherwise delegates to `synthetic_unit_index_to_timestamp_ns(...)`.
 - Примечание:
-    - this file establishes the timestamp mapping architecture boundary required by MVP;
-    - it intentionally does not implement playout/release policy yet;
-    - receiver-side playout timing, offset/delay policy, and pipeline integration remain future work through `071A` / `072` / later bootstrap tasks.
+    - this file models two intentionally separate timestamp paths:
+        - RTP-domain mapping for standards-facing receive timing;
+        - synthetic fps-based mapping for tests/scaffolding.
+    - current RTP mapper is intentionally simple and monotonic:
+        - it accepts normal forward wraparound;
+        - it rejects backward or half-range-ambiguous jumps instead of trying to infer sender discontinuities or resynchronization.
+    - receiver-side playout/reconstruction delay policy is not implemented here and must remain in the separate `video_playout_timing.hpp` boundary above mapped media timestamps.
 
 ### libs/st2110core/include/st2110/video_playout_timing.hpp
 - Роль:
-    - explicit receiver-side playout / reconstruction timing boundary для video receive path.
-    - отделяет RTP-domain-to-`TimestampNs` mapping от receiver-side решения, когда reconstructed frame/unit считается доступным для дальнейшей выдачи.
-    - задает локальную точку будущего расширения для receiver offset/delay policy, buffering/release behavior и ST 2110-21-related receiver timing behavior.
+    - explicit receiver-side playout / reconstruction timing boundary for the video receive path.
+    - separates:
+        - RTP-domain timestamp mapping;
+        - receiver-side reconstruction/playout delay application;
+        - final timing metadata attached to reconstructed video frames.
+    - keeps receiver delay calculation out of RTP parsing, depacketizer, reconstructor, and sink-facing frame storage.
 - Связи:
-    - использует `TimestampNs` из `timestamp.hpp`;
-    - использует `Error` для validation/result reporting;
-    - использует `ReconstructedVideoFrame` из `video_unit_reconstructor.hpp`;
-    - не зависит от `PacketView`, `Depacketizer`, reorder buffer, packet parsing или segment placement.
+    - использует:
+        - `error.hpp` for validation/result reporting;
+        - `timestamp.hpp` for `TimestampNs`;
+        - `video_unit_reconstructor.hpp` for `ReconstructedVideoFrame`.
+    - intended upstream consumer is a video RTP timestamp mapping boundary such as `video_timestamp_mapping.hpp`.
+    - intended downstream consumers are backend delivery, dump/inspection tools, and future receiver-side release/scheduling layers.
+    - behavior is covered by `tests/video_playout_timing_test.cpp`.
 - Сущности:
     - `VideoReceiverPlayoutTimingConfig`
-        - `link_offset_delay_ns` — receiver-side reconstruction/playout offset относительно mapped media timestamp.
+        - receiver-side playout/reconstruction timing config:
+            - `link_offset_delay_ns`
     - `VideoReceiverPlayoutTimingDecision`
-        - `media_timestamp_ns`
-        - `reconstruction_timestamp_ns`
+        - explicit timing decision result:
+            - `media_timestamp_ns`
+            - `reconstruction_timestamp_ns`
     - `VideoReconstructedFrameTiming`
-        - `rtp_timestamp`
-        - `media_timestamp_ns`
-        - `reconstruction_timestamp_ns`
-    - `validate_video_receiver_playout_timing_config(...)`
-        - structural validation entry point for receiver playout timing config.
-    - `video_receiver_playout_timing_decision(...)`
-        - computes `reconstruction_timestamp_ns = media_timestamp_ns + link_offset_delay_ns`;
+        - timing metadata attached to a reconstructed frame:
+            - `rtp_timestamp`
+            - `media_timestamp_ns`
+            - `reconstruction_timestamp_ns`
+    - `validate_video_receiver_playout_timing_config(const VideoReceiverPlayoutTimingConfig&) -> Error`
+        - structural validation entry point for receiver playout timing config;
+        - current implementation accepts all modeled values and returns `Ok`.
+    - `video_receiver_playout_timing_decision(TimestampNs media_timestamp_ns, const VideoReceiverPlayoutTimingConfig&) -> std::expected<VideoReceiverPlayoutTimingDecision, Error>`
+        - validates config first;
+        - computes:
+            - `reconstruction_timestamp_ns = media_timestamp_ns + link_offset_delay_ns`;
+        - preserves original `media_timestamp_ns` in the result;
         - rejects overflow as `InvalidValue`.
-    - `video_reconstructed_frame_timing(...)`
-        - adapter from `ReconstructedVideoFrame` metadata plus mapped media timestamp to explicit timing metadata.
+    - `video_reconstructed_frame_timing(const ReconstructedVideoFrame&, TimestampNs media_timestamp_ns, const VideoReceiverPlayoutTimingConfig&) -> std::expected<VideoReconstructedFrameTiming, Error>`
+        - validates config through the existing timing-decision path;
+        - derives receiver playout/reconstruction timing from the supplied mapped media timestamp;
+        - copies `frame.rtp_timestamp` into the resulting timing metadata;
+        - returns:
+            - `rtp_timestamp`
+            - `media_timestamp_ns`
+            - `reconstruction_timestamp_ns`
+        - propagates timing-decision/config errors unchanged.
 - Примечание:
-    - файл не реализует scheduler/sleep/release queue;
-    - он только фиксирует architecture boundary между timestamp mapping и future playout/release policy;
-    - future receiver timing behavior should extend this boundary rather than move into parser/reorder/depacketizer internals.
+    - this file does not map RTP timestamps to `TimestampNs`; that remains a separate boundary.
+    - this file does not implement scheduling, sleeping, queueing, release timing, or deadline enforcement; it only computes timing metadata and receiver-side delay application.
+    - `link_offset_delay_ns` is modeled explicitly as receiver-side timing policy, which aligns with the ST 2110-10 Link Offset Delay concept, but the current file keeps only the local calculation boundary, not fuller buffer/conformance behavior.
+    - current timing attachment is performed above reconstructed-frame creation, not inside depacketizer or frame storage.
 
 ### libs/st2110core/include/st2110/audio_signaling.hpp
 - Роль:
-    - standards-aware signaling/model boundary for ST 2110-30 audio.
-    - explicitly separates PCM encoding kind from PCM bit depth so SDP/media-description interpretation is not collapsed into one implicit `LinearPcm -> L24` assumption.
+    - центральная standards-aware signaling/model boundary для текущего ST 2110-30 audio path.
+    - задает:
+        - modeled audio media description;
+        - modeled conformance-range policy;
+        - modeled channel-order signaling;
+        - stream-level validation rules.
+    - отделяет standards-facing audio signaling semantics от:
+        - raw SDP parsing;
+        - runtime `RxAudioConfig`;
+        - RTP/audio packet parsing;
+        - wire-sample decoding;
+        - audio buffer storage/layout;
+        - backend/socket runtime behavior.
 - Связи:
-    - используется `rx_config.hpp`, `audio_signaling_rx_config.hpp`, `audio_receiver_bootstrap.hpp`, `audio_sdp_signaling_adapter.hpp`;
-    - задает signaling/media-description layer above runtime transport/backend config.
+    - использует `error.hpp` для strict parse/validation results.
+    - используется `audio_channel_order.hpp` как lower-level parsed/effective channel-order boundary поверх этого signaling model.
+    - используется `audio_sdp_signaling_adapter.hpp` для raw SDP -> `AudioStreamSignaling` mapping.
+    - используется `audio_signaling_rx_config.hpp` для signaling -> `RxAudioConfig` projection.
+    - используется `audio_receiver_bootstrap.hpp` для aggregated bootstrap composition.
+    - runtime audio config in `rx_config.hpp` explicitly reuses:
+        - `AudioPcmBitDepth`;
+        - `AudioMediaDescription`;
+        - `AudioConformanceRange`;
+        - validation helpers from this file.
 - Сущности:
     - `AudioConformanceLevel`
+        - modeled ST 2110-30 conformance-level axis:
+            - `LevelA`
+            - `LevelAX`
+            - `LevelB`
+            - `LevelBX`
+            - `LevelC`
+            - `LevelCX`.
     - `AudioConformanceRange`
+        - explicit modeled conformance/support range:
+            - `level`
+            - `sampling_rate_hz`
+            - `packet_time_us`
+            - `min_channels`
+            - `max_channels`.
     - `AudioPcmEncoding`
-        - `LinearPcm`
+        - current modeled PCM encoding axis:
+            - `LinearPcm`.
     - `AudioPcmBitDepth`
-        - `Bits16`
-        - `Bits24`
+        - explicit PCM bit-depth axis:
+            - `Bits16`
+            - `Bits24`.
     - `validate_audio_pcm_bit_depth(AudioPcmBitDepth) -> Error`
-        - explicit validation boundary for modeled PCM bit depth.
+        - validates known modeled bit-depth enum values.
     - `AudioMediaDescription`
-        - `pcm_encoding`
-        - `pcm_bit_depth`
-        - `sampling_rate_hz`
-        - `packet_time_us`
-        - `channel_count`
+        - modeled audio media/signaling description:
+            - `pcm_encoding`
+            - `pcm_bit_depth`
+            - `sampling_rate_hz`
+            - `packet_time_us`
+            - `channel_count`.
     - `AudioChannelOrderConvention`
+        - modeled channel-order signaling convention:
+            - `Unspecified`
+            - `Smpte2110`
+            - `Other`.
     - `AudioChannelOrderSignaling`
+        - raw/modeled channel-order signaling object:
+            - `convention`
+            - `raw_value`.
     - `AudioStreamSignaling`
-    - `audio_level_a_receiver_baseline()`
-    - `validate_audio_conformance_range(...)`
-    - `audio_media_description_matches_conformance_range(...)`
-    - `validate_audio_media_description_against_conformance_range(...)`
-        - now validates modeled PCM bit depth in addition to encoding/rate/ptime/channel-count constraints.
-    - `validate_audio_channel_order_signaling(...)`
-    - `validate_audio_stream_signaling(...)`
+        - final modeled audio stream signaling:
+            - `media`
+            - optional `channel_order`.
+    - `AudioChannelOrderDeclaredCountValidation`
+        - helper result object for strict SMPTE 2110 channel-order declared-count parsing:
+            - `error`
+            - `declared_channel_count`
+            - `has_declared_channel_count`.
+    - `audio_level_a_receiver_baseline() -> AudioConformanceRange`
+        - explicit current default standards-aware receiver baseline:
+            - `48 kHz`
+            - `1 ms`
+            - `1..8 channels`
+            - `LevelA`.
+    - conformance/media validation helpers:
+        - `validate_audio_conformance_range(const AudioConformanceRange&) -> Error`
+            - validates structural correctness of a modeled conformance range.
+        - `audio_media_description_matches_conformance_range(const AudioMediaDescription&, const AudioConformanceRange&) -> bool`
+            - pure matching helper for sampling-rate / packet-time / channel-range comparison.
+        - `validate_audio_media_description_against_conformance_range(const AudioMediaDescription&, const AudioConformanceRange&) -> Error`
+            - validates:
+                - encoding;
+                - bit depth;
+                - conformance-range structure;
+                - media/range compatibility.
+    - channel-order parsing/validation helpers:
+        - `audio_signaling_channel_order_is_digit(...)`
+        - `audio_signaling_channel_order_token_contains_ws(...)`
+        - `audio_signaling_smpte2110_channel_order_symbol_count(...)`
+            - validates one SMPTE 2110 channel-order symbol and derives its declared channel count.
+        - `validate_smpte2110_audio_channel_order_raw_value_and_count(...)`
+            - strictly validates `SMPTE2110.(...)` raw syntax and total declared channel count.
+        - `validate_audio_channel_order_signaling(const AudioChannelOrderSignaling&) -> Error`
+            - validates convention/raw-value consistency:
+                - `Unspecified` requires empty `raw_value`;
+                - `Smpte2110` requires strict `SMPTE2110.(...)` form;
+                - `Other` requires non-empty raw token.
+    - stream-level validation:
+        - `validate_audio_stream_signaling(const AudioStreamSignaling&) -> Error`
+            - validates audio media against the current Level A receiver baseline;
+            - validates optional channel-order signaling;
+            - for `Smpte2110` channel order, rejects declared channel counts that exceed signaled media `channel_count`.
 - Примечание:
-    - PCM bit depth is now a first-class modeled axis in signaling;
-    - channel-order semantics remain separate from PCM encoding/bit-depth semantics;
-    - runtime storage layout is still a separate boundary and is not used as a proxy for signaled wire bit depth.
+    - current default standards-aware acceptance is explicitly Level A-oriented, but the architecture is already shaped around extensible `AudioConformanceRange` rather than hardcoding Level A into every consumer.
+    - this file models channel-order signaling and strict validation, but it does not parse channel groups into effective layout objects; that richer parsed/effective boundary lives in `audio_channel_order.hpp`.
+    - this file does not project signaling into runtime transport fields such as UDP port, payload type, or IPs; that remains in `audio_signaling_rx_config.hpp` and `audio_receiver_bootstrap.hpp`.
 
 ### libs/st2110core/include/st2110/audio_signaling_rx_config.hpp
 - Роль:
-    - projection from standards-aware `AudioStreamSignaling` to backend/manual-facing `RxAudioConfig`.
-    - keeps signaled PCM bit depth explicit when moving from SDP/signaling layer into runtime/backend config.
+    - explicit projection boundary from standards-aware `AudioStreamSignaling` to runtime/backend-facing `RxAudioConfig`.
+    - отделяет signaling/media semantics from runtime transport/config fields needed by receive backends.
+    - keeps signaling-derived runtime projection separate from:
+        - raw SDP parsing;
+        - audio receiver bootstrap aggregation;
+        - RTP/audio packet parsing;
+        - wire-sample decode;
+        - audio buffer layout/storage;
+        - backend/socket runtime behavior.
 - Связи:
-    - использует `audio_signaling.hpp`, `config_validation.hpp`, `rx_config.hpp`;
-    - потребляется `audio_receiver_bootstrap.hpp` и future backend/bootstrap layers.
+    - использует `audio_signaling.hpp` for:
+        - `AudioStreamSignaling`;
+        - `validate_audio_stream_signaling(...)`.
+    - использует `config_validation.hpp` for:
+        - `audio_samples_per_packet_from_rate_and_packet_time(...)`.
+    - использует `rx_config.hpp` for:
+        - `RxAudioConfig`;
+        - `AudioSampleFormat`;
+        - `validate_rx_audio_config(...)`.
+    - используется `audio_receiver_bootstrap.hpp` как lower composition layer for signaling-derived receiver bootstrap.
+    - intended downstream consumers are audio runtime/backend layers that need a validated `RxAudioConfig` derived from audio signaling.
 - Сущности:
     - `rx_audio_config_from_audio_stream_signaling(const AudioStreamSignaling&, uint16_t udp_port, uint8_t payload_type, std::string local_ip, std::string dest_ip, AudioSampleFormat format = AudioSampleFormat::LinearPcm) -> std::expected<RxAudioConfig, Error>`
-        - validates signaling;
-        - derives `samples_per_packet` from `sampling_rate_hz` + `packet_time_us`;
-        - projects transport fields and runtime sample format;
-        - projects `signaling.media.pcm_bit_depth` into `RxAudioConfig::pcm_bit_depth`;
-        - validates the resulting runtime config before returning it.
+        - main signaling-to-runtime projection entry point.
+        - input:
+            - validated/validatable `AudioStreamSignaling`;
+            - explicit runtime transport/config fields:
+                - `udp_port`
+                - `payload_type`
+                - `local_ip`
+                - `dest_ip`
+                - runtime `AudioSampleFormat`.
+        - behavior:
+            - validates the input signaling through `validate_audio_stream_signaling(...)`;
+            - derives `samples_per_packet` from signaled `sampling_rate_hz` and `packet_time_us` via the common config-validation helper;
+            - maps signaling media fields into runtime config:
+                - `sampling_rate_hz`
+                - `packet_time_us`
+                - `channel_count`
+                - `pcm_bit_depth`;
+            - maps explicit transport/runtime fields into runtime config:
+                - `udp_port`
+                - `payload_type`
+                - `local_ip`
+                - `dest_ip`
+                - `format`;
+            - validates the resulting `RxAudioConfig` through `validate_rx_audio_config(...)` before returning it.
+        - failure behavior:
+            - propagates invalid signaling;
+            - propagates derived-value failures for non-integral/invalid `samples_per_packet`;
+            - propagates runtime-config validation failures for invalid transport fields or unsupported runtime sample format/policy.
 - Примечание:
-    - bit depth is now preserved through signaling-to-runtime projection rather than being reselected later inside the backend.
+    - this file intentionally does not choose channel-order behavior; channel-order stays outside `RxAudioConfig` and is handled by `audio_channel_order.hpp` / `audio_receiver_bootstrap.hpp`.
+    - this file intentionally does not parse SDP directly; it projects only from already-modeled `AudioStreamSignaling`.
+    - runtime audio config now preserves explicit `pcm_bit_depth` from signaling instead of collapsing it into a backend-local assumption.
 
 ### libs/st2110core/include/st2110/audio_receiver_bootstrap.hpp
 - Роль:
-    - explicit audio receiver bootstrap composition boundary.
-    - связывает standards-aware `AudioStreamSignaling` с текущим runtime audio config и effective channel-order model.
-    - делает signaling-derived audio config first-class bootstrap input без смешивания с audio buffer layout, channel reordering, packet pipeline или backend/socket behavior.
+    - thin audio receiver bootstrap composition boundary.
+    - связывает standards-aware `AudioStreamSignaling` с:
+        - current runtime `RxAudioConfig`;
+        - parsed/effective channel-order model.
+    - делает signaling-derived audio receive bootstrap first-class отдельным result object без смешивания с:
+        - raw SDP parsing;
+        - audio sample storage/layout;
+        - channel reordering/mixing;
+        - RTP/audio packet parsing;
+        - reorder/jitter handling;
+        - timestamp/playout policy;
+        - backend/socket behavior.
 - Связи:
-    - использует `audio_signaling.hpp` for `AudioStreamSignaling`;
-    - использует `audio_signaling_rx_config.hpp` for signaling-to-`RxAudioConfig` projection;
-    - использует `audio_channel_order.hpp` for effective channel grouping;
-    - использует `rx_config.hpp` for runtime `RxAudioConfig` / `AudioSampleFormat`;
-    - future audio runtime pipeline / backend bootstrap should consume this composition boundary rather than reparsing SDP strings or directly coupling to raw SDP parsing.
+    - использует `audio_channel_order.hpp` for:
+        - `ParsedAudioChannelOrder`;
+        - `effective_audio_channel_order_from_audio_stream_signaling(...)`.
+    - использует `audio_signaling.hpp` for:
+        - `AudioStreamSignaling`.
+    - использует `audio_signaling_rx_config.hpp` for:
+        - `rx_audio_config_from_audio_stream_signaling(...)`.
+    - использует `rx_config.hpp` for:
+        - `RxAudioConfig`;
+        - `AudioSampleFormat`.
+    - использует `error.hpp` through `std::expected<..., Error>`.
+    - current direct consumer coverage is `tests/audio_receiver_bootstrap_test.cpp`.
+    - intended downstream audio runtime/bootstrap code should consume this boundary instead of reparsing signaling strings or independently recomputing channel-order/runtime projection.
 - Сущности:
     - `AudioReceiverBootstrapConfig`
-        - `rx_config` — projected runtime audio receive config.
-        - `channel_order` — parsed/effective modeled channel-order representation.
+        - aggregated bootstrap result:
+            - `rx_config` — projected runtime audio receive config;
+            - `channel_order` — parsed/effective modeled channel-order representation.
     - `audio_receiver_bootstrap_config_from_audio_stream_signaling(...) -> std::expected<AudioReceiverBootstrapConfig, Error>`
-        - validates and projects `AudioStreamSignaling` into `RxAudioConfig` through `rx_audio_config_from_audio_stream_signaling(...)`;
-        - derives effective channel order through `effective_audio_channel_order_from_audio_stream_signaling(...)`;
-        - keeps local runtime/transport fields explicit:
-            - `udp_port`;
-            - `payload_type`;
-            - `local_ip`;
-            - `dest_ip`;
-            - runtime `AudioSampleFormat`;
-        - propagates validation/projection errors from existing boundaries.
+        - input:
+            - `const AudioStreamSignaling& signaling`
+            - `uint16_t udp_port`
+            - `uint8_t payload_type`
+            - `std::string local_ip`
+            - `std::string dest_ip`
+            - optional runtime `AudioSampleFormat format = AudioSampleFormat::LinearPcm`
+        - behavior:
+            - projects runtime config through `rx_audio_config_from_audio_stream_signaling(...)`;
+            - derives effective channel-order through `effective_audio_channel_order_from_audio_stream_signaling(...)`;
+            - returns one aggregated bootstrap object when both stages succeed.
+        - keeps local runtime/transport inputs explicit at the bootstrap call site:
+            - `udp_port`
+            - `payload_type`
+            - `local_ip`
+            - `dest_ip`
+            - runtime `AudioSampleFormat`.
+        - propagates validation/projection failures from the existing lower boundaries unchanged.
 - Примечание:
-    - this file intentionally does not implement audio sample buffer layout, channel reordering, audio RTP packet parsing, jitter/reorder, backend socket/MTL behavior, or OBS integration;
-    - future channel mapping / layout adaptation should consume `ParsedAudioChannelOrder` from this bootstrap result.
+    - this file is intentionally only a composition/helper boundary and does not introduce its own parallel validation model.
+    - it does not parse SDP directly; raw SDP parsing/mapping remains outside this file.
+    - it does not implement audio buffer layout, channel reordering, audio packet pipeline, timestamp mapping, backend socket/MTL behavior, or OBS integration.
+    - future runtime/bootstrap integration should prefer consuming `AudioReceiverBootstrapConfig` as one signaling-derived bootstrap result rather than duplicating:
+        - `RxAudioConfig` derivation;
+        - effective channel-order derivation.
 
 ### libs/st2110core/include/st2110/audio_sdp_media_section.hpp
 - Роль:
     - raw SDP audio media-section parsing boundary для выбранного audio payload type.
-    - отделяет SDP/media-section parsing от `AudioStreamSignaling`, runtime `RxAudioConfig`, audio buffer layout и backend/socket transport behavior.
+    - отделяет raw SDP/media-section parsing от:
+        - `AudioStreamSignaling`;
+        - runtime `RxAudioConfig`;
+        - audio receiver bootstrap;
+        - audio buffer/channel layout;
+        - backend/socket transport behavior.
     - является raw layer для audio SDP ingestion path; raw-to-signaling mapping живет в `audio_sdp_signaling_adapter.hpp`, final SDP-to-signaling composition — в `audio_sdp_ingestion.hpp`.
 - Связи:
-    - зависит только от `Error` и стандартных utility types;
+    - зависит только от `error.hpp` и стандартных utility/container types;
     - используется `audio_sdp_signaling_adapter.hpp` и `audio_sdp_ingestion.hpp`;
     - не зависит от video SDP boundary, audio runtime config, backend transport или OBS integration.
 - Сущности:
     - `RawAudioSdpAttribute`
-        - raw preserved SDP attribute / fmtp parameter representation (`name`, `value`).
+        - raw preserved SDP attribute / fmtp parameter representation:
+            - `name`
+            - `value`.
     - `RawAudioSdpRtpMap`
         - parsed audio `a=rtpmap` payload:
-            - `encoding_name`;
-            - `sampling_rate_hz`;
+            - `encoding_name`
+            - `sampling_rate_hz`
             - optional `channel_count`.
     - `RawAudioSdpFmtpParameters`
         - parsed selected audio `a=fmtp` payload:
-            - optional `channel_order`;
-            - preserved unknown parameters.
+            - optional `channel_order`
+            - preserved `unknown_parameters`.
     - `RawAudioSdpMediaSection`
         - selected raw audio media-section summary:
-            - `media_line`;
-            - selected `payload_type`;
-            - all media payload types;
-            - raw and parsed `rtpmap`;
-            - raw and parsed `fmtp`;
-            - optional `packet_time_us`;
-            - optional convenience `channel_order`;
-            - unknown session/media attributes.
+            - `media_line`
+            - selected `payload_type`
+            - all `media_payload_types`
+            - raw and parsed `rtpmap`
+            - raw and parsed `fmtp`
+            - optional `packet_time_us`
+            - optional convenience `channel_order`
+            - preserved `unknown_session_attributes`
+            - preserved `unknown_attributes`.
+    - `RawAudioSdpFmtpParameterToken`
+        - strict intermediate token model for one parsed fmtp parameter:
+            - `name`
+            - `value`
+            - `has_value`.
     - helper functions:
         - `strip_audio_sdp_cr(...)`
         - `is_audio_sdp_ascii_ws(...)`
@@ -1419,686 +3117,1298 @@
         - `parse_unknown_audio_sdp_attribute(...)`
         - `parse_audio_sdp_rtpmap_payload(...)`
         - `parse_audio_sdp_ptime_us(...)`
+        - `audio_sdp_fmtp_token_contains_ws(...)`
         - `split_audio_sdp_fmtp_parameters(...)`
         - `parse_audio_sdp_fmtp_parameter_token(...)`
         - `parse_audio_sdp_fmtp_payload(...)`
     - main entry point:
         - `select_raw_audio_sdp_media_section(std::string_view, uint8_t) -> std::expected<RawAudioSdpMediaSection, Error>`
             - selects the matching `m=audio` section for the requested payload type;
+            - rejects ambiguous selection if more than one matching audio media section is found;
             - requires selected payload-bound `a=rtpmap`;
+            - parses optional payload-bound `a=fmtp:<pt> ...`;
             - parses optional `a=ptime` into integer microseconds;
-            - parses payload-bound `a=fmtp:<pt> channel-order=...`;
+            - parses payload-bound `channel-order=...` from `a=fmtp`;
+            - preserves unknown fmtp parameters instead of discarding them;
             - preserves standalone `a=channel-order:` as unknown instead of treating it as standards-facing channel-order signaling;
-            - preserves unknown session/media attributes, including currently unmodeled timing/reference-clock attributes consumed by final ingestion presence checks;
-            - rejects duplicate selected `rtpmap`, duplicate selected `fmtp`, duplicate `ptime`, duplicate `channel-order`, malformed RTP clock/channel count, extra rtpmap slash, zero ptime, and non-integral-microsecond ptime.
+            - preserves unknown session/media `a=` attributes, and preserves selected media-level `c=` through raw unknown attributes;
+            - rejects duplicate selected `rtpmap`, duplicate selected `fmtp`, duplicate `ptime`, duplicate fmtp `channel-order`, malformed RTP clock/channel count, extra `rtpmap` slash, empty/invalid fmtp parameters, zero `ptime`, and non-integral-microsecond `ptime`.
 - Примечание:
     - this is a raw SDP boundary only;
+    - it preserves raw SDP information needed by later boundaries, including currently unmodeled timing/reference-clock attributes consumed by final ingestion presence checks;
     - raw-to-`AudioStreamSignaling` mapping, Level A validation, final SDP ingestion, runtime projection, transport metadata projection, and audio buffer/channel layout remain separate boundaries.
 
 ### libs/st2110core/include/st2110/audio_sdp_signaling_adapter.hpp
 - Роль:
     - adapter from raw parsed audio SDP media-section data to modeled `AudioStreamSignaling`.
-    - explicitly derives both PCM encoding kind and PCM bit depth from SDP `a=rtpmap` encoding names such as `L16` / `L24`.
+    - explicit raw-to-signaling boundary between:
+        - `RawAudioSdpMediaSection`;
+        - standards-aware audio signaling model.
+    - derives PCM encoding kind, PCM bit depth, packet time, channel count, and optional channel-order signaling from raw SDP fields without mixing this step with runtime `RxAudioConfig` projection, backend transport, packet parsing, or audio buffer/layout behavior.
 - Связи:
-    - использует `audio_sdp_media_section.hpp`, `audio_signaling.hpp`, `error.hpp`;
-    - sits between raw SDP parsing and signaling/runtime projection.
+    - использует `audio_sdp_media_section.hpp` for:
+        - `RawAudioSdpMediaSection`;
+        - `contains_audio_payload_type(...)`.
+    - использует `audio_signaling.hpp` for:
+        - `AudioStreamSignaling`;
+        - `AudioPcmEncoding`;
+        - `AudioPcmBitDepth`;
+        - `AudioChannelOrderSignaling`;
+        - `AudioChannelOrderConvention`;
+        - `validate_audio_stream_signaling(...)`.
+    - использует `error.hpp` for explicit adapter failures.
+    - sits between raw SDP parsing and:
+        - final SDP ingestion in `audio_sdp_ingestion.hpp`;
+        - signaling-to-runtime projection in `audio_signaling_rx_config.hpp`;
+        - bootstrap composition in `audio_receiver_bootstrap.hpp`.
 - Сущности:
     - `audio_sdp_ascii_lower(...)`
+        - local ASCII lowercase helper for case-insensitive token matching.
     - `audio_sdp_ascii_iequals(...)`
+        - local ASCII case-insensitive string comparison helper.
     - `audio_pcm_bit_depth_from_raw_audio_sdp_rtpmap_encoding_name(std::string_view) -> std::expected<AudioPcmBitDepth, Error>`
-        - maps `L16` -> `Bits16`;
-        - maps `L24` -> `Bits24`;
+        - maps:
+            - `L16` -> `Bits16`
+            - `L24` -> `Bits24`
+        - accepts case-insensitive RTP encoding names;
         - rejects empty token as `InvalidValue`;
         - rejects unsupported encodings as `Unsupported`.
     - `audio_pcm_encoding_from_raw_audio_sdp_rtpmap_encoding_name(std::string_view) -> std::expected<AudioPcmEncoding, Error>`
-    - `audio_channel_order_signaling_from_raw_audio_sdp_value(...)`
+        - maps supported PCM RTP encodings to modeled `AudioPcmEncoding::LinearPcm`;
+        - accepts case-insensitive `L16` / `L24`;
+        - rejects empty token as `InvalidValue`;
+        - rejects unsupported encodings as `Unsupported`.
+    - `audio_channel_order_signaling_from_raw_audio_sdp_value(std::string_view) -> AudioChannelOrderSignaling`
+        - classifies raw channel-order token as:
+            - `AudioChannelOrderConvention::Smpte2110` when value starts with `SMPTE2110.`;
+            - `AudioChannelOrderConvention::Other` otherwise;
+        - preserves original raw token unchanged.
     - `audio_stream_signaling_from_raw_audio_sdp_media_section(const RawAudioSdpMediaSection&) -> std::expected<AudioStreamSignaling, Error>`
-        - validates selected payload binding and required raw fields;
-        - maps RTP encoding token to both `pcm_encoding` and `pcm_bit_depth`;
-        - preserves payload-bound channel-order signaling;
-        - finishes with `validate_audio_stream_signaling(...)`.
+        - main raw-to-signaling adapter entry point.
+        - behavior:
+            - validates that selected payload type is actually present in `media_payload_types`;
+            - requires parsed `rtpmap` with non-empty encoding name and non-zero sampling rate;
+            - requires parsed RTP channel count to be present;
+            - requires parsed `ptime`;
+            - maps RTP encoding token to both `pcm_encoding` and `pcm_bit_depth`;
+            - maps sampling rate, packet time, and channel count into `AudioStreamSignaling::media`;
+            - preserves payload-bound `channel-order` when present;
+            - rejects empty raw `channel-order` value;
+            - finishes with `validate_audio_stream_signaling(...)`.
 - Примечание:
-    - the SDP adapter no longer collapses `L16` and `L24` into the same signaling shape;
-    - unknown/unsupported RTP encodings still remain rejected through the adapter boundary.
+    - the adapter no longer collapses `L16` and `L24` into the same signaling shape; bit depth remains explicit in signaling.
+    - standalone unknown attributes remain a raw SDP concern and are not carried through this adapter except via already-extracted raw media-section fields.
+    - this file does not perform final ST 2110 clock-signaling checks such as required `ts-refclk` / media-level `mediaclk`; that final-ingestion policy remains in `audio_sdp_ingestion.hpp`.
+    - this file does not project signaling into runtime receive config or bootstrap objects; that remains in adjacent projection/bootstrap boundaries.
 
 ### libs/st2110core/include/st2110/audio_sdp_ingestion.hpp
 - Роль:
-    - final SDP-to-`AudioStreamSignaling` ingestion entry point для audio.
-    - композиционный слой, который связывает raw audio SDP media-section selection и raw-to-signaling adapter.
-    - отделяет final SDP signaling ingestion от runtime `RxAudioConfig` projection, socket/backend config, audio buffer layout, channel reordering и backend transport behavior.
+    - final audio SDP ingestion boundary for standards-aware ST 2110-30 receive signaling.
+    - combines:
+        - selection/parsing of one raw audio SDP media section;
+        - required ST 2110 clock-signaling checks;
+        - final raw-SDP-to-`AudioStreamSignaling` mapping.
+    - keeps final ST 2110-oriented ingestion policy separate from:
+        - low-level SDP line/token parsing;
+        - raw SDP attribute preservation;
+        - runtime `RxAudioConfig` projection;
+        - channel-order effective mapping/bootstrap composition;
+        - packet/runtime/backend behavior.
 - Связи:
-    - использует `audio_sdp_media_section.hpp` для выбора raw audio media section по payload type;
-    - использует `audio_sdp_signaling_adapter.hpp` для mapping raw selected media section в `AudioStreamSignaling`;
-    - использует `audio_signaling.hpp` как итоговую signaling model boundary;
-    - не зависит от audio runtime config, backend interfaces, packet parser, audio buffer layout или OBS integration.
+    - использует `audio_sdp_media_section.hpp` for:
+        - `RawAudioSdpMediaSection`;
+        - `RawAudioSdpAttribute`;
+        - `select_raw_audio_sdp_media_section(...)`.
+    - использует `audio_sdp_signaling_adapter.hpp` for:
+        - `audio_stream_signaling_from_raw_audio_sdp_media_section(...)`.
+    - использует `audio_signaling.hpp` for:
+        - `AudioStreamSignaling`.
+    - использует `error.hpp` for strict final-ingestion failures.
+    - downstream consumers should use this boundary when they need final ST 2110 audio signaling from whole-SDP text rather than operating on raw media-section structures directly.
+    - тестируется `tests/audio_sdp_ingestion_test.cpp`.
 - Сущности:
-    - `raw_audio_sdp_has_attribute(const std::vector<RawAudioSdpAttribute>&, std::string_view) -> bool`
-        - helper для локальной проверки наличия raw SDP attribute by name.
-    - `validate_raw_audio_sdp_required_st2110_clock_signaling(const RawAudioSdpMediaSection&) -> Error`
-        - final ingestion presence check для required ST 2110 clock signaling at current raw boundary:
-            - accepts `ts-refclk` at session or selected media scope;
-            - requires `mediaclk` at selected media scope;
-        - keeps actual clock interpretation and stricter parsing as a future localized expansion rather than mixing it into runtime projection.
-    - `parse_audio_stream_signaling_from_sdp(std::string_view, uint8_t) -> std::expected<AudioStreamSignaling, Error>`
-        - selects matching raw audio SDP media section by expected payload type;
-        - validates required clock-signaling presence;
-        - maps selected raw media section into validated `AudioStreamSignaling`;
-        - returns parse/validation errors as localized `Error` values.
+    - `raw_audio_sdp_has_attribute(const std::vector<RawAudioSdpAttribute>&, std::string_view)`
+        - helper to detect raw preserved attributes by name.
+        - used for final required-clock-signaling checks across session-level and media-level raw attributes.
+    - `validate_raw_audio_sdp_required_st2110_clock_signaling(const RawAudioSdpMediaSection&)`
+        - final ST 2110 audio SDP clock-signaling validation boundary.
+        - current rules:
+            - `ts-refclk` must exist either in preserved session-level attributes or media-level attributes;
+            - `mediaclk` must exist specifically at media level.
+        - rejects SDP that is structurally parsed but not standards-clean for final ST 2110 ingestion.
+    - `parse_audio_stream_signaling_from_sdp(std::string_view sdp, uint8_t expected_payload_type) -> std::expected<AudioStreamSignaling, Error>`
+        - full entry point for final audio SDP ingestion.
+        - behavior:
+            - selects exactly one relevant raw `m=audio` section for the expected payload type;
+            - validates required final ST 2110 clock signaling through `validate_raw_audio_sdp_required_st2110_clock_signaling(...)`;
+            - maps the raw selected media section into validated `AudioStreamSignaling` through `audio_stream_signaling_from_raw_audio_sdp_media_section(...)`.
+        - failure behavior:
+            - propagates raw SDP selection/parsing failures;
+            - rejects missing required `ts-refclk`;
+            - rejects missing media-level `mediaclk`;
+            - propagates unsupported/invalid raw-to-signaling mapping errors such as unsupported encoding or malformed `ptime`.
 - Примечание:
-    - this is a final signaling ingestion boundary, not a receiver bootstrap boundary;
-    - transport/network fields and local receiver policy inputs remain outside this file;
-    - channel-order parsing/effective grouping now lives in `audio_channel_order.hpp`;
-    - audio buffer layout and channel reordering behavior remain future work through later audio runtime pipeline tasks that should consume the modeled channel-order boundary instead of reparsing SDP strings.
+    - this file intentionally does not preserve raw unknown attributes in the final `AudioStreamSignaling` result; that preservation remains in `RawAudioSdpMediaSection`.
+    - session-level raw `ts-refclk` is currently accepted for final ingestion, but session-level-only `mediaclk` is intentionally not enough: final ingestion requires media-level `mediaclk`.
+    - this file is a final-ingestion wrapper above raw SDP parsing, not a replacement for `audio_sdp_media_section.hpp`; future stricter ST 2110 audio SDP rules should be added here or in the adjacent raw/signaling adapter boundary, not in runtime/backend code.
 
 ### libs/st2110core/include/st2110/audio_channel_order.hpp
 - Роль:
-    - explicit modeled boundary для ST 2110-30 audio channel-order parsing and effective channel grouping.
-    - отделяет signaled channel-order semantics от internal audio buffer layout, runtime reordering and backend transport.
-    - задает локальную точку будущего расширения для channel mapping / layout adaptation.
+    - explicit modeled boundary для ST 2110-30 `channel-order` parsing, validation и effective channel grouping.
+    - отделяет signaled channel-group semantics от internal audio buffer layout, runtime channel reordering, packet assembly и backend transport.
+    - задает локальную точку будущего расширения для channel mapping / layout adaptation без повторного парсинга raw SDP strings.
 - Связи:
-    - использует `audio_signaling.hpp` for `AudioChannelOrderSignaling` / `AudioStreamSignaling`;
-    - использует `Error`;
-    - downstream audio buffer/channel reordering code should consume this parsed/effective model rather than reparsing SDP strings.
+    - использует `audio_signaling.hpp` for:
+        - `AudioChannelOrderConvention`;
+        - `AudioChannelOrderSignaling`;
+        - `AudioStreamSignaling`;
+        - `validate_audio_channel_order_signaling(...)`;
+        - `validate_audio_media_description_against_conformance_range(...)`;
+        - `audio_level_a_receiver_baseline()`.
+    - использует `error.hpp` для explicit parse/validation result reporting.
+    - потребляется `audio_receiver_bootstrap.hpp` при формировании `AudioReceiverBootstrapConfig::channel_order`.
+    - indirectly fed from raw SDP through `audio_sdp_signaling_adapter.hpp`, который maps raw `channel-order` text into `AudioChannelOrderSignaling`.
+    - future audio layout/reordering/runtime delivery code should consume `ParsedAudioChannelOrder` from this boundary rather than reparsing signaling strings.
 - Сущности:
     - `AudioChannelGroupKind`
-        - `Mono`
-        - `Stereo`
-        - `DualMono`
-        - `MatrixStereo`
-        - `FiveOne`
-        - `SevenOne`
-        - `TwentyTwoTwo`
-        - `SdiGroup`
-        - `Undefined`
-        - `Other`.
+        - explicit modeled channel-group kinds:
+            - `Mono`
+            - `Stereo`
+            - `DualMono`
+            - `MatrixStereo`
+            - `FiveOne`
+            - `SevenOne`
+            - `TwentyTwoTwo`
+            - `SdiGroup`
+            - `Undefined`
+            - `Other`.
     - `AudioChannelOrderGroup`
-        - one parsed/effective group:
+        - one parsed/effective channel group:
             - `kind`
             - `symbol`
             - `channel_count`.
     - `ParsedAudioChannelOrder`
-        - parsed/effective channel-order representation:
+        - parsed/effective channel-order model:
             - `convention`
             - `raw_value`
             - ordered `groups`
             - `declared_channel_count`.
-    - helper functions:
+    - low-level helpers:
+        - `is_audio_channel_order_digit(...)`
+            - local ASCII digit check used by `Uxx` parsing.
+        - `audio_channel_order_token_contains_ws(...)`
+            - rejects whitespace inside channel-order group tokens.
         - `parse_audio_channel_order_u_two_digit_count(...)`
-            - parses `U01`..`U64`.
+            - strictly parses `U01`..`U64`;
+            - rejects malformed, zero, and out-of-range undefined-group counts.
         - `make_audio_channel_order_undefined_group(...)`
-            - creates a canonical Undefined group symbol for an effective channel count.
+            - creates canonical effective `Undefined` group symbols from a channel count.
         - `audio_channel_order_group_from_smpte2110_symbol(...)`
-            - maps known ST 2110-30 SMPTE2110 grouping symbols into `AudioChannelOrderGroup`.
+            - maps known `SMPTE2110` grouping symbols such as `M`, `ST`, `DM`, `LtRt`, `51`, `71`, `222`, `SGRP`, and `Uxx` into `AudioChannelOrderGroup`;
+            - returns `Unsupported` for syntactically valid but currently unmodeled symbols.
         - `parse_smpte2110_audio_channel_order_raw_value(...)`
-            - parses `SMPTE2110.(...)` raw value into ordered groups and declared count.
+            - strictly parses `SMPTE2110.(...)` raw value into ordered groups;
+            - accumulates `declared_channel_count`;
+            - rejects malformed separators, empty groups, and count overflow.
     - public entry points:
         - `parse_audio_channel_order_signaling(const AudioChannelOrderSignaling&) -> std::expected<ParsedAudioChannelOrder, Error>`
-            - parses a validated channel-order signaling object;
-            - returns explicit empty parsed models for `Unspecified` / `Other`;
-            - returns detailed groups for `Smpte2110`.
+            - validates the signaling object first;
+            - returns explicit empty parsed models for `Unspecified` and `Other`;
+            - returns detailed group structure for `Smpte2110`.
         - `validate_audio_channel_order_against_channel_count(const AudioChannelOrderSignaling&, uint16_t) -> Error`
-            - validates that declared SMPTE2110 groups do not exceed actual stream channel count.
+            - rejects zero actual channel count;
+            - validates/parses channel-order signaling;
+            - for `Smpte2110`, rejects declarations whose total declared channels exceed actual stream channel count.
         - `effective_audio_channel_order_from_audio_stream_signaling(const AudioStreamSignaling&) -> std::expected<ParsedAudioChannelOrder, Error>`
-            - derives effective channel grouping for a stream;
-            - absent or unspecified channel-order becomes one Undefined group covering all channels;
-            - under-declared SMPTE2110 channel-order gets an appended Undefined group for the remaining channels;
-            - exact SMPTE2110 channel-order is returned unchanged.
+            - validates the stream against the current Level A receiver baseline before deriving an effective channel-order result;
+            - absent or `Unspecified` channel-order becomes one effective `Undefined` group covering all channels;
+            - exact `Smpte2110` declarations are preserved;
+            - under-declared `Smpte2110` channel-order gets an appended effective `Undefined` remainder group;
+            - non-`Smpte2110` `Other` convention is preserved as raw signaling without inventing a concrete layout/group mapping.
 - Примечание:
-    - this boundary intentionally does not implement audio sample buffer layout or channel reordering;
-    - future audio layout/reordering should consume `ParsedAudioChannelOrder` and stay outside SDP/signaling parsing.
+    - this file intentionally does not implement audio sample buffer layout, channel reordering, audio packet assembly, or OBS/backend delivery behavior;
+    - `Other` channel-order conventions are preserved as signaling but are not interpreted into a concrete channel layout here;
+    - future channel mapping/layout adaptation should consume `ParsedAudioChannelOrder` or `AudioReceiverBootstrapConfig::channel_order` rather than reparsing `channel-order` text.
 
 ### libs/st2110core/include/st2110/audio_frame.hpp
 - Роль:
-    - owning audio sample-buffer storage and non-owning audio frame view boundary for the MVP audio path.
-    - separates audio storage/layout from ST 2110-30 signaling, runtime `RxAudioConfig` validation, channel-order semantics, packet parsing, and backend transport.
-    - provides the initial internal audio frame/block representation for future audio packet assembly, backend delivery, dump tools, and OBS handoff.
+    - базовая boundary для internal audio sample storage и non-owning audio frame/block views в audio receive path.
+    - отделяет internal reconstructed/decoded audio storage from:
+        - RTP/audio packet parsing;
+        - reorder/jitter handling;
+        - PCM wire decode;
+        - channel-order mapping;
+        - playout/timestamp mapping policy;
+        - backend/runtime transport logic.
+    - задает current internal audio storage contract для assembled audio blocks и backend sink delivery.
 - Связи:
-    - uses `TimestampNs` from `timestamp.hpp`;
-    - can be constructed from `RxAudioConfig` from `rx_config.hpp`;
-    - intended downstream consumers include future audio assembler/depacketizer, audio backend/sink interfaces, dump writers, and OBS audio integration.
-    - channel-order interpretation remains outside this file and should consume `ParsedAudioChannelOrder` from `audio_channel_order.hpp` / `AudioReceiverBootstrapConfig`.
+    - использует `rx_config.hpp` для convenience constructor from `RxAudioConfig`;
+    - использует `timestamp.hpp` for `TimestampNs`;
+    - используется `audio_frame_assembler.hpp` как owning decoded-block storage target;
+    - используется `backend.hpp` через `AudioFrameView` in `IAudioFrameSink::on_audio_frame(...)`;
+    - тестируется `tests/test_audio_frame.cpp`.
 - Сущности:
     - `AudioSampleStorageFormat`
-        - `InterleavedS32` — current MVP internal storage layout: interleaved signed 32-bit samples.
+        - modeled internal audio sample storage format axis.
+        - current value:
+            - `InterleavedS32`.
     - `AudioFrameView`
-        - non-owning audio frame/block view:
-            - `storage_format`;
-            - `sampling_rate_hz`;
-            - `channel_count`;
-            - `samples_per_channel`;
-            - `samples`;
-            - `total_sample_count`;
-            - `sample_frame_stride`;
-            - `size_bytes`;
-            - `timestamp_ns`.
+        - non-owning audio block/view contract:
+            - `storage_format`
+            - `sampling_rate_hz`
+            - `channel_count`
+            - `samples_per_channel`
+            - `samples`
+            - `total_sample_count`
+            - `sample_frame_stride`
+            - `size_bytes`
+            - `timestamp_ns`
+        - предназначен для sink/backend delivery without copying owned storage.
     - `AudioBuffer`
-        - owning audio sample buffer.
+        - owning internal audio sample buffer.
         - constructors:
-            - `(sampling_rate_hz, channel_count, samples_per_channel, storage_format)`;
-            - `(const RxAudioConfig&, storage_format)`, using `samples_per_packet` as `samples_per_channel`.
-        - accessors:
-            - `storage_format()`;
-            - `sampling_rate_hz()`;
-            - `channel_count()`;
-            - `samples_per_channel()`;
-            - `sample_frame_stride()`;
-            - `total_sample_count()`;
-            - `size_bytes()`;
-            - `samples()`;
-            - `sample(sample_index, channel)`;
-            - `view(TimestampNs = 0)`.
+            - `AudioBuffer(uint32_t sampling_rate_hz, uint16_t channel_count, uint32_t samples_per_channel, AudioSampleStorageFormat storage_format = AudioSampleStorageFormat::InterleavedS32)`
+            - `AudioBuffer(const RxAudioConfig&, AudioSampleStorageFormat storage_format = AudioSampleStorageFormat::InterleavedS32)`
+        - metadata accessors:
+            - `storage_format()`
+            - `sampling_rate_hz()`
+            - `channel_count()`
+            - `samples_per_channel()`
+            - `sample_frame_stride()`
+            - `total_sample_count()`
+            - `size_bytes()`
+        - storage accessors:
+            - `samples()`
+            - `sample(uint32_t sample_index, uint16_t channel)`
+        - view adapter:
+            - `view(TimestampNs timestamp_ns = 0) const`
+                - returns zero-copy `AudioFrameView` over owned samples.
+    - internal helper boundaries in `AudioBuffer`:
+        - `checked_total_sample_count(...)`
+            - validates supported storage format;
+            - computes total owned sample count with overflow protection.
+        - `linear_sample_index(...)`
+            - validates sample/channel bounds;
+            - maps `(sample_index, channel)` to current interleaved storage index.
 - Примечание:
-    - current implementation intentionally models only storage/view behavior;
-    - it does not implement channel reordering, channel mapping, RTP packet parsing, jitter/reorder, playout policy, backend behavior, or OBS integration;
-    - future audio layout/reordering should stay outside this storage class and consume the existing channel-order boundary.
+    - current internal storage is explicitly modeled as `InterleavedS32`; this is a storage-format boundary, not a claim about RTP wire format or ST 2110-30 signaling format.
+    - файл intentionally does not decode PCM wire bytes and does not interpret RTP marker/timestamp semantics; that work stays above/beside this layer in `audio_frame_assembler.hpp` and later timing/playout boundaries.
+    - `AudioBuffer(const RxAudioConfig&)` uses already-derived runtime `samples_per_packet` / `channel_count` values and therefore keeps storage sizing tied to explicit runtime config rather than hardcoded Level A cadence assumptions.
 
 ### libs/st2110core/include/st2110/audio_packet.hpp
 - Роль:
-    - normalized audio RTP packet policy/view layer.
-    - keeps explicit separation between runtime-configured PCM bit depth and RTP wire-format width in octets.
+    - explicit modeled boundary для normalized ST 2110-30 / RTP audio packet representation in the current receive path.
+    - отделяет:
+        - RTP header parsing and payload extraction;
+        - runtime-config-derived audio packet expectations;
+        - exact payload-size / payload-type admission;
+          от:
+        - packet reorder/jitter handling;
+        - PCM wire-sample decoding into internal storage;
+        - RTP timestamp to `TimestampNs` mapping;
+        - channel-order interpretation/reordering;
+        - backend sink delivery.
+    - keeps audio wire-format / bit-depth axis explicit instead of leaving it as a backend-local assumption.
 - Связи:
-    - использует `rtp.hpp`, `rx_config.hpp`, `bytes.hpp`, `error.hpp`;
-    - используется `audio_frame_assembler.hpp`, `test_audio_rtp_parser.cpp`, `socket_rx_audio_backend.hpp`.
+    - использует `ByteSpan` from `bytes.hpp` for non-owning RTP payload/data spans;
+    - использует `Error` from `error.hpp` for strict parse/validation failures;
+    - использует `RtpHeaderView`, `parse_rtp_header(...)`, and `rtp_payload_span(...)` from `rtp.hpp`;
+    - использует `RxAudioConfig`, `AudioPcmBitDepth`, and `validate_rx_audio_config(...)` from `rx_config.hpp`;
+    - upstream raw datagram parsing comes through `rtp.hpp`;
+    - downstream consumers include:
+        - `audio_frame_assembler.hpp` for PCM wire decode into `AudioBuffer`;
+        - `socket_rx_audio_backend.hpp` for admission, reorder, assembly, and later timestamp mapping;
+    - тестируется `tests/test_audio_packet.cpp`.
 - Сущности:
     - `AudioPcmWireFormat`
-        - `L16`
-        - `L24`
+        - explicit RTP/audio wire-format axis for current PCM receive path:
+            - `L16`
+            - `L24`.
     - `AudioRtpPacketPolicy`
-        - `sampling_rate_hz`
-        - `channel_count`
-        - `samples_per_packet`
-        - `payload_type`
-        - `wire_format`
+        - runtime-derived packet expectation/policy:
+            - `sampling_rate_hz`
+            - `channel_count`
+            - `samples_per_packet`
+            - `payload_type`
+            - `wire_format`.
+        - used to keep packet validation/config-derived expectations explicit.
     - `AudioRtpPacketView`
-        - `rtp`
-        - `payload`
-        - `sampling_rate_hz`
-        - `channel_count`
-        - `samples_per_channel`
-        - `wire_format`
-    - `audio_pcm_wire_sample_bytes(AudioPcmWireFormat) -> std::expected<std::size_t, Error>`
-    - `audio_pcm_wire_format_from_bit_depth(AudioPcmBitDepth) -> std::expected<AudioPcmWireFormat, Error>`
-        - maps explicit runtime PCM bit depth to RTP wire format.
-    - `audio_rtp_packet_policy_from_rx_audio_config(const RxAudioConfig&) -> std::expected<AudioRtpPacketPolicy, Error>`
-        - validates runtime audio config;
-        - derives `wire_format` from `cfg.pcm_bit_depth`;
-        - does not require a backend-local wire-format override parameter.
-    - `audio_rtp_packet_payload_size_bytes(const AudioRtpPacketPolicy&)`
-    - `make_audio_rtp_packet_view(...)`
-    - `parse_audio_rtp_packet_view(ByteSpan, const AudioRtpPacketPolicy&)`
+        - normalized non-owning audio RTP packet view:
+            - `rtp`
+            - `payload`
+            - `sampling_rate_hz`
+            - `channel_count`
+            - `samples_per_channel`
+            - `wire_format`.
+        - current MVP path models one RTP packet as one audio block candidate with one payload span and packet-level metadata.
+    - helper functions:
+        - `audio_pcm_wire_sample_bytes(AudioPcmWireFormat)`
+            - maps wire format to explicit octets-per-sample;
+            - rejects invalid enum values.
+        - `audio_pcm_wire_format_from_bit_depth(AudioPcmBitDepth)`
+            - projects modeled PCM bit depth into explicit RTP/audio wire format;
+            - keeps runtime/config bit-depth axis separate from packet parsing.
+        - `audio_rtp_packet_policy_from_rx_audio_config(const RxAudioConfig&)`
+            - validates `RxAudioConfig`;
+            - derives `AudioRtpPacketPolicy` from runtime config;
+            - preserves explicit runtime axes:
+                - sampling rate;
+                - channel count;
+                - samples per packet;
+                - payload type;
+                - wire format.
+        - `audio_rtp_packet_payload_size_bytes(const AudioRtpPacketPolicy&)`
+            - derives exact expected RTP payload size from:
+                - `samples_per_packet`
+                - `channel_count`
+                - `wire_format`.
+        - `make_audio_rtp_packet_view(const RtpHeaderView&, ByteSpan, const AudioRtpPacketPolicy&)`
+            - validates RTP payload type against configured policy;
+            - validates exact payload byte size;
+            - returns normalized non-owning `AudioRtpPacketView`.
+        - `parse_audio_rtp_packet_view(ByteSpan, const AudioRtpPacketPolicy&)`
+            - parses RTP header from a datagram;
+            - extracts RTP payload span;
+            - applies policy-based packet validation through `make_audio_rtp_packet_view(...)`.
 - Примечание:
-    - packet-policy construction no longer bakes in a temporary `LinearPcm -> L24` assumption;
-    - payload sizing remains driven by `samples_per_packet * channel_count * wire-sample-bytes`.
+    - this file intentionally does not decode PCM bytes into signed sample storage; that remains in `audio_frame_assembler.hpp`.
+    - this file intentionally does not reorder packets or track continuity/jitter; that remains in `audio_reorder_buffer.hpp`.
+    - this file intentionally does not map RTP timestamps into internal nanosecond timeline; that remains in `audio_timestamp_mapping.hpp`.
+    - current packet model keeps payload-type admission and exact payload-size validation explicit and localized, so future support for new audio wire formats should mainly require:
+        - adding enum coverage;
+        - adding `audio_pcm_wire_sample_bytes(...)` and bit-depth mapping cases;
+        - extending tests;
+        - not redesigning reorder/assembler/backend layers.
 
 ### libs/st2110core/include/st2110/audio_reorder_buffer.hpp
 - Роль:
-    - first MVP audio reorder/jitter boundary for ST 2110-30 receive path.
-    - provides fixed-window RTP sequence-number reordering for already-validated `AudioRtpPacketView` packets.
-    - separates audio packet ordering/loss accounting from:
-        - generic RTP parsing;
-        - audio RTP packet validation;
-        - audio block/frame assembly;
-        - audio timestamp mapping;
-        - receiver playout timing;
+    - explicit fixed-window audio reorder/jitter boundary for the current ST 2110-30 receive path.
+    - reorders already-validated `AudioRtpPacketView` packets by 16-bit RTP sequence number before audio block assembly.
+    - separates packet ordering / loss-gap progression from:
+        - generic RTP datagram parsing;
+        - audio packet payload-type / payload-size validation;
+        - PCM wire decode and `AudioBuffer` creation;
+        - RTP timestamp to `TimestampNs` mapping;
+        - playout/release timing;
         - channel-order / channel-mapping semantics;
-        - socket / MTL backend behavior.
+        - backend socket/MTL transport behavior.
 - Связи:
-    - uses `AudioRtpPacketView` and `AudioPcmWireFormat` from `audio_packet.hpp`;
-    - uses `RtpHeaderView` and sequence helpers from `rtp.hpp`;
-    - uses `Error` for localized admission failures;
-    - intended downstream consumer is future audio block/frame assembly task `093`;
-    - future audio stats / backend receive paths should consume this boundary rather than adding ad hoc sequence tracking.
+    - использует `AudioRtpPacketView` and `AudioPcmWireFormat` from `audio_packet.hpp`;
+    - использует `RtpHeaderView` and `seq_less(...)` from `rtp.hpp`;
+    - использует `Error` from `error.hpp` for localized admission failures;
+    - current downstream consumers include:
+        - `audio_frame_assembler.hpp`;
+        - `socket_rx_audio_backend.hpp`.
+    - тестируется `tests/test_audio_reorder_buffer.cpp`.
 - Сущности:
     - `AudioReorderBufferConfig`
-        - `window_size_packets` — explicit fixed reorder window size.
+        - `window_size_packets`
+            - explicit reorder-window size in packets.
     - `AudioReorderBufferStats`
-        - `packets_pushed`;
-        - `packets_popped`;
-        - `duplicates`;
-        - `late_packets`;
-        - `out_of_window`;
+        - `packets_pushed`
+        - `packets_popped`
+        - `duplicates`
+        - `late_packets`
+        - `out_of_window`
         - `missing_packets_flushed`.
     - `StoredAudioRtpPacket`
-        - owning stored representation of one audio RTP packet:
-            - `rtp`;
-            - owning `payload`;
-            - `sampling_rate_hz`;
-            - `channel_count`;
-            - `samples_per_channel`;
+        - owning stored representation of one reordered audio RTP packet:
+            - `rtp`
+            - owning `payload`
+            - `sampling_rate_hz`
+            - `channel_count`
+            - `samples_per_channel`
             - `wire_format`.
         - `view() const -> AudioRtpPacketView`
-            - reconstructs a non-owning packet view over the stored payload bytes.
-            - the returned `payload` span is authoritative for stored packet payload access.
+            - reconstructs a non-owning packet view over stored payload bytes.
     - `AudioFixedWindowReorderBuffer`
-        - fixed-window reorder buffer by RTP sequence number.
+        - current fixed-window reorder implementation over 16-bit RTP sequence numbers.
+        - `AudioFixedWindowReorderBuffer(AudioReorderBufferConfig cfg = {})`
         - `push(const AudioRtpPacketView&) -> Error`
-            - accepts and stores a packet if it belongs to the current reorder window;
-            - rejects duplicate, late, out-of-window, or invalid-config cases locally.
+            - rejects invalid config when `window_size_packets == 0`;
+            - initializes expected sequence from the first accepted packet;
+            - rejects duplicates already present in the pending map;
+            - rejects packets older than current expected sequence as late;
+            - rejects packets at or beyond the configured window distance as out-of-window;
+            - deep-copies payload and packet metadata into `StoredAudioRtpPacket`;
+            - increments `packets_pushed` only for accepted packets.
         - `pop_next() -> std::optional<StoredAudioRtpPacket>`
-            - emits the expected packet only when available.
+            - emits only the packet whose sequence number equals the current expected sequence;
+            - advances expected sequence after a successful pop;
+            - increments `packets_popped`.
         - `flush_missing_once()`
-            - advances the expected sequence number by one missing packet and accounts it.
+            - advances expected sequence by one only when:
+                - sequence tracking is initialized;
+                - there are pending packets;
+                - the current expected packet is missing;
+            - increments `missing_packets_flushed`.
         - `reset()`
-            - clears pending packets, expected sequence and stats.
-        - `has_pending()`
-        - `stats()`
+            - clears expected sequence, pending packets, and stats.
+        - `has_pending() const`
+            - reports whether pending reordered packets exist.
+        - `stats() const`
+            - returns current reorder stats snapshot.
+    - internal helpers:
+        - `config_is_valid() const`
+            - validates localized reorder-buffer config.
+        - `next_seq(uint16_t)`
+            - advances RTP sequence with wraparound semantics.
+        - `forward_seq_distance(uint16_t from, uint16_t to)`
+            - computes forward modular sequence distance.
+        - `store_packet(const AudioRtpPacketView&)`
+            - creates owning stored packet copy from a non-owning packet view.
 - Примечание:
-    - this file intentionally does not parse RTP datagrams and does not validate audio payload size or payload type; those remain in `audio_packet.hpp`;
-    - it preserves RTP marker/timestamp metadata but does not interpret marker as an audio block boundary;
-    - it does not map RTP timestamps to `TimestampNs`;
-    - it does not create `AudioBuffer` or perform channel reordering;
-    - time-based jitter/playout policy remains future work through `095` and later playout/release boundaries.
+    - this file intentionally does not parse RTP datagrams and does not validate audio payload type or payload size; that remains in `audio_packet.hpp`.
+    - it preserves RTP timestamp and marker metadata in stored packets but does not interpret marker as an audio block boundary.
+    - it does not map RTP timestamps to `TimestampNs`; that remains in `audio_timestamp_mapping.hpp`.
+    - it does not create `AudioBuffer`, decode PCM wire samples, or perform channel reordering; those remain above this layer.
+    - sequence progression is explicitly wraparound-friendly through `seq_less(...)`, modular distance, and `next_seq(...)`, so future extensions should build on this boundary instead of embedding ad hoc sequence tracking in backend or assembler code.
 
 ### libs/st2110core/include/st2110/audio_frame_assembler.hpp
 - Роль:
-    - first MVP audio RTP packet -> internal audio block assembly boundary.
-    - converts already-validated `AudioRtpPacketView` packets into owning `AudioBuffer` blocks.
-    - keeps PCM wire decoding and internal audio storage creation separate from RTP parsing, reorder/jitter, timestamp mapping, playout policy, channel-order mapping, and backend behavior.
+    - explicit audio packet-to-owned-block assembly boundary for the MVP ST 2110-30 receive path.
+    - converts one already-validated `AudioRtpPacketView` into one owning `AssembledAudioBlock` with decoded internal sample storage.
+    - keeps PCM wire decode and internal audio storage creation separate from:
+        - RTP datagram parsing;
+        - payload-type admission;
+        - reorder/jitter handling;
+        - RTP timestamp to `TimestampNs` mapping;
+        - playout/release timing;
+        - channel-order interpretation/reordering;
+        - backend transport/runtime behavior.
 - Связи:
-    - uses `AudioRtpPacketView` and `AudioPcmWireFormat` from `audio_packet.hpp`;
-    - uses `AudioBuffer` and `AudioSampleStorageFormat` from `audio_frame.hpp`;
-    - uses `ByteSpan` for local wire-sample decode views;
-    - uses `Error` / `std::expected` for localized validation and decode failures;
-    - intended upstream consumer is `AudioFixedWindowReorderBuffer` output from `audio_reorder_buffer.hpp`;
-    - intended downstream consumers are future audio timestamp/playout pipeline, dump writer, backend delivery, and OBS handoff boundaries.
+    - использует `AudioBuffer` and `AudioSampleStorageFormat` from `audio_frame.hpp`;
+    - использует `AudioRtpPacketView`, `AudioPcmWireFormat`, and `audio_pcm_wire_sample_bytes(...)` from `audio_packet.hpp`;
+    - использует `ByteSpan` from `bytes.hpp` for per-sample decode slices;
+    - использует `Error` / `std::expected` for localized validation and decode failures;
+    - current upstream runtime flow is `audio_reorder_buffer.hpp` -> `audio_frame_assembler.hpp`;
+    - current concrete downstream consumer is `socket_rx_audio_backend.hpp`, which then applies `audio_timestamp_mapping.hpp` and sink delivery.
 - Сущности:
     - `AssembledAudioBlock`
         - owning assembled audio block:
-            - `buffer`;
-            - `rtp_timestamp`;
-            - `rtp_sequence_number`;
-            - `rtp_marker`;
-            - `complete`.
-        - current MVP behavior emits one complete block per validated audio RTP packet.
+            - `buffer`
+            - `rtp_timestamp`
+            - `rtp_sequence_number`
+            - `rtp_marker`
+            - `complete`
+        - current MVP behavior emits one complete block per accepted packet.
     - `AudioFrameAssemblerConfig`
         - `storage_format`
         - current supported internal storage format:
             - `AudioSampleStorageFormat::InterleavedS32`.
     - `AudioFrameAssemblerStats`
-        - `packets_used`;
-        - `packets_rejected`;
+        - `packets_used`
+        - `packets_rejected`
         - `blocks_emitted`.
-    - `validate_audio_frame_assembler_config(...)`
-        - validates current assembler storage-format support.
-    - `checked_audio_assembler_payload_size_bytes(...)`
-        - derives expected wire payload size from:
+    - `validate_audio_frame_assembler_config(const AudioFrameAssemblerConfig&)`
+        - validates currently supported internal storage-format values.
+    - `checked_audio_assembler_payload_size_bytes(uint32_t samples_per_channel, uint16_t channel_count, std::size_t wire_sample_bytes)`
+        - derives exact expected payload size from:
             - samples per channel;
             - channel count;
-            - wire bytes per sample;
+            - wire-sample width in octets;
         - rejects zero dimensions and overflow.
-    - `decode_audio_pcm_wire_sample_to_s32(...)`
-        - decodes one signed PCM wire sample into signed 32-bit internal sample value:
+    - `decode_audio_pcm_wire_sample_to_s32(ByteSpan sample_bytes, AudioPcmWireFormat wire_format)`
+        - decodes one signed PCM wire sample into signed 32-bit internal storage value;
+        - supports:
             - `L16` from 2 big-endian octets;
             - `L24` from 3 big-endian octets;
-        - rejects mismatched sample byte count or invalid wire format.
+        - rejects mismatched byte count or invalid wire-format enum.
     - `AudioFrameAssembler`
         - `push(const AudioRtpPacketView&) -> std::expected<AssembledAudioBlock, Error>`
-            - validates packet dimensions and expected payload byte size;
-            - decodes interleaved wire PCM into `AudioBuffer`;
-            - preserves RTP timestamp, sequence number, and marker metadata without interpreting marker semantics;
-            - updates assembler stats.
+            - validates assembler config;
+            - validates packet structural dimensions (`sampling_rate_hz`, `channel_count`, `samples_per_channel`);
+            - derives wire-sample width from packet `wire_format`;
+            - validates exact payload-size match;
+            - allocates `AudioBuffer` with packet-derived rate/channel/sample geometry and configured internal storage format;
+            - decodes packet payload sample-by-sample into interleaved internal storage;
+            - preserves RTP timestamp / sequence / marker metadata without interpreting marker semantics;
+            - updates `packets_used`, `packets_rejected`, and `blocks_emitted`.
         - `reset()`
             - clears assembler stats.
         - `stats()`
-            - returns current assembler stats.
+            - returns current assembler stats snapshot.
 - Примечание:
-    - this file intentionally does not parse RTP datagrams and does not validate RTP payload type; those remain in `audio_packet.hpp`;
-    - it intentionally does not reorder packets; reorder remains in `audio_reorder_buffer.hpp`;
-    - it intentionally does not map RTP timestamps to `TimestampNs`; that remains future work through `095`;
-    - it intentionally does not apply channel-order mapping/reordering; future mapping should consume `ParsedAudioChannelOrder` / `AudioReceiverBootstrapConfig`;
-    - current one-packet-one-block behavior matches the MVP Level A-oriented audio receive path and does not preclude later loss/concealment/playout policy above this boundary.
+    - this file intentionally does not parse RTP datagrams and does not validate RTP payload type; that remains in `audio_packet.hpp` and outer receive admission layers.
+    - this file intentionally does not reorder packets; that remains in `audio_reorder_buffer.hpp`.
+    - this file intentionally does not map RTP timestamps to `TimestampNs`; that boundary now exists separately in `audio_timestamp_mapping.hpp` and is applied above this layer by current runtime/backend composition.
+    - this file intentionally does not apply channel-order mapping/reordering; future mapping should consume `ParsedAudioChannelOrder` / `AudioReceiverBootstrapConfig`.
+    - current one-packet-one-block behavior is an explicit MVP assembly policy and should remain localized here until fuller loss-concealment / playout aggregation policy is added above this boundary.
 
 ### libs/st2110core/include/st2110/audio_stats.hpp
 - Роль:
-    - shared audio receive stats boundary for the MVP audio receive path.
-    - provides packet/block counters and local helper functions for stats accounting.
-    - keeps stats representation separate from RTP parsing, reorder/jitter, frame assembly, timestamp/playout, channel-order mapping, and backend behavior.
+    - explicit stats/counter boundary for the current audio receive path.
+    - separates audio receive observability from:
+        - RTP/audio packet parsing;
+        - reorder/jitter buffering;
+        - audio block assembly;
+        - timestamp/playout logic;
+        - backend transport/runtime details.
+    - provides a small common vocabulary for packet-level and block-level receive outcomes.
 - Связи:
-    - uses `Error` from `error.hpp`;
-    - intended consumers include future audio parser/reorder/assembler pipeline composition, socket/MTL audio backend stats reporting, dump tools, and OBS handoff/status code.
+    - использует `error.hpp` for explicit validation/result reporting.
+    - intended to be consumed by current and future audio receive pipeline/runtime layers that need localized audio packet/block accounting.
+    - тестируется `tests/test_audio_stats.cpp`.
 - Сущности:
     - `AudioReceiveStats`
-        - packet-level counters:
-            - `packets_ok`;
-            - `packets_lost`;
-            - `packets_rejected`;
-        - block-level counters:
-            - `blocks_ok`;
-            - `blocks_partial`;
-            - `blocks_dropped`.
+        - common audio receive counters:
+            - packet-level:
+                - `packets_ok`
+                - `packets_lost`
+                - `packets_rejected`
+            - block-level:
+                - `blocks_ok`
+                - `blocks_partial`
+                - `blocks_dropped`.
     - `AudioBlockCompletionStatus`
-        - explicit block completion/result axis:
-            - `Complete`;
-            - `Partial`;
+        - explicit modeled block-result axis:
+            - `Complete`
+            - `Partial`
             - `Dropped`.
-    - `validate_audio_block_completion_status(...)`
-        - validates known completion status enum values and rejects invalid enum values.
-    - packet stats helpers:
-        - `record_audio_packet_ok(...)`;
-        - `record_audio_packet_lost(...)`;
-        - `record_audio_packet_rejected(...)`.
-    - block stats helper:
-        - `record_audio_block_result(...)`
-            - validates status before mutating stats;
-            - increments the corresponding block counter for complete / partial / dropped results.
-    - `reset_audio_receive_stats(...)`
-        - resets all counters to zero.
+    - `validate_audio_block_completion_status(AudioBlockCompletionStatus) -> Error`
+        - validates known block completion-status enum values;
+        - rejects invalid/unknown enum values as `InvalidValue`.
+    - `record_audio_packet_ok(AudioReceiveStats&)`
+        - increments `packets_ok`.
+    - `record_audio_packet_lost(AudioReceiveStats&)`
+        - increments `packets_lost`.
+    - `record_audio_packet_rejected(AudioReceiveStats&)`
+        - increments `packets_rejected`.
+    - `record_audio_block_result(AudioReceiveStats&, AudioBlockCompletionStatus) -> Error`
+        - validates block completion status first;
+        - routes:
+            - `Complete` -> `blocks_ok`
+            - `Partial` -> `blocks_partial`
+            - `Dropped` -> `blocks_dropped`
+        - rejects invalid status as `InvalidValue`;
+        - does not mutate stats on invalid status.
+    - `reset_audio_receive_stats(AudioReceiveStats&)`
+        - clears all audio receive counters back to zero.
 - Примечание:
-    - this file intentionally does not decide what constitutes packet loss, partial block emission, or dropped block policy;
-    - those decisions remain in reorder/jitter, assembler, and future playout/loss-policy layers;
-    - this boundary only provides the shared counters and recording helpers.
+    - this file is intentionally only a stats vocabulary/helper boundary;
+    - it does not define how packet loss is detected, how partial audio blocks are assembled, or when a block is considered dropped — those policy decisions must remain in higher receive/runtime layers that use these counters.
 
 ### libs/st2110core/include/st2110/audio_timestamp_mapping.hpp
 - Роль:
-    - explicit audio RTP timestamp mapping and receiver-side playout timing boundary for the MVP ST 2110-30 audio path.
-    - separates RTP timestamp domain from internal `TimestampNs`.
-    - separates media timestamp mapping from receiver-side playout/release timing decisions.
+    - explicit audio timing boundary for the current ST 2110-30 receive path.
+    - covers two adjacent but separate responsibilities:
+        - mapping RTP audio timestamps to internal `TimestampNs`;
+        - receiver-side playout timing decisions for already-timed audio blocks.
+    - keeps timestamp-domain conversion and playout-delay calculation separate from:
+        - RTP/audio packet parsing;
+        - reorder/jitter buffering;
+        - audio block assembly / PCM decode;
+        - backend socket transport;
+        - sink delivery.
 - Связи:
-    - uses `TimestampNs` from `timestamp.hpp`;
-    - uses `Error` for validation/result reporting;
-    - intended downstream consumers include future audio receive pipeline composition, backend delivery, dump tools, and OBS handoff timing;
-    - remains separate from RTP parsing, audio packet validation, reorder/jitter buffering, audio block assembly, channel-order mapping, and backend socket/MTL behavior.
+    - использует `error.hpp` for strict validation/result reporting.
+    - использует `timestamp.hpp` for `TimestampNs`.
+    - current runtime consumer is `socket_rx_audio_backend.hpp`, which uses `AudioRtpTimestampMapper` to map assembled block RTP timestamps before sink delivery.
+    - timing results can be combined with assembled audio blocks without coupling timestamp logic to `audio_frame_assembler.hpp`.
+    - тестируется `tests/audio_timestamp_mapping_test.cpp`.
 - Сущности:
-    - `audioTimestampNanosecondsPerSecond`
-        - nanoseconds-per-second conversion constant.
-    - `audioRtpTimestampAmbiguousDelta`
-        - half-range threshold for rejecting backward / ambiguous RTP timestamp deltas.
+    - timing constants:
+        - `audioTimestampNanosecondsPerSecond`
+            - fixed nanoseconds-per-second conversion constant.
+        - `audioRtpTimestampAmbiguousDelta`
+            - threshold used to reject backward/ambiguous 32-bit RTP timestamp deltas.
     - `AudioRtpTimestampMapperConfig`
-        - `rtp_clock_rate`;
-        - `anchor_rtp_timestamp`;
-        - `anchor_timestamp_ns`.
-    - `validate_audio_rtp_timestamp_mapper_config(...)`
-        - rejects invalid timestamp-mapper config such as zero RTP clock rate.
-    - `forward_audio_rtp_timestamp_delta(...)`
-        - computes forward RTP timestamp delta using 32-bit modulo arithmetic;
-        - accepts normal forward movement and wraparound;
-        - rejects backward / ambiguous movement at or above half the 32-bit range.
-    - `audio_rtp_ticks_to_timestamp_ns(...)`
-        - converts RTP ticks to nanoseconds using explicit RTP clock rate;
-        - rejects invalid clock rate and overflow.
+        - RTP-to-internal timestamp mapping config:
+            - `rtp_clock_rate`
+            - `anchor_rtp_timestamp`
+            - `anchor_timestamp_ns`.
+    - `validate_audio_rtp_timestamp_mapper_config(const AudioRtpTimestampMapperConfig&) -> Error`
+        - validates mapper config;
+        - currently requires non-zero RTP clock rate.
+    - `forward_audio_rtp_timestamp_delta(uint32_t previous, uint32_t current) -> std::expected<uint64_t, Error>`
+        - computes forward RTP timestamp delta with 32-bit wraparound semantics;
+        - rejects ambiguous deltas `>= 0x80000000`;
+        - therefore rejects backward/ambiguous timestamp movement.
+    - `audio_rtp_ticks_to_timestamp_ns(uint64_t ticks, uint32_t rtp_clock_rate) -> std::expected<TimestampNs, Error>`
+        - converts RTP clock ticks to nanoseconds using configured RTP clock rate;
+        - handles whole-seconds and remainder-ticks parts explicitly;
+        - rejects zero RTP clock rate and arithmetic overflow.
     - `AudioRtpTimestampMapper`
-        - standards-facing audio RTP timestamp mapper.
+        - stateful mapper from successive RTP timestamps to monotonic internal `TimestampNs`.
+        - `AudioRtpTimestampMapper(AudioRtpTimestampMapperConfig)`
         - `map(uint32_t rtp_timestamp) -> std::expected<TimestampNs, Error>`
-            - maps RTP timestamps to internal nanoseconds relative to an explicit anchor;
-            - preserves continuity across RTP timestamp wraparound;
-            - rejects invalid/backward/ambiguous timestamp movement.
+            - validates config on use;
+            - for first packet, maps relative to configured anchor RTP timestamp;
+            - for later packets, advances from the last seen RTP timestamp;
+            - accumulates forward RTP ticks since anchor;
+            - converts accumulated ticks to nanoseconds;
+            - rejects backward/ambiguous movement and overflow;
+            - updates internal last-seen mapping state only on success.
         - `reset(AudioRtpTimestampMapperConfig) -> Error`
-            - validates and resets the mapper anchor/state.
-    - `AudioReceiverPlayoutTimingConfig`
-        - `playout_delay_ns`.
-    - `AudioReceiverPlayoutTimingDecision`
-        - `media_timestamp_ns`;
-        - `playout_timestamp_ns`.
-    - `validate_audio_receiver_playout_timing_config(...)`
-        - structural validation entry point for receiver playout timing config.
-    - `audio_receiver_playout_timing_decision(...)`
-        - computes `playout_timestamp_ns = media_timestamp_ns + playout_delay_ns`;
-        - rejects overflow.
-    - `AudioBlockTiming`
-        - carries RTP timestamp, mapped media timestamp, and computed playout timestamp.
-    - `audio_block_timing(...)`
-        - adapter from RTP timestamp metadata plus mapped media timestamp to explicit block timing metadata.
+            - validates new config;
+            - reanchors mapper state and clears prior progression.
+    - playout timing model:
+        - `AudioReceiverPlayoutTimingConfig`
+            - `playout_delay_ns`.
+        - `AudioReceiverPlayoutTimingDecision`
+            - `media_timestamp_ns`
+            - `playout_timestamp_ns`.
+        - `validate_audio_receiver_playout_timing_config(const AudioReceiverPlayoutTimingConfig&) -> Error`
+            - current playout config validation hook;
+            - currently accepts all modeled values.
+        - `audio_receiver_playout_timing_decision(TimestampNs media_timestamp_ns, const AudioReceiverPlayoutTimingConfig&) -> std::expected<AudioReceiverPlayoutTimingDecision, Error>`
+            - adds receiver playout delay to media timestamp;
+            - rejects overflow.
+    - block timing composition:
+        - `AudioBlockTiming`
+            - `rtp_timestamp`
+            - `media_timestamp_ns`
+            - `playout_timestamp_ns`.
+        - `audio_block_timing(uint32_t rtp_timestamp, TimestampNs media_timestamp_ns, const AudioReceiverPlayoutTimingConfig&) -> std::expected<AudioBlockTiming, Error>`
+            - combines media timestamp and playout timing decision into one audio-block timing summary;
+            - intentionally stays independent from concrete assembler/storage types.
 - Примечание:
-    - this file does not implement scheduler/sleep/release queue behavior;
-    - it does not interpret RTP marker, packet time, channel count, or channel order;
-    - future audio runtime pipeline should consume this boundary above reorder/assembly rather than embedding timestamp conversion in RTP parsing or audio block assembly.
+    - this file intentionally separates RTP-domain timestamp mapping from receiver playout timing; playout delay is not folded into `AudioRtpTimestampMapper`.
+    - current timing boundary is audio-specific and uses configured audio RTP clock rate rather than video timing assumptions.
+    - mapper state is monotonic-forward only by policy: backward or ambiguous RTP timestamp movement is rejected rather than silently coerced.
+    - current runtime usage maps RTP timestamps after audio block assembly, but the timing boundary itself remains independent from packet decode and audio storage code.
 
 ### libs/st2110core/include/st2110/socket_rx_video_backend.hpp
 - Роль:
-    - concrete socket video receive backend built on the shared single-media socket runtime base.
-    - composes socket receive runtime, packet parsing, explicit packet-admission policy, reorder, video receive pipeline, and timestamp mapping into one video receive path.
+    - concrete socket-based single-media video receive backend for the current ST 2110-20 receive path.
+    - composes the common socket single-media runtime base with the current video pipeline:
+        - socket open/receive runtime;
+        - RTP/ST 2110 packet parsing;
+        - explicit video payload-type admission;
+        - packet reorder;
+        - depacketize/reconstruct pipeline;
+        - RTP timestamp to internal `TimestampNs` mapping;
+        - final sink delivery.
+    - keeps video-specific receive behavior above `ISocketRxPort`, while reusing the common socket lifecycle / receive-loop / stats layer from `SocketRxSingleMediaBackendBase`.
 - Связи:
-    - inherits from `SocketRxSingleMediaBackendBase` and `IRxVideoBackend`;
-    - uses:
-        - `packet_parse.hpp`
-        - `packet_admission.hpp`
-        - `fixed_reorder_buffer.hpp`
-        - `video_receive_pipeline.hpp`
-        - `video_timestamp_mapping.hpp`
-        - `socket_runtime.hpp`
-    - uses `RxVideoConfig` for runtime/open-config projection and selected-stream payload type.
+    - наследуется от `SocketRxSingleMediaBackendBase` for:
+        - common socket runtime lifecycle;
+        - receive thread and receive loop;
+        - base backend stats accounting;
+        - RTCP-like and generic payload-type prefilter helpers;
+        - default socket-port factory selection boundary.
+    - реализует `IRxVideoBackend` from `backend.hpp`.
+    - использует:
+        - `fixed_reorder_buffer.hpp` for `FixedWindowReorderBuffer` / `IReorderBuffer`;
+        - `packet_admission.hpp` for explicit configured-payload-type admission;
+        - `packet_parse.hpp` and `packet_view.hpp` parsing path through `parse_packet_view_staged(...)`;
+        - `socket_runtime.hpp` for `SocketRxOpenConfig` and `socket_rx_open_config_from_video_config(...)`;
+        - `video_receive_pipeline.hpp` for depacketize + reconstruct delivery path;
+        - `video_timestamp_mapping.hpp` for `VideoRtpTimestampMapper`.
+    - test coverage lives in `tests/test_socket_rx_video_backend.cpp`.
 - Сущности:
     - `SocketRxVideoBackend`
+        - final concrete video backend.
+        - constructors:
+            - default constructor
+                - uses `make_default_port_factory()` through the common socket backend base;
+                - advertises `RxMediaKind::Video` and video-only capabilities.
+            - injected-factory constructor
+                - accepts `std::unique_ptr<ISocketRxPortFactory>`;
+                - keeps socket port dependency injectable for tests and future platform/runtime variants.
         - `start_video(const RxVideoConfig&, IVideoFrameSink&) -> RxBackendLifecycleResult`
-        - `process_received_datagram(ByteSpan) noexcept`
+            - validates common backend start preconditions through the base class;
+            - derives socket open config from `RxVideoConfig`;
+            - creates one socket receive port from the current factory;
+            - rejects null port creation as `InvalidValue`;
+            - delegates concrete startup to `start_video_runtime(...)`.
+    - overridden runtime hooks:
         - `clear_media_runtime_objects() noexcept`
+            - clears common socket runtime state through `clear_common_runtime_objects()`;
+            - clears all video-specific runtime objects and cached config-derived fields:
+                - reorder buffer;
+                - video receive pipeline;
+                - timestamp mapper;
+                - packet parse policy;
+                - sink pointer;
+                - configured payload type.
+        - `process_received_datagram(ByteSpan) noexcept`
+            - video datagram receive-path entry from the common receive loop.
+            - behavior:
+                - returns immediately if required video runtime objects are not initialized;
+                - ignores RTCP-like datagrams through the common base helper;
+                - parses one packet via `parse_packet_view_staged(...)`;
+                - records staged parse failures through `record_rejected_packet(...)`;
+                - applies explicit configured video payload-type admission through `validate_video_packet_payload_type_admission(...)`;
+                - mismatching payload type is treated as nonmedia datagram and does not enter reorder/pipeline state;
+                - accepted packets are recorded through `record_parsed_packet_ok()`, pushed into reorder, and drained toward sink delivery.
         - `augment_stats_snapshot_locked(BackendStats&) const noexcept`
-    - runtime helpers:
-        - `build_packet_parse_policy(const RxVideoConfig&)`
-        - `build_video_receive_pipeline_config(const RxVideoConfig&)`
-        - `make_reorder_buffer()`
-        - `start_video_runtime(...)`
-        - `drain_reorder_buffer_to_sink()`
-        - `deliver_reconstructed_frame(...)`
-        - `map_frame_timestamp_ns(uint32_t) noexcept`
-        - `build_open_config(const RxVideoConfig&)`
-    - state:
-        - reorder buffer
-        - video receive pipeline
-        - RTP timestamp mapper
-        - packet-parse policy
-        - selected video sink
-        - configured expected video payload type
-- Поведение:
-    - receive path is ordered as:
-        - RTCP-like datagram tolerance/classification;
-        - generic video packet parsing through `parse_packet_view_staged(...)`;
-        - explicit video RTP payload-type admission through `validate_video_packet_payload_type_admission(...)`;
-        - reorder admission;
-        - depacketizer/pipeline drain;
-        - reconstructed-frame delivery.
-    - RTCP-like datagrams are counted as control datagrams and are not fed into media packet parsing.
-    - malformed/unsupported media datagrams that do reach parsing are accounted for separately as rejected media packets.
-    - wrong-PT packets are ignored/dropped/accounted for locally before reorder/depacketizer and do not mutate depacketizer state.
+            - augments the common backend stats snapshot with:
+                - reorder stats from the current reorder buffer;
+                - depacketizer stats from the current video receive pipeline.
+    - runtime construction helpers:
+        - `build_packet_parse_policy(const RxVideoConfig&) -> PacketParsePolicy`
+            - current implementation returns default `PacketParsePolicy{}`.
+        - `build_video_receive_pipeline_config(const RxVideoConfig&) -> VideoReceivePipelineConfig`
+            - derives:
+                - `DepacketizerConfig`
+                    - width / height / format from `RxVideoConfig`
+                    - `partial_frame_policy = PartialFramePolicy::Drop`
+                    - scan mode from config
+                    - packing mode from config
+                - `VideoUnitReconstructorConfig`
+                    - format from config
+                    - scan mode from config
+        - `make_reorder_buffer() -> std::unique_ptr<IReorderBuffer>`
+            - current implementation uses `FixedWindowReorderBuffer(32)`.
+        - `build_open_config(const RxVideoConfig&) -> std::expected<SocketRxOpenConfig, Error>`
+            - delegates to `socket_rx_open_config_from_video_config(...)`.
+    - `start_video_runtime(...) -> RxBackendLifecycleResult`
+        - builds/initializes all video-specific runtime objects before common socket runtime start:
+            - packet parse policy;
+            - reorder buffer;
+            - receive buffer;
+            - video receive pipeline;
+            - video RTP timestamp mapper;
+            - sink pointer and configured payload type.
+        - `VideoReceivePipeline` and `VideoRtpTimestampMapper` construction failures are mapped as:
+            - `std::invalid_argument` -> `InvalidValue`
+            - `std::logic_error` -> `Unsupported`
+        - then starts the common socket runtime via `start_common_runtime(...)`;
+        - on common-runtime start failure, clears media runtime objects before returning the error.
+    - receive-pipeline helpers:
+        - `drain_reorder_buffer_to_sink() noexcept`
+            - repeatedly pops ready packets from reorder;
+            - feeds them into `VideoReceivePipeline::push(...)`;
+            - forwards each reconstructed frame result to `deliver_reconstructed_frame(...)`.
+        - `deliver_reconstructed_frame(ReconstructedVideoFrame&&) noexcept`
+            - delivers only when:
+                - sink exists;
+                - frame is not partial.
+            - maps RTP timestamp to `TimestampNs`;
+            - calls `IVideoFrameSink::on_video_frame(...)`;
+            - records both delivered-frame and delivered-media-unit counters.
+        - `map_frame_timestamp_ns(uint32_t) noexcept -> TimestampNs`
+            - uses `VideoRtpTimestampMapper` when present;
+            - returns `0` when mapper is absent or timestamp mapping fails.
+    - cached runtime state:
+        - `reorder_buffer_`
+        - `video_receive_pipeline_`
+        - optional `video_timestamp_mapper_`
+        - `packet_parse_policy_`
+        - `video_sink_`
+        - optional `configured_video_payload_type_`
+    - `SocketRxVideoBackendFactory`
+        - final `IRxBackendFactory` for the socket video backend.
+        - `descriptor()`
+            - returns:
+                - `kind = RxBackendKind::Socket`
+                - `name = "socket"`
+                - video-only capabilities
+                - `available = true`
+        - `create_backend()`
+            - creates one default `SocketRxVideoBackend`.
 - Примечание:
-    - generic RTP parsing, UDP control/media classification, and stream-specific packet admission are now explicitly separated;
-    - actual RTCP semantic interpretation remains outside MVP.
+    - current backend keeps explicit payload-type admission separate from generic packet parsing: wrong-PT datagrams are treated as nonmedia traffic and do not mutate reorder/depacketizer state.
+    - current packet-parse policy remains defaulted even though the backend carries an explicit `PacketParsePolicy` boundary.
+    - current delivery path is complete-frame-only: partial reconstructed frames are intentionally not delivered to the sink.
+    - RTP timestamp mapping is localized to the backend delivery boundary and currently uses a fixed 90 kHz RTP clock with zero anchor values.
 
 ### libs/st2110core/include/st2110/socket_rx_audio_backend.hpp
 - Роль:
-    - concrete socket-based audio receive backend over the common single-media socket runtime base.
-    - consumes explicit runtime audio signaling/projection results without reintroducing a backend-local hardcoded wire-format assumption.
+    - concrete socket-based single-media audio receive backend for the current ST 2110-30 MVP path.
+    - composes the existing socket runtime boundary with the current audio receive pipeline:
+        - socket open/receive runtime;
+        - RTCP-like / wrong-payload-type filtering;
+        - audio RTP packet parsing;
+        - audio reorder buffering;
+        - audio frame/block assembly;
+        - RTP timestamp to `TimestampNs` mapping;
+        - final sink delivery.
+    - keeps audio-specific receive behavior above `ISocketRxPort`, while reusing the common single-media socket backend runtime/lifecycle layer.
 - Связи:
-    - использует `audio_frame_assembler.hpp`, `audio_packet.hpp`, `audio_reorder_buffer.hpp`, `audio_timestamp_mapping.hpp`, `backend.hpp`, `backend_factory.hpp`, `packet_parse.hpp`, `socket_runtime.hpp`, `socket_rx_single_media_backend_base.hpp`;
-    - получает transport/runtime config из `RxAudioConfig`.
+    - наследуется от `SocketRxSingleMediaBackendBase` for:
+        - common socket runtime lifecycle;
+        - receive thread;
+        - datagram receive loop;
+        - backend stats skeleton;
+        - common packet/control/nonmedia filtering helpers.
+    - реализует `IRxAudioBackend` from `backend.hpp`.
+    - использует:
+        - `audio_packet.hpp` for `AudioRtpPacketPolicy` and `parse_audio_rtp_packet_view(...)`;
+        - `audio_reorder_buffer.hpp` for `AudioFixedWindowReorderBuffer` and `AudioReorderBufferConfig`;
+        - `audio_frame_assembler.hpp` for `AudioFrameAssembler`, `AssembledAudioBlock`, and assembler config;
+        - `audio_timestamp_mapping.hpp` for `AudioRtpTimestampMapper` and timestamp mapper config;
+        - `socket_runtime.hpp` for `SocketRxOpenConfig` and audio socket-open projection;
+        - `socket_rx_single_media_backend_base.hpp` for common runtime/start-stop behavior;
+        - `backend_factory.hpp` for `IRxBackendFactory` / `RxBackendDescriptor`.
+    - test coverage is in `tests/test_socket_rx_audio_backend.cpp`.
 - Сущности:
     - `SocketRxAudioBackend`
+        - final concrete audio backend.
+        - constructors:
+            - default constructor
+                - uses `make_default_port_factory()` through the common socket backend base;
+                - advertises `RxMediaKind::Audio` and audio-only capabilities.
+            - injected-factory constructor
+                - accepts `std::unique_ptr<ISocketRxPortFactory>`;
+                - keeps concrete socket-port dependency injectable for tests and future runtime/platform variants.
         - `start_audio(const RxAudioConfig&, IAudioFrameSink&) -> RxBackendLifecycleResult`
-        - `process_received_datagram(ByteSpan) noexcept`
+            - validates common backend start preconditions via the base class;
+            - builds socket open config from `RxAudioConfig`;
+            - creates one socket receive port from the configured/injected factory;
+            - rejects null port creation as `InvalidValue`;
+            - delegates concrete startup to `start_audio_runtime(...)`.
+    - overridden runtime hooks:
         - `clear_media_runtime_objects() noexcept`
-        - `build_open_config(const RxAudioConfig&)`
-        - `build_audio_packet_policy(const RxAudioConfig&)`
-            - delegates to `audio_rtp_packet_policy_from_rx_audio_config(...)`;
-            - therefore uses explicit `pcm_bit_depth` from runtime config.
-        - `build_audio_frame_assembler_config(const RxAudioConfig&)`
-        - `start_audio_runtime(...)`
+            - clears common socket runtime state through the base class;
+            - clears all audio-specific runtime objects and cached config-derived fields:
+                - packet parse policy;
+                - audio packet policy;
+                - reorder buffer;
+                - frame assembler;
+                - timestamp mapper;
+                - sink pointer;
+                - cached payload type / sampling rate / packet-time / samples-per-packet / channel count.
+        - `process_received_datagram(ByteSpan) noexcept`
+            - audio datagram receive-path entry from the common receive loop.
+            - behavior:
+                - returns immediately if required audio runtime objects are not initialized;
+                - ignores RTCP-like datagrams through the common base helper;
+                - ignores datagrams whose RTP payload type does not match the configured audio payload type;
+                - parses one audio RTP packet via `parse_audio_rtp_packet_view(...)`;
+                - pushes accepted packets into the audio reorder buffer;
+                - records accepted/rejected datagram stats through the common backend base;
+                - drains ready reordered packets toward assembly/sink delivery.
+    - audio runtime construction helpers:
+        - `build_packet_parse_policy(const RxAudioConfig&) -> PacketParsePolicy`
+            - current implementation returns default `PacketParsePolicy{}` and does not yet derive audio-specific packet-size policy from config/signaling.
+        - `build_open_config(const RxAudioConfig&) -> std::expected<SocketRxOpenConfig, Error>`
+            - delegates to `socket_rx_open_config_from_audio_config(...)`.
+        - `build_audio_packet_policy(const RxAudioConfig&) -> std::expected<AudioRtpPacketPolicy, Error>`
+            - delegates to `audio_rtp_packet_policy_from_rx_audio_config(...)`.
+        - `build_audio_frame_assembler_config(const RxAudioConfig&) -> AudioFrameAssemblerConfig`
+            - current internal storage format is explicitly `AudioSampleStorageFormat::InterleavedS32`.
+        - `build_audio_reorder_buffer_config(const RxAudioConfig&) -> AudioReorderBufferConfig`
+            - current implementation returns the default reorder config.
+        - `build_audio_timestamp_mapper_config(const RxAudioConfig&) -> AudioRtpTimestampMapperConfig`
+            - maps:
+                - `rtp_clock_rate = cfg.sampling_rate_hz`
+                - `anchor_rtp_timestamp = 0`
+                - `anchor_timestamp_ns = 0`
+    - `start_audio_runtime(...) -> RxBackendLifecycleResult`
+        - creates/initializes all audio-specific runtime objects before common socket runtime start:
+            - receive buffer from packet-parse policy;
+            - audio RTP packet policy;
+            - audio reorder buffer;
+            - audio frame assembler;
+            - audio RTP timestamp mapper;
+            - sink pointer and cached config-derived audio fields.
+        - then starts the common socket runtime via `start_common_runtime(...)`;
+        - on common-runtime start failure, clears all media runtime objects again before returning the error.
+    - receive-pipeline helpers:
         - `drain_reorder_buffer_to_sink() noexcept`
-        - `deliver_assembled_audio_block(...) noexcept`
-        - `map_block_timestamp_ns(...) noexcept`
-        - `build_audio_reorder_buffer_config(...)`
-        - `build_audio_timestamp_mapper_config(...)`
+            - repeatedly pops ready packets from the audio reorder buffer;
+            - assembles each ready packet into an `AssembledAudioBlock`;
+            - rejected assembly result increments rejected-media-packet stats and is skipped;
+            - successful assembled blocks go to `deliver_assembled_audio_block(...)`.
+        - `deliver_assembled_audio_block(AssembledAudioBlock&&) noexcept`
+            - delivers only when:
+                - sink exists;
+                - block is marked `complete`.
+            - maps RTP timestamp to `TimestampNs`;
+            - sends `block.buffer.view(timestamp_ns)` to `IAudioFrameSink::on_audio_frame(...)`;
+            - records delivered media-unit stats.
+        - `map_block_timestamp_ns(uint32_t) noexcept -> TimestampNs`
+            - uses `AudioRtpTimestampMapper` when present;
+            - falls back to `0` on absent mapper or mapping failure.
+    - cached runtime state:
+        - `packet_parse_policy_`
+        - optional `audio_packet_policy_`
+        - `reorder_buffer_`
+        - `audio_frame_assembler_`
+        - optional `audio_timestamp_mapper_`
+        - `audio_sink_`
+        - optional cached configured values:
+            - `configured_audio_payload_type_`
+            - `configured_sampling_rate_hz_`
+            - `configured_packet_time_us_`
+            - `configured_samples_per_packet_`
+            - `configured_channel_count_`
     - `SocketRxAudioBackendFactory`
+        - final `IRxBackendFactory` for the socket audio backend.
+        - `descriptor()`
+            - returns:
+                - `kind = RxBackendKind::Socket`
+                - `name = "socket"`
+                - audio-only capabilities
+                - `available = true`
+        - `create_backend()`
+            - creates one default `SocketRxAudioBackend`.
 - Примечание:
-    - backend no longer contains a private `select_audio_wire_format(...)` that hardcodes `LinearPcm -> L24`;
-    - explicit audio wire-format selection now lives in the already-modeled signaling/runtime/packet-policy path.
+    - current backend performs a cheap RTP payload-type prefilter on raw datagrams before full audio packet parsing; this keeps wrong-PT traffic localized as nonmedia datagrams and out of reorder/assembler state.
+    - audio receive path is currently one concrete composition over existing explicit boundaries, not a monolithic backend-local parser.
+    - `PacketParsePolicy` is present in the backend shape, but current audio path still uses the default policy rather than signaling/config-derived audio-specific packet-size behavior.
+    - incomplete assembled audio blocks are not delivered by this backend; current MVP delivery path is complete-block-only.
 
 ### libs/st2110core/include/st2110/socket_runtime.hpp
 - Роль:
-    - OS-neutral socket runtime boundary for receive-port lifecycle and config projection;
-    - keeps socket family, bind endpoint, multicast membership, and open-config semantics explicit above concrete Linux/Winsock code.
+    - OS-neutral socket runtime boundary for receive-port lifecycle, address-family modeling, address/multicast validation, and runtime config projection.
+    - keeps socket family, bind endpoint, multicast membership, open-config semantics, and datagram receive contract explicit above concrete Linux/Winsock code.
+    - локализует generic socket-open derivation from media runtime configs instead of spreading socket-family/multicast decisions into backend code.
 - Связи:
     - использует `config_validation.hpp`, `error.hpp`, `rx_config.hpp`;
-    - используется `SocketRxVideoBackend` and concrete socket runtime implementations such as `LinuxSocketRxPort`.
+    - используется concrete socket backends and runtime implementations such as:
+        - `linux_socket_rx_port.hpp`;
+        - `socket_rx_video_backend.hpp`;
+        - `socket_rx_audio_backend.hpp`.
+    - покрывается `tests/test_socket_runtime_interface.cpp`.
 - Сущности:
     - `SocketAddressFamily`
         - modeled socket family axis:
-            - `IPv4`;
-            - `IPv6`.
-    - `validate_socket_address_family(...)`
-    - `socket_address_family_name(...)`
-    - address helpers:
-        - `is_valid_ipv4_address(...)`
-        - `is_ipv4_multicast_address(...)`
-        - `is_valid_ipv6_address(...)`
-        - `is_ipv6_multicast_address(...)`
-        - `is_valid_address(...)`
+            - `IPv4`
+            - `IPv6`
+    - family helpers:
+        - `validate_socket_address_family(SocketAddressFamily) -> Error`
+        - `socket_address_family_name(SocketAddressFamily) -> std::string_view`
+    - IPv4 parsing/validation helpers:
+        - `parse_ipv4_block(std::string_view) -> std::expected<uint8_t, Error>`
+        - `is_valid_ipv4_address(std::string_view) -> bool`
+        - `is_ipv4_multicast_address(std::string_view) -> bool`
+    - generic ASCII / IPv6 helpers:
+        - `is_ascii_hex_digit(char) -> bool`
+        - `ascii_to_lower(char) -> char`
+        - `is_valid_ipv6_hextet(std::string_view) -> bool`
+        - `parse_ipv6_side(std::string_view, bool allow_ipv4_tail, int& group_count) -> bool`
+        - `is_valid_ipv6_address(std::string_view) -> bool`
+        - `is_ipv6_multicast_address(std::string_view) -> bool`
+        - `is_valid_address(std::string_view, SocketAddressFamily) -> bool`
     - `SocketEndpoint`
         - `family`
         - `address`
         - `port`
-    - `validate_socket_endpoint(...)`
+    - `validate_socket_endpoint(const SocketEndpoint&) -> Error`
+        - validates family;
+        - validates textual address for the declared family;
+        - validates UDP port.
     - `SocketMulticastMembership`
         - `family`
         - `group_address`
         - `interface_address`
             - explicit multicast join interface/local-address selection boundary.
-    - `validate_socket_multicast_membership(...)`
-        - validates multicast group syntax and optional interface-address syntax within the same family.
+    - `validate_socket_multicast_membership(const SocketMulticastMembership&) -> Error`
+        - validates family;
+        - validates group/interface textual address syntax in the same family;
+        - requires multicast group semantics for the selected family;
+        - rejects unicast/non-multicast group addresses.
     - `SocketRxOpenConfig`
         - `bind_endpoint`
         - optional `multicast_membership`
         - `reuse_address`
-    - `validate_socket_rx_open_config(...)`
-    - `socket_rx_uses_multicast(...)`
-    - `socket_rx_open_config_from_video_config(const RxVideoConfig&)`
-        - projects manual/backend-facing video config into socket-open config;
-        - for multicast destinations, maps bind address to family wildcard (`0.0.0.0` / `::`);
-        - carries destination multicast group through `multicast_membership.group_address`;
-        - carries explicit `RxVideoConfig.local_ip` into `multicast_membership.interface_address` when present.
-    - `SocketReceiveResult`
-        - `size_bytes`
-    - `ISocketRxPort`
-        - `is_open()`
-        - `open(...)`
-        - `close()`
-        - `receive(...)`
-    - `ISocketRxPortFactory`
-        - `create_port()`
+    - `validate_socket_rx_open_config(const SocketRxOpenConfig&) -> Error`
+        - validates bind endpoint;
+        - validates optional multicast membership;
+        - rejects family mismatch between bind endpoint and multicast membership.
+    - `socket_rx_uses_multicast(const SocketRxOpenConfig&) -> bool`
+    - generic socket-open config builder:
+        - `build_socket_rx_open_config(uint16_t udp_port, const std::string& local_ip, const std::string& dest_ip) -> std::expected<SocketRxOpenConfig, Error>`
+            - derives family from `local_ip` when present, otherwise from `dest_ip`;
+            - rejects invalid/mixed-family address combinations;
+            - for unicast:
+                - binds to explicit local address when present;
+                - otherwise binds to family wildcard (`0.0.0.0` / `::`);
+            - for multicast:
+                - binds to family wildcard;
+                - creates `multicast_membership` with destination group address;
+                - carries explicit `local_ip` into `interface_address` when present;
+            - validates the final open config before returning it.
+    - projection helpers:
+        - `socket_rx_open_config_from_video_config(const RxVideoConfig&) -> std::expected<SocketRxOpenConfig, Error>`
+            - validates `RxVideoConfig` first;
+            - then delegates to `build_socket_rx_open_config(...)`.
+        - `socket_rx_open_config_from_audio_config(const RxAudioConfig&) -> std::expected<SocketRxOpenConfig, Error>`
+            - validates `RxAudioConfig` first;
+            - then delegates to `build_socket_rx_open_config(...)`.
+    - receive/runtime interface:
+        - `SocketReceiveResult`
+            - `size_bytes`
+        - `ISocketRxPort`
+            - `is_open() const noexcept`
+            - `open(const SocketRxOpenConfig&)`
+            - `close()`
+            - `receive(std::span<std::uint8_t>) -> std::expected<SocketReceiveResult, Error>`
+        - `ISocketRxPortFactory`
+            - `create_port() -> std::unique_ptr<ISocketRxPort>`
 - Примечание:
-    - multicast interface selection is now modeled explicitly inside the existing runtime boundary rather than being hidden in Linux-only backend code;
-    - family coverage remains explicit even where some concrete runtime branches are still temporarily unsupported.
+    - multicast interface selection is explicitly modeled inside the runtime boundary rather than hidden in Linux-only backend code.
+    - family coverage is explicit even where some concrete runtime branches remain temporarily unsupported.
+    - this file now serves both video and audio socket-open projection paths; it is no longer only a video-oriented runtime helper layer.
 
 ### libs/st2110core/include/st2110/socket_stub_rx_port.hpp
 - Роль:
-    - временная concrete stub-реализация OS-neutral socket runtime boundary.
-    - позволяет перевести `SocketRxVideoBackend` на `ISocketRxPort` / `ISocketRxPortFactory` до появления реальной Linux socket runtime implementation.
+    - concrete stub implementation of the OS-neutral socket receive-port runtime boundary.
+    - provides a non-networking fallback `ISocketRxPort` / `ISocketRxPortFactory` implementation for builds where a real platform socket runtime is not selected.
+    - keeps backend public API and socket runtime contracts stable even when concrete transport runtime is unavailable.
 - Связи:
     - реализует `ISocketRxPort` и `ISocketRxPortFactory` из `socket_runtime.hpp`;
-    - используется `SocketRxVideoBackend` как default runtime dependency;
-    - не делает реальных Linux/Winsock socket operations.
+    - используется через common socket backend runtime base, not directly as a video-only dependency;
+    - current default platform selection is localized in `src/socket_rx_single_media_backend_base.cpp`:
+        - Linux builds use `make_linux_socket_rx_port_factory()`;
+        - other builds fall back to `make_socket_stub_rx_port_factory()`.
 - Сущности:
     - `SocketStubRxPort`
+        - final stub `ISocketRxPort` implementation.
         - `SocketStubRxPort()`
             - creates a closed stub port.
-        - `is_open() -> bool`
+        - `is_open() const noexcept -> bool`
             - reports current stub open-state.
         - `open(const SocketRxOpenConfig&) -> Error`
-            - validates the config;
-            - rejects repeated open via `InvalidBackendState`;
-            - saves config and switches to open state on success.
+            - validates open config through `validate_socket_rx_open_config(...)`;
+            - rejects repeated open with `InvalidBackendState`;
+            - stores validated open config and switches to open state on success.
         - `close() -> Error`
             - idempotent close path;
-            - clears saved config/open state;
-            - does not perform OS cleanup.
+            - clears stored open config when the port was open;
+            - always resets open-state to closed;
+            - does not perform OS-level cleanup.
         - `receive(std::span<std::uint8_t>) -> std::expected<SocketReceiveResult, Error>`
-            - rejects receive on closed port with `InvalidBackendState`;
-            - rejects empty buffer with `InvalidValue`;
-            - returns `Unsupported` for opened stub receive path instead of simulating network packets.
+            - rejects receive on a closed stub port with `InvalidBackendState`;
+            - rejects empty receive buffer with `InvalidValue`;
+            - for an opened stub port, always returns `Unsupported` instead of simulating packets.
     - `SocketStubRxPortFactory`
+        - final stub factory implementing `ISocketRxPortFactory`.
         - `create_port() -> std::unique_ptr<ISocketRxPort>`
-            - returns a new closed stub port instance.
+            - returns a new closed `SocketStubRxPort`.
     - `make_socket_stub_rx_port_factory() -> std::unique_ptr<ISocketRxPortFactory>`
-        - helper for constructing the default stub runtime dependency.
+        - convenience helper for constructing the stub runtime dependency.
 - Примечание:
-    - this file is intentionally a temporary transport/runtime stub;
-    - real Linux socket behavior must be added later behind the same `ISocketRxPort` / `ISocketRxPortFactory` boundary rather than by changing backend public API.
+    - this file is no longer the default runtime path on supported Linux builds; it is the explicit fallback runtime dependency for unsupported/non-Linux platform selection.
+    - the stub keeps lifecycle/config validation behavior explicit, but intentionally does not fake datagram transport.
+    - future real platform runtimes should continue to implement the same `ISocketRxPort` / `ISocketRxPortFactory` boundary rather than changing backend-facing contracts.
 
 ### libs/st2110core/include/st2110/linux_socket_rx_port.hpp
 - Роль:
-    - Linux-specific реализация OS-neutral socket receive-port boundary.
+    - concrete Linux implementation of the existing family-aware socket receive-port runtime boundary.
+    - реализует `ISocketRxPort` поверх Linux UDP socket API without changing the public backend/runtime contracts.
+    - локализует Linux-specific socket lifecycle, bind, multicast join/leave, and receive error mapping below `socket_runtime.hpp`.
 - Связи:
-    - реализует `ISocketRxPort` и `ISocketRxPortFactory` из `socket_runtime.hpp`;
-    - используется socket backend’ом через abstract runtime boundary.
+    - использует `socket_runtime.hpp` for:
+        - `ISocketRxPort`;
+        - `ISocketRxPortFactory`;
+        - `SocketRxOpenConfig`;
+        - `SocketAddressFamily`;
+        - `SocketReceiveResult`;
+        - `validate_socket_rx_open_config(...)`.
+    - использует `error.hpp` indirectly through the socket runtime boundary and returned `Error` values.
+    - concrete Linux socket backend/runtime code should consume this port via `ISocketRxPort` / `ISocketRxPortFactory`, not by calling raw POSIX socket APIs directly in higher layers.
+    - покрывается `tests/test_linux_socket_rx_port.cpp`.
 - Сущности:
     - `LinuxSocketRxPort`
-        - `is_open()`
-        - `open(const SocketRxOpenConfig&)`
-            - validates config/platform support;
-            - creates native UDP socket;
-            - configures/binds it;
-            - joins multicast membership where configured.
-        - `close()`
-            - leaves multicast membership where configured;
-            - performs native socket shutdown/close sequence;
-            - clears open state only after successful runtime close.
-        - `receive(std::span<std::uint8_t>)`
-            - blocking datagram receive;
-            - maps interrupted/aborted/failed I/O into explicit runtime errors.
-        - helpers:
-            - multicast join/leave;
-            - native socket creation/configuration/bind/close;
-            - platform-support validation.
-    - `LinuxSocketRxPortFactory`
-    - `make_linux_socket_rx_port_factory()`
+        - final concrete `ISocketRxPort` implementation for Linux.
+        - non-copyable, non-movable.
+        - destructor:
+            - if port is still open, calls `close()`.
+        - `is_open() const noexcept`
+            - returns `true` only when native socket fd is valid and `open_cfg_` is present.
+        - `open(const SocketRxOpenConfig&) -> Error`
+            - rejects repeated open with `InvalidBackendState`;
+            - validates request through:
+                - `validate_socket_rx_open_config(...)`;
+                - `validate_current_platform_support(...)`;
+            - creates UDP socket according to bind family;
+            - applies pre-bind socket options;
+            - binds socket to the configured endpoint;
+            - joins multicast membership when requested;
+            - stores open state only after all prior steps succeed.
+        - `close() -> Error`
+            - repeated close on an already-closed port returns `Ok`;
+            - on open port:
+                - leaves multicast membership first when configured;
+                - closes native socket;
+                - clears open state only after both steps succeed.
+            - therefore, leave/close failure keeps state uncleared and surfaces the failure explicitly.
+        - `receive(std::span<std::uint8_t>) -> std::expected<SocketReceiveResult, Error>`
+            - rejects receive on a closed port as `InvalidBackendState`;
+            - rejects empty buffer as `InvalidValue`;
+            - uses `::recv(...)` on the native socket;
+            - maps Linux receive errors:
+                - `EINTR` -> `ReceiveInterrupted`;
+                - `EBADF` / `ENOTSOCK` -> `ReceiveAborted`;
+                - everything else -> `ReceiveFailed`;
+            - returns received byte count through `SocketReceiveResult`.
+    - `LinuxSocketRxPort` internal helpers:
+        - `join_multicast_membership(...)`
+            - no-op when multicast is not configured;
+            - IPv4:
+                - parses multicast group address with `inet_pton`;
+                - uses `INADDR_ANY` when interface address is empty;
+                - joins through `IP_ADD_MEMBERSHIP`;
+            - IPv6 multicast currently returns `Unsupported`;
+            - invalid family returns `InvalidValue`.
+        - `leave_multicast_membership(...)`
+            - symmetric leave helper via `IP_DROP_MEMBERSHIP`;
+            - uses `INADDR_ANY` when interface address is empty;
+            - IPv6 multicast currently returns `Unsupported`;
+            - malformed leave parameters map to `MulticastLeaveFailed`.
+        - `validate_open_request(...)`
+            - combines generic open-config validation with current Linux platform-support limits.
+        - `validate_current_platform_support(...)`
+            - currently allows:
+                - no multicast;
+                - IPv4 multicast;
+            - rejects IPv6 multicast as `Unsupported`.
+        - `create_native_socket(...)`
+            - selects `AF_INET` / `AF_INET6` from `SocketAddressFamily`;
+            - creates `SOCK_DGRAM` socket;
+            - maps socket-creation failure to `SystemFailure`.
+        - `configure_native_socket_before_bind(...)`
+            - applies `SO_REUSEADDR` from `cfg.reuse_address`;
+            - maps failure to `SystemFailure`.
+        - `bind_native_socket(...)`
+            - binds IPv4 or IPv6 socket according to `bind_endpoint`;
+            - invalid textual address maps to `InvalidValue`;
+            - bind syscall failure maps to `BindFailed`.
+        - `close_native_socket(...)`
+            - calls `shutdown(..., SHUT_RDWR)` best-effort before `::close(...)`;
+            - close failure maps to `SystemFailure`.
+        - `clear_open_state()`
+            - resets fd and stored open config.
+        - `native_socket_is_valid(...)`
+            - fd validity helper.
+    - factory layer:
+        - `LinuxSocketRxPortFactory`
+            - final concrete `ISocketRxPortFactory`;
+            - `create_port()` returns a new closed `LinuxSocketRxPort`.
+        - `make_linux_socket_rx_port_factory()`
+            - convenience helper returning `std::unique_ptr<ISocketRxPortFactory>`.
 - Примечание:
-    - native close path is the runtime-side mechanism that allows backend graceful stop to terminate blocked receive work cleanly without exposing Linux socket details above the runtime boundary.
+    - current platform support is intentionally explicit:
+        - IPv4 unicast supported;
+        - IPv6 unicast supported;
+        - IPv4 multicast supported;
+        - IPv6 multicast not implemented yet and localized here as `Unsupported`.
+    - this file intentionally stays below packet parsing/admission/depacketizer/backend pipeline logic: it receives raw UDP datagrams only and does not interpret RTP/ST 2110 payload semantics.
+    - cleanup/error behavior is explicit rather than silent:
+        - repeated `open()` is rejected;
+        - repeated `close()` on an already-closed port is accepted;
+        - receive-loop errno mapping remains localized here instead of leaking Linux errno handling upward.
 
 ### libs/st2110core/include/st2110/socket_rx_single_media_backend_base.hpp
 - Роль:
-    - shared socket receive runtime base for single-media backends.
-    - owns common socket lifecycle, receive-thread loop, receive buffer ownership, and backend-local stats/accounting.
-    - now also localizes the UDP datagram pre-parse classification/tolerance boundary shared by socket receive paths:
-        - RTCP-like datagrams are identified before media packet parsing;
-        - control datagrams can be ignored/counted separately;
-        - stream-specific media admission stays above generic parsing in concrete media backends.
+    - общая runtime/lifecycle база для concrete socket receive backends, которые обслуживают ровно один media kind.
+    - отделяет:
+        - socket port lifecycle;
+        - receive thread;
+        - receive-buffer sizing;
+        - common backend stats accounting;
+        - generic datagram filtering helpers;
+          от:
+        - media-specific packet parsing;
+        - reorder/depacketizer/assembler behavior;
+        - sink delivery details.
+    - служит reusable socket-runtime layer под `SocketRxVideoBackend` и `SocketRxAudioBackend`, чтобы не дублировать common backend-state / stop / receive-loop logic.
 - Связи:
-    - inherits `IRxBackend`;
-    - uses:
-        - `backend.hpp`
-        - `bytes.hpp`
-        - `packet_parse.hpp`
-        - `socket_runtime.hpp`
-        - `stats.hpp`
-    - consumed by concrete socket backends such as `socket_rx_video_backend.hpp`.
+    - использует:
+        - `backend.hpp` for `IRxBackend`, `RxBackendState`, `RxBackendCapabilities`, `RxMediaKind`;
+        - `bytes.hpp` for `ByteSpan`;
+        - `packet_parse.hpp` for `PacketParsePolicy`, `effective_max_udp_datagram_bytes(...)`, `udpHeaderBytes`, `PacketParseStage`;
+        - `socket_runtime.hpp` for `ISocketRxPort`, `ISocketRxPortFactory`, `SocketRxOpenConfig`;
+        - `stats.hpp` for `BackendStats` and `record_packet_parse_result(...)`.
+    - concrete derived backends:
+        - `socket_rx_video_backend.hpp`;
+        - `socket_rx_audio_backend.hpp`.
+    - default platform port-factory selection is implemented in `src/socket_rx_single_media_backend_base.cpp` and currently chooses:
+        - Linux socket port factory on supported Linux builds;
+        - stub socket port factory otherwise.
 - Сущности:
-    - lifecycle/runtime helpers:
+    - `SocketRxSingleMediaBackendBase`
+        - abstract common base over `IRxBackend`.
+        - `backend_name() const`
+            - always returns `"socket"`.
+        - `capabilities() const`
+            - returns the capabilities passed into the constructor.
+        - `state() const`
+            - returns current backend lifecycle state snapshot.
+        - `stats() const`
+            - returns a thread-safe backend stats snapshot;
+            - builds a base snapshot from common runtime counters;
+            - then allows derived classes to augment it through `augment_stats_snapshot_locked(...)`.
+        - `stop() -> RxBackendLifecycleResult`
+            - if no active media and no port object exist, returns the current stopped state;
+            - if port exists and is open, closes it first;
+            - propagates close failure without clearing runtime objects/state;
+            - on success clears all media/common runtime objects and returns the updated state.
+    - constructor/runtime boundaries:
+        - protected constructor:
+            - `SocketRxSingleMediaBackendBase(RxMediaKind media_kind, RxBackendCapabilities capabilities, std::unique_ptr<ISocketRxPortFactory> port_factory)`
+            - fixes the media kind served by this backend instance and stores the injected/default port factory.
+        - `make_default_port_factory()`
+            - static factory-selection boundary implemented out-of-line in `.cpp`;
+            - keeps platform selection localized away from concrete backend headers/app code.
         - `validate_common_start_preconditions()`
+            - returns `Ok` only when:
+                - this media is not already active;
+                - port factory is available;
+            - returns `InvalidBackendState` when the media is already active;
+            - returns `InvalidValue` when runtime cannot create a port because the factory is absent.
         - `create_port()`
-        - `start_common_runtime(...)`
+            - delegates to the current `ISocketRxPortFactory`.
+    - media-state helpers:
+        - `media_active() const`
+            - reads the active flag corresponding to the configured `RxMediaKind`.
+        - `set_media_active(bool)`
+            - writes the active flag corresponding to the configured `RxMediaKind`.
+    - common runtime start/loop:
+        - `start_common_runtime(std::unique_ptr<ISocketRxPort>, const SocketRxOpenConfig&, std::vector<std::uint8_t> receive_buffer) -> RxBackendLifecycleResult`
+            - opens the socket port;
+            - stores the port and receive buffer;
+            - resets common stats before the receive thread starts;
+            - creates the receive `std::jthread`;
+            - on thread-creation failure:
+                - closes the already-open port best-effort;
+                - clears common/media runtime objects;
+                - returns `SystemFailure`;
+            - marks the bound media as active only after thread creation succeeds.
         - `run_receive_loop(std::stop_token) noexcept`
+            - common receive loop for derived socket backends.
+            - behavior:
+                - exits immediately if no port or receive buffer is present;
+                - calls `port_->receive(...)` repeatedly until stop is requested;
+                - handles `ReceiveInterrupted` as retry/continue;
+                - stops the loop on all other receive errors;
+                - records common datagram/byte stats for successfully received datagrams;
+                - delegates media-specific processing to `process_received_datagram(...)`.
+    - common runtime cleanup/stats mutation:
         - `clear_common_runtime_objects() noexcept`
-        - `reset_stats() noexcept`
-    - stats/accounting helpers:
-        - `record_received_datagram(...)`
-        - `record_ignored_control_datagram() noexcept`
-        - `record_ignored_nonmedia_datagram() noexcept`
-        - `record_rejected_packet(...)`
-        - `record_accepted_media_packet() noexcept`
-        - `record_rejected_media_packet() noexcept`
-        - `record_parsed_packet_ok() noexcept`
-        - `record_delivered_video_frame() noexcept`
-        - `record_delivered_media_unit() noexcept`
-        - `build_base_stats_snapshot_locked() const noexcept`
-    - receive-buffer helper:
+            - stops/drops the receive thread object;
+            - releases the port;
+            - clears the receive buffer;
+            - marks the configured media inactive;
+            - resets common stats.
+        - `reset_stats()`
+        - `record_received_datagram(std::size_t size_bytes)`
+        - `record_ignored_control_datagram()`
+        - `record_ignored_nonmedia_datagram()`
+        - `record_rejected_packet(Error err, PacketParseStage stage)`
+            - records both:
+                - rejected media-packet/drop accounting;
+                - packet-parse-stage failure accounting.
+        - `record_accepted_media_packet()`
+        - `record_rejected_media_packet()`
+        - `record_parsed_packet_ok()`
+            - records a successful packet-parse result in `packet_parse` stats.
+        - `record_delivered_video_frame()`
+        - `record_delivered_media_unit()`
+        - `build_base_stats_snapshot_locked() const`
+            - returns the base common stats snapshot.
+    - generic helpers for derived backends:
         - `make_receive_buffer(const PacketParsePolicy&)`
-    - pre-parse datagram classification helpers:
-        - `is_rtcp_like_datagram(ByteSpan) noexcept`
-            - recognizes RTP-version-2 datagrams with RTCP packet-type range and keeps them out of media packet parsing;
-        - `datagram_matches_configured_payload_type(ByteSpan, std::uint8_t) noexcept`
-            - remains a small raw helper in the common base, while the explicit parsed-packet payload-type admission boundary for video lives above generic parsing.
-    - abstract extension points:
-        - `process_received_datagram(ByteSpan) noexcept`
-        - `clear_media_runtime_objects() noexcept`
-        - `augment_stats_snapshot_locked(BackendStats&) const noexcept`
-- Поведение:
-    - common receive loop:
-        - receives UDP datagrams from the socket runtime;
-        - records receive counters;
-        - passes each datagram to the concrete media runtime path.
-    - RTCP-like datagrams can be classified and tolerated locally before `PacketView` parsing and do not need RTCP semantic interpretation in MVP.
+            - sizes the UDP payload receive buffer from effective max UDP datagram size minus UDP header bytes.
+        - `is_rtcp_like_datagram(ByteSpan) -> bool`
+            - classifies RTP-version-2 datagrams with payload type `192..223` as RTCP-like/control traffic.
+        - `datagram_matches_configured_payload_type(ByteSpan, std::uint8_t configured_payload_type) -> bool`
+            - cheap RTP-version/payload-type prefilter on raw datagrams before full media parsing.
+    - derived-class extension points:
+        - pure virtual:
+            - `process_received_datagram(ByteSpan) noexcept`
+            - `clear_media_runtime_objects() noexcept`
+        - optional override:
+            - `augment_stats_snapshot_locked(BackendStats&) const noexcept`
 - Примечание:
-    - this file now carries the shared UDP control/media pre-parse tolerance boundary;
-    - malformed media packet handling remains separate from tolerated RTCP-like control datagrams.
+    - this file is the shared runtime layer for socket single-media backends; media-specific parsing/assembly must stay in derived classes.
+    - receive-loop error policy is intentionally localized here: `ReceiveInterrupted` retries, all other receive errors terminate the loop.
+    - default socket-port factory selection is explicitly separated from concrete media backend constructors and localized in the `.cpp` implementation.
+    - the common helpers `is_rtcp_like_datagram(...)` and `datagram_matches_configured_payload_type(...)` ensure lightweight control/nonmedia rejection can stay above full packet parsing but below socket receive.
 
 ### libs/st2110core/src/socket_rx_single_media_backend_base.cpp
 - Роль:
@@ -2113,18 +4423,137 @@
 
 ### libs/st2110core/include/st2110/packet_admission.hpp
 - Роль:
-    - explicit stream-specific RTP payload-type admission boundary above generic RTP/packet parsing and below reorder/depacketizer use.
-    - keeps “does this parsed packet belong to the selected stream?” separate from raw RTP parsing.
+    - explicit stream-specific packet-admission boundary above generic RTP/ST 2110 packet parsing.
+    - отделяет:
+        - generic RTP/header/payload structural parsing;
+          от:
+        - stream-specific payload-type admission against the configured expected RTP payload type.
+    - keeps wrong-payload-type rejection localized before reorder/depacketizer/runtime media processing.
 - Связи:
-    - uses `PacketView` / `RtpHeaderView::payload_type`;
-    - consumed by runtime receive/backend code before reorder/depacketizer admission;
-    - does not depend on socket/media runtime state beyond the expected payload type value.
+    - использует `error.hpp` for explicit admission result reporting.
+    - использует `packet_view.hpp` for `PacketView` and access to parsed RTP payload type.
+    - intended downstream consumer is the runtime/backend receive path, which should call this boundary after generic packet parsing and before reorder/depacketizer use.
+    - behavior is covered by `tests/test_video_packet_admission.cpp`, including backend-level proof that wrong-PT packets do not enter depacketizer/reorder processing.
 - Сущности:
-    - `validate_rtp_payload_type_admission(std::uint8_t parsed_payload_type, std::uint8_t expected_payload_type) noexcept`
-        - validates PT equality for the selected stream.
-    - `validate_video_packet_payload_type_admission(const PacketView&, std::uint8_t expected_payload_type) noexcept`
-        - video-facing wrapper over parsed `PacketView::rtp.payload_type`.
+    - `validate_rtp_payload_type_admission(std::uint8_t parsed_payload_type, std::uint8_t expected_payload_type) -> Error`
+        - generic RTP payload-type admission helper.
+        - behavior:
+            - returns `Ok` when parsed payload type matches the expected payload type exactly;
+            - returns `InvalidValue` on mismatch.
+    - `validate_video_packet_payload_type_admission(const PacketView&, std::uint8_t expected_payload_type) -> Error`
+        - video-oriented convenience wrapper over the generic RTP payload-type admission helper.
+        - behavior:
+            - reads `packet.rtp.payload_type`;
+            - delegates to `validate_rtp_payload_type_admission(...)`;
+            - returns `Ok` only for an exact payload-type match;
+            - returns `InvalidValue` for a wrong payload type.
 - Примечание:
-    - generic RTP parser still only parses PT;
-    - packet admission decides stream membership;
-    - wrong-PT handling remains a local drop/accounting boundary, not a packet-parse failure boundary.
+    - this file intentionally does not parse RTP or ST 2110 packet structure; structurally valid packets with a wrong RTP payload type must still parse successfully in the generic packet parser and be rejected only here.
+    - current public surface is video-oriented plus one generic RTP helper; future media-specific admission helpers should extend this boundary rather than pushing payload-type checks into generic RTP parsing or deeper depacketizer logic.
+
+### libs/st2110core/include/st2110/stats.hpp
+- Роль:
+    - общая stats/counter boundary для текущего receive path.
+    - задает компактный vocabulary для observability на нескольких уровнях:
+        - generic parser results;
+        - staged packet parsing;
+        - reorder behavior;
+        - depacketizer behavior;
+        - backend runtime snapshot.
+    - keeps stats representation and helper accounting separate from parser/depacketizer/backend business logic.
+- Связи:
+    - использует `error.hpp` for classifying parse/accounting results by `Error`.
+    - используется:
+        - `packet_parse.hpp` for integrated packet-parse accounting;
+        - `packet_view.hpp` for staged parse-failure stage typing;
+        - `reorder_buffer.hpp` / `fixed_reorder_buffer.hpp` for reorder stats snapshots;
+        - `depacketizer.hpp` / `video_receive_pipeline.hpp` for depacketizer stats;
+        - `backend.hpp` and socket backend runtime layers for `BackendStats`.
+    - покрывается как минимум:
+        - `tests/test_stats.cpp`;
+        - `tests/test_packet_parse_stats.cpp`;
+        - plus broader backend/packet-parse integration tests that consume these structures indirectly.
+- Сущности:
+    - `ReorderBufferStats`
+        - reorder-layer counters:
+            - `packets_pushed`
+            - `packets_stored`
+            - `packets_popped`
+            - `duplicates`
+            - `out_of_window`
+            - `late_packets`
+            - `missing_seq`
+            - `missing_seq_flushed`
+    - `PacketParseStage`
+        - staged packet-parse boundary classification:
+            - `RtpHeader`
+            - `St2110PayloadHeaderParse`
+            - `St2110PayloadHeaderValidate`
+            - `SrdPayloadSplit`
+            - `PacketPolicy`
+    - `ParserStats`
+        - generic parser result counters:
+            - totals:
+                - `packets_total`
+                - `packets_ok`
+                - `packets_failed`
+            - error buckets:
+                - `short_packet`
+                - `bad_rtp_version`
+                - `invalid_value`
+                - `unsupported`
+                - `buffer_too_small`
+                - `other_error`
+    - `PacketParseStats`
+        - packet-parse stats layered over generic parser stats:
+            - `parser_stats`
+            - stage-local counters:
+                - `rtp_header_fail`
+                - `st2110_header_parse_fail`
+                - `bad_srd`
+                - `srd_payload_split_fail`
+                - `packet_policy_fail`
+    - `record_parse_result(ParserStats&, Error)`
+        - common generic parser accounting helper.
+        - behavior:
+            - always increments `packets_total`;
+            - for `Error::Ok`, increments `packets_ok`;
+            - otherwise increments `packets_failed`;
+            - routes known parse/validation-style errors into dedicated buckets;
+            - routes unknown/unclassified errors into `other_error`.
+    - `DepacketizerStats`
+        - depacketizer/unit-level counters:
+            - `packets_in`
+            - `packets_used`
+            - `units_ok`
+            - `units_partial`
+            - `units_dropped`
+    - `BackendStats`
+        - backend-local runtime snapshot counters:
+            - datagram/byte intake:
+                - `datagrams_received`
+                - `bytes_received`
+            - ignored traffic:
+                - `control_datagrams_ignored`
+                - `nonmedia_datagrams_ignored`
+            - media packet outcomes:
+                - `packets_parsed_ok`
+                - `packets_rejected`
+            - delivery/drop outcomes:
+                - `frames_delivered`
+                - `datagrams_dropped`
+                - `media_units_delivered`
+            - nested subsystem snapshots:
+                - `packet_parse`
+                - `reorder`
+                - `depacketizer`
+    - `record_packet_parse_result(PacketParseStats&, Error, PacketParseStage)`
+        - staged packet-parse accounting helper.
+        - behavior:
+            - first delegates to `record_parse_result(...)`;
+            - for `Error::Ok`, does not increment any stage-failure counter;
+            - for non-`Ok` results, increments the failure bucket corresponding to the given `PacketParseStage`.
+- Примечание:
+    - these structures are intentionally plain mutable counters, not synchronized/statistical engines; thread safety remains the responsibility of the caller/runtime layer exposing snapshots.
+    - `PacketParseStats` is intentionally layered: generic parser totals/error categories are tracked once in `parser_stats`, while stage-specific failure counters add localization without duplicating the generic classification model.
+    - `BackendStats` is a snapshot shape, not a mandatory storage strategy; concrete backends may aggregate/update it internally and expose snapshots through their own locking/runtime policy.
