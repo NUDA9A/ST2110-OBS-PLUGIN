@@ -747,15 +747,18 @@
 ### libs/st2110core/include/st2110/video_signaling.hpp
 - Роль:
     - standards-aware video signaling/model validation and projection boundary.
-    - validates modeled ST 2110 video media-description properties and projects signaling into runtime-facing video config / pipeline config through existing boundaries.
-    - keeps media-description cross-field validation and signaling-only SDP constraints localized in signaling/model space rather than pushing standards rules into runtime `PixelFormat` projection.
+    - validates modeled ST 2110 video media-description and timing/reference properties and projects signaling into runtime-facing video config / pipeline config through existing boundaries.
 - Связи:
     - использует `signaling_structs.hpp`, `config_validation.hpp`, `packet_parse.hpp`, `rx_config.hpp`, `depacketizer.hpp`, `video_receive_pipeline.hpp`, `video_unit_reconstructor.hpp`, `pixel_format.hpp`, `video_scan_mode.hpp`;
-    - используется signaling/runtime projection helpers и SDP ingestion path;
-    - ниже него runtime projection still uses `pixel_format_from_video_stream_signaling(...)` and existing packing/runtime support boundaries.
+    - используется signaling/runtime projection helpers и SDP ingestion path.
 - Сущности:
     - `validate_video_sender_signaling(...)`
     - `validate_reference_clock(...)`
+        - validates modeled known reference-clock payloads more strictly:
+            - `Ptp` requires `ptp` and rejects `local_mac` / `raw_token`
+            - non-traceable PTP requires non-zero clock identity
+            - `LocalMac` requires non-zero MAC and rejects `ptp` / `raw_token`
+            - `Other` preserves explicit unknown/open-ended forms through non-empty `raw_token`
     - `validate_media_clock_mode(...)`
     - `validate_timestamp_mode(...)`
     - `validate_video_timing_signaling(...)`
@@ -763,31 +766,16 @@
     - `validate_video_colorimetry(...)`
     - `validate_video_transfer_characteristic_system(...)`
     - `validate_video_signal_standard(...)`
-    - `validate_video_range(const VideoRange&)`
-    - `validate_video_pixel_aspect_ratio(const VideoPixelAspectRatio&)`
-        - validates modeled PAR / pixel aspect ratio;
-        - requires both parts to be positive integers;
-        - keeps PAR validation structural and separate from runtime pixel/storage behavior.
-    - `validate_video_media_description_dimensions(uint32_t width, uint32_t height)`
-        - signaling/media-description-only dimension validation;
-        - enforces ST 2110-20 signaled SDP limit `1..32767`;
-        - intentionally does not encode runtime format-specific constraints such as UYVY even-width.
+    - `validate_video_range(...)`
+    - `validate_video_pixel_aspect_ratio(...)`
+    - `validate_video_media_description_dimensions(...)`
     - `validate_video_bit_depth(...)`
     - `is_420_video_sampling(...)`
-    - `validate_video_media_description_cross_field_constraints(const VideoMediaDescription&, VideoScanMode)`
-        - localized ST 2110-20 media-description cross-field rules for scan mode, KEY/ALPHA, `SSN`, and `RANGE`;
-        - does not turn PAR or runtime format constraints into storage/projection logic.
+    - `validate_video_media_description_cross_field_constraints(...)`
+        - localized ST 2110-20 cross-field rules for scan mode, KEY/ALPHA, `SSN`, and `RANGE`
     - `pixel_format_from_video_stream_signaling(...)`
-        - runtime/storage projection boundary remains unchanged;
-        - current MVP runtime support still maps only `YCbCr422 + 8-bit integer` to `PixelFormat::UYVY`;
-        - PAR and signaled dimension upper-bound checks do not affect runtime projection shape.
+        - current runtime/storage projection boundary remains localized
     - `validate_video_media_description(...)`
-        - includes structural validation for:
-            - token-backed enums;
-            - bit depth;
-            - PAR;
-            - signaled dimensions `1..32767`;
-            - frame rate.
     - `validate_video_stream_signaling(...)`
     - `packet_parse_policy_from_video_stream_signaling(...)`
     - `validate_video_stream_signaling_against_rx_video_config(...)`
@@ -797,8 +785,8 @@
     - `rx_video_config_from_video_stream_signaling(...)`
     - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
 - Примечание:
-    - ST 2110-20 signaling limits for `width` / `height` are now enforced without changing runtime frame-storage or projection behavior;
-    - runtime format-specific limits remain localized below this signaling boundary.
+    - strict modeled reference-clock validation now remains localized in signaling/model validation rather than being deferred to runtime behavior;
+    - runtime PTP behavior is still out of scope.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -1226,63 +1214,61 @@
 
 ### libs/st2110core/include/st2110/video_sdp_timing_attributes.hpp
 - Роль:
-    - pure SDP parsing layer для timing/reference-clock/sender-timing video attributes.
-    - отделяет raw parsing timing-related `a=` values от signaling validation, signaling-model mapping и runtime/bootstrap projection.
+    - raw parsing and scoped-resolution boundary for SDP timing/reference/sender attributes.
+    - keeps strict raw parsing of known `ts-refclk` / `mediaclk` / sender-timing attributes separate from final signaling projection.
 - Связи:
-    - использует `Error` и `RawVideoSdpMediaSection` из `video_sdp_media_section.hpp`;
-    - должен использоваться следующими шагами SDP ingestion/composition, прежде всего `069D5`;
-    - не зависит от `VideoStreamSignaling`, depacketizer, reorder buffer и receive pipeline internals.
+    - использует `error.hpp` и `video_sdp_media_section.hpp`;
+    - используется `video_sdp_ingestion.hpp` as the raw timing parser feeding final SDP-to-signaling ingestion.
 - Сущности:
     - `RawVideoSdpPtpReferenceClock`
-        - raw parsed PTP clock form (`version`, `gmid`, optional `domain`).
+        - `version`
+        - `gmid`
+        - optional `domain`
     - `RawVideoSdpReferenceClock`
-        - raw parsed reference clock with `Kind`:
-            - `Ptp`
-            - `LocalMac`
-            - `Other`
-        - stores `raw_value`, optional parsed `ptp`, optional `local_mac`.
+        - `Kind::{Ptp, LocalMac, Other}`
+        - `raw_value`
+        - optional `ptp`
+        - optional `local_mac`
     - `RawVideoSdpMediaClock`
-        - raw parsed media clock with `Kind`:
-            - `Direct`
-            - `Sender`
-            - `Other`
-        - stores `raw_value`, optional `direct_offset`.
+        - `Kind::{Direct, Sender, Other}`
+        - `raw_value`
+        - optional `direct_offset`
     - `RawVideoSdpTimestampModeValue`
-        - preserved raw `TSMODE` token.
     - `RawVideoSdpSenderTypeValue`
-        - preserved raw `TP` token.
     - `RawVideoSdpScopedTimingValue<T>`
-        - parsed timing/reference/sender value plus original SDP scope:
-            - `value`
-            - `scope`
+        - resolved timing value plus explicit `RawSdpAttributeScope`
     - `RawVideoSdpTimingAttributes`
-        - aggregates optional parsed timing-related attributes with scope:
-            - `reference_clock`
-            - `media_clock`
-            - `timestamp_mode`
-            - `ts_delay_sender_ticks`
-            - `sender_type`
-            - `troff_us`
-            - `cmax`
-    - helper / parsing entry points:
+        - resolved scoped timing/reference/sender attributes for the selected video stream
+    - helpers:
         - `trim(...)`
+        - `parse_video_sdp_decimal_uint8(...)`
+        - `is_hex_digit_ascii(...)`
+        - `is_eui_with_dash_separators<N>(...)`
+        - `validate_raw_video_sdp_ptp_gmid(...)`
+        - `validate_raw_video_sdp_localmac(...)`
+        - `raw_video_sdp_has_reference_clock(...)`
         - `parse_video_sdp_reference_clock(...)`
+            - strict known-form parsing for:
+                - `ptp=IEEE1588-2008:<gmid>[:domain]`
+                - `ptp=IEEE1588-2008:traceable`
+                - `localmac=<EUI-48 MAC>`
+            - malformed known forms reject as `InvalidValue`
+            - non-known/open-ended forms remain preservable through `Kind::Other`
         - `parse_video_sdp_media_clock(...)`
         - `parse_video_sdp_timestamp_mode(...)`
         - `parse_video_sdp_sender_type(...)`
         - `parse_video_sdp_ts_delay(...)`
         - `parse_video_sdp_troff(...)`
         - `parse_video_sdp_cmax(...)`
-        - `parse_video_sdp_timing_attributes(...)`
         - `resolve_raw_sdp_scoped_timing_attribute(...)`
-            - resolves media-level value over session-level value;
-            - falls back to legacy resolved fields for manually constructed test/raw objects.
+    - entry point:
+        - `parse_video_sdp_timing_attributes(const RawVideoSdpMediaSection&)`
+            - resolves session/media scope for timing/reference attributes;
+            - preserves media-over-session precedence;
+            - parses strict known reference-clock forms before final signaling ingestion.
 - Примечание:
-    - файл выполняет только raw timing-attribute parsing;
-    - semantic interpretation и mapping в modeled signaling должны добавляться поверх этого слоя, а не внутрь него;
-    - unknown/open-ended reference/media clock forms сохраняются как `Other` с `raw_value` для дальнейшего локального расширения.
-    - parsed timing attributes now preserve whether the selected value came from session level or media level;
-    - this keeps scope resolution localized in SDP ingestion instead of leaking into runtime projection or receive pipeline internals.
+    - this file remains a raw SDP timing parser/resolution boundary, not a runtime timing/PTP behavior layer;
+    - strict parsing of known `ts-refclk` forms is now localized here.
 
 ### libs/st2110core/include/st2110/video_sdp_rtpmap.hpp
 - Роль:
@@ -1318,28 +1304,21 @@
 ### libs/st2110core/include/st2110/video_sdp_ingestion.hpp
 - Роль:
     - final standards-aware SDP-to-`VideoStreamSignaling` ingestion boundary for ST 2110 video streams.
-    - combines:
-        - raw media-section selection;
-        - fmtp parsing;
-        - SDP media-description to signaling mapping;
-        - rtpmap validation;
-        - timing/reference-clock mapping;
-        - final signaling validation.
-    - keeps final SDP standards gates above runtime pipeline/depacketizer boundaries.
+    - combines raw media-section selection, fmtp parsing/mapping, rtpmap validation, scoped timing parsing, timing/signaling application, and final signaling validation.
 - Связи:
     - использует `video_sdp_media_section.hpp`, `video_sdp_fmtp.hpp`, `video_sdp_rtpmap.hpp`, `video_sdp_signaling_adapter.hpp`, `video_sdp_timing_attributes.hpp`, `video_signaling.hpp`, `signaling_structs.hpp`, `error.hpp`;
-    - используется as final entry point for SDP-driven video signaling ingestion.
+    - используется as top-level video SDP ingestion entry point by payload type.
 - Сущности:
     - `ascii_iequals(...)`
     - `validate_video_sdp_rtpmap_for_video_signaling(...)`
         - requires `raw/90000`;
-        - rejects extra encoding parameters for current ST 2110-20 video ingestion path.
-    - hex / octet helpers:
+        - rejects extra encoding parameters for the current ST 2110-20 video ingestion path.
+    - raw reference-clock mapping helpers:
         - `hex_nibble(...)`
         - `parse_hex_byte(...)`
         - `parse_separated_hex_octets<N>(...)`
-    - raw timing/reference mapping helpers:
         - `reference_clock_from_raw_video_sdp_reference_clock(...)`
+            - maps strict raw `ptp` / `localmac` forms into modeled `ReferenceClock`
         - `media_clock_mode_from_raw_video_sdp_media_clock(...)`
         - `timestamp_mode_from_raw_video_sdp_timestamp_mode(...)`
         - `sender_type_from_raw_video_sdp_sender_type(...)`
@@ -1348,28 +1327,26 @@
         - `apply_video_sdp_fmtp_timing_sender_fields_to_signaling(...)`
     - timing-scope helpers:
         - `raw_video_sdp_timing_value_is_media_scoped(...)`
-        - `raw_video_sdp_has_media_level_mediaclk(const RawVideoSdpTimingAttributes&)`
-            - returns `true` only when the resolved raw timing model contains `mediaclk` with media scope;
-            - used as a final ST 2110-10 ingestion gate.
+        - `raw_video_sdp_has_media_level_mediaclk(...)`
     - `validate_no_duplicate_fmtp_and_standalone_timing_fields(...)`
-        - keeps conflict policy localized:
-            - fmtp timing media parameters may override session-level standalone attributes;
-            - fmtp timing media parameters must not coexist with same-semantic media-level standalone timing attributes.
+        - fmtp timing media parameters may override session-level standalone attributes;
+        - same-semantic media-level coexistence remains invalid.
     - `video_stream_signaling_from_raw_video_sdp_media_section(...)`
         - final SDP ingestion pipeline:
             - parses fmtp;
             - maps fmtp to `VideoStreamSignaling`;
             - validates selected `rtpmap`;
             - parses scoped timing attributes;
-            - now requires media-level `mediaclk` before final signaling application;
+            - now requires both:
+                - resolved `ts-refclk`
+                - media-level `mediaclk`
             - applies standalone timing attributes and fmtp timing fields;
             - validates final `VideoStreamSignaling`.
     - `parse_video_stream_signaling_from_sdp(...)`
         - top-level final SDP ingestion entry point by payload type.
 - Примечание:
-    - raw SDP parsing remains scope-aware and non-destructive;
-    - session-level `mediaclk` may still be preserved in the raw model, but final ST 2110 video ingestion is now standards-clean only when a media-level `mediaclk` is present;
-    - timing interpretation remains outside runtime pipeline / depacketizer boundaries.
+    - raw SDP scope preservation remains non-destructive;
+    - final ST 2110 video ingestion is now standards-clean only when `ts-refclk` is present and `mediaclk` is present at media level.
 
 ### libs/st2110core/include/st2110/video_timestamp_mapping.hpp
 - Роль:

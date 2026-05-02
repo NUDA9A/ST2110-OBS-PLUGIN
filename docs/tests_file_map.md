@@ -525,7 +525,25 @@
 
 ### tests/test_video_reference_clock.cpp
 - Роль:
-    - проверяет reference clock model and validation.
+    - проверяет modeled `ReferenceClock` validation on the signaling boundary.
+- Покрывает:
+    - valid PTP reference clock with non-zero clock identity;
+    - valid traceable PTP form with zero clock identity allowed only when `traceable=true`;
+    - rejection of invalid modeled PTP shapes:
+        - missing payload;
+        - mixed `Ptp` + `LocalMac`;
+        - unexpected raw token;
+        - all-zero non-traceable clock identity.
+    - valid localmac reference clock with non-zero MAC;
+    - rejection of invalid modeled localmac shapes:
+        - missing payload;
+        - all-zero MAC;
+        - mixed `LocalMac` + `Ptp`.
+    - explicit `Other + raw_token` support for unknown/open-ended forms;
+    - propagation of reference-clock validation through `validate_video_stream_signaling(...)`.
+- Фиксирует:
+    - strict modeled validation of known reference-clock forms remains localized on the signaling boundary;
+    - unknown/open-ended forms still remain preservable only through explicit `Other`.
 
 ### tests/test_video_sender_signaling.cpp
 - Роль:
@@ -644,6 +662,22 @@
 ### tests/video_sdp_timing_attributes_test.cpp
 - Роль:
     - проверяет raw parsing of SDP timing/reference/sender attributes.
+- Покрывает:
+    - parsing of known `ts-refclk` forms:
+        - `ptp=IEEE1588-2008:<gmid>[:domain]`
+        - `ptp=IEEE1588-2008:traceable`
+        - `localmac=<EUI-48 MAC>`
+    - preservation of unknown/open-ended reference-clock forms through `Other`;
+    - rejection of malformed known `ptp` / `localmac` forms:
+        - malformed PTP GMID;
+        - malformed PTP domain;
+        - malformed localmac.
+    - parsing of known `mediaclk`, `TSMODE`, `TSDELAY`, `TP`, `TROFF`, `CMAX`;
+    - session/media scoped timing resolution and media-over-session precedence;
+    - helper-level detection of presence of resolved reference clock and media-level `mediaclk`.
+- Фиксирует:
+    - strict known reference-clock parsing is localized in the raw timing parser;
+    - malformed known forms do not silently fall through as unknown/open-ended forms.
 
 ### tests/video_sdp_rtpmap_test.cpp
 - Роль:
@@ -659,10 +693,18 @@
     - explicit square `PAR=1:1`;
     - non-square `PAR=12:11` surviving final SDP-to-signaling mapping;
     - malformed `PAR` rejection through final ingestion;
-    - propagation of invalid RTP/timing/media errors from final ingestion.
+    - propagation of invalid RTP/timing/media errors from final ingestion;
+    - final-ingestion requirement for:
+        - `ts-refclk`
+        - media-level `mediaclk`
+    - acceptance of valid reference-clock forms:
+        - PTP GMID form
+        - PTP traceable form
+        - localmac form
+    - rejection of missing or malformed reference-clock signaling.
 - Фиксирует:
-    - `PAR` survives the full SDP ingestion path as signaling/media-description data;
-    - runtime video projection/bootstrapping behavior is unchanged by PAR modeling.
+    - final video SDP ingestion is standards-clean only when both required timing-clock attributes are present in the accepted form;
+    - runtime video projection/bootstrapping behavior remains separate from SDP timing/reference parsing.
 
 ### tests/video_sdp_fmtp_timing_parameters_test.cpp
 - Роль:
@@ -780,16 +822,13 @@
     - session-level-only `mediaclk` remaining preserved in raw timing parsing but being rejected by final video SDP ingestion;
     - media-level `ts-refclk` / `mediaclk` overriding session-level values in the resolved raw timing model;
     - duplicate rejection within the same scope for timing attributes;
-    - media-level timing requirement helper behavior:
-        - media-level `mediaclk` detected as sufficient;
-        - session-level-only `mediaclk` not treated as media-level presence.
     - conflict policy between fmtp timing fields and standalone timing attributes:
         - fmtp timing field may override session-level standalone attribute;
         - fmtp timing field conflicts with same-semantic media-level standalone attribute.
     - existing media-level-only SDP timing behavior remaining unchanged.
 - Фиксирует:
     - raw timing parsing remains scope-aware and non-destructive;
-    - final ST 2110 video SDP ingestion now requires media-level `mediaclk`;
+    - final ST 2110 video SDP ingestion now requires both a resolved `ts-refclk` and a media-level `mediaclk`;
     - media-level timing values still override session-level values where applicable.
 
 ### tests/video_sdp_connection_data_test.cpp

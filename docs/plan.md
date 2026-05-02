@@ -71,7 +71,7 @@
 - [x] S036: Signaled video `width` / `height` are now validated in the standards-aware signaling/media-description boundary as `1..32767`, matching the ST 2110-20 SDP limits. This is kept separate from lower-level runtime/frame validation such as the current UYVY-specific even-width runtime constraint.
 - [x] S037: SDP `exactframerate` parsing in `video_sdp_fmtp.hpp` now enforces the ST 2110-20 canonical form. Integer frame rates are accepted only as a single decimal integer (for example `25`), rational frame rates are accepted only in the smallest numerator/denominator representation (for example `30000/1001`), zero numerator/denominator and malformed forms are rejected as `InvalidValue`, and this tightening remains localized to SDP fmtp parsing without changing timestamp mapping or runtime cadence behavior.
 - [x] S038: Final ST 2110 video SDP ingestion now requires `mediaclk` to be present as a media-level SDP attribute, as required by ST 2110-10. Raw SDP timing parsing continues to preserve session/media scope non-destructively, and session-level `mediaclk` may still exist in the raw model, but session-level-only `mediaclk` no longer makes final video SDP ingestion standards-clean. Media-level `mediaclk` continues to override a session-level value where both are present.
-- [ ] S039: ST 2110-10 requires `ts-refclk` to be present for all stream descriptions, and the accepted `ptp` / `localmac` forms should be validated more strictly. Current raw parsing and modeled reference-clock validation should be tightened so missing or malformed reference-clock signaling does not silently pass final video SDP ingestion.
+- [x] S039: Final ST 2110 video SDP ingestion now requires `ts-refclk`, and the accepted known reference-clock forms are validated strictly. Raw SDP timing parsing preserves unknown/open-ended forms only through the existing `Other` model path, while malformed known `ptp=` / `localmac=` forms are rejected as `InvalidValue`. Final ingestion now rejects SDP without `ts-refclk`, and modeled `ReferenceClock` validation also rejects empty/all-zero known reference-clock payloads unless the PTP form is explicitly `traceable`.
 - [ ] S040: SDP `MAXUDP` parsing is now wired through the correct path, but the accepted value still needs final policy validation against ST 2110-10 Standard UDP Size Limit / Extended UDP Size Limit semantics. This should reuse the existing `PacketParsePolicy` / packet-size validation path and avoid adding a parallel size policy.
 - [ ] S041: Raw SDP `a=source-filter` parsing preserves useful structure, but the raw parser should be tightened for known source-filter grammar details such as accepted filter-mode tokens and malformed source-list forms. Runtime/backend source-filter application remains future work through the existing transport/bootstrap boundary.
 - [x] S042: Runtime video packet admission currently does not validate RTP payload type against the configured / signaled payload type before reorder/depacketizer use. `RxVideoConfig::payload_type` is validated and `RtpHeaderView::payload_type` is parsed, but the receive path lacks an explicit boundary that rejects or drops packets with a mismatching RTP payload type. This boundary now exists in the socket video datagram receive path before reorder/pipeline ingestion.
@@ -1327,23 +1327,19 @@
   - session-level `mediaclk` may remain preserved in the raw model, but does not by itself make final ST 2110 video ingestion standards-clean;
   - media-level value continues to override a session-level value where both are present;
   - timing interpretation remains localized in SDP timing/ingestion boundaries and is not moved into runtime pipeline or depacketizer.
-- [ ] 196G: Tighten required `ts-refclk` / reference-clock validation
-  - final ST 2110 video SDP ingestion should require `ts-refclk`.
-  - validate known reference-clock forms more strictly:
+- [x] 196G: Tighten required `ts-refclk` / reference-clock validation
+  - final ST 2110 video SDP ingestion now requires `ts-refclk`;
+  - known reference-clock forms are validated more strictly:
     - `ptp=IEEE1588-2008:<gmid>[:domain]`;
-    - `ptp=IEEE1588-2008:traceable` if supported by the modeled representation;
-    - `localmac=<EUI-48 MAC>`.
-  - preserve unknown/open-ended reference-clock forms only where the current model intentionally supports them, but do not let malformed known forms pass silently.
-  - prefer minimal changes to existing `.hpp` files:
-    - `video_sdp_timing_attributes.hpp`
-    - `video_sdp_ingestion.hpp`
-    - `video_signaling.hpp`
-    - related tests only
-  - do not implement PTP runtime behavior in this task.
-  - add focused tests for:
+    - `ptp=IEEE1588-2008:traceable`;
+    - `localmac=<EUI-48 MAC>`;
+  - unknown/open-ended reference-clock forms remain preservable only through the intentional `Other` model path;
+  - malformed known `ptp=` / `localmac=` forms no longer pass silently;
+  - no PTP runtime behavior was added in this task;
+  - covered by focused tests for:
     - missing `ts-refclk` rejected by final video SDP ingestion;
     - valid PTP GMID accepted;
-    - valid PTP traceable form accepted if modeled;
+    - valid PTP traceable form accepted;
     - malformed PTP GMID/domain rejected;
     - valid localmac accepted;
     - malformed localmac rejected.
