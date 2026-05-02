@@ -374,7 +374,19 @@
     - проверяет mode-aware receive semantics boundary:
         - unit kind;
         - completion policy;
-        - scan-mode-specific packet acceptance.
+        - scan-mode-specific packet acceptance;
+        - architecture-level depacketizer behavior for current progressive path.
+- Покрывает:
+    - `VideoAssemblyUnitKind` derivation from `VideoScanMode`;
+    - rejection of unknown scan mode;
+    - progressive completion policy;
+    - localized `Unsupported` for interlaced / PsF completion policy in current MVP;
+    - progressive depacketizer marker behavior unchanged;
+    - progressive depacketizer timestamp/key-change behavior unchanged;
+    - non-progressive depacketizer mode remains locally rejected.
+- Фиксирует:
+    - assembly-unit semantics remain mode-aware by architecture;
+    - cross-packet ordering enforcement is layered under the same receive-semantics boundary rather than pushed into low-level generic payload parsing.
 
 ### tests/test_video_assembly_key.cpp
 - Роль:
@@ -415,7 +427,20 @@
 
 ### tests/test_depacketizer_writes.cpp
 - Роль:
-    - проверяет SRD segment writes into assembled frame storage.
+    - проверяет depacketizer segment writes into assembled frame storage;
+    - теперь также покрывает assembly-unit-local cross-packet SRD row/offset monotonicity for the current `Progressive + GPM` path.
+- Покрывает:
+    - single-packet complete frame emission;
+    - valid multi-packet same-row fragmentation with strictly increasing offset;
+    - accepted row advance across packets within the same frame/unit;
+    - rejection of a later packet with lower row number;
+    - rejection of a later packet with the same row and lower/equal offset;
+    - proof that rejected regressing packets do not corrupt already-assembled frame bytes and do not prevent later valid completion of the same unit;
+    - existing multi-segment packet write behavior;
+    - timestamp/key transition behavior for starting a new unit.
+- Фиксирует:
+    - cross-packet SRD monotonicity is enforced in depacketizer assembly state, not only packet-locally;
+    - packet rejection happens before write mutation for the rejected packet.
 
 ### tests/test_depacketizer_stats.cpp
 - Роль:
@@ -435,7 +460,15 @@
 
 ### tests/test_depacketizer_trailing_padding_state.cpp
 - Роль:
-    - проверяет, что rejected trailing padding не corrupt’ит assembly state.
+    - regression coverage for depacketizer state integrity when packet rejection happens before frame mutation because of invalid trailing padding / invalid transition conditions.
+- Покрывает:
+    - invalid first packet with forbidden trailing padding does not open a unit;
+    - invalid key-transition packet with forbidden trailing padding does not close or replace the previous in-progress unit;
+    - after such rejection, the original unit can still be completed by a later valid packet with a monotonic same-row offset advance;
+    - rejected packet does not count as a used packet and does not corrupt assembler/depacketizer state.
+- Фиксирует:
+    - packet-level rejection before assembly mutation preserves current depacketizer state;
+    - this remains compatible with the localized cross-packet row/offset ordering boundary.
 
 ### tests/test_video_unit_reconstructor.cpp
 - Роль:

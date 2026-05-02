@@ -196,7 +196,7 @@
 ### libs/st2110core/include/st2110/depacketizer.hpp
 - Роль:
     - packet-to-video-unit assembly layer.
-    - собирает `PacketView` в `AssembledVideoUnit`, используя mode-aware grouping/completion, packing-aware + format-aware placement и packing-aware + mode-aware packet padding validation.
+    - собирает `PacketView` в `AssembledVideoUnit`, используя mode-aware grouping/completion, packing-aware + format-aware placement, packing-aware + mode-aware packet padding validation, and now assembly-unit-local cross-packet write-order validation.
 - Связи:
     - зависит от `PacketView`, `FrameAssembler`, `VideoReceiveSemantics`, `VideoSegmentPlacement`, `VideoPacketPadding`, `VideoPackingMode`, `Stats`.
     - выше него находится `VideoReceivePipeline`, ниже — packet parsing.
@@ -208,6 +208,7 @@
         - `packing_mode`
     - `DepacketizerAssemblyState`
         - `current_key` — текущий `VideoAssemblyKey` в сборке.
+        - `write_cursor` — текущий `VideoAssemblyCursor` для assembly-unit-local cross-packet ordering checks.
     - `Depacketizer`
         - `push(const PacketView&) -> std::vector<AssembledVideoUnit>` — основной API depacketizer’а.
         - `reset()`
@@ -222,11 +223,14 @@
         - берет completion policy через `video_receive_completion_policy(...)`;
         - берет assembly key через `video_packet_assembly_key(...)`;
         - валидирует trailing payload padding через `validate_video_packet_trailing_padding(cfg_.packing_mode, cfg_.scan_mode, ...)` до изменения assembly state;
-        - пишет сегменты через `map_video_segment_to_frame_write(cfg_.packing_mode, cfg_.format, cfg_.scan_mode, ...)`;
+        - вычисляет frame-write operations через `map_video_segment_to_frame_write(cfg_.packing_mode, cfg_.format, cfg_.scan_mode, ...)`;
+        - валидирует и продвигает assembly-unit write cursor через `validate_and_advance_video_assembly_cursor(...)` до любого `assembler_.write_segment(...)`;
+        - only after full packet validation writes all packet segments into the current assembler;
         - пока runtime-реализация только для `Progressive + GPM`, non-progressive и `BPM` локализованно отвергаются через уже существующие boundaries.
 - Примечание:
-    - packing mode теперь реально доведен до runtime config и runtime dispatch points;
-    - дальнейшая реализация BPM должна заполнять уже существующие packing-aware branches, а не менять shape depacketizer API.
+    - cross-packet row/offset monotonicity is now enforced inside depacketizer assembly state rather than only within one packet;
+    - rejected regressing packets do not emit a unit and do not corrupt already-assembled frame state;
+    - `S046` remains separate: same-packet atomicity for later intra-packet failures is still its own follow-up.
 
 ### libs/st2110core/include/st2110/endian.hpp
 - Роль:
@@ -670,10 +674,17 @@
 
 ### libs/st2110core/include/st2110/video_receive_semantics.hpp
 - Роль:
-    - mode-aware abstraction для unit kind, completion policy, packet grouping key и scan-mode-specific packet semantic acceptance.
-    - ключевая точка локализации различий между `Progressive | Interlaced | PsF`.
+    - mode-aware receive semantics boundary above generic packet parsing and below depacketizer/frame assembly.
+    - defines:
+        - assembly-unit kind;
+        - completion policy;
+        - packet-to-assembly-key mapping;
+        - scan-mode-specific packet semantic validation;
+        - assembly-unit-local cross-packet write-order validation.
 - Связи:
-    - используется `Depacketizer`, `FrameAssembler`, future non-progressive support.
+    - uses `PacketView`, `VideoScanMode`, and `VideoSegmentPlacement`.
+    - consumed by `depacketizer.hpp`.
+    - keeps progressive/interlaced/PsF semantics out of low-level `st2110_20.hpp` parsing.
 - Сущности:
     - `VideoAssemblyUnitKind`
         - `Frame`
@@ -687,19 +698,28 @@
         - `unit_kind`
         - `rtp_timestamp`
         - `sub_unit_index`
-        - `operator==`
+        - equality-comparable.
+    - `VideoAssemblyCursor`
+        - localized per-assembly-unit ordering cursor for the current MVP write path:
+            - `last_srd_row_number`
+            - `last_srd_offset`
+            - `last_write_row`
+            - `last_write_end_byte_offset`
     - `video_assembly_unit_kind(VideoScanMode)`
     - `video_receive_completion_policy(VideoScanMode)`
     - `video_packet_assembly_key(VideoScanMode, const PacketView&)`
     - `same_video_assembly_key(const VideoAssemblyKey&, const VideoAssemblyKey&)`
     - `validate_video_packet_scan_mode_semantics(VideoScanMode, const PacketView&)`
-        - explicit mode-aware boundary for acceptance/rejection of packet semantics such as `field_id`
-- Текущий runtime status:
-    - `Progressive` реализован;
-    - `Interlaced` / `PsF` пока локализованно `Unsupported`.
+        - keeps mode-specific acceptance of packet fields such as progressive `F=0` outside generic payload-header validation.
+    - `validate_and_advance_video_assembly_cursor(VideoScanMode, std::optional<VideoAssemblyCursor>&, const SrdSegmentView&, const VideoFrameWriteOp&)`
+        - localized cross-packet / cross-segment assembly-unit ordering boundary;
+        - for current `Progressive` path:
+            - rejects row-number regression;
+            - rejects same-row non-increasing offset;
+            - rejects write overlap/regression before frame mutation;
+        - non-progressive branches remain explicitly localized for future work.
 - Примечание:
-    - эта ось уже должна считаться архитектурно заложенной в MVP;
-    - mode-specific rejection of `F`/`field_id` now belongs here rather than in generic low-level ST 2110-20 payload-header validation.
+    - cross-packet SRD monotonicity is now modeled as assembly-unit/mode-aware validation, not as generic ST 2110-20 wire parsing.
 
 ### libs/st2110core/include/st2110/video_scan_mode.hpp
 - Роль:
