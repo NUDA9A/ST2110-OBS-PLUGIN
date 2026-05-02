@@ -24,7 +24,7 @@ std::string make_sdp(std::string_view fmtp_extra) {
     sdp += base_sdp_prefix;
     sdp += "a=fmtp:96 sampling=YCbCr-4:2:2; width=1920; height=1080; "
            "exactframerate=25; depth=8; colorimetry=BT709; "
-           "PM=2110GPM; SSN=ST2110-20:2022";
+           "PM=2110GPM; SSN=ST2110-20:2017";
     sdp += fmtp_extra;
     sdp += "\r\n";
     sdp += base_sdp_suffix;

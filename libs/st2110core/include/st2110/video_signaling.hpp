@@ -220,7 +220,32 @@ inline Error validate_video_media_description_cross_field_constraints(const Vide
         }
     }
 
-    return Error::Ok;
+    const bool uses_alpha_colorimetry = (media.colorimetry.known == VideoColorimetry::Known::Alpha);
+    const bool uses_st2115logs3_tcs =
+        media.transfer_characteristic_system.has_value() &&
+        media.transfer_characteristic_system->known == VideoTransferCharacteristicSystem::Known::St2115LogS3;
+
+    const bool requires_st2110_20_2022 = uses_alpha_colorimetry || uses_st2115logs3_tcs;
+
+    // This task tightens only the known ST 2110-20 SSN cross-field rule.
+    // Absence of SSN remains handled separately by the dedicated follow-up.
+    if (!media.signal_standard.has_value()) {
+        return Error::Ok;
+    }
+
+    switch (media.signal_standard->known) {
+    case VideoSignalStandard::Known::Other:
+        // Preserve structurally unknown future SSN values.
+        return Error::Ok;
+
+    case VideoSignalStandard::Known::St2110_20_2017:
+        return requires_st2110_20_2022 ? Error::InvalidValue : Error::Ok;
+
+    case VideoSignalStandard::Known::St2110_20_2022:
+        return requires_st2110_20_2022 ? Error::Ok : Error::InvalidValue;
+    }
+
+    return Error::InvalidValue;
 }
 
 inline std::expected<PixelFormat, Error>

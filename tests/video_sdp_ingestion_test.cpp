@@ -17,7 +17,7 @@ static std::string make_valid_video_sdp() {
            "m=video 5004 RTP/AVP 96\r\n"
            "a=rtpmap:96 raw/90000\r\n"
            "a=fmtp:96 sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=60000/1001; depth=10; "
-           "colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2022; TCS=SDR; RANGE=FULL\r\n"
+           "colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TCS=SDR; RANGE=FULL\r\n"
            "a=ts-refclk:ptp=IEEE1588-2008:39-A7-94-FF-FE-07-CB-D0:127\r\n"
            "a=mediaclk:direct=0\r\n"
            "a=tsmode:SAMP\r\n"

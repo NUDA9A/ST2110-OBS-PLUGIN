@@ -6,6 +6,15 @@
 #include <st2110/video_sdp_ingestion.hpp>
 #include <st2110/video_signaling.hpp>
 
+static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStandard::Known known) {
+    return st2110::VideoSignalStandard{known, std::nullopt};
+}
+
+static st2110::VideoTransferCharacteristicSystem
+make_tcs(st2110::VideoTransferCharacteristicSystem::Known known) {
+    return st2110::VideoTransferCharacteristicSystem{known, std::nullopt};
+}
+
 static st2110::VideoStreamSignaling make_valid_video_signaling() {
     st2110::VideoStreamSignaling signaling{};
 
@@ -19,7 +28,7 @@ static st2110::VideoStreamSignaling make_valid_video_signaling() {
     signaling.media.colorimetry.known = st2110::VideoColorimetry::Known::Bt709;
 
     st2110::VideoSignalStandard ssn{};
-    ssn.known = st2110::VideoSignalStandard::Known::St2110_20_2022;
+    ssn.known = st2110::VideoSignalStandard::Known::St2110_20_2017;
     signaling.media.signal_standard = ssn;
 
     signaling.scan_mode = st2110::VideoScanMode::Progressive;
@@ -87,6 +96,7 @@ static void test_key_sampling_requires_alpha_colorimetry_and_no_tcs() {
         signaling.media.sampling.known = st2110::VideoSampling::Known::Key;
         signaling.media.colorimetry.known = st2110::VideoColorimetry::Known::Alpha;
         signaling.media.transfer_characteristic_system = std::nullopt;
+        signaling.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2022);
 
         assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::Ok);
         assert_runtime_projection_is_unsupported(signaling);
@@ -109,8 +119,70 @@ static void test_key_sampling_requires_alpha_colorimetry_and_no_tcs() {
         st2110::VideoTransferCharacteristicSystem tcs{};
         tcs.known = st2110::VideoTransferCharacteristicSystem::Known::SDR;
         signaling.media.transfer_characteristic_system = tcs;
+        signaling.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2022);
 
         assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::InvalidValue);
+    }
+}
+
+static void test_bt709_sdr_ssn_cross_field_validation() {
+    {
+        auto signaling = make_valid_video_signaling();
+        signaling.media.transfer_characteristic_system = make_tcs(st2110::VideoTransferCharacteristicSystem::Known::SDR);
+        signaling.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
+
+        assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::Ok);
+    }
+
+    {
+        auto signaling = make_valid_video_signaling();
+        signaling.media.transfer_characteristic_system = make_tcs(st2110::VideoTransferCharacteristicSystem::Known::SDR);
+        signaling.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2022);
+
+        assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::InvalidValue);
+    }
+}
+
+static void test_alpha_requires_st2110_20_2022() {
+    {
+        auto signaling = make_valid_video_signaling();
+        signaling.media.sampling.known = st2110::VideoSampling::Known::Key;
+        signaling.media.colorimetry.known = st2110::VideoColorimetry::Known::Alpha;
+        signaling.media.transfer_characteristic_system = std::nullopt;
+        signaling.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
+
+        assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::InvalidValue);
+    }
+
+    {
+        auto signaling = make_valid_video_signaling();
+        signaling.media.sampling.known = st2110::VideoSampling::Known::Key;
+        signaling.media.colorimetry.known = st2110::VideoColorimetry::Known::Alpha;
+        signaling.media.transfer_characteristic_system = std::nullopt;
+        signaling.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2022);
+
+        assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::Ok);
+        assert_runtime_projection_is_unsupported(signaling);
+    }
+}
+
+static void test_st2115logs3_requires_st2110_20_2022() {
+    {
+        auto signaling = make_valid_video_signaling();
+        signaling.media.transfer_characteristic_system =
+            make_tcs(st2110::VideoTransferCharacteristicSystem::Known::St2115LogS3);
+        signaling.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
+
+        assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::InvalidValue);
+    }
+
+    {
+        auto signaling = make_valid_video_signaling();
+        signaling.media.transfer_characteristic_system =
+            make_tcs(st2110::VideoTransferCharacteristicSystem::Known::St2115LogS3);
+        signaling.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2022);
+
+        assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::Ok);
     }
 }
 
@@ -129,7 +201,7 @@ static std::string make_sdp_with_fmtp(std::string_view fmtp_payload) {
 static void test_sdp_ingestion_applies_420_cross_field_validation() {
     const std::string progressive_420_sdp =
         make_sdp_with_fmtp("sampling=YCbCr-4:2:0; width=1920; height=1080; exactframerate=25; "
-                           "depth=8; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2022");
+                           "depth=8; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017");
 
     auto progressive = st2110::parse_video_stream_signaling_from_sdp(progressive_420_sdp, 112);
 
@@ -140,7 +212,7 @@ static void test_sdp_ingestion_applies_420_cross_field_validation() {
 
     const std::string interlaced_420_sdp =
         make_sdp_with_fmtp("sampling=YCbCr-4:2:0; width=1920; height=1080; exactframerate=25; "
-                           "depth=8; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2022; interlace");
+                           "depth=8; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; interlace");
 
     auto interlaced = st2110::parse_video_stream_signaling_from_sdp(interlaced_420_sdp, 112);
 
@@ -179,12 +251,83 @@ static void test_sdp_ingestion_applies_key_cross_field_validation() {
     assert(key_with_tcs.error() == st2110::Error::InvalidValue);
 }
 
+static void test_sdp_ingestion_applies_ssn_cross_field_validation() {
+    {
+        const std::string sdp = make_sdp_with_fmtp("sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; "
+                                                   "depth=8; colorimetry=BT709; TCS=SDR; PM=2110GPM; "
+                                                   "SSN=ST2110-20:2017");
+
+        auto signaling = st2110::parse_video_stream_signaling_from_sdp(sdp, 112);
+        assert(signaling.has_value());
+        assert(signaling->media.signal_standard.has_value());
+        assert(signaling->media.signal_standard->known == st2110::VideoSignalStandard::Known::St2110_20_2017);
+    }
+
+    {
+        const std::string sdp = make_sdp_with_fmtp("sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; "
+                                                   "depth=8; colorimetry=BT709; TCS=SDR; PM=2110GPM; "
+                                                   "SSN=ST2110-20:2022");
+
+        auto signaling = st2110::parse_video_stream_signaling_from_sdp(sdp, 112);
+        assert(!signaling.has_value());
+        assert(signaling.error() == st2110::Error::InvalidValue);
+    }
+
+    {
+        const std::string sdp = make_sdp_with_fmtp("sampling=KEY; width=1920; height=1080; exactframerate=25; "
+                                                   "depth=8; colorimetry=ALPHA; PM=2110GPM; "
+                                                   "SSN=ST2110-20:2017");
+
+        auto signaling = st2110::parse_video_stream_signaling_from_sdp(sdp, 112);
+        assert(!signaling.has_value());
+        assert(signaling.error() == st2110::Error::InvalidValue);
+    }
+
+    {
+        const std::string sdp = make_sdp_with_fmtp("sampling=KEY; width=1920; height=1080; exactframerate=25; "
+                                                   "depth=8; colorimetry=ALPHA; PM=2110GPM; "
+                                                   "SSN=ST2110-20:2022");
+
+        auto signaling = st2110::parse_video_stream_signaling_from_sdp(sdp, 112);
+        assert(signaling.has_value());
+        assert_runtime_projection_is_unsupported(*signaling);
+    }
+
+    {
+        const std::string sdp = make_sdp_with_fmtp("sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; "
+                                                   "depth=8; colorimetry=BT709; TCS=ST2115LOGS3; PM=2110GPM; "
+                                                   "SSN=ST2110-20:2017");
+
+        auto signaling = st2110::parse_video_stream_signaling_from_sdp(sdp, 112);
+        assert(!signaling.has_value());
+        assert(signaling.error() == st2110::Error::InvalidValue);
+    }
+
+    {
+        const std::string sdp = make_sdp_with_fmtp("sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; "
+                                                   "depth=8; colorimetry=BT709; TCS=ST2115LOGS3; PM=2110GPM; "
+                                                   "SSN=ST2110-20:2022");
+
+        auto signaling = st2110::parse_video_stream_signaling_from_sdp(sdp, 112);
+        assert(signaling.has_value());
+        assert(signaling->media.transfer_characteristic_system.has_value());
+        assert(signaling->media.transfer_characteristic_system->known ==
+               st2110::VideoTransferCharacteristicSystem::Known::St2115LogS3);
+    }
+}
+
 int main() {
     test_progressive_420_sampling_is_structurally_valid_but_runtime_unsupported();
     test_interlaced_and_psf_420_sampling_are_structurally_rejected();
     test_key_sampling_requires_alpha_colorimetry_and_no_tcs();
+
+    test_bt709_sdr_ssn_cross_field_validation();
+    test_alpha_requires_st2110_20_2022();
+    test_st2115logs3_requires_st2110_20_2022();
+
     test_sdp_ingestion_applies_420_cross_field_validation();
     test_sdp_ingestion_applies_key_cross_field_validation();
+    test_sdp_ingestion_applies_ssn_cross_field_validation();
 
     return 0;
 }

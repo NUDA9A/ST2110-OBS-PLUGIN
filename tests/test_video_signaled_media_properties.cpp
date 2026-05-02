@@ -13,6 +13,14 @@ static ReferenceClock make_valid_reference_clock() {
     return clock;
 }
 
+static VideoSignalStandard make_signal_standard(VideoSignalStandard::Known known) {
+    return VideoSignalStandard{known, std::nullopt};
+}
+
+static VideoTransferCharacteristicSystem make_tcs(VideoTransferCharacteristicSystem::Known known) {
+    return VideoTransferCharacteristicSystem{known, std::nullopt};
+}
+
 static VideoStreamSignaling make_valid_signaling() {
     VideoStreamSignaling signaling{};
 
@@ -21,7 +29,7 @@ static VideoStreamSignaling make_valid_signaling() {
     signaling.media.colorimetry = VideoColorimetry{VideoColorimetry::Known::Bt709, std::nullopt};
     signaling.media.transfer_characteristic_system =
         VideoTransferCharacteristicSystem{VideoTransferCharacteristicSystem::Known::SDR, std::nullopt};
-    signaling.media.signal_standard = VideoSignalStandard{VideoSignalStandard::Known::St2110_20_2022, std::nullopt};
+    signaling.media.signal_standard = VideoSignalStandard{VideoSignalStandard::Known::St2110_20_2017, std::nullopt};
     signaling.media.range = VideoRange{VideoRange::Known::Narrow, std::nullopt};
 
     signaling.media.width = 1920;
@@ -102,6 +110,10 @@ static void test_token_backed_video_media_fields_validate_known_and_other_cases(
     }
 
     {
+        const VideoSignalStandard ssn{VideoSignalStandard::Known::St2110_20_2017, std::nullopt};
+        assert(validate_video_signal_standard(ssn) == Error::Ok);
+    }
+    {
         const VideoSignalStandard ssn{VideoSignalStandard::Known::St2110_20_2022, std::nullopt};
         assert(validate_video_signal_standard(ssn) == Error::Ok);
     }
@@ -164,6 +176,49 @@ static void test_video_stream_signaling_rejects_invalid_optional_media_field() {
     assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
 }
 
+static void test_video_stream_signaling_rejects_bt709_sdr_with_st2110_20_2022() {
+    VideoStreamSignaling signaling = make_valid_signaling();
+    signaling.media.signal_standard = make_signal_standard(VideoSignalStandard::Known::St2110_20_2022);
+
+    assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
+}
+
+static void test_video_stream_signaling_accepts_alpha_with_st2110_20_2022() {
+    VideoStreamSignaling signaling = make_valid_signaling();
+    signaling.media.sampling = VideoSampling{VideoSampling::Known::Key, std::nullopt};
+    signaling.media.colorimetry = VideoColorimetry{VideoColorimetry::Known::Alpha, std::nullopt};
+    signaling.media.transfer_characteristic_system = std::nullopt;
+    signaling.media.signal_standard = make_signal_standard(VideoSignalStandard::Known::St2110_20_2022);
+
+    assert(validate_video_stream_signaling(signaling) == Error::Ok);
+}
+
+static void test_video_stream_signaling_rejects_alpha_with_st2110_20_2017() {
+    VideoStreamSignaling signaling = make_valid_signaling();
+    signaling.media.sampling = VideoSampling{VideoSampling::Known::Key, std::nullopt};
+    signaling.media.colorimetry = VideoColorimetry{VideoColorimetry::Known::Alpha, std::nullopt};
+    signaling.media.transfer_characteristic_system = std::nullopt;
+    signaling.media.signal_standard = make_signal_standard(VideoSignalStandard::Known::St2110_20_2017);
+
+    assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
+}
+
+static void test_video_stream_signaling_accepts_st2115logs3_with_st2110_20_2022() {
+    VideoStreamSignaling signaling = make_valid_signaling();
+    signaling.media.transfer_characteristic_system = make_tcs(VideoTransferCharacteristicSystem::Known::St2115LogS3);
+    signaling.media.signal_standard = make_signal_standard(VideoSignalStandard::Known::St2110_20_2022);
+
+    assert(validate_video_stream_signaling(signaling) == Error::Ok);
+}
+
+static void test_video_stream_signaling_rejects_st2115logs3_with_st2110_20_2017() {
+    VideoStreamSignaling signaling = make_valid_signaling();
+    signaling.media.transfer_characteristic_system = make_tcs(VideoTransferCharacteristicSystem::Known::St2115LogS3);
+    signaling.media.signal_standard = make_signal_standard(VideoSignalStandard::Known::St2110_20_2017);
+
+    assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
+}
+
 static void test_pixel_format_projection_accepts_ycbcr422_8bit() {
     VideoStreamSignaling signaling = make_valid_signaling();
     signaling.media.depth = VideoBitDepth{8, false};
@@ -192,6 +247,19 @@ static void test_pixel_format_projection_rejects_structurally_valid_but_unsuppor
         assert(!projected.has_value());
         assert(projected.error() == Error::Unsupported);
     }
+
+    {
+        VideoStreamSignaling signaling = make_valid_signaling();
+        signaling.media.sampling = VideoSampling{VideoSampling::Known::Key, std::nullopt};
+        signaling.media.colorimetry = VideoColorimetry{VideoColorimetry::Known::Alpha, std::nullopt};
+        signaling.media.transfer_characteristic_system = std::nullopt;
+        signaling.media.signal_standard = make_signal_standard(VideoSignalStandard::Known::St2110_20_2022);
+        signaling.media.depth = VideoBitDepth{8, false};
+
+        const auto projected = pixel_format_from_video_stream_signaling(signaling);
+        assert(!projected.has_value());
+        assert(projected.error() == Error::Unsupported);
+    }
 }
 
 int main() {
@@ -206,6 +274,11 @@ int main() {
     test_video_stream_signaling_rejects_invalid_sampling();
     test_video_stream_signaling_rejects_invalid_bit_depth();
     test_video_stream_signaling_rejects_invalid_optional_media_field();
+    test_video_stream_signaling_rejects_bt709_sdr_with_st2110_20_2022();
+    test_video_stream_signaling_accepts_alpha_with_st2110_20_2022();
+    test_video_stream_signaling_rejects_alpha_with_st2110_20_2017();
+    test_video_stream_signaling_accepts_st2115logs3_with_st2110_20_2022();
+    test_video_stream_signaling_rejects_st2115logs3_with_st2110_20_2017();
     test_pixel_format_projection_accepts_ycbcr422_8bit();
     test_pixel_format_projection_rejects_structurally_valid_but_unsupported_media();
     return 0;

@@ -11,7 +11,7 @@ constexpr uint8_t kPayloadType = 112;
 
 [[nodiscard]] std::string valid_fmtp_payload() {
     return "sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; "
-           "depth=8; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2022; "
+           "depth=8; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; "
            "TCS=SDR; TP=2110TPN";
 }
 

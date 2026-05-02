@@ -16,7 +16,7 @@ static RawVideoSdpFmtpParameters make_base_raw_fmtp() {
     raw.depth = 10;
     raw.colorimetry = "BT709";
     raw.packing_mode = "2110GPM";
-    raw.signal_standard = "ST2110-20:2022";
+    raw.signal_standard = "ST2110-20:2017";
     raw.transfer_characteristic_system = std::string("SDR");
     raw.range = std::string("FULL");
     raw.interlace = false;
@@ -54,7 +54,7 @@ static void test_maps_progressive_known_values() {
     assert(!signaling.media.transfer_characteristic_system->raw_token.has_value());
 
     assert(signaling.media.signal_standard.has_value());
-    assert(signaling.media.signal_standard->known == VideoSignalStandard::Known::St2110_20_2022);
+    assert(signaling.media.signal_standard->known == VideoSignalStandard::Known::St2110_20_2017);
     assert(!signaling.media.signal_standard->raw_token.has_value());
 
     assert(signaling.media.range.has_value());

@@ -33,6 +33,15 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     return s;
 }
 
+static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStandard::Known known) {
+    return st2110::VideoSignalStandard{known, std::nullopt};
+}
+
+static st2110::VideoTransferCharacteristicSystem
+make_tcs(st2110::VideoTransferCharacteristicSystem::Known known) {
+    return st2110::VideoTransferCharacteristicSystem{known, std::nullopt};
+}
+
 static void test_valid_progressive_gpm_signaling_is_accepted() {
     st2110::VideoStreamSignaling s = make_base_signaling();
 
@@ -130,6 +139,68 @@ static void test_unsupported_sampling_is_structurally_valid_but_not_runtime_mapp
     assert(projected.error() == st2110::Error::Unsupported);
 }
 
+static void test_bt709_sdr_with_st2110_20_2017_is_accepted() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.transfer_characteristic_system = make_tcs(st2110::VideoTransferCharacteristicSystem::Known::SDR);
+    s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
+
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
+}
+
+static void test_bt709_sdr_with_st2110_20_2022_is_rejected() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.transfer_characteristic_system = make_tcs(st2110::VideoTransferCharacteristicSystem::Known::SDR);
+    s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2022);
+
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
+}
+
+static void test_alpha_requires_st2110_20_2022_and_runtime_projection_remains_localized() {
+    {
+        st2110::VideoStreamSignaling s = make_base_signaling();
+        s.media.sampling = st2110::VideoSampling{st2110::VideoSampling::Known::Key, std::nullopt};
+        s.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Alpha, std::nullopt};
+        s.media.transfer_characteristic_system = std::nullopt;
+        s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
+
+        assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
+    }
+
+    {
+        st2110::VideoStreamSignaling s = make_base_signaling();
+        s.media.sampling = st2110::VideoSampling{st2110::VideoSampling::Known::Key, std::nullopt};
+        s.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Alpha, std::nullopt};
+        s.media.transfer_characteristic_system = std::nullopt;
+        s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2022);
+
+        assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
+
+        auto projected = st2110::pixel_format_from_video_stream_signaling(s);
+        assert(!projected.has_value());
+        assert(projected.error() == st2110::Error::Unsupported);
+    }
+}
+
+static void test_st2115logs3_requires_st2110_20_2022() {
+    {
+        st2110::VideoStreamSignaling s = make_base_signaling();
+        s.media.transfer_characteristic_system =
+            make_tcs(st2110::VideoTransferCharacteristicSystem::Known::St2115LogS3);
+        s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
+
+        assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
+    }
+
+    {
+        st2110::VideoStreamSignaling s = make_base_signaling();
+        s.media.transfer_characteristic_system =
+            make_tcs(st2110::VideoTransferCharacteristicSystem::Known::St2115LogS3);
+        s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2022);
+
+        assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
+    }
+}
+
 int main() {
     test_valid_progressive_gpm_signaling_is_accepted();
     test_valid_bpm_signaling_is_accepted();
@@ -140,5 +211,11 @@ int main() {
     test_packet_parse_policy_is_derived_from_signaling();
     test_absent_maxudp_produces_empty_policy_override();
     test_unsupported_sampling_is_structurally_valid_but_not_runtime_mappable();
+
+    test_bt709_sdr_with_st2110_20_2017_is_accepted();
+    test_bt709_sdr_with_st2110_20_2022_is_rejected();
+    test_alpha_requires_st2110_20_2022_and_runtime_projection_remains_localized();
+    test_st2115logs3_requires_st2110_20_2022();
+
     return 0;
 }

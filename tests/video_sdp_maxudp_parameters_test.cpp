@@ -27,7 +27,7 @@ static std::string make_base_fmtp_payload() {
            "depth=10; "
            "colorimetry=BT709; "
            "PM=2110GPM; "
-           "SSN=ST2110-20:2022; "
+           "SSN=ST2110-20:2017; "
            "TCS=SDR; "
            "RANGE=FULL";
 }

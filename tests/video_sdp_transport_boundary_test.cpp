@@ -6,7 +6,7 @@
 #include <st2110/video_sdp_media_section.hpp>
 
 static constexpr std::string_view kBaseFmtp = "sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; "
-                                              "depth=8; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2022";
+                                              "depth=8; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017";
 
 static std::string make_valid_sdp_with_transport() {
     return std::string{"v=0\n"

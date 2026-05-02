@@ -26,7 +26,7 @@ static std::string make_fmtp_payload_with_timing_parameters() {
            "depth=10; "
            "colorimetry=BT709; "
            "PM=2110GPM; "
-           "SSN=ST2110-20:2022; "
+           "SSN=ST2110-20:2017; "
            "TCS=SDR; "
            "RANGE=FULL; "
            "TP=2110TPW; "
@@ -45,7 +45,7 @@ static std::string make_video_sdp_with_fmtp_timing_parameters() {
            "m=video 5004 RTP/AVP 96\r\n"
            "a=rtpmap:96 raw/90000\r\n"
            "a=fmtp:96 sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=60000/1001; depth=10; "
-           "colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2022; TCS=SDR; RANGE=FULL; TP=2110TPW; TROFF=11; CMAX=2; "
+           "colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TCS=SDR; RANGE=FULL; TP=2110TPW; TROFF=11; CMAX=2; "
            "TSMODE=SAMP; TSDELAY=37\r\n"
            "a=ts-refclk:ptp=IEEE1588-2008:39-A7-94-FF-FE-07-CB-D0:127\r\n"
            "a=mediaclk:direct=0\r\n";
@@ -59,7 +59,7 @@ static std::string make_video_sdp_with_standalone_timing_attributes() {
            "m=video 5004 RTP/AVP 96\r\n"
            "a=rtpmap:96 raw/90000\r\n"
            "a=fmtp:96 sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=60000/1001; depth=10; "
-           "colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2022; TCS=SDR; RANGE=FULL\r\n"
+           "colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TCS=SDR; RANGE=FULL\r\n"
            "a=ts-refclk:ptp=IEEE1588-2008:39-A7-94-FF-FE-07-CB-D0:127\r\n"
            "a=mediaclk:direct=0\r\n"
            "a=tsmode:SAMP\r\n"
@@ -116,7 +116,7 @@ static void test_fmtp_parser_rejects_malformed_numeric_timing_parameter() {
                           "depth=10; "
                           "colorimetry=BT709; "
                           "PM=2110GPM; "
-                          "SSN=ST2110-20:2022; "
+                          "SSN=ST2110-20:2017; "
                           "TROFF=not-a-number";
 
     auto parsed = parse_video_sdp_fmtp_payload(payload);
