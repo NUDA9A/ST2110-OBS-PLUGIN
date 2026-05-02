@@ -375,6 +375,10 @@ raw_video_sdp_timing_value_is_media_scoped(const std::optional<RawVideoSdpScoped
     return value.has_value() && value->scope == RawSdpAttributeScope::Media;
 }
 
+[[nodiscard]] inline bool raw_video_sdp_has_media_level_mediaclk(const RawVideoSdpTimingAttributes &raw) {
+    return raw.media_clock && raw.media_clock->scope == RawSdpAttributeScope::Media;
+}
+
 [[nodiscard]] inline Error
 validate_no_duplicate_fmtp_and_standalone_timing_fields(const RawVideoSdpFmtpParameters &fmtp,
                                                         const RawVideoSdpTimingAttributes &timing) {
@@ -439,6 +443,10 @@ video_stream_signaling_from_raw_video_sdp_media_section(const RawVideoSdpMediaSe
 
     if (!expected_timing_attributes.has_value()) {
         return std::unexpected(expected_timing_attributes.error());
+    }
+
+    if (!raw_video_sdp_has_media_level_mediaclk(*expected_timing_attributes)) {
+        return std::unexpected(Error::InvalidValue);
     }
 
     if (Error err =
