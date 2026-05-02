@@ -1916,43 +1916,52 @@
 
 ### libs/st2110core/include/st2110/socket_rx_video_backend.hpp
 - Роль:
-    - final socket video RX backend поверх общего `SocketRxSingleMediaBackendBase`.
-    - держит только video-specific runtime pipeline и video-specific datagram processing.
+    - concrete socket video receive backend built on the shared single-media socket runtime base.
+    - composes socket receive runtime, packet parsing, explicit packet-admission policy, reorder, video receive pipeline, and timestamp mapping into one video receive path.
 - Связи:
-    - наследует общий socket lifecycle/runtime/state/stats from `SocketRxSingleMediaBackendBase`;
-    - использует:
-        - `FixedWindowReorderBuffer`;
-        - `VideoReceivePipeline`;
-        - `VideoRtpTimestampMapper`;
-        - `socket_rx_open_config_from_video_config(...)`.
+    - inherits from `SocketRxSingleMediaBackendBase` and `IRxVideoBackend`;
+    - uses:
+        - `packet_parse.hpp`
+        - `packet_admission.hpp`
+        - `fixed_reorder_buffer.hpp`
+        - `video_receive_pipeline.hpp`
+        - `video_timestamp_mapping.hpp`
+        - `socket_runtime.hpp`
+    - uses `RxVideoConfig` for runtime/open-config projection and selected-stream payload type.
 - Сущности:
     - `SocketRxVideoBackend`
-        - `start_video(const RxVideoConfig&, IVideoFrameSink&)`
-            - validates common lifecycle preconditions;
-            - projects `RxVideoConfig` to `SocketRxOpenConfig`;
-            - creates socket port through the common factory boundary;
-            - builds video-specific runtime objects and then starts common runtime.
-        - video-specific runtime state:
-            - `reorder_buffer_`;
-            - `video_receive_pipeline_`;
-            - `video_timestamp_mapper_`;
-            - `packet_parse_policy_`;
-            - `video_sink_`;
-            - `configured_video_payload_type_`.
-        - video-specific hooks:
-            - `clear_media_runtime_objects()`;
-            - `process_received_datagram(ByteSpan)`;
-            - `augment_stats_snapshot_locked(BackendStats&)`;
-            - `start_video_runtime(...)`;
-            - `drain_reorder_buffer_to_sink()`;
-            - `deliver_reconstructed_frame(...)`;
-            - `map_frame_timestamp_ns(...)`.
-    - `SocketRxVideoBackendFactory`
-        - advertises `Socket` + `video_rx=true` + `audio_rx=false`;
-        - creates one `SocketRxVideoBackend`.
+        - `start_video(const RxVideoConfig&, IVideoFrameSink&) -> RxBackendLifecycleResult`
+        - `process_received_datagram(ByteSpan) noexcept`
+        - `clear_media_runtime_objects() noexcept`
+        - `augment_stats_snapshot_locked(BackendStats&) const noexcept`
+    - runtime helpers:
+        - `build_packet_parse_policy(const RxVideoConfig&)`
+        - `build_video_receive_pipeline_config(const RxVideoConfig&)`
+        - `make_reorder_buffer()`
+        - `start_video_runtime(...)`
+        - `drain_reorder_buffer_to_sink()`
+        - `deliver_reconstructed_frame(...)`
+        - `map_frame_timestamp_ns(uint32_t) noexcept`
+        - `build_open_config(const RxVideoConfig&)`
+    - state:
+        - reorder buffer
+        - video receive pipeline
+        - RTP timestamp mapper
+        - packet-parse policy
+        - selected video sink
+        - configured expected video payload type
+- Поведение:
+    - receive path is ordered as:
+        - RTCP-like datagram filtering;
+        - generic video packet parsing through `parse_packet_view_staged(...)`;
+        - explicit video RTP payload-type admission through `validate_video_packet_payload_type_admission(...)`;
+        - reorder admission;
+        - depacketizer/pipeline drain;
+        - reconstructed-frame delivery.
+    - wrong-PT packets are ignored/dropped/accounted for locally before reorder/depacketizer and do not mutate depacketizer state.
 - Примечание:
-    - RTCP tolerance and configured RTP payload-type admission are now localized in the socket video datagram receive path before reorder/pipeline ingestion;
-    - open/bind/multicast/receive-thread/stop/restart behavior is now shared through `SocketRxSingleMediaBackendBase`.
+    - generic RTP parsing and stream-specific packet admission are now explicitly separated;
+    - current payload-type admission is still equality-based for one selected stream and remains localized in the runtime receive path.
 
 ### libs/st2110core/include/st2110/socket_rx_audio_backend.hpp
 - Роль:
@@ -2150,7 +2159,8 @@
             - `clear_media_runtime_objects()`;
             - `augment_stats_snapshot_locked(BackendStats&)`.
 - Примечание:
-    - `RxMediaKind` remains an explicit modeled axis inside the base;
+    - RTCP-like datagram filtering remains in the common socket base;
+    - stream-specific RTP payload-type admission for the video path now lives above generic parsing in `packet_admission.hpp` / `socket_rx_video_backend.hpp`, not as the primary video admission rule in the common base.
     - common runtime owns:
         - `port_factory_`;
         - `port_`;
@@ -2171,3 +2181,21 @@
         - `make_socket_stub_rx_port_factory()` на неподдерживаемых build’ах.
 - Примечание:
     - platform selection локализован здесь и не размазан по app/bootstrap code или concrete backend constructors.
+
+### libs/st2110core/include/st2110/packet_admission.hpp
+- Роль:
+    - explicit stream-specific RTP payload-type admission boundary above generic RTP/packet parsing and below reorder/depacketizer use.
+    - keeps “does this parsed packet belong to the selected stream?” separate from raw RTP parsing.
+- Связи:
+    - uses `PacketView` / `RtpHeaderView::payload_type`;
+    - consumed by runtime receive/backend code before reorder/depacketizer admission;
+    - does not depend on socket/media runtime state beyond the expected payload type value.
+- Сущности:
+    - `validate_rtp_payload_type_admission(std::uint8_t parsed_payload_type, std::uint8_t expected_payload_type) noexcept`
+        - validates PT equality for the selected stream.
+    - `validate_video_packet_payload_type_admission(const PacketView&, std::uint8_t expected_payload_type) noexcept`
+        - video-facing wrapper over parsed `PacketView::rtp.payload_type`.
+- Примечание:
+    - generic RTP parser still only parses PT;
+    - packet admission decides stream membership;
+    - wrong-PT handling remains a local drop/accounting boundary, not a packet-parse failure boundary.

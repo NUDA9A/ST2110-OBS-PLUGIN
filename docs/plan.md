@@ -74,7 +74,7 @@
 - [x] S039: Final ST 2110 video SDP ingestion now requires `ts-refclk`, and the accepted known reference-clock forms are validated strictly. Raw SDP timing parsing preserves unknown/open-ended forms only through the existing `Other` model path, while malformed known `ptp=` / `localmac=` forms are rejected as `InvalidValue`. Final ingestion now rejects SDP without `ts-refclk`, and modeled `ReferenceClock` validation also rejects empty/all-zero known reference-clock payloads unless the PTP form is explicitly `traceable`.
 - [x] S040: SDP `MAXUDP` parsing is now wired through the correct path, and accepted values are now finalized against ST 2110-10 Standard UDP Size Limit / Extended UDP Size Limit semantics through the existing `PacketParsePolicy` boundary. Absent `MAXUDP` defaults to the Standard UDP Size Limit; when present, only Standard and Extended UDP size-limit values are accepted; no parallel size policy was introduced.
 - [x] S041: Raw SDP `a=source-filter` parser is now tightened for known grammar details while remaining a raw transport-metadata boundary. Accepted filter-mode tokens are validated explicitly, required `nettype` / `addrtype` / destination / source-list presence is checked, malformed packed source-list forms are rejected, and the original raw value plus parsed fields remain preserved. Runtime/backend source-filter application remains future work through the existing transport/bootstrap boundary.
-- [x] S042: Runtime video packet admission currently does not validate RTP payload type against the configured / signaled payload type before reorder/depacketizer use. `RxVideoConfig::payload_type` is validated and `RtpHeaderView::payload_type` is parsed, but the receive path lacks an explicit boundary that rejects or drops packets with a mismatching RTP payload type. This boundary now exists in the socket video datagram receive path before reorder/pipeline ingestion.
+- [x] S042: Runtime video packet admission now has an explicit RTP payload-type boundary separated from generic RTP parsing. `RtpHeaderView` / `PacketView` parsing still only parses RTP/PT structure, while `packet_admission.hpp` performs stream-specific payload-type admission against the configured/signaled expected payload type. Wrong-PT packets are ignored/dropped locally before reorder/depacketizer use, without mutating depacketizer state.
 - [ ] S043: Raw video SDP `m=video` parsing / final SDP ingestion currently accepts payload type values without enforcing the ST 2110 dynamic RTP payload type range `96..127` for raw video streams, and does not validate the media-line port/protocol shape. This should be tightened locally in the raw SDP media-section / final ingestion boundary without mixing transport socket behavior into `VideoStreamSignaling`.
 - [x] S044: The receive/parser architecture currently has no explicit RTCP tolerance / datagram classification boundary. ST 2110-10 permits RTCP and requires receivers to tolerate its presence, but the current packet parser path treats every UDP datagram as an RTP/ST2110-20 media packet. A local classifier/drop boundary is now present in the socket video datagram receive path so RTCP-like packets are ignored instead of being treated as malformed media packets.
 - [ ] S045: SRD ordering validation is currently packet-local only. ST 2110-20 also requires SRD Row Number to increase within the frame/field/segment and SRD Offset to increase within the same sample row across successive RTP packets. The depacketizer currently does not track previous row/offset state inside the current assembly unit, so cross-packet row/offset regressions or overlaps can be accepted.
@@ -1381,7 +1381,7 @@
     - missing destination/source fields rejected;
     - parsed source-filter remains scope-aware;
     - backend/runtime behavior remains untouched.
-- [ ] 196J: Add runtime RTP payload-type admission boundary
+- [x] 196J: Add runtime RTP payload-type admission boundary
   - add an explicit video packet admission / validation helper that compares `PacketView::rtp.payload_type` with the configured or signaled expected payload type.
   - place this boundary before reorder/depacketizer use in the eventual receive path.
   - keep raw RTP parsing separate from stream-specific admission policy:
@@ -1389,8 +1389,8 @@
     - admission policy should decide whether this packet belongs to the selected stream.
   - wrong-PT packets should be rejected/dropped/accounted for locally without mutating depacketizer state.
   - prefer minimal changes to existing `.hpp` files where possible:
-    - new small header if useful, for example `packet_admission.hpp`
-    - `rx_config.hpp` / `video_signaling.hpp` only if helper placement needs config types
+    - new small header `packet_admission.hpp`
+    - `rx_config.hpp` / `video_signaling.hpp` unchanged
     - related tests only
   - add focused tests for:
     - matching dynamic payload type accepted;

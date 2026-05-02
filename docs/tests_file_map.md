@@ -24,7 +24,7 @@
     - каждому test target явно задается `cxx_std_23`, чтобы IDE/test-target compilation model не расходился с project/toolchain requirements.
 - Сущности:
     - `add_st2110_test(...)`
-    - targets for smoke/base tests, RTP/ST2110 packet parsing, reorder, frame assembly, depacketizer, video signaling, SDP ingestion, timing, playout, audio signaling model tests, audio SDP ingestion tests, audio receiver bootstrap tests, backend interface tests, backend factory tests, audio frame storage tests, audio packet model tests, socket runtime tests, Linux socket receive-port tests, socket video backend tests, and socket audio backend tests.
+    - targets for smoke/base tests, RTP/ST2110 packet parsing, packet admission, reorder, frame assembly, depacketizer, video signaling, SDP ingestion, timing, playout, audio signaling model tests, audio SDP ingestion tests, audio receiver bootstrap tests, backend interface tests, backend factory tests, audio frame storage tests, audio packet model tests, socket runtime tests, Linux socket receive-port tests, socket video backend tests, and socket audio backend tests.
 
 ## Smoke / common foundations
 
@@ -1295,3 +1295,24 @@
 - Фиксирует:
     - `SocketRxAudioBackend` now reuses the shared socket lifecycle/runtime boundary while also connecting the existing audio packet/reorder/assembler/timestamp helpers into one backend receive path;
     - remaining follow-up work is not basic audio socket runtime integration anymore, but explicit wire-format modeling and future observability/policy extensions.
+
+### tests/test_video_packet_admission.cpp
+- Роль:
+    - проверяет explicit video RTP payload-type admission boundary separate from generic RTP / `PacketView` parsing.
+    - проверяет, что wrong-PT packets are dropped locally before reorder/depacketizer use in the socket video receive path.
+- Покрывает:
+    - matching dynamic payload type accepted through:
+        - `validate_rtp_payload_type_admission(...)`;
+        - `validate_video_packet_payload_type_admission(...)`.
+    - mismatching payload type rejected by the admission helper.
+    - payload-type admission remains separate from generic RTP parsing:
+        - structurally valid RTP/ST2110 packet with a different PT still parses successfully into `PacketView`;
+        - stream-specific admission then rejects it.
+    - socket video backend runtime path:
+        - wrong-PT datagram is counted as ignored/dropped locally;
+        - reorder buffer is not entered;
+        - depacketizer is not entered;
+        - no media units / frames are delivered.
+- Фиксирует:
+    - `PacketView::rtp.payload_type` is parsed by the generic RTP/packet parser;
+    - stream membership by PT is decided later by the explicit admission boundary.
