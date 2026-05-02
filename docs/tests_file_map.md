@@ -448,7 +448,11 @@
 - Покрывает:
     - valid progressive `GPM` signaling;
     - valid `BPM` signaling at the structural signaling layer;
-    - invalid dimensions;
+    - signaled dimension limits in the signaling/media-description boundary:
+        - width/height `1` accepted structurally;
+        - width/height `32767` accepted structurally;
+        - width/height `0` rejected structurally;
+        - width/height `32768` rejected structurally.
     - invalid frame rate;
     - signaling-valid but runtime-invalid odd-width projection case;
     - invalid `MAXUDP` signaling;
@@ -460,6 +464,7 @@
         - `ALPHA`/KEY signaling requires `SSN=ST2110-20:2022`;
         - `TCS=ST2115LOGS3` requires `SSN=ST2110-20:2022`.
     - localized runtime support boundary:
+        - structurally valid odd-width signaling still fails only through runtime UYVY projection/config validation, not in signaling dimension-limit validation;
         - structurally valid `ALPHA`/KEY signaling remains runtime-unsupported only through `pixel_format_from_video_stream_signaling(...)`.
 
 ### tests/test_video_signaling_rx_match.cpp
@@ -497,6 +502,11 @@
         - `1:1` accepted;
         - non-square ratios such as `12:11` accepted;
         - zero parts rejected.
+    - signaling/media-description dimension validation:
+        - explicit helper-level acceptance of `1` and `32767`;
+        - rejection of `0` and `32768`;
+        - stream-level acceptance of signaled min/max dimensions;
+        - stream-level rejection of out-of-range dimensions.
     - acceptance of a valid BT709/SDR media-description shape with `SSN=ST2110-20:2017`;
     - acceptance of absent optional signaling/media fields where currently allowed;
     - rejection of invalid structural media fields;
@@ -509,6 +519,9 @@
     - runtime projection remains separate:
         - valid `YCbCr422 + 8-bit` projects to `UYVY`;
         - structurally valid but unsupported media, including KEY/ALPHA, remain rejected only by runtime projection.
+- Фиксирует:
+    - ST 2110-20 signaled dimension limits are now enforced in the signaling/media-description boundary;
+    - current UYVY-specific even-width runtime constraint still remains localized below that boundary.
 
 ### tests/test_video_reference_clock.cpp
 - Роль:

@@ -748,7 +748,7 @@
 - Роль:
     - standards-aware video signaling/model validation and projection boundary.
     - validates modeled ST 2110 video media-description properties and projects signaling into runtime-facing video config / pipeline config through existing boundaries.
-    - keeps media-description cross-field validation localized in signaling/model space rather than pushing standards rules into runtime `PixelFormat` projection.
+    - keeps media-description cross-field validation and signaling-only SDP constraints localized in signaling/model space rather than pushing standards rules into runtime `PixelFormat` projection.
 - Связи:
     - использует `signaling_structs.hpp`, `config_validation.hpp`, `packet_parse.hpp`, `rx_config.hpp`, `depacketizer.hpp`, `video_receive_pipeline.hpp`, `video_unit_reconstructor.hpp`, `pixel_format.hpp`, `video_scan_mode.hpp`;
     - используется signaling/runtime projection helpers и SDP ingestion path;
@@ -768,17 +768,26 @@
         - validates modeled PAR / pixel aspect ratio;
         - requires both parts to be positive integers;
         - keeps PAR validation structural and separate from runtime pixel/storage behavior.
+    - `validate_video_media_description_dimensions(uint32_t width, uint32_t height)`
+        - signaling/media-description-only dimension validation;
+        - enforces ST 2110-20 signaled SDP limit `1..32767`;
+        - intentionally does not encode runtime format-specific constraints such as UYVY even-width.
     - `validate_video_bit_depth(...)`
     - `is_420_video_sampling(...)`
     - `validate_video_media_description_cross_field_constraints(const VideoMediaDescription&, VideoScanMode)`
         - localized ST 2110-20 media-description cross-field rules for scan mode, KEY/ALPHA, `SSN`, and `RANGE`;
-        - does not turn `PAR` into a runtime/storage concern.
+        - does not turn PAR or runtime format constraints into storage/projection logic.
     - `pixel_format_from_video_stream_signaling(...)`
         - runtime/storage projection boundary remains unchanged;
         - current MVP runtime support still maps only `YCbCr422 + 8-bit integer` to `PixelFormat::UYVY`;
-        - PAR does not affect runtime projection.
+        - PAR and signaled dimension upper-bound checks do not affect runtime projection shape.
     - `validate_video_media_description(...)`
-        - now includes structural PAR validation.
+        - includes structural validation for:
+            - token-backed enums;
+            - bit depth;
+            - PAR;
+            - signaled dimensions `1..32767`;
+            - frame rate.
     - `validate_video_stream_signaling(...)`
     - `packet_parse_policy_from_video_stream_signaling(...)`
     - `validate_video_stream_signaling_against_rx_video_config(...)`
@@ -788,8 +797,8 @@
     - `rx_video_config_from_video_stream_signaling(...)`
     - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
 - Примечание:
-    - `PAR` is now an explicit signaling/media-description property with default `1:1`;
-    - runtime frame storage, `PixelFormat`, depacketizer, placement, and runtime projection behavior remain unchanged.
+    - ST 2110-20 signaling limits for `width` / `height` are now enforced without changing runtime frame-storage or projection behavior;
+    - runtime format-specific limits remain localized below this signaling boundary.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:

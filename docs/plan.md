@@ -68,7 +68,7 @@
 - [x] S033: Video SDP/signaling validation now enforces the ST 2110-20 `SSN` cross-field rule in the existing signaling/media-description validation boundary. `SSN=ST2110-20:2017` is accepted for normal non-`ALPHA` / non-`ST2115LOGS3` streams, while `colorimetry=ALPHA` or `TCS=ST2115LOGS3` requires `SSN=ST2110-20:2022`. Structurally unknown future `SSN` values may still be represented via `Other + raw_token`, and runtime `PixelFormat` projection remains unchanged.
 - [x] S034: Video SDP/signaling validation now models `RANGE=FULLPROTECT` explicitly as a known `VideoRange` value and enforces the ST 2110-20 `RANGE` cross-field rule in the existing signaling/media-description validation boundary. With `colorimetry=BT2100`, only `NARROW` and `FULL` are accepted; outside the BT2100 context, `NARROW`, `FULLPROTECT`, and `FULL` are accepted. Structurally unknown future `RANGE` values may still be represented via `Other + raw_token`, and runtime frame storage / depacketizer behavior remains unchanged.
 - [x] S035: Video SDP ingestion now models SDP `PAR` from `a=fmtp` as an explicit signaling/media-description property. `PAR` is represented as `VideoPixelAspectRatio` in `VideoMediaDescription`, defaults to `1:1` when absent at signaling level, validates positive integer parts, and is parsed/canonicalized locally in the SDP fmtp parser without changing runtime frame storage, `PixelFormat`, depacketizer, placement, or runtime projection behavior.
-- [ ] S036: SDP media-description `width` and `height` validation should enforce the ST 2110-20 allowed range `1..32767`, not only non-zero dimensions. This must be fixed in the existing video media-description / config validation boundary with minimal changes.
+- [x] S036: Signaled video `width` / `height` are now validated in the standards-aware signaling/media-description boundary as `1..32767`, matching the ST 2110-20 SDP limits. This is kept separate from lower-level runtime/frame validation such as the current UYVY-specific even-width runtime constraint.
 - [ ] S037: SDP `exactframerate` parsing accepts syntactically valid rational values but does not yet enforce the ST 2110-20 canonical form requirements: integer frame rates should be signaled as a single decimal integer, and rational frame rates should use the numerically smallest numerator/denominator representation. This should be tightened locally in `video_sdp_fmtp.hpp`.
 - [ ] S038: ST 2110-10 requires `mediaclk` to be present as a media-level attribute. Current SDP timing scope handling preserves session/media scope, but final ST 2110 video ingestion must not treat session-level `mediaclk` alone as sufficient for standards-clean SDP ingestion. This should be enforced at the SDP ingestion boundary, while raw parsing may continue preserving session-level attributes.
 - [ ] S039: ST 2110-10 requires `ts-refclk` to be present for all stream descriptions, and the accepted `ptp` / `localmac` forms should be validated more strictly. Current raw parsing and modeled reference-clock validation should be tightened so missing or malformed reference-clock signaling does not silently pass final video SDP ingestion.
@@ -1296,20 +1296,16 @@
     - malformed forms are rejected;
     - canonical/minimal ratio form is applied in the raw fmtp parsing path;
   - runtime `VideoFrame`, `PixelFormat`, depacketizer, placement, and runtime projection behavior remain unchanged.
-- [ ] 196D: Enforce ST 2110-20 `width` / `height` SDP limits
-  - validate signaled video dimensions as `1..32767` in the signaling/media-description boundary.
-  - keep lower-level runtime/frame validation separate where it already exists.
-  - prefer minimal changes to existing `.hpp` files:
-    - `video_signaling.hpp`
-    - optionally `config_validation.hpp` only if a shared helper is cleaner
-    - related tests only
-  - do not change current UYVY-specific even-width runtime constraint; this task is about signaled SDP media-description limits.
-  - add focused tests for:
+- [x] 196D: Enforce ST 2110-20 `width` / `height` SDP limits
+  - validate signaled video dimensions as `1..32767` in the signaling/media-description boundary;
+  - keep lower-level runtime/frame validation separate where it already exists;
+  - current UYVY-specific even-width runtime constraint remains unchanged and localized in runtime projection/format validation;
+  - covered by focused tests for:
     - width/height `1` accepted structurally;
     - width/height `32767` accepted structurally;
     - width/height `0` rejected;
     - width/height `32768` rejected;
-    - current UYVY runtime projection constraints still remain localized.
+    - current UYVY runtime projection constraints still remaining localized.
 - [ ] 196E: Tighten SDP `exactframerate` canonical parsing
   - keep `exactframerate` parsing local to `video_sdp_fmtp.hpp`.
   - enforce:
