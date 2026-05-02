@@ -491,7 +491,7 @@
         - `colorimetry`;
         - `TCS`;
         - `SSN`;
-        - `RANGE`;
+        - `RANGE`.
     - structural `VideoBitDepth` validation including `16f`;
     - acceptance of a valid BT709/SDR media-description shape with `SSN=ST2110-20:2017`;
     - acceptance of absent optional signaling/media fields where currently allowed;
@@ -500,6 +500,11 @@
         - normal `BT709 + SDR` rejects `SSN=ST2110-20:2022`;
         - `ALPHA` signaling accepts `SSN=ST2110-20:2022` and rejects `SSN=ST2110-20:2017`;
         - `TCS=ST2115LOGS3` accepts `SSN=ST2110-20:2022` and rejects `SSN=ST2110-20:2017`.
+    - tightened `RANGE` modeling and cross-field validation:
+        - `RANGE=FULLPROTECT` is a known enum value, not `Other`;
+        - `BT2100 + RANGE=FULL` accepted;
+        - `BT2100 + RANGE=FULLPROTECT` rejected;
+        - non-BT2100 `RANGE=FULLPROTECT` accepted.
     - runtime projection remains separate:
         - valid `YCbCr422 + 8-bit` projects to `UYVY`;
         - structurally valid but unsupported media, including KEY/ALPHA, remain rejected only by runtime projection.
@@ -584,6 +589,17 @@
 ### tests/video_sdp_signaling_adapter_test.cpp
 - Роль:
     - проверяет adapter from raw SDP/fmtp media-description fields to `VideoStreamSignaling`.
+- Покрывает:
+    - mapping of known progressive video fmtp fields into explicit signaling enums/values;
+    - mapping of `FULLPROTECT` into `VideoRange::Known::FullProtect`;
+    - interlaced / PsF scan-mode derivation;
+    - packing-mode mapping;
+    - rejection of malformed scan-mode / packing-mode combinations;
+    - preservation of unknown future tokens through `Other + raw_token`, including unknown `RANGE` tokens;
+    - rejection of malformed depth outside the signaling model.
+- Фиксирует:
+    - token-to-model mapping remains localized in the SDP adapter;
+    - standards cross-field rejection for `RANGE` is still handled by signaling validation, not by ad hoc adapter special-casing.
 
 ### tests/video_sdp_timing_attributes_test.cpp
 - Роль:
@@ -619,6 +635,19 @@
 - Роль:
     - проверяет explicit enum coverage for known ST 2110-20 SDP media-property tokens;
     - проверяет `Other + raw_token` для unknown future tokens.
+- Покрывает:
+    - explicit enum mapping for known `sampling` tokens;
+    - explicit enum mapping for known `colorimetry` tokens;
+    - explicit enum mapping for known `TCS` tokens;
+    - explicit enum mapping for known `RANGE` tokens:
+        - `NARROW`;
+        - `FULLPROTECT`;
+        - `FULL`;
+    - preservation of unknown future `sampling` / `colorimetry` / `TCS` / `RANGE` tokens through `Other + raw_token`;
+    - separation between explicit signaling-model enum coverage and runtime `PixelFormat` projection support.
+- Фиксирует:
+    - `FULLPROTECT` is now a first-class known `VideoRange` value rather than a fallback `Other` token;
+    - unsupported runtime projection still remains localized outside the enum-mapping boundary.
 
 ### tests/video_sdp_optional_sender_timing_test.cpp
 - Роль:
@@ -639,7 +668,8 @@
         - progressive-only `4:2:0` variants;
         - `KEY + ALPHA`;
         - rejection of invalid KEY/TCS/colorimetry combinations;
-        - tightened `SSN` cross-field rule.
+        - tightened `SSN` cross-field rule;
+        - tightened `RANGE` cross-field rule.
 - Покрывает:
     - `4:2:0` accepted only with progressive scan signaling;
     - `KEY` requires `colorimetry=ALPHA` and forbids `TCS`;
@@ -647,6 +677,11 @@
     - `BT709 + SDR + SSN=ST2110-20:2022` rejected;
     - `ALPHA` requiring `SSN=ST2110-20:2022`;
     - `TCS=ST2115LOGS3` requiring `SSN=ST2110-20:2022`;
+    - `BT2100 + RANGE=FULL` accepted;
+    - `BT2100 + RANGE=FULLPROTECT` rejected;
+    - non-BT2100 `RANGE=FULLPROTECT` accepted;
+    - absent `RANGE` remains accepted at signaling level;
+    - unknown future `RANGE` token preserved through `Other + raw_token`.
     - the same cross-field rules through final SDP ingestion, not only manually constructed signaling objects;
     - unsupported runtime projection remaining localized after structurally valid KEY/ALPHA acceptance.
 

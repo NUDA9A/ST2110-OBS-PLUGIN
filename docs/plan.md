@@ -66,7 +66,7 @@
 - [x] S031: Raw SDP `c=` connection data now preserves the original connection address string and also exposes parsed connection-address components for future backend bootstrap: `base_address`, optional TTL, and optional address count / numaddr. Runtime/backend consumption remains future work through `214C`.
 - [x] S032: SDP timing/reference-clock attributes such as `ts-refclk` and `mediaclk` can be session-level or media-level. The raw SDP ingestion boundary now preserves this scope explicitly and applies localized session/media resolution for the selected video stream. Media-level values override session-level values where allowed; duplicate values within the same scope are rejected; `fmtp` timing media parameters are treated as media-level signaling and conflict only with media-level standalone attributes for the same semantic field.
 - [x] S033: Video SDP/signaling validation now enforces the ST 2110-20 `SSN` cross-field rule in the existing signaling/media-description validation boundary. `SSN=ST2110-20:2017` is accepted for normal non-`ALPHA` / non-`ST2115LOGS3` streams, while `colorimetry=ALPHA` or `TCS=ST2115LOGS3` requires `SSN=ST2110-20:2022`. Structurally unknown future `SSN` values may still be represented via `Other + raw_token`, and runtime `PixelFormat` projection remains unchanged.
-- [ ] S034: Video SDP/signaling validation still needs stricter `RANGE` handling. For `colorimetry=BT2100`, only `NARROW` and `FULL` are valid; outside the BT2100 context, `FULLPROTECT` is also a known standard value. This should be modeled explicitly in `VideoRange` / SDP mapping and validated as a media-description cross-field constraint.
+- [x] S034: Video SDP/signaling validation now models `RANGE=FULLPROTECT` explicitly as a known `VideoRange` value and enforces the ST 2110-20 `RANGE` cross-field rule in the existing signaling/media-description validation boundary. With `colorimetry=BT2100`, only `NARROW` and `FULL` are accepted; outside the BT2100 context, `NARROW`, `FULLPROTECT`, and `FULL` are accepted. Structurally unknown future `RANGE` values may still be represented via `Other + raw_token`, and runtime frame storage / depacketizer behavior remains unchanged.
 - [ ] S035: Video SDP ingestion currently does not model SDP `PAR` from `a=fmtp`. ST 2110-20 defines `PAR` as an optional pixel-aspect-ratio parameter with default `1:1`. This should be added as a signaling/media-description property with default behavior, but without affecting runtime frame storage or depacketizer behavior yet.
 - [ ] S036: SDP media-description `width` and `height` validation should enforce the ST 2110-20 allowed range `1..32767`, not only non-zero dimensions. This must be fixed in the existing video media-description / config validation boundary with minimal changes.
 - [ ] S037: SDP `exactframerate` parsing accepts syntactically valid rational values but does not yet enforce the ST 2110-20 canonical form requirements: integer frame rates should be signaled as a single decimal integer, and rational frame rates should use the numerically smallest numerator/denominator representation. This should be tightened locally in `video_sdp_fmtp.hpp`.
@@ -1278,23 +1278,14 @@
     - streams with `colorimetry=ALPHA` or `TCS=ST2115LOGS3` require `SSN=ST2110-20:2022`;
     - structurally unknown future `SSN` values remain representable through `Other`;
     - runtime `PixelFormat`, frame storage, depacketizer, and pipeline projection shape remain unchanged.
-- [ ] 196B: Tighten `RANGE` modeling and validation
-  - model `FULLPROTECT` explicitly as a known `VideoRange` value instead of routing it through `Other`.
-  - validate ST 2110-20 range constraints:
-    - with `colorimetry=BT2100`, allow only `NARROW` / `FULL`;
-    - outside BT2100 context, allow `NARROW` / `FULLPROTECT` / `FULL`;
-    - absent `RANGE` keeps the existing default/unspecified behavior at signaling level.
-  - prefer minimal changes to existing `.hpp` files:
-    - `signaling_structs.hpp`
-    - `video_sdp_signaling_adapter.hpp`
-    - `video_signaling.hpp`
-    - related tests only
-  - do not change runtime frame storage or depacketizer behavior.
-  - add focused tests for:
-    - `BT2100 + RANGE=FULL`;
-    - `BT2100 + RANGE=FULLPROTECT` rejected;
-    - non-BT2100 `FULLPROTECT` accepted;
-    - unknown future range token preserved through `Other`.
+- [x] 196B: Tighten `RANGE` modeling and validation
+  - model `FULLPROTECT` explicitly as a known `VideoRange` value instead of routing it through `Other`;
+  - implemented ST 2110-20 range constraints:
+    - with `colorimetry=BT2100`, only `NARROW` / `FULL` are accepted;
+    - outside BT2100 context, `NARROW` / `FULLPROTECT` / `FULL` are accepted;
+    - absent `RANGE` keeps the existing optional / unspecified signaling-level behavior;
+    - unknown future range tokens remain representable through `Other + raw_token`;
+  - runtime frame storage, `PixelFormat` projection shape, and depacketizer behavior remain unchanged.
 - [ ] 196C: Add SDP `PAR` media-description modeling
   - parse optional `PAR=<w>:<h>` from video `a=fmtp`.
   - represent PAR as a signaling/media-description property, not as runtime frame storage.

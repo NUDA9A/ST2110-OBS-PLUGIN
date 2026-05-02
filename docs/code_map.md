@@ -763,18 +763,26 @@
     - `validate_video_colorimetry(...)`
     - `validate_video_transfer_characteristic_system(...)`
     - `validate_video_signal_standard(...)`
-    - `validate_video_range(...)`
+    - `validate_video_range(const VideoRange&)`
+        - token-backed structural validation for `VideoRange`;
+        - known values including `FullProtect` require no raw token;
+        - `Other` requires non-empty `raw_token`.
     - `validate_video_bit_depth(...)`
     - `is_420_video_sampling(...)`
     - `validate_video_media_description_cross_field_constraints(const VideoMediaDescription&, VideoScanMode)`
         - keeps localized ST 2110-20 media-description cross-field rules;
         - accepts `4:2:0` sampling variants only with progressive scan signaling;
         - requires `KEY` sampling to use `colorimetry=ALPHA` and forbids `TCS` for KEY signals;
-        - now also enforces the `SSN` rule:
+        - enforces the `SSN` rule:
             - normal non-`ALPHA` / non-`ST2115LOGS3` streams accept `SSN=ST2110-20:2017`;
             - `colorimetry=ALPHA` or `TCS=ST2115LOGS3` requires `SSN=ST2110-20:2022`;
             - structurally unknown future `SSN` values through `Other + raw_token` remain accepted;
-            - absent `SSN` remains tolerated here and is still a separate follow-up boundary.
+            - absent `SSN` remains tolerated here and is still a separate follow-up boundary;
+        - now also enforces the `RANGE` rule:
+            - absent `RANGE` remains accepted at signaling level;
+            - `RANGE=Other + raw_token` remains structurally accepted for forward compatibility;
+            - with `colorimetry=BT2100`, only `Narrow` / `Full` are accepted;
+            - outside the BT2100 context, `Narrow` / `FullProtect` / `Full` are accepted.
     - `pixel_format_from_video_stream_signaling(...)`
         - runtime/storage projection boundary remains unchanged;
         - current MVP runtime support still maps only `YCbCr422 + 8-bit integer` to `PixelFormat::UYVY`;
@@ -789,8 +797,8 @@
     - `rx_video_config_from_video_stream_signaling(...)`
     - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
 - Примечание:
-    - `SSN` handling is now stricter for known ST 2110-20 combinations without changing modeled enums or runtime projection shape;
-    - this closes the known signaling-validation gap for `SSN` cross-field consistency while preserving forward-compatible `Other` representation.
+    - known `RANGE` handling is now tighter and explicit without changing runtime projection shape;
+    - `RANGE` defaulting remains an external caller/standards interpretation concern rather than a hidden adapter/validator mutation.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -878,11 +886,11 @@
 
 ### libs/st2110core/include/st2110/signaling_structs.hpp
 - Роль:
-    - выделенный header для standards-aware signaling model structs/enums.
-    - отделяет shape signaling model от validation/projection logic из `video_signaling.hpp` и timing-aware bootstrap composition из `video_receiver_timing_signaling.hpp`.
+    - central standards-aware signaling data model for video receiver configuration/projection.
+    - keeps signaled SDP/media-description properties explicit and separate from runtime storage/depacketizer implementation details.
 - Связи:
-    - использует `VideoScanMode`, `VideoPackingMode`, `PacketParsePolicy`, `RxVideoConfig`, `VideoReceivePipelineConfig`, `VideoReceiverTimingConfig`.
-    - включается из `video_signaling.hpp` и `video_receiver_timing_signaling.hpp` и используется как общая декларативная основа signaling/runtime bootstrap boundary.
+    - используется `video_signaling.hpp`, `video_sdp_signaling_adapter.hpp`, receiver bootstrap/projection helpers, and SDP ingestion path;
+    - depends on runtime-facing config/pipeline types only where bootstrap composition requires them.
 - Сущности:
     - `MediaClockMode`
     - `TimestampMode`
@@ -892,76 +900,32 @@
     - `ReferenceClock`
     - `VideoSenderType`
     - `VideoSampling`
-        - known SDP sampling tokens:
-            - `YCbCr422`
-            - `YCbCr444`
-            - `YCbCr420`
-            - `RGB`
-            - `XYZ`
-            - `Key`
-            - `CLYCbCr444`
-            - `CLYCbCr422`
-            - `CLYCbCr420`
-            - `ICtCp444`
-            - `ICtCp422`
-            - `ICtCp420`
-            - `Other`
-        - `raw_token` is used only for `Other` / forward-compatible unknown tokens.
     - `VideoBitDepth`
     - `VideoColorimetry`
-        - known SDP colorimetry tokens:
-            - `Bt601`
-            - `Bt709`
-            - `Bt2020`
-            - `Bt2100`
-            - `St2065_1`
-            - `St2065_3`
-            - `Unspecified`
-            - `Xyz`
-            - `Alpha`
-            - `Other`
-        - `raw_token` is used only for `Other` / forward-compatible unknown tokens.
     - `VideoTransferCharacteristicSystem`
-        - known SDP TCS tokens:
-            - `SDR`
-            - `PQ`
-            - `HLG`
-            - `Linear`
-            - `Bt2100LinPq`
-            - `Bt2100LinHlg`
-            - `St2065_1`
-            - `St428_1`
-            - `Density`
-            - `St2115LogS3`
-            - `Unspecified`
-            - `Other`
-        - `raw_token` is used only for `Other` / forward-compatible unknown tokens.
     - `VideoSignalStandard`
     - `VideoRange`
+        - `Known::Narrow`
+        - `Known::FullProtect`
+        - `Known::Full`
+        - `Known::Other`
+        - now models `FULLPROTECT` explicitly instead of routing it through `Other`.
     - `VideoMediaDescription`
+        - `sampling`
+        - `width`, `height`
+        - `fps_num`, `fps_den`
+        - `depth`
+        - `colorimetry`
+        - `transfer_characteristic_system`
+        - `signal_standard`
+        - `range`
+            - remains optional at the signaling-model layer;
+            - unknown future tokens remain representable through `Other + raw_token`.
     - `VideoStreamSignaling`
-        - `media`
-        - `scan_mode`
-        - `packing_mode`
-        - `max_udp_datagram_bytes`
-        - `media_clock_mode`
-        - `timestamp_mode`
-        - `reference_clock`
-        - `ts_delay_sender_ticks`
-        - `sender_type`
-        - `troff_us`
-        - `cmax`
     - `VideoReceiverBootstrapConfig`
-        - `packet_parse_policy`
-        - `rx_config`
-        - `receive_pipeline_config`
-        - `timing_config`
 - Примечание:
-    - signaling model shape теперь вынесен отдельно от validation/projection helper’ов;
-    - bootstrap config теперь несет не только parse/runtime pipeline projection, но и explicit receiver timing config as a first-class bootstrap input;
-    - это упрощает дальнейшее расширение SDP parsing/ingestion path и ST 2110-21 timing composition без смешивания model declarations и adapter logic.
-    - video media-property enums now explicitly model the currently known ST 2110-20 SDP sampling / colorimetry / TCS variants covered by `069D8`;
-    - `Other + raw_token` remains reserved for forward compatibility and truly unknown future values, not for already-covered standard tokens.
+    - this header remains the place where known SDP/media-description axes are represented explicitly;
+    - `RANGE` now has explicit known coverage for `FULLPROTECT` without changing runtime frame/depacketizer behavior.
 
 ### libs/st2110core/include/st2110/video_receiver_timing.hpp
 - Роль:
@@ -1276,39 +1240,27 @@
 
 ### libs/st2110core/include/st2110/video_sdp_signaling_adapter.hpp
 - Роль:
-    - explicit adapter layer от raw parsed SDP/fmtp video description к modeled `VideoStreamSignaling`.
-    - отделяет raw SDP parsing от signaling model mapping.
+    - adapter from raw parsed video SDP/fmtp media-description fields to modeled `VideoStreamSignaling`.
+    - performs token-to-model mapping for known ST 2110-20 SDP values while preserving unknown future values through `Other + raw_token`.
 - Связи:
-    - использует `video_sdp_fmtp.hpp`, `signaling_structs.hpp`, `video_scan_mode.hpp`, `video_packing_mode.hpp`, `video_signaling.hpp`, `error.hpp`;
-    - должен использоваться последующими ingestion/composition шагами `069D5`;
-    - не зависит от depacketizer / reorder / receive pipeline internals.
+    - использует `signaling_structs.hpp`, `video_sdp_fmtp.hpp`, `video_signaling.hpp`, `video_scan_mode.hpp`, `video_packing_mode.hpp`, `error.hpp`;
+    - feeds final SDP ingestion and signaling validation flow.
 - Сущности:
-    - `video_scan_mode_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters&)`
-        - локально выводит `Progressive | Interlaced | PsF` из SDP flags `interlace` / `segmented`.
-    - `video_packing_mode_from_raw_video_sdp_fmtp(std::string_view)`
-        - маппит raw `PM` token в `VideoPackingMode` (`2110GPM` / `2110BPM`).
-    - `video_media_description_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters&)`
-        - маппит raw fmtp media-description fields в `VideoMediaDescription`;
-        - конвертирует known tokens в modeled enums;
-        - unknown/open-ended tokens сохраняет как `Known::Other + raw_token`;
-        - валидирует границы signaling-model представления там, где это относится к media description.
-        - maps raw `depth_floating_point` into `VideoBitDepth::floating_point`;
-        - `depth=16f` is represented as `VideoBitDepth{bits=16, floating_point=true}`.
-        - maps known ST 2110-20 SDP `sampling`, `colorimetry`, and `TCS` tokens into explicit modeled enum values, including the additional variants introduced by `069D8`;
-        - unknown/open-ended tokens remain preserved as `Known::Other + raw_token`;
-    - `video_stream_signaling_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters&)`
-        - собирает partial `VideoStreamSignaling` из raw fmtp mapping:
-            - `media`
-            - `scan_mode`
-            - `packing_mode`
-            - optional `max_udp_datagram_bytes`
-        - validates mapped media fields through `validate_video_media_description(...)`;
-        - applies `validate_video_media_description_cross_field_constraints(...)` after deriving `scan_mode`, so SDP-derived invalid combinations such as interlaced `4:2:0` or invalid `KEY` signaling are rejected at the SDP-to-signaling adapter boundary;
-        - на текущем шаге не наполняет timing/reference-clock/sender-related signaling fields.
+    - `video_scan_mode_from_raw_video_sdp_fmtp(...)`
+    - `video_packing_mode_from_raw_video_sdp_fmtp(...)`
+    - `video_media_description_from_raw_video_sdp_fmtp(...)`
+        - maps known `sampling`, `colorimetry`, `TCS`, `SSN`, and `RANGE` tokens into explicit enums;
+        - now maps:
+            - `RANGE=NARROW` -> `VideoRange::Known::Narrow`
+            - `RANGE=FULLPROTECT` -> `VideoRange::Known::FullProtect`
+            - `RANGE=FULL` -> `VideoRange::Known::Full`
+        - preserves unknown future `RANGE` tokens through `VideoRange::Known::Other + raw_token`;
+        - keeps absent `RANGE` as `std::nullopt` rather than synthesizing a default in the adapter.
+    - `video_stream_signaling_from_raw_video_sdp_fmtp(...)`
+        - runs existing media-description and cross-field validation after token mapping.
 - Примечание:
-    - это mapping/adapter layer, а не raw SDP parser и не full signaling-ingestion entry point;
-    - later tasks should compose it with raw media-section selection, `a=rtpmap`, and timing/reference-clock parsing instead of expanding ad hoc mapping directly in runtime/bootstrap code.
-    - `MAXUDP` is mapped from raw fmtp parameters into `VideoStreamSignaling::max_udp_datagram_bytes`; packet-size policy derivation remains in the existing signaling projection helpers.
+    - adapter is still responsible only for raw-token mapping and basic structural conversion;
+    - standards cross-field policy for `RANGE` remains localized in `video_signaling.hpp`, not duplicated here.
 
 ### libs/st2110core/include/st2110/video_sdp_timing_attributes.hpp
 - Роль:
