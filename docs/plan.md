@@ -69,7 +69,7 @@
 - [x] S034: Video SDP/signaling validation now models `RANGE=FULLPROTECT` explicitly as a known `VideoRange` value and enforces the ST 2110-20 `RANGE` cross-field rule in the existing signaling/media-description validation boundary. With `colorimetry=BT2100`, only `NARROW` and `FULL` are accepted; outside the BT2100 context, `NARROW`, `FULLPROTECT`, and `FULL` are accepted. Structurally unknown future `RANGE` values may still be represented via `Other + raw_token`, and runtime frame storage / depacketizer behavior remains unchanged.
 - [x] S035: Video SDP ingestion now models SDP `PAR` from `a=fmtp` as an explicit signaling/media-description property. `PAR` is represented as `VideoPixelAspectRatio` in `VideoMediaDescription`, defaults to `1:1` when absent at signaling level, validates positive integer parts, and is parsed/canonicalized locally in the SDP fmtp parser without changing runtime frame storage, `PixelFormat`, depacketizer, placement, or runtime projection behavior.
 - [x] S036: Signaled video `width` / `height` are now validated in the standards-aware signaling/media-description boundary as `1..32767`, matching the ST 2110-20 SDP limits. This is kept separate from lower-level runtime/frame validation such as the current UYVY-specific even-width runtime constraint.
-- [ ] S037: SDP `exactframerate` parsing accepts syntactically valid rational values but does not yet enforce the ST 2110-20 canonical form requirements: integer frame rates should be signaled as a single decimal integer, and rational frame rates should use the numerically smallest numerator/denominator representation. This should be tightened locally in `video_sdp_fmtp.hpp`.
+- [x] S037: SDP `exactframerate` parsing in `video_sdp_fmtp.hpp` now enforces the ST 2110-20 canonical form. Integer frame rates are accepted only as a single decimal integer (for example `25`), rational frame rates are accepted only in the smallest numerator/denominator representation (for example `30000/1001`), zero numerator/denominator and malformed forms are rejected as `InvalidValue`, and this tightening remains localized to SDP fmtp parsing without changing timestamp mapping or runtime cadence behavior.
 - [ ] S038: ST 2110-10 requires `mediaclk` to be present as a media-level attribute. Current SDP timing scope handling preserves session/media scope, but final ST 2110 video ingestion must not treat session-level `mediaclk` alone as sufficient for standards-clean SDP ingestion. This should be enforced at the SDP ingestion boundary, while raw parsing may continue preserving session-level attributes.
 - [ ] S039: ST 2110-10 requires `ts-refclk` to be present for all stream descriptions, and the accepted `ptp` / `localmac` forms should be validated more strictly. Current raw parsing and modeled reference-clock validation should be tightened so missing or malformed reference-clock signaling does not silently pass final video SDP ingestion.
 - [ ] S040: SDP `MAXUDP` parsing is now wired through the correct path, but the accepted value still needs final policy validation against ST 2110-10 Standard UDP Size Limit / Extended UDP Size Limit semantics. This should reuse the existing `PacketParsePolicy` / packet-size validation path and avoid adding a parallel size policy.
@@ -1306,24 +1306,21 @@
     - width/height `0` rejected;
     - width/height `32768` rejected;
     - current UYVY runtime projection constraints still remaining localized.
-- [ ] 196E: Tighten SDP `exactframerate` canonical parsing
-  - keep `exactframerate` parsing local to `video_sdp_fmtp.hpp`.
-  - enforce:
-    - integer frame rates are represented as a single decimal integer, not `N/1`;
-    - rational frame rates use the smallest numerator/denominator representation;
-    - numerator and denominator are positive;
-    - malformed forms reject as `InvalidValue`.
-  - prefer minimal changes to existing `.hpp` files:
-    - `video_sdp_fmtp.hpp`
-    - related tests only
-  - do not change timestamp mapping or runtime cadence behavior in this task.
-  - add focused tests for:
+- [x] 196E: Tighten SDP `exactframerate` canonical parsing
+  - keep `exactframerate` parsing local to `video_sdp_fmtp.hpp`;
+  - implemented behavior:
+    - integer frame rates are accepted only as a single decimal integer, not `N/1`;
+    - rational frame rates are accepted only in the smallest numerator/denominator representation;
+    - numerator and denominator must be positive;
+    - malformed forms reject as `InvalidValue`;
+  - timestamp mapping and runtime cadence behavior remain unchanged;
+  - covered by focused tests for:
     - `25` accepted;
     - `25/1` rejected;
     - `30000/1001` accepted;
     - reducible rational such as `60000/2002` rejected;
     - zero numerator/denominator rejected;
-    - existing valid SDP examples remain accepted.
+    - existing valid SDP examples remaining accepted.
 - [ ] 196F: Require media-level `mediaclk` for final ST 2110 video SDP ingestion
   - keep raw SDP parsing scope-aware and non-destructive.
   - final `VideoStreamSignaling` ingestion should require a selected media-level `a=mediaclk`, as required by ST 2110-10.

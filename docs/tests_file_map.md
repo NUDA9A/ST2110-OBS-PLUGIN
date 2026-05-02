@@ -602,7 +602,14 @@
 - Покрывает:
     - parsing of required and optional known fmtp parameters;
     - preservation of unknown syntactically valid parameters;
-    - integer and rational `exactframerate`;
+    - canonical `exactframerate` parsing:
+        - integer `25` accepted;
+        - non-canonical integer rational `25/1` rejected;
+        - canonical rational `30000/1001` accepted;
+        - reducible rational such as `60000/2002` rejected;
+        - zero numerator/denominator rejected;
+        - malformed `exactframerate` rejected;
+        - existing valid SDP examples using `30000/1001` remain accepted.
     - `PAR` parsing:
         - valid `PAR=1:1`;
         - valid non-square `PAR=12:11`;
@@ -613,7 +620,8 @@
     - malformed numeric and duplicate known-parameter rejection.
 - Фиксирует:
     - raw fmtp parser keeps absent `PAR` as absent raw property;
-    - signaling-level defaulting to `1:1` is left to later mapping/model layers.
+    - signaling-level defaulting to `1:1` is left to later mapping/model layers;
+    - `exactframerate` canonical form is enforced locally in the raw fmtp parser rather than in runtime cadence/timestamp logic.
 
 ### tests/video_sdp_signaling_adapter_test.cpp
 - Роль:

@@ -1180,8 +1180,12 @@
         - `parse_strict_video_sdp_fmtp_parameter_token(...)`
         - `require_fmtp_parameter_value(...)`
         - `parse_required_positive_fmtp_uint32(...)`
-        - `parse_fmtp_exact_frame_rate(...)`
         - `gcd_u32(...)`
+        - `parse_fmtp_exact_frame_rate(...)`
+            - parses `exactframerate`;
+            - accepts integer form only as a single decimal integer;
+            - accepts rational form only when numerator/denominator are positive and already canonical/minimal;
+            - rejects `N/1`, reducible rationals, zero parts, and malformed forms.
         - `parse_fmtp_pixel_aspect_ratio(...)`
             - parses `PAR=<w>:<h>`;
             - rejects malformed or non-positive forms;
@@ -1191,13 +1195,14 @@
     - entry points:
         - `parse_video_sdp_fmtp_payload(...)`
             - parses known video fmtp parameters;
-            - now parses optional `PAR`;
+            - now enforces canonical `exactframerate` syntax locally;
+            - parses optional `PAR`;
             - preserves absent `PAR` as raw `std::nullopt`;
             - rejects duplicate `PAR`.
         - `parse_video_sdp_fmtp_attribute(...)`
 - Примечание:
     - raw fmtp parsing remains a strict boundary distinct from signaling-model defaults;
-    - signaling-level default `PAR=1:1` is applied later in the signaling model rather than being synthesized in the raw fmtp structure when `PAR` is absent.
+    - `exactframerate` canonicalization rules are enforced here, without changing timestamp mapping or runtime cadence behavior.
 
 ### libs/st2110core/include/st2110/video_sdp_signaling_adapter.hpp
 - Роль:
