@@ -81,7 +81,7 @@
 - [x] S046: `Depacketizer::write_packet_segments()` now validates/maps the whole packet atomically before mutating the current `FrameAssembler`. All `VideoFrameWriteOp`s for the packet are collected and validated first, including assembly-unit-local ordering checks, and only then are writes applied. An invalid later SRD segment in the same packet no longer partially mutates the current assembly unit.
 - [x] S047: Standards-clean `VideoStreamSignaling` validation now requires `VideoMediaDescription::signal_standard` explicitly. The gap between SDP ingestion, which already required `SSN`, and manually constructed signaling objects is closed in `video_signaling.hpp` through an explicit required-`SSN` validation helper. No implicit synthetic/manual fallback path is used by generic signaling validation or by final SDP/runtime/bootstrap projection paths. Cross-field `SSN` rules about `ST2110-20:2017` vs `ST2110-20:2022` remain separate from this boundary.
 - [x] S048: ST 2110-21 sender timing signaling is now corrected in the existing video SDP ingestion / signaling validation boundaries. Final SDP ingestion no longer silently defaults absent `TP` to `VideoSenderType::Narrow`; standards-clean video SDP now requires `TP` to be explicitly present in `a=fmtp`. At the same time, `validate_video_sender_signaling()` no longer rejects `TROFF` / `CMAX` for `Narrow` or `NarrowLinear` solely by sender class; these parameters are treated according to ST 2110-21 optional-parameter semantics, with validation remaining localized to “present and structurally/policy valid” cases. `TROFF=0` is rejected, malformed/invalid `CMAX` remains rejected by the local modeled policy, and stricter receiver/conformance checks remain separated in the receiver-timing boundary rather than being pushed into normal SDP ingestion.
-- [ ] S049: Raw SDP `c=` connection data parsing preserves useful transport metadata but is still too permissive structurally. It accepts arbitrary `nettype` / `addrtype` tokens and parses slash parameters without validating whether the form is appropriate for the address type / multicast shape. This should be tightened in the raw SDP transport boundary while keeping backend socket behavior separate.
+- [x] S049: Raw SDP `c=` connection-data parsing is now tightened in the existing raw SDP transport boundary. Known structural forms are validated explicitly for `nettype=IN`, `addrtype=IP4` and `addrtype=IP6`, non-empty base connection address is required, and slash parameters are accepted only where they are structurally meaningful for the address type / multicast shape. Malformed TTL / address-count forms are rejected locally in raw SDP parsing, while `c=` remains preserved as raw transport metadata outside `VideoStreamSignaling` and no socket join / multicast-source-filter behavior is introduced here.
 - [x] S050: Backend lifecycle boundary is no longer skeleton-oriented. `IRxVideoBackend::start_video(...)`, `IRxAudioBackend::start_audio(...)`, and `IRxBackend::stop()` now use an explicit result-returning, state-aware lifecycle boundary via `RxBackendState` / `RxBackendLifecycleResult`, with localized policy for repeated start, stop-before-start, repeated stop, and retry after failed start. Future socket/MTL runtime work must extend this existing boundary rather than reintroducing silent no-op behavior, ad hoc logging-only failure handling, or sink-coupled runtime error reporting.
 - [x] S051: The socket platform boundary is no longer deferred behind concrete Linux receive-loop work. An OS-neutral socket runtime boundary now exists in `socket_runtime.hpp`, modeling socket address family, bind endpoint, multicast membership, socket-open config, config projection from `RxVideoConfig`, and abstract receive-port lifecycle separately from Linux/Winsock implementation details. Future Linux and Windows socket backends must fill this boundary rather than reshaping public backend/runtime contracts.
 ---
@@ -1500,23 +1500,23 @@
     - `TROFF=0` rejected;
     - `CMAX` handling matches the corrected sender timing policy;
     - receiver capability rejection still remains in `video_receiver_timing_signaling.hpp`.
-- [ ] 196Q: Tighten raw SDP `c=` connection-data structural validation
-  - keep `c=` as raw transport metadata outside `VideoStreamSignaling`.
-  - validate known SDP/ST 2110-relevant structure more explicitly:
-    - `nettype`, initially `IN`;
-    - `addrtype`, initially `IP4` and/or explicit `IP6` branch if supported by the raw model;
+- [x] 196Q: Tighten raw SDP `c=` connection-data structural validation
+  - kept `c=` as raw transport metadata outside `VideoStreamSignaling`;
+  - known SDP/ST 2110-relevant structure is now validated more explicitly:
+    - `nettype`, currently `IN`;
+    - `addrtype`, currently `IP4` and `IP6`;
     - non-empty base connection address;
     - slash parameters only in forms where they are structurally meaningful;
-    - malformed TTL / address-count forms rejected.
-  - do not implement socket join / multicast source filtering here.
-  - prefer minimal changes:
+    - malformed TTL / address-count forms rejected;
+  - no socket join / multicast source filtering was implemented here;
+  - changes stayed localized to:
     - `video_sdp_media_section.hpp`
     - related tests only
-  - add focused tests for:
+  - focused tests now cover:
     - valid unicast `c=IN IP4 192.0.2.10`;
     - valid multicast `c=IN IP4 239.1.1.1/32`;
-    - malformed nettype/addrtype rejected;
-    - malformed slash parameter forms rejected;
+    - malformed `nettype` / `addrtype` rejected;
+    - malformed slash-parameter forms rejected;
     - existing session/media `c=` preservation remains unchanged.
 ---
 

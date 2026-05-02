@@ -874,25 +874,18 @@
 
 ### tests/video_sdp_transport_boundary_test.cpp
 - Роль:
-    - проверяет raw SDP transport/redundancy metadata preservation:
-        - `c=`;
-        - `source-filter`;
-        - `mid`;
-        - `group:DUP`;
-        - unknown attributes.
+    - проверяет preservation boundary for raw SDP transport/redundancy metadata around the selected video media section.
 - Покрывает:
-    - preservation of session and media `c=` connection data separately;
-    - preservation of `mid`, `source-filter`, and session-level `group:DUP`;
-    - separate preservation of unknown session-level and media-level attributes;
-    - duplicate rejection for:
-        - media connection;
-        - session connection;
-        - `mid`.
-    - transport metadata isolation across media sections.
-    - compatibility with final video SDP ingestion when the selected media section is otherwise standards-clean, including media-level `mediaclk`.
+    - preservation of session-level and media-level `c=` data in the selected raw media section;
+    - preservation of `mid`, `a=source-filter`, and `a=group:DUP`;
+    - separate preservation of unknown session/media attributes;
+    - proof that preserved raw transport metadata does not break final video signaling ingestion;
+    - rejection of duplicate media/session connection-data lines;
+    - rejection of duplicate `mid`;
+    - proof that transport metadata from other media sections is not leaked into the selected video section.
 - Фиксирует:
-    - raw transport/redundancy metadata stays outside `VideoStreamSignaling`;
-    - transport metadata does not break final video signaling ingestion when the selected media section includes the required media-level `mediaclk`.
+    - raw transport/redundancy SDP metadata remains separate from final `VideoStreamSignaling`;
+    - detailed `c=` structural validation itself is covered separately by `video_sdp_connection_data_test.cpp`.
 
 ### tests/video_sdp_media_cross_field_validation_test.cpp
 - Роль:
@@ -982,11 +975,27 @@
 
 ### tests/video_sdp_connection_data_test.cpp
 - Роль:
-    - проверяет raw SDP `c=` connection data parsing:
-        - original connection address preservation;
-        - parsed base address;
-        - optional TTL;
-        - optional address count.
+    - focused regression/acceptance coverage for raw SDP `c=` connection-data structural validation in `video_sdp_media_section.hpp`.
+- Покрывает:
+    - valid unicast connection-data parsing:
+        - `c=IN IP4 192.0.2.10`;
+    - valid IPv4 multicast parsing:
+        - `c=IN IP4 239.1.1.1/32`;
+        - `c=IN IP4 239.1.1.1/32/4`;
+    - rejection of malformed raw connection-data structure:
+        - empty base address;
+        - empty TTL;
+        - non-numeric TTL;
+        - out-of-range TTL;
+        - empty address count;
+        - non-numeric address count;
+        - zero address count;
+        - too many slash parameters.
+    - preservation of existing session/media `c=` behavior through `select_raw_video_sdp_media_section(...)`;
+    - rejection of malformed session-level and media-level `c=` lines during media-section parsing.
+- Фиксирует:
+    - raw SDP `c=` remains transport metadata outside `VideoStreamSignaling`;
+    - structural validation is now tighter, but session/media preservation behavior remains unchanged.
 
 ## Audio frame storage
 
