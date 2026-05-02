@@ -64,14 +64,68 @@ static void test_valid_bpm_signaling_is_accepted() {
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
 }
 
-static void test_invalid_dimensions_are_rejected() {
+static void test_min_signaled_dimensions_are_accepted_structurally() {
     st2110::VideoStreamSignaling s = make_base_signaling();
-    s.media.width = 0;
-    s.media.height = 1080;
+    s.media.width = 1;
+    s.media.height = 1;
     s.media.fps_num = 25;
     s.media.fps_den = 1;
 
-    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
+}
+
+static void test_max_signaled_dimensions_are_accepted_structurally() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.width = 32767;
+    s.media.height = 32767;
+    s.media.fps_num = 25;
+    s.media.fps_den = 1;
+
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
+}
+
+static void test_zero_dimensions_are_rejected_structurally() {
+    {
+        st2110::VideoStreamSignaling s = make_base_signaling();
+        s.media.width = 0;
+        s.media.height = 1080;
+        s.media.fps_num = 25;
+        s.media.fps_den = 1;
+
+        assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
+    }
+
+    {
+        st2110::VideoStreamSignaling s = make_base_signaling();
+        s.media.width = 1920;
+        s.media.height = 0;
+        s.media.fps_num = 25;
+        s.media.fps_den = 1;
+
+        assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
+    }
+}
+
+static void test_overflow_dimensions_are_rejected_structurally() {
+    {
+        st2110::VideoStreamSignaling s = make_base_signaling();
+        s.media.width = 32768;
+        s.media.height = 1080;
+        s.media.fps_num = 25;
+        s.media.fps_den = 1;
+
+        assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
+    }
+
+    {
+        st2110::VideoStreamSignaling s = make_base_signaling();
+        s.media.width = 1920;
+        s.media.height = 32768;
+        s.media.fps_num = 25;
+        s.media.fps_den = 1;
+
+        assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
+    }
 }
 
 static void test_invalid_frame_rate_is_rejected() {
@@ -204,7 +258,10 @@ static void test_st2115logs3_requires_st2110_20_2022() {
 int main() {
     test_valid_progressive_gpm_signaling_is_accepted();
     test_valid_bpm_signaling_is_accepted();
-    test_invalid_dimensions_are_rejected();
+    test_min_signaled_dimensions_are_accepted_structurally();
+    test_max_signaled_dimensions_are_accepted_structurally();
+    test_zero_dimensions_are_rejected_structurally();
+    test_overflow_dimensions_are_rejected_structurally();
     test_invalid_frame_rate_is_rejected();
     test_odd_width_is_structurally_valid_but_runtime_projection_rejects_it();
     test_invalid_maxudp_config_is_rejected();

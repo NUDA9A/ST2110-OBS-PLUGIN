@@ -182,6 +182,20 @@ inline Error validate_video_pixel_aspect_ratio(const VideoPixelAspectRatio &par)
     return Error::Ok;
 }
 
+[[nodiscard]] inline Error validate_video_media_description_dimensions(uint32_t width, uint32_t height) {
+    constexpr uint32_t max_signaled_video_dimension = 32767;
+
+    if (width == 0 || height == 0) {
+        return Error::InvalidValue;
+    }
+
+    if (width > max_signaled_video_dimension || height > max_signaled_video_dimension) {
+        return Error::InvalidValue;
+    }
+
+    return Error::Ok;
+}
+
 inline Error validate_video_bit_depth(const VideoBitDepth &depth) {
     if (depth.floating_point) {
         if (depth.bits != 16) {
@@ -345,7 +359,7 @@ inline Error validate_video_media_description(const VideoMediaDescription &media
     if (Error err = validate_video_pixel_aspect_ratio(media.pixel_aspect_ratio); err != Error::Ok) {
         return err;
     }
-    if (Error err = config_validation::validate_video_dimensions(media.width, media.height); err != Error::Ok) {
+    if (Error err = validate_video_media_description_dimensions(media.width, media.height); err != Error::Ok) {
         return err;
     }
     if (Error err = config_validation::validate_frame_rate(media.fps_num, media.fps_den); err != Error::Ok) {

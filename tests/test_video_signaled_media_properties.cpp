@@ -166,6 +166,18 @@ static void test_pixel_aspect_ratio_rejects_invalid_values() {
     assert(validate_video_pixel_aspect_ratio(make_par(0, 0)) == Error::InvalidValue);
 }
 
+static void test_signaled_dimension_limits_accept_min_and_max_values() {
+    assert(validate_video_media_description_dimensions(1, 1) == Error::Ok);
+    assert(validate_video_media_description_dimensions(32767, 32767) == Error::Ok);
+}
+
+static void test_signaled_dimension_limits_reject_zero_and_overflow_values() {
+    assert(validate_video_media_description_dimensions(0, 1) == Error::InvalidValue);
+    assert(validate_video_media_description_dimensions(1, 0) == Error::InvalidValue);
+    assert(validate_video_media_description_dimensions(32768, 1) == Error::InvalidValue);
+    assert(validate_video_media_description_dimensions(1, 32768) == Error::InvalidValue);
+}
+
 static void test_video_stream_signaling_accepts_extended_media_properties() {
     VideoStreamSignaling signaling = make_valid_signaling();
     assert(validate_video_stream_signaling(signaling) == Error::Ok);
@@ -192,6 +204,58 @@ static void test_video_stream_signaling_rejects_invalid_pixel_aspect_ratio() {
     signaling.media.pixel_aspect_ratio = make_par(0, 1);
 
     assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
+}
+
+static void test_video_stream_signaling_accepts_signaled_dimension_limits() {
+    {
+        VideoStreamSignaling signaling = make_valid_signaling();
+        signaling.media.width = 1;
+        signaling.media.height = 1;
+
+        assert(validate_video_stream_signaling(signaling) == Error::Ok);
+    }
+
+    {
+        VideoStreamSignaling signaling = make_valid_signaling();
+        signaling.media.width = 32767;
+        signaling.media.height = 32767;
+
+        assert(validate_video_stream_signaling(signaling) == Error::Ok);
+    }
+}
+
+static void test_video_stream_signaling_rejects_out_of_range_signaled_dimensions() {
+    {
+        VideoStreamSignaling signaling = make_valid_signaling();
+        signaling.media.width = 0;
+        signaling.media.height = 1080;
+
+        assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
+    }
+
+    {
+        VideoStreamSignaling signaling = make_valid_signaling();
+        signaling.media.width = 1920;
+        signaling.media.height = 0;
+
+        assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
+    }
+
+    {
+        VideoStreamSignaling signaling = make_valid_signaling();
+        signaling.media.width = 32768;
+        signaling.media.height = 1080;
+
+        assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
+    }
+
+    {
+        VideoStreamSignaling signaling = make_valid_signaling();
+        signaling.media.width = 1920;
+        signaling.media.height = 32768;
+
+        assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
+    }
 }
 
 static void test_video_stream_signaling_rejects_invalid_sampling() {
@@ -345,10 +409,14 @@ int main() {
     test_token_backed_video_media_fields_validate_known_and_other_cases();
     test_pixel_aspect_ratio_accepts_valid_values();
     test_pixel_aspect_ratio_rejects_invalid_values();
+    test_signaled_dimension_limits_accept_min_and_max_values();
+    test_signaled_dimension_limits_reject_zero_and_overflow_values();
     test_video_stream_signaling_accepts_extended_media_properties();
     test_video_stream_signaling_accepts_absent_optional_media_fields();
     test_video_stream_signaling_accepts_non_square_pixel_aspect_ratio();
     test_video_stream_signaling_rejects_invalid_pixel_aspect_ratio();
+    test_video_stream_signaling_accepts_signaled_dimension_limits();
+    test_video_stream_signaling_rejects_out_of_range_signaled_dimensions();
     test_video_stream_signaling_rejects_invalid_sampling();
     test_video_stream_signaling_rejects_invalid_bit_depth();
     test_video_stream_signaling_rejects_invalid_optional_media_field();
