@@ -15,6 +15,10 @@ make_tcs(st2110::VideoTransferCharacteristicSystem::Known known) {
     return st2110::VideoTransferCharacteristicSystem{known, std::nullopt};
 }
 
+static st2110::VideoRange make_range(st2110::VideoRange::Known known) {
+    return st2110::VideoRange{known, std::nullopt};
+}
+
 static st2110::VideoStreamSignaling make_valid_video_signaling() {
     st2110::VideoStreamSignaling signaling{};
 
@@ -186,6 +190,49 @@ static void test_st2115logs3_requires_st2110_20_2022() {
     }
 }
 
+static void test_range_cross_field_validation() {
+    {
+        auto signaling = make_valid_video_signaling();
+        signaling.media.colorimetry.known = st2110::VideoColorimetry::Known::Bt2100;
+        signaling.media.range = make_range(st2110::VideoRange::Known::Full);
+
+        assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::Ok);
+    }
+
+    {
+        auto signaling = make_valid_video_signaling();
+        signaling.media.colorimetry.known = st2110::VideoColorimetry::Known::Bt2100;
+        signaling.media.range = make_range(st2110::VideoRange::Known::FullProtect);
+
+        assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::InvalidValue);
+    }
+
+    {
+        auto signaling = make_valid_video_signaling();
+        signaling.media.colorimetry.known = st2110::VideoColorimetry::Known::Bt709;
+        signaling.media.range = make_range(st2110::VideoRange::Known::FullProtect);
+
+        assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::Ok);
+    }
+
+    {
+        auto signaling = make_valid_video_signaling();
+        signaling.media.colorimetry.known = st2110::VideoColorimetry::Known::Bt2100;
+        signaling.media.range = std::nullopt;
+
+        assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::Ok);
+    }
+
+    {
+        auto signaling = make_valid_video_signaling();
+        signaling.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Other,
+                                                               std::string{"FUTURE-COLOR"}};
+        signaling.media.range = st2110::VideoRange{st2110::VideoRange::Known::Other, std::string{"FUTURE-RANGE"}};
+
+        assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::Ok);
+    }
+}
+
 static std::string make_sdp_with_fmtp(std::string_view fmtp_payload) {
     return std::string{"v=0\n"
                        "o=- 1 1 IN IP4 192.0.2.1\n"
@@ -316,6 +363,53 @@ static void test_sdp_ingestion_applies_ssn_cross_field_validation() {
     }
 }
 
+static void test_sdp_ingestion_applies_range_cross_field_validation() {
+    {
+        const std::string sdp = make_sdp_with_fmtp("sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; "
+                                                   "depth=8; colorimetry=BT2100; RANGE=FULL; PM=2110GPM; "
+                                                   "SSN=ST2110-20:2017");
+
+        auto signaling = st2110::parse_video_stream_signaling_from_sdp(sdp, 112);
+        assert(signaling.has_value());
+        assert(signaling->media.range.has_value());
+        assert(signaling->media.range->known == st2110::VideoRange::Known::Full);
+    }
+
+    {
+        const std::string sdp = make_sdp_with_fmtp("sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; "
+                                                   "depth=8; colorimetry=BT2100; RANGE=FULLPROTECT; PM=2110GPM; "
+                                                   "SSN=ST2110-20:2017");
+
+        auto signaling = st2110::parse_video_stream_signaling_from_sdp(sdp, 112);
+        assert(!signaling.has_value());
+        assert(signaling.error() == st2110::Error::InvalidValue);
+    }
+
+    {
+        const std::string sdp = make_sdp_with_fmtp("sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; "
+                                                   "depth=8; colorimetry=BT709; RANGE=FULLPROTECT; PM=2110GPM; "
+                                                   "SSN=ST2110-20:2017");
+
+        auto signaling = st2110::parse_video_stream_signaling_from_sdp(sdp, 112);
+        assert(signaling.has_value());
+        assert(signaling->media.range.has_value());
+        assert(signaling->media.range->known == st2110::VideoRange::Known::FullProtect);
+    }
+
+    {
+        const std::string sdp = make_sdp_with_fmtp("sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; "
+                                                   "depth=8; colorimetry=BT709; RANGE=FUTURE-RANGE; PM=2110GPM; "
+                                                   "SSN=ST2110-20:2017");
+
+        auto signaling = st2110::parse_video_stream_signaling_from_sdp(sdp, 112);
+        assert(signaling.has_value());
+        assert(signaling->media.range.has_value());
+        assert(signaling->media.range->known == st2110::VideoRange::Known::Other);
+        assert(signaling->media.range->raw_token.has_value());
+        assert(*signaling->media.range->raw_token == "FUTURE-RANGE");
+    }
+}
+
 int main() {
     test_progressive_420_sampling_is_structurally_valid_but_runtime_unsupported();
     test_interlaced_and_psf_420_sampling_are_structurally_rejected();
@@ -324,10 +418,12 @@ int main() {
     test_bt709_sdr_ssn_cross_field_validation();
     test_alpha_requires_st2110_20_2022();
     test_st2115logs3_requires_st2110_20_2022();
+    test_range_cross_field_validation();
 
     test_sdp_ingestion_applies_420_cross_field_validation();
     test_sdp_ingestion_applies_key_cross_field_validation();
     test_sdp_ingestion_applies_ssn_cross_field_validation();
+    test_sdp_ingestion_applies_range_cross_field_validation();
 
     return 0;
 }

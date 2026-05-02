@@ -21,6 +21,8 @@ static VideoTransferCharacteristicSystem make_tcs(VideoTransferCharacteristicSys
     return VideoTransferCharacteristicSystem{known, std::nullopt};
 }
 
+static VideoRange make_range(VideoRange::Known known) { return VideoRange{known, std::nullopt}; }
+
 static VideoStreamSignaling make_valid_signaling() {
     VideoStreamSignaling signaling{};
 
@@ -127,6 +129,14 @@ static void test_token_backed_video_media_fields_validate_known_and_other_cases(
     }
 
     {
+        const VideoRange range{VideoRange::Known::Narrow, std::nullopt};
+        assert(validate_video_range(range) == Error::Ok);
+    }
+    {
+        const VideoRange range{VideoRange::Known::FullProtect, std::nullopt};
+        assert(validate_video_range(range) == Error::Ok);
+    }
+    {
         const VideoRange range{VideoRange::Known::Full, std::nullopt};
         assert(validate_video_range(range) == Error::Ok);
     }
@@ -219,6 +229,30 @@ static void test_video_stream_signaling_rejects_st2115logs3_with_st2110_20_2017(
     assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
 }
 
+static void test_video_stream_signaling_accepts_bt2100_with_full_range() {
+    VideoStreamSignaling signaling = make_valid_signaling();
+    signaling.media.colorimetry = VideoColorimetry{VideoColorimetry::Known::Bt2100, std::nullopt};
+    signaling.media.range = make_range(VideoRange::Known::Full);
+
+    assert(validate_video_stream_signaling(signaling) == Error::Ok);
+}
+
+static void test_video_stream_signaling_rejects_bt2100_with_fullprotect_range() {
+    VideoStreamSignaling signaling = make_valid_signaling();
+    signaling.media.colorimetry = VideoColorimetry{VideoColorimetry::Known::Bt2100, std::nullopt};
+    signaling.media.range = make_range(VideoRange::Known::FullProtect);
+
+    assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
+}
+
+static void test_video_stream_signaling_accepts_non_bt2100_fullprotect_range() {
+    VideoStreamSignaling signaling = make_valid_signaling();
+    signaling.media.colorimetry = VideoColorimetry{VideoColorimetry::Known::Bt709, std::nullopt};
+    signaling.media.range = make_range(VideoRange::Known::FullProtect);
+
+    assert(validate_video_stream_signaling(signaling) == Error::Ok);
+}
+
 static void test_pixel_format_projection_accepts_ycbcr422_8bit() {
     VideoStreamSignaling signaling = make_valid_signaling();
     signaling.media.depth = VideoBitDepth{8, false};
@@ -279,6 +313,9 @@ int main() {
     test_video_stream_signaling_rejects_alpha_with_st2110_20_2017();
     test_video_stream_signaling_accepts_st2115logs3_with_st2110_20_2022();
     test_video_stream_signaling_rejects_st2115logs3_with_st2110_20_2017();
+    test_video_stream_signaling_accepts_bt2100_with_full_range();
+    test_video_stream_signaling_rejects_bt2100_with_fullprotect_range();
+    test_video_stream_signaling_accepts_non_bt2100_fullprotect_range();
     test_pixel_format_projection_accepts_ycbcr422_8bit();
     test_pixel_format_projection_rejects_structurally_valid_but_unsupported_media();
     return 0;

@@ -158,6 +158,7 @@ video_media_description_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters 
         } else if (*raw.range == "FULL") {
             range.known = VideoRange::Known::Full;
         } else {
+            range.known = VideoRange::Known::Other;
             range.raw_token = *raw.range;
         }
 

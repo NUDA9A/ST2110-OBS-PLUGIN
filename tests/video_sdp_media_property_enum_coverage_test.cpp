@@ -25,7 +25,7 @@ RawVideoSdpFmtpParameters make_base_raw_fmtp() {
     raw.depth_floating_point = false;
     raw.colorimetry = "BT709";
     raw.packing_mode = "2110GPM";
-    raw.signal_standard = "ST2110-20:2022";
+    raw.signal_standard = "ST2110-20:2017";
 
     return raw;
 }
@@ -41,6 +41,8 @@ void assert_no_raw_token(const VideoSampling &sampling) { assert(!sampling.raw_t
 void assert_no_raw_token(const VideoColorimetry &colorimetry) { assert(!colorimetry.raw_token.has_value()); }
 
 void assert_no_raw_token(const VideoTransferCharacteristicSystem &tcs) { assert(!tcs.raw_token.has_value()); }
+
+void assert_no_raw_token(const VideoRange &range) { assert(!range.raw_token.has_value()); }
 
 void sampling_known_tokens_are_explicit_enums() {
     struct Case {
@@ -137,6 +139,31 @@ void transfer_characteristic_system_known_tokens_are_explicit_enums() {
     }
 }
 
+void range_known_tokens_are_explicit_enums() {
+    struct Case {
+        std::string_view token;
+        VideoRange::Known expected;
+    };
+
+    const Case cases[] = {
+        {"NARROW", VideoRange::Known::Narrow},
+        {"FULLPROTECT", VideoRange::Known::FullProtect},
+        {"FULL", VideoRange::Known::Full},
+    };
+
+    for (const auto &c : cases) {
+        auto raw = make_base_raw_fmtp();
+        raw.range = std::string(c.token);
+
+        const auto media = map_media_or_fail(raw);
+
+        assert(media.range.has_value());
+        assert(media.range->known == c.expected);
+        assert_no_raw_token(*media.range);
+        assert(validate_video_range(*media.range) == Error::Ok);
+    }
+}
+
 void unknown_future_tokens_are_preserved_as_other() {
     {
         auto raw = make_base_raw_fmtp();
@@ -173,6 +200,19 @@ void unknown_future_tokens_are_preserved_as_other() {
         assert(media.transfer_characteristic_system->raw_token.has_value());
         assert(*media.transfer_characteristic_system->raw_token == "FUTURE-TCS");
         assert(validate_video_transfer_characteristic_system(*media.transfer_characteristic_system) == Error::Ok);
+    }
+
+    {
+        auto raw = make_base_raw_fmtp();
+        raw.range = "FUTURE-RANGE";
+
+        const auto media = map_media_or_fail(raw);
+
+        assert(media.range.has_value());
+        assert(media.range->known == VideoRange::Known::Other);
+        assert(media.range->raw_token.has_value());
+        assert(*media.range->raw_token == "FUTURE-RANGE");
+        assert(validate_video_range(*media.range) == Error::Ok);
     }
 }
 
@@ -221,6 +261,7 @@ int main() {
     sampling_known_tokens_are_explicit_enums();
     colorimetry_known_tokens_are_explicit_enums();
     transfer_characteristic_system_known_tokens_are_explicit_enums();
+    range_known_tokens_are_explicit_enums();
     unknown_future_tokens_are_preserved_as_other();
     runtime_projection_remains_localized_for_known_but_unsupported_sampling();
     existing_runtime_projection_for_ycbcr_422_8bit_still_works();

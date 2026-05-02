@@ -227,25 +227,29 @@ inline Error validate_video_media_description_cross_field_constraints(const Vide
 
     const bool requires_st2110_20_2022 = uses_alpha_colorimetry || uses_st2115logs3_tcs;
 
-    // This task tightens only the known ST 2110-20 SSN cross-field rule.
-    // Absence of SSN remains handled separately by the dedicated follow-up.
-    if (!media.signal_standard.has_value()) {
-        return Error::Ok;
+    if (media.signal_standard.has_value()) {
+        switch (media.signal_standard->known) {
+        case VideoSignalStandard::Known::Other:
+            break;
+
+        case VideoSignalStandard::Known::St2110_20_2017:
+            if (requires_st2110_20_2022) {
+                return Error::InvalidValue;
+            }
+            break;
+
+        case VideoSignalStandard::Known::St2110_20_2022:
+            if (!requires_st2110_20_2022) {
+                return Error::InvalidValue;
+            }
+            break;
+
+        default:
+            return Error::InvalidValue;
+        }
     }
 
-    switch (media.signal_standard->known) {
-    case VideoSignalStandard::Known::Other:
-        // Preserve structurally unknown future SSN values.
-        return Error::Ok;
-
-    case VideoSignalStandard::Known::St2110_20_2017:
-        return requires_st2110_20_2022 ? Error::InvalidValue : Error::Ok;
-
-    case VideoSignalStandard::Known::St2110_20_2022:
-        return requires_st2110_20_2022 ? Error::Ok : Error::InvalidValue;
-    }
-
-    if (!media.range || media.range->known == VideoRange::Known::Other) {
+    if (!media.range.has_value() || media.range->known == VideoRange::Known::Other) {
         return Error::Ok;
     }
 
@@ -254,14 +258,22 @@ inline Error validate_video_media_description_cross_field_constraints(const Vide
         case VideoRange::Known::Narrow:
         case VideoRange::Known::Full:
             return Error::Ok;
+
+        case VideoRange::Known::FullProtect:
         default:
-            break;
+            return Error::InvalidValue;
         }
-    } else {
-        return Error::Ok;
     }
 
-    return Error::InvalidValue;
+    switch (media.range->known) {
+    case VideoRange::Known::Narrow:
+    case VideoRange::Known::FullProtect:
+    case VideoRange::Known::Full:
+        return Error::Ok;
+
+    default:
+        return Error::InvalidValue;
+    }
 }
 
 inline std::expected<PixelFormat, Error>

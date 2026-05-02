@@ -64,6 +64,21 @@ static void test_maps_progressive_known_values() {
     assert(validate_video_media_description(signaling.media) == Error::Ok);
 }
 
+static void test_maps_fullprotect_range_as_known_value() {
+    auto raw = make_base_raw_fmtp();
+    raw.range = std::string("FULLPROTECT");
+
+    auto signaling_expected = video_stream_signaling_from_raw_video_sdp_fmtp(raw);
+    assert(signaling_expected.has_value());
+
+    const auto &signaling = *signaling_expected;
+    assert(signaling.media.range.has_value());
+    assert(signaling.media.range->known == VideoRange::Known::FullProtect);
+    assert(!signaling.media.range->raw_token.has_value());
+
+    assert(validate_video_media_description(signaling.media) == Error::Ok);
+}
+
 static void test_maps_interlaced_scan_mode() {
     auto raw = make_base_raw_fmtp();
     raw.interlace = true;
@@ -163,6 +178,7 @@ static void test_rejects_depth_that_does_not_fit_signaling_model() {
 
 int main() {
     test_maps_progressive_known_values();
+    test_maps_fullprotect_range_as_known_value();
     test_maps_interlaced_scan_mode();
     test_maps_psf_scan_mode();
     test_rejects_segmented_without_interlace();
