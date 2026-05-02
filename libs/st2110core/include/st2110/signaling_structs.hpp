@@ -105,7 +105,7 @@ struct VideoSignalStandard {
 };
 
 struct VideoRange {
-    enum class Known { Narrow, Full, Other };
+    enum class Known { Narrow, FullProtect, Full, Other };
 
     Known known = Known::Narrow;
     std::optional<std::string> raw_token{};

@@ -153,10 +153,11 @@ video_media_description_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters 
     if (raw.range.has_value()) {
         if (*raw.range == "NARROW") {
             range.known = VideoRange::Known::Narrow;
+        } else if (*raw.range == "FULLPROTECT") {
+            range.known = VideoRange::Known::FullProtect;
         } else if (*raw.range == "FULL") {
             range.known = VideoRange::Known::Full;
         } else {
-            range.known = VideoRange::Known::Other;
             range.raw_token = *raw.range;
         }
 

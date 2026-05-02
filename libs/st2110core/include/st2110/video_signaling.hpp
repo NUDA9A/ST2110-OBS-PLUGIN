@@ -245,6 +245,22 @@ inline Error validate_video_media_description_cross_field_constraints(const Vide
         return requires_st2110_20_2022 ? Error::Ok : Error::InvalidValue;
     }
 
+    if (!media.range || media.range->known == VideoRange::Known::Other) {
+        return Error::Ok;
+    }
+
+    if (media.colorimetry.known == VideoColorimetry::Known::Bt2100) {
+        switch (media.range->known) {
+        case VideoRange::Known::Narrow:
+        case VideoRange::Known::Full:
+            return Error::Ok;
+        default:
+            break;
+        }
+    } else {
+        return Error::Ok;
+    }
+
     return Error::InvalidValue;
 }
 
