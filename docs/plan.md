@@ -79,7 +79,7 @@
 - [x] S044: Runtime UDP datagram handling now has a local RTP/RTCP tolerance boundary before media packet parsing/pipeline use. RTCP-like datagrams are classified and tolerated locally, counted as control datagrams, not fed into `PacketView::from_udp_datagram()` / `parse_packet_view_staged(...)`, and not counted as malformed ST 2110-20 media packets. Actual RTCP semantic interpretation remains out of MVP.
 - [x] S045: Cross-packet SRD ordering validation is now enforced inside the depacketizer assembly-unit boundary instead of remaining packet-local only. For the current `Progressive + GPM` MVP path, `SRD Row Number` is rejected if it goes backwards within the current assembly unit, and within the same row `SRD Offset` must strictly increase across successive segments/packets. Regressing or overlapping later segments are rejected before any write mutates the current frame assembly state.
 - [x] S046: `Depacketizer::write_packet_segments()` now validates/maps the whole packet atomically before mutating the current `FrameAssembler`. All `VideoFrameWriteOp`s for the packet are collected and validated first, including assembly-unit-local ordering checks, and only then are writes applied. An invalid later SRD segment in the same packet no longer partially mutates the current assembly unit.
-- [ ] S047: `VideoMediaDescription::signal_standard` is optional in the standards-aware signaling model, so manually constructed `VideoStreamSignaling` can validate without an `SSN` even though ST 2110-20 requires the `SSN` media type parameter for conforming video streams. SDP parsing requires `SSN`, but generic signaling-model validation should either require it for standards-clean video signaling or make the synthetic/manual fallback explicit.
+- [x] S047: Standards-clean `VideoStreamSignaling` validation now requires `VideoMediaDescription::signal_standard` explicitly. The gap between SDP ingestion, which already required `SSN`, and manually constructed signaling objects is closed in `video_signaling.hpp` through an explicit required-`SSN` validation helper. No implicit synthetic/manual fallback path is used by generic signaling validation or by final SDP/runtime/bootstrap projection paths. Cross-field `SSN` rules about `ST2110-20:2017` vs `ST2110-20:2022` remain separate from this boundary.
 - [ ] S048: ST 2110-21 sender timing signaling is currently modeled too loosely in one place and too strictly in another. Final SDP ingestion can silently default absent `TP` to `VideoSenderType::Narrow`, even though `TP` is required by ST 2110-21 for video RTP streams. At the same time, `validate_video_sender_signaling()` rejects `TROFF` / `CMAX` for `Narrow` and `NarrowLinear`, although ST 2110-21 defines these as optional media type parameters with default assumptions when absent. This validation should be rechecked and corrected against ST 2110-21.
 - [ ] S049: Raw SDP `c=` connection data parsing preserves useful transport metadata but is still too permissive structurally. It accepts arbitrary `nettype` / `addrtype` tokens and parses slash parameters without validating whether the form is appropriate for the address type / multicast shape. This should be tightened in the raw SDP transport boundary while keeping backend socket behavior separate.
 - [x] S050: Backend lifecycle boundary is no longer skeleton-oriented. `IRxVideoBackend::start_video(...)`, `IRxAudioBackend::start_audio(...)`, and `IRxBackend::stop()` now use an explicit result-returning, state-aware lifecycle boundary via `RxBackendState` / `RxBackendLifecycleResult`, with localized policy for repeated start, stop-before-start, repeated stop, and retry after failed start. Future socket/MTL runtime work must extend this existing boundary rather than reintroducing silent no-op behavior, ad hoc logging-only failure handling, or sink-coupled runtime error reporting.
@@ -1467,11 +1467,10 @@
     - packet with invalid later segment writes none of its segments;
     - current unit remains recoverable/drop-policy-consistent after rejected packet;
     - behavior remains unchanged for valid progressive packets.
-- [ ] 196O: Require or explicitly default `SSN` in standards-aware video signaling validation
+- [x] 196O: Require or explicitly default `SSN` in standards-aware video signaling validation
   - close the gap where SDP parsing requires `SSN`, but manually constructed `VideoStreamSignaling` can validate with `media.signal_standard == nullopt`.
   - choose one explicit policy:
     - require `signal_standard` for standards-clean `VideoStreamSignaling`;
-    - or add a clearly named synthetic/manual validation path where absent `SSN` is allowed only for tests/scaffolding.
   - keep this separate from `196A`, which handles the `ST2110-20:2017` vs `ST2110-20:2022` cross-field rule.
   - prefer minimal changes:
     - `video_signaling.hpp`
@@ -1479,7 +1478,7 @@
   - add focused tests for:
     - missing `SSN` rejected by standards-clean signaling validation;
     - SDP-derived signaling still passes when `SSN` is present;
-    - synthetic/manual fallback, if kept, is explicit and not used by final SDP ingestion.
+    - final runtime/bootstrap/timing projection helpers reject missing `SSN` before downstream projection logic.
 - [ ] 196P: Correct ST 2110-21 `TP` / `TROFF` / `CMAX` sender timing validation
   - re-check `validate_video_sender_signaling(...)` and final SDP ingestion behavior against ST 2110-21.
   - final video SDP ingestion should not silently treat absent `TP` as `2110TPN`.

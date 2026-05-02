@@ -779,47 +779,66 @@
 
 ### libs/st2110core/include/st2110/video_signaling.hpp
 - Роль:
-    - standards-aware video signaling/model validation and projection boundary.
-    - validates modeled ST 2110 video media-description and timing/reference properties and projects signaling into runtime-facing video config / pipeline config through existing boundaries.
+    - standards-aware video signaling validation and signaling-to-runtime/bootstrap projection boundary for ST 2110 video.
+    - keeps modeled video media-description properties separate from runtime `PixelFormat` / depacketizer / backend config.
+    - now also closes the standards-clean `SSN` requirement gap between SDP-derived signaling and manually constructed signaling objects.
 - Связи:
-    - использует `signaling_structs.hpp`, `config_validation.hpp`, `packet_parse.hpp`, `rx_config.hpp`, `depacketizer.hpp`, `video_receive_pipeline.hpp`, `video_unit_reconstructor.hpp`, `pixel_format.hpp`, `video_scan_mode.hpp`;
-    - используется signaling/runtime projection helpers и SDP ingestion path.
+    - uses:
+        - `config_validation.hpp`
+        - `packet_parse.hpp`
+        - `rx_config.hpp`
+        - `depacketizer.hpp`
+        - `video_receive_pipeline.hpp`
+        - `video_unit_reconstructor.hpp`
+        - `signaling_structs.hpp`
+    - feeds:
+        - `PacketParsePolicy`
+        - `RxVideoConfig`
+        - `DepacketizerConfig`
+        - `VideoUnitReconstructorConfig`
+        - `VideoReceivePipelineConfig`
+        - `VideoReceiverBootstrapConfig`
+    - remains separate from raw SDP parsing/ingestion boundaries, but is used by final SDP-derived signaling paths.
 - Сущности:
-    - `validate_video_sender_signaling(...)`
-    - `validate_reference_clock(...)`
-        - validates modeled known reference-clock payloads more strictly:
-            - `Ptp` requires `ptp` and rejects `local_mac` / `raw_token`
-            - non-traceable PTP requires non-zero clock identity
-            - `LocalMac` requires non-zero MAC and rejects `ptp` / `raw_token`
-            - `Other` preserves explicit unknown/open-ended forms through non-empty `raw_token`
-    - `validate_media_clock_mode(...)`
-    - `validate_timestamp_mode(...)`
-    - `validate_video_timing_signaling(...)`
-    - `validate_video_sampling(...)`
-    - `validate_video_colorimetry(...)`
-    - `validate_video_transfer_characteristic_system(...)`
-    - `validate_video_signal_standard(...)`
-    - `validate_video_range(...)`
-    - `validate_video_pixel_aspect_ratio(...)`
-    - `validate_video_media_description_dimensions(...)`
-    - `validate_video_bit_depth(...)`
-    - `is_420_video_sampling(...)`
-    - `validate_video_media_description_cross_field_constraints(...)`
-        - localized ST 2110-20 cross-field rules for scan mode, KEY/ALPHA, `SSN`, and `RANGE`
-    - `pixel_format_from_video_stream_signaling(...)`
-        - current runtime/storage projection boundary remains localized
-    - `validate_video_media_description(...)`
-    - `validate_video_stream_signaling(...)`
-    - `packet_parse_policy_from_video_stream_signaling(...)`
-    - `validate_video_stream_signaling_against_rx_video_config(...)`
-    - `depacketizer_config_from_video_stream_signaling(...)`
-    - `video_unit_reconstructor_config_from_video_stream_signaling(...)`
-    - `video_receive_pipeline_config_from_video_stream_signaling(...)`
-    - `rx_video_config_from_video_stream_signaling(...)`
-    - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
+    - signaling/media validation helpers:
+        - `validate_video_sender_signaling(...)`
+        - `validate_reference_clock(...)`
+        - `validate_media_clock_mode(...)`
+        - `validate_timestamp_mode(...)`
+        - `validate_video_timing_signaling(...)`
+        - `validate_video_sampling(...)`
+        - `validate_video_colorimetry(...)`
+        - `validate_video_transfer_characteristic_system(...)`
+        - `validate_video_signal_standard(...)`
+        - `validate_required_video_signal_standard(...)`
+            - explicit standards-clean boundary:
+                - `media.signal_standard == nullopt` is rejected as `InvalidValue`;
+                - known/other `SSN` token validation is delegated to `validate_video_signal_standard(...)`.
+        - `validate_video_range(...)`
+        - `validate_video_pixel_aspect_ratio(...)`
+        - `validate_video_media_description_dimensions(...)`
+        - `validate_video_bit_depth(...)`
+        - `validate_video_media_description_cross_field_constraints(...)`
+        - `validate_video_media_description(...)`
+        - `validate_video_stream_signaling(...)`
+    - signaling/runtime mapping helpers:
+        - `pixel_format_from_video_stream_signaling(...)`
+        - `packet_parse_policy_from_video_stream_signaling(...)`
+        - `validate_video_stream_signaling_against_rx_video_config(...)`
+        - `depacketizer_config_from_video_stream_signaling(...)`
+        - `video_unit_reconstructor_config_from_video_stream_signaling(...)`
+        - `video_receive_pipeline_config_from_video_stream_signaling(...)`
+        - `rx_video_config_from_video_stream_signaling(...)`
+        - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
+- Поведение:
+    - generic signaling validation is now standards-clean by default:
+        - `SSN` is required;
+        - malformed or missing `SSN` returns `InvalidValue`;
+        - cross-field `SSN` constraints remain handled separately in existing media-description cross-field logic.
+    - downstream runtime/projection/bootstrap helpers all reuse the same signaling validation boundary first, so missing `SSN` is rejected before runtime mapping/projection code runs.
 - Примечание:
-    - strict modeled reference-clock validation now remains localized in signaling/model validation rather than being deferred to runtime behavior;
-    - runtime PTP behavior is still out of scope.
+    - no separate synthetic/manual “SSN-optional” validation path was introduced in this task;
+    - final SDP ingestion remains on the standards-clean path and does not rely on a relaxed manual fallback.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:

@@ -492,6 +492,9 @@
 - Покрывает:
     - valid progressive `GPM` signaling;
     - valid `BPM` signaling at the structural signaling layer;
+    - standards-clean `SSN` requirement:
+        - missing `SSN` rejected by `validate_video_stream_signaling(...)`;
+        - existing valid signaling with explicit `SSN` remains accepted.
     - signaled dimension limits in the signaling/media-description boundary:
         - width/height `1` accepted structurally;
         - width/height `32767` accepted structurally;
@@ -519,22 +522,54 @@
 ### tests/test_video_signaling_rx_match.cpp
 - Роль:
     - проверяет consistency между signaling model и manual `RxVideoConfig`.
+- Покрывает:
+    - matching signaling and `RxVideoConfig` accepted;
+    - width / height / frame-rate / scan-mode mismatch rejected;
+    - missing `SSN` in signaling rejected before RX-match consistency logic.
 
 ### tests/test_video_signaling_to_rx_config.cpp
 - Роль:
     - проверяет projection from `VideoStreamSignaling` to `RxVideoConfig`.
+- Покрывает:
+    - valid standards-clean signaling projects successfully;
+    - invalid signaling rejected before projection;
+    - missing `SSN` rejected before projection;
+    - invalid transport arguments rejected after signaling projection;
+    - scan mode is preserved structurally;
+    - invalid payload type rejected;
+    - structurally valid but unsupported runtime pixel-format mapping rejected as `Unsupported`.
 
 ### tests/test_video_signaling_to_pipeline_config.cpp
 - Роль:
     - проверяет projection from `VideoStreamSignaling` to runtime video receive pipeline config.
+- Покрывает:
+    - depacketizer config projection;
+    - reconstructor config projection;
+    - composed pipeline config projection;
+    - structural preservation of interlaced scan mode in projection helpers;
+    - invalid signaling rejected before runtime projection;
+    - missing `SSN` rejected before runtime projection;
+    - structurally valid but runtime-unmappable media rejected as `Unsupported`.
 
 ### tests/test_video_receiver_bootstrap.cpp
 - Роль:
     - проверяет generic signaling-driven receiver bootstrap composition.
+- Покрывает:
+    - successful composition of packet-parse policy, RX config, and receive-pipeline config from valid signaling;
+    - absent `MAXUDP` override preserved through bootstrap policy projection;
+    - invalid signaling rejected before downstream bootstrap projection;
+    - missing `SSN` rejected before downstream bootstrap projection;
+    - invalid transport inputs rejected after signaling-derived projection;
+    - structurally valid but runtime-unmappable signaling rejected as `Unsupported`.
 
 ### tests/test_video_packing_mode_runtime_projection.cpp
 - Роль:
     - проверяет runtime projection/support boundary для `VideoPackingMode`.
+- Покрывает:
+    - `GPM` projection into depacketizer / receive-pipeline / bootstrap configs;
+    - `BPM` remains structurally valid in signaling model;
+    - `BPM` remains rejected by current runtime projection/support boundaries as `Unsupported`;
+    - missing `SSN` is rejected before packing-mode runtime projection is attempted.
 
 ### tests/test_video_signaled_media_properties.cpp
 - Роль:
@@ -556,8 +591,10 @@
         - rejection of `0` and `32768`;
         - stream-level acceptance of signaled min/max dimensions;
         - stream-level rejection of out-of-range dimensions.
-    - acceptance of a valid BT709/SDR media-description shape with `SSN=ST2110-20:2017`;
-    - acceptance of absent optional signaling/media fields where currently allowed;
+    - standards-clean media-description behavior:
+        - valid BT709/SDR media-description with explicit `SSN=ST2110-20:2017` accepted;
+        - missing `SSN` rejected;
+        - optional `TCS` and `RANGE` may still be absent where currently allowed.
     - rejection of invalid structural media fields;
     - tightened `SSN` cross-field validation;
     - tightened `RANGE` modeling and cross-field validation.
@@ -569,8 +606,8 @@
         - valid `YCbCr422 + 8-bit` projects to `UYVY`;
         - structurally valid but unsupported media, including KEY/ALPHA, remain rejected only by runtime projection.
 - Фиксирует:
-    - ST 2110-20 signaled dimension limits are now enforced in the signaling/media-description boundary;
-    - current UYVY-specific even-width runtime constraint still remains localized below that boundary.
+    - `SSN` is no longer treated as an optional signaling/media-description field in standards-clean validation;
+    - current UYVY-specific even-width runtime constraint still remains localized below the signaling boundary.
 
 ### tests/test_video_reference_clock.cpp
 - Роль:
@@ -589,18 +626,23 @@
         - all-zero MAC;
         - mixed `LocalMac` + `Ptp`.
     - explicit `Other + raw_token` support for unknown/open-ended forms;
-    - propagation of reference-clock validation through `validate_video_stream_signaling(...)`.
+    - propagation of reference-clock validation through `validate_video_stream_signaling(...)`;
+    - missing `SSN` rejection remains above/reference-clock-using signaling validation paths.
 - Фиксирует:
     - strict modeled validation of known reference-clock forms remains localized on the signaling boundary;
-    - unknown/open-ended forms still remain preservable only through explicit `Other`.
+    - standards-clean signaling still requires explicit `SSN` in addition to a valid reference clock.
 
 ### tests/test_video_sender_signaling.cpp
 - Роль:
     - проверяет sender timing signaling fields:
         - sender type;
-        - TROFF;
-        - CMAX;
+        - `TROFF`;
+        - `CMAX`;
         - structural validation.
+- Покрывает:
+    - direct sender-field validation for `Narrow`, `NarrowLinear`, and `Wide`;
+    - stream-level signaling validation for valid and invalid wide-sender cases;
+    - missing `SSN` rejection remains explicit and happens before stream-level sender-timing acceptance is treated as standards-clean signaling.
 
 ### tests/test_video_timing_signaling.cpp
 - Роль:
@@ -622,6 +664,11 @@
 ### tests/test_video_receiver_timing_bootstrap.cpp
 - Роль:
     - проверяет timing-aware signaling-driven bootstrap wrapper.
+- Покрывает:
+    - successful timing-aware bootstrap composition;
+    - missing `SSN` rejected before timing-aware runtime/bootstrap projection;
+    - unsupported sender-type rejection remains localized in timing boundary;
+    - unconsumed `TSDELAY` rejection remains localized in timing boundary.
 
 ### tests/video_receiver_timing_architecture_test.cpp
 - Роль:
