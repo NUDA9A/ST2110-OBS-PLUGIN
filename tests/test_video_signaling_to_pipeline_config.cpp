@@ -10,7 +10,13 @@
 static st2110::ReferenceClock make_valid_reference_clock() {
     st2110::ReferenceClock clock{};
     clock.kind = st2110::ReferenceClockKind::Ptp;
-    clock.ptp = st2110::PtpReferenceClock{};
+
+    st2110::PtpReferenceClock ptp{};
+    ptp.clock_identity = {0x39, 0xA7, 0x94, 0xFF, 0xFE, 0x07, 0xCB, 0xD0};
+    ptp.domain_number = 127;
+    ptp.traceable = false;
+
+    clock.ptp = ptp;
     return clock;
 }
 
@@ -51,6 +57,7 @@ static void test_depacketizer_config_is_projected_from_signaling() {
     assert(cfg->height == 1080);
     assert(cfg->format == st2110::PixelFormat::UYVY);
     assert(cfg->scan_mode == st2110::VideoScanMode::Progressive);
+    assert(cfg->packing_mode == st2110::VideoPackingMode::Gpm);
     assert(cfg->partial_frame_policy == st2110::PartialFramePolicy::EmitWithFlag);
 }
 
@@ -75,6 +82,7 @@ static void test_pipeline_config_is_projected_from_signaling() {
     assert(cfg->depacketizer.height == 1080);
     assert(cfg->depacketizer.format == st2110::PixelFormat::UYVY);
     assert(cfg->depacketizer.scan_mode == st2110::VideoScanMode::Progressive);
+    assert(cfg->depacketizer.packing_mode == st2110::VideoPackingMode::Gpm);
     assert(cfg->depacketizer.partial_frame_policy == st2110::PartialFramePolicy::Drop);
 
     assert(cfg->reconstructor.format == st2110::PixelFormat::UYVY);
@@ -90,12 +98,13 @@ static void test_pipeline_projection_preserves_interlaced_scan_mode_structurally
 
     assert(cfg.has_value());
     assert(cfg->depacketizer.scan_mode == st2110::VideoScanMode::Interlaced);
+    assert(cfg->depacketizer.packing_mode == st2110::VideoPackingMode::Gpm);
     assert(cfg->reconstructor.scan_mode == st2110::VideoScanMode::Interlaced);
 }
 
 static void test_invalid_signaling_is_rejected_before_runtime_projection() {
     st2110::VideoStreamSignaling s = make_base_signaling();
-    s.reference_clock.ptp = std::nullopt; // invalid for kind=Ptp
+    s.reference_clock.ptp = std::nullopt;
 
     auto dep_cfg = st2110::depacketizer_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
     assert(!dep_cfg.has_value());
@@ -113,8 +122,7 @@ static void test_invalid_signaling_is_rejected_before_runtime_projection() {
 
 static void test_structurally_valid_but_unmappable_runtime_format_is_unsupported() {
     st2110::VideoStreamSignaling s = make_base_signaling();
-    s.media.depth =
-        st2110::VideoBitDepth{10, false}; // structurally valid, but not currently mappable to UYVY runtime path
+    s.media.depth = st2110::VideoBitDepth{10, false};
 
     auto dep_cfg = st2110::depacketizer_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
     assert(!dep_cfg.has_value());

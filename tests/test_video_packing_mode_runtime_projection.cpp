@@ -4,6 +4,14 @@
 
 #include <st2110/video_signaling.hpp>
 
+static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
+    st2110::PtpReferenceClock ptp{};
+    ptp.clock_identity = {0x39, 0xA7, 0x94, 0xFF, 0xFE, 0x07, 0xCB, 0xD0};
+    ptp.domain_number = 127;
+    ptp.traceable = false;
+    return ptp;
+}
+
 static st2110::VideoStreamSignaling make_base_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -22,7 +30,7 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     s.media_clock_mode = st2110::MediaClockMode::Direct;
     s.timestamp_mode = st2110::TimestampMode::New;
     s.reference_clock.kind = st2110::ReferenceClockKind::Ptp;
-    s.reference_clock.ptp = st2110::PtpReferenceClock{};
+    s.reference_clock.ptp = make_valid_ptp_reference_clock();
     s.ts_delay_sender_ticks = 0;
 
     s.sender_type = st2110::VideoSenderType::Narrow;
@@ -77,6 +85,7 @@ static void test_gpm_projects_to_bootstrap_config_with_runtime_packing_mode() {
     assert(cfg->rx_config.height == 1080);
     assert(cfg->rx_config.format == st2110::PixelFormat::UYVY);
     assert(cfg->rx_config.scan_mode == st2110::VideoScanMode::Progressive);
+    assert(cfg->rx_config.packing_mode == st2110::VideoPackingMode::Gpm);
 
     assert(cfg->receive_pipeline_config.depacketizer.packing_mode == st2110::VideoPackingMode::Gpm);
 }

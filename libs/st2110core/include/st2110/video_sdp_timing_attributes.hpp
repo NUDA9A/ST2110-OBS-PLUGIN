@@ -69,12 +69,85 @@ struct RawVideoSdpTimingAttributes {
     return s.substr(first, last - first + 1);
 }
 
+[[nodiscard]] inline std::expected<uint8_t, Error> parse_video_sdp_decimal_uint8(std::string_view value) {
+    value = trim(value);
+
+    if (value.empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    unsigned long val = 0;
+    const char *first = value.data();
+    const char *last = value.data() + value.size();
+    const auto [ptr, ec] = std::from_chars(first, last, val);
+
+    if (ec != std::errc{} || ptr != last || val > 255) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return static_cast<uint8_t>(val);
+}
+
+[[nodiscard]] inline bool is_hex_digit_ascii(char c) noexcept {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+template <std::size_t N>
+[[nodiscard]] bool is_eui_with_dash_separators(std::string_view value) noexcept {
+    if (value.size() != (N * 2) + (N - 1)) {
+        return false;
+    }
+
+    for (std::size_t i = 0; i < N; ++i) {
+        const std::size_t octet_pos = i * 3;
+
+        if (!is_hex_digit_ascii(value[octet_pos]) || !is_hex_digit_ascii(value[octet_pos + 1])) {
+            return false;
+        }
+
+        if (i + 1 < N && value[octet_pos + 2] != '-') {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+[[nodiscard]] inline Error validate_raw_video_sdp_ptp_gmid(std::string_view gmid) {
+    gmid = trim(gmid);
+
+    if (gmid.empty()) {
+        return Error::InvalidValue;
+    }
+
+    if (gmid == "traceable") {
+        return Error::Ok;
+    }
+
+    return is_eui_with_dash_separators<8>(gmid) ? Error::Ok : Error::InvalidValue;
+}
+
+[[nodiscard]] inline Error validate_raw_video_sdp_localmac(std::string_view mac) {
+    mac = trim(mac);
+
+    if (mac.empty()) {
+        return Error::InvalidValue;
+    }
+
+    return is_eui_with_dash_separators<6>(mac) ? Error::Ok : Error::InvalidValue;
+}
+
+[[nodiscard]] inline bool raw_video_sdp_has_reference_clock(const RawVideoSdpTimingAttributes &raw) {
+    return raw.reference_clock.has_value();
+}
+
 [[nodiscard]] inline std::expected<RawVideoSdpReferenceClock, Error>
 parse_video_sdp_reference_clock(std::string_view value) {
     value = trim(value);
     if (value.empty()) {
         return std::unexpected(Error::InvalidValue);
     }
+
     RawVideoSdpReferenceClock res{};
     res.raw_value = std::string(value);
 
@@ -82,13 +155,12 @@ parse_video_sdp_reference_clock(std::string_view value) {
         value.remove_prefix(4);
 
         const std::size_t first_colon = value.find(':');
-        if (first_colon == std::string_view::npos) {
+        if (first_colon == std::string_view::npos || first_colon == 0) {
             return std::unexpected(Error::InvalidValue);
         }
 
-        RawVideoSdpPtpReferenceClock ptp{};
-        ptp.version = std::string(value.substr(0, first_colon));
-        if (ptp.version.empty()) {
+        const std::string_view version = value.substr(0, first_colon);
+        if (version != "IEEE1588-2008") {
             return std::unexpected(Error::InvalidValue);
         }
 
@@ -97,28 +169,53 @@ parse_video_sdp_reference_clock(std::string_view value) {
             return std::unexpected(Error::InvalidValue);
         }
 
+        RawVideoSdpPtpReferenceClock ptp{};
+        ptp.version = std::string(version);
+
         const std::size_t second_colon = value.find(':');
+
         if (second_colon == std::string_view::npos) {
-            ptp.gmid = std::string(value);
-        } else {
-            ptp.gmid = std::string(value.substr(0, second_colon));
-            value.remove_prefix(second_colon + 1);
-
-            uint32_t domain = 0;
-            const char *first = value.data();
-            const char *last = value.data() + value.size();
-            const auto [ptr, ec] = std::from_chars(first, last, domain);
-
-            if (ec != std::errc{} || ptr != last || domain > 255) {
+            if (validate_raw_video_sdp_ptp_gmid(value) != Error::Ok) {
                 return std::unexpected(Error::InvalidValue);
             }
 
-            ptp.domain = static_cast<uint8_t>(domain);
+            ptp.gmid = std::string(value);
+
+            if (ptp.gmid == "traceable") {
+                ptp.domain = std::nullopt;
+            }
+
+            res.kind = RawVideoSdpReferenceClock::Kind::Ptp;
+            res.ptp = std::move(ptp);
+            return res;
         }
 
-        if (ptp.gmid.empty()) {
+        const std::string_view gmid = value.substr(0, second_colon);
+        const std::string_view domain_text = value.substr(second_colon + 1);
+
+        if (gmid.empty() || domain_text.empty()) {
             return std::unexpected(Error::InvalidValue);
         }
+
+        if (gmid == "traceable") {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        if (validate_raw_video_sdp_ptp_gmid(gmid) != Error::Ok) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        if (domain_text.find(':') != std::string_view::npos) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        auto domain = parse_video_sdp_decimal_uint8(domain_text);
+        if (!domain.has_value()) {
+            return std::unexpected(domain.error());
+        }
+
+        ptp.gmid = std::string(gmid);
+        ptp.domain = *domain;
 
         res.kind = RawVideoSdpReferenceClock::Kind::Ptp;
         res.ptp = std::move(ptp);
@@ -127,7 +224,8 @@ parse_video_sdp_reference_clock(std::string_view value) {
 
     if (value.starts_with("localmac=")) {
         value.remove_prefix(9);
-        if (value.empty()) {
+
+        if (validate_raw_video_sdp_localmac(value) != Error::Ok) {
             return std::unexpected(Error::InvalidValue);
         }
 

@@ -24,6 +24,14 @@ using TimingBootstrapResult = decltype(video_receiver_bootstrap_config_from_vide
 static_assert(std::is_same_v<GenericBootstrapResult, TimingBootstrapResult>);
 static_assert(std::is_same_v<GenericBootstrapResult, std::expected<VideoReceiverBootstrapConfig, Error>>);
 
+PtpReferenceClock make_valid_ptp_reference_clock() {
+    PtpReferenceClock ptp{};
+    ptp.clock_identity = {0x39, 0xA7, 0x94, 0xFF, 0xFE, 0x07, 0xCB, 0xD0};
+    ptp.domain_number = 127;
+    ptp.traceable = false;
+    return ptp;
+}
+
 VideoStreamSignaling make_valid_signaling() {
     VideoStreamSignaling signaling{};
 
@@ -44,7 +52,7 @@ VideoStreamSignaling make_valid_signaling() {
     signaling.timestamp_mode = TimestampMode::New;
 
     signaling.reference_clock.kind = ReferenceClockKind::Ptp;
-    signaling.reference_clock.ptp = PtpReferenceClock{};
+    signaling.reference_clock.ptp = make_valid_ptp_reference_clock();
     signaling.reference_clock.local_mac.reset();
     signaling.reference_clock.raw_token.reset();
 
@@ -88,6 +96,7 @@ void assert_same_runtime_projection_except_timing(const VideoReceiverBootstrapCo
     assert(generic_cfg.rx_config.dest_ip == timing_cfg.rx_config.dest_ip);
     assert(generic_cfg.rx_config.format == timing_cfg.rx_config.format);
     assert(generic_cfg.rx_config.scan_mode == timing_cfg.rx_config.scan_mode);
+    assert(generic_cfg.rx_config.packing_mode == timing_cfg.rx_config.packing_mode);
 
     assert(generic_cfg.receive_pipeline_config.depacketizer.width ==
            timing_cfg.receive_pipeline_config.depacketizer.width);

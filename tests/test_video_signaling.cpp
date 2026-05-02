@@ -4,6 +4,20 @@
 
 #include <st2110/video_signaling.hpp>
 
+static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
+    st2110::PtpReferenceClock ptp{};
+    ptp.clock_identity = {0x39, 0xA7, 0x94, 0xFF, 0xFE, 0x07, 0xCB, 0xD0};
+    ptp.domain_number = 127;
+    ptp.traceable = false;
+    return ptp;
+}
+
+static st2110::LocalMacReferenceClock make_valid_localmac_reference_clock() {
+    st2110::LocalMacReferenceClock local_mac{};
+    local_mac.mac = {0x7C, 0xE9, 0xD3, 0x1B, 0x9A, 0xAF};
+    return local_mac;
+}
+
 static st2110::VideoStreamSignaling make_base_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -23,7 +37,7 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     s.media_clock_mode = st2110::MediaClockMode::Direct;
     s.timestamp_mode = st2110::TimestampMode::New;
     s.reference_clock.kind = st2110::ReferenceClockKind::Ptp;
-    s.reference_clock.ptp = st2110::PtpReferenceClock{};
+    s.reference_clock.ptp = make_valid_ptp_reference_clock();
     s.ts_delay_sender_ticks = 0;
 
     s.sender_type = st2110::VideoSenderType::Narrow;
@@ -58,7 +72,7 @@ static void test_valid_bpm_signaling_is_accepted() {
     s.packing_mode = st2110::VideoPackingMode::Bpm;
     s.reference_clock.kind = st2110::ReferenceClockKind::LocalMac;
     s.reference_clock.ptp = std::nullopt;
-    s.reference_clock.local_mac = st2110::LocalMacReferenceClock{};
+    s.reference_clock.local_mac = make_valid_localmac_reference_clock();
     s.sender_type = st2110::VideoSenderType::NarrowLinear;
 
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
@@ -159,7 +173,7 @@ static void test_invalid_maxudp_config_is_rejected() {
     s.media.height = 1080;
     s.media.fps_num = 25;
     s.media.fps_den = 1;
-    s.max_udp_datagram_bytes = 8; // smaller than min parsable datagram
+    s.max_udp_datagram_bytes = 8;
 
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
 }

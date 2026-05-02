@@ -445,6 +445,10 @@ video_stream_signaling_from_raw_video_sdp_media_section(const RawVideoSdpMediaSe
         return std::unexpected(expected_timing_attributes.error());
     }
 
+    if (!raw_video_sdp_has_reference_clock(*expected_timing_attributes)) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
     if (!raw_video_sdp_has_media_level_mediaclk(*expected_timing_attributes)) {
         return std::unexpected(Error::InvalidValue);
     }

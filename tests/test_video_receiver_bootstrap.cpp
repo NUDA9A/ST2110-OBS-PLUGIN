@@ -4,6 +4,14 @@
 
 #include <st2110/video_signaling.hpp>
 
+static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
+    st2110::PtpReferenceClock ptp{};
+    ptp.clock_identity = {0x39, 0xA7, 0x94, 0xFF, 0xFE, 0x07, 0xCB, 0xD0};
+    ptp.domain_number = 127;
+    ptp.traceable = false;
+    return ptp;
+}
+
 static st2110::VideoStreamSignaling make_base_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -23,7 +31,7 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     s.timestamp_mode = st2110::TimestampMode::New;
 
     s.reference_clock.kind = st2110::ReferenceClockKind::Ptp;
-    s.reference_clock.ptp = st2110::PtpReferenceClock{};
+    s.reference_clock.ptp = make_valid_ptp_reference_clock();
 
     s.ts_delay_sender_ticks = 0;
 
@@ -55,11 +63,13 @@ static void test_valid_bootstrap_composes_all_receiver_inputs() {
     assert(bootstrap->rx_config.dest_ip == "239.1.1.1");
     assert(bootstrap->rx_config.format == st2110::PixelFormat::UYVY);
     assert(bootstrap->rx_config.scan_mode == st2110::VideoScanMode::Progressive);
+    assert(bootstrap->rx_config.packing_mode == st2110::VideoPackingMode::Gpm);
 
     assert(bootstrap->receive_pipeline_config.depacketizer.width == 1920);
     assert(bootstrap->receive_pipeline_config.depacketizer.height == 1080);
     assert(bootstrap->receive_pipeline_config.depacketizer.format == st2110::PixelFormat::UYVY);
     assert(bootstrap->receive_pipeline_config.depacketizer.scan_mode == st2110::VideoScanMode::Progressive);
+    assert(bootstrap->receive_pipeline_config.depacketizer.packing_mode == st2110::VideoPackingMode::Gpm);
     assert(bootstrap->receive_pipeline_config.depacketizer.partial_frame_policy ==
            st2110::PartialFramePolicy::EmitWithFlag);
 
@@ -76,12 +86,14 @@ static void test_bootstrap_preserves_absent_maxudp_override() {
 
     assert(bootstrap.has_value());
     assert(!bootstrap->packet_parse_policy.max_udp_datagram_bytes.has_value());
+    assert(bootstrap->rx_config.packing_mode == st2110::VideoPackingMode::Gpm);
     assert(bootstrap->receive_pipeline_config.depacketizer.partial_frame_policy == st2110::PartialFramePolicy::Drop);
+    assert(bootstrap->receive_pipeline_config.depacketizer.packing_mode == st2110::VideoPackingMode::Gpm);
 }
 
 static void test_bootstrap_rejects_invalid_signaling_before_projection() {
     st2110::VideoStreamSignaling signaling = make_base_signaling();
-    signaling.reference_clock.ptp = std::nullopt; // invalid for kind=Ptp
+    signaling.reference_clock.ptp = std::nullopt;
 
     auto bootstrap = st2110::video_receiver_bootstrap_config_from_video_stream_signaling(
         signaling, 5004, 112, "0.0.0.0", "239.1.1.1", st2110::PartialFramePolicy::EmitWithFlag);
@@ -95,8 +107,11 @@ static void test_bootstrap_rejects_invalid_transport_inputs_after_signaling_proj
 
     auto bootstrap = st2110::video_receiver_bootstrap_config_from_video_stream_signaling(
         signaling,
-        0, // invalid UDP port
-        112, "0.0.0.0", "239.1.1.1", st2110::PartialFramePolicy::EmitWithFlag);
+        0,
+        112,
+        "0.0.0.0",
+        "239.1.1.1",
+        st2110::PartialFramePolicy::EmitWithFlag);
 
     assert(!bootstrap.has_value());
     assert(bootstrap.error() == st2110::Error::InvalidValue);
@@ -104,7 +119,7 @@ static void test_bootstrap_rejects_invalid_transport_inputs_after_signaling_proj
 
 static void test_bootstrap_returns_unsupported_for_structurally_valid_but_runtime_unmapped_signaling() {
     st2110::VideoStreamSignaling signaling = make_base_signaling();
-    signaling.media.depth = st2110::VideoBitDepth{10, false}; // structurally valid, runtime mapping not yet supported
+    signaling.media.depth = st2110::VideoBitDepth{10, false};
 
     assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::Ok);
 

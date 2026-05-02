@@ -1,8 +1,17 @@
 #include <cassert>
 #include <cstdint>
+#include <optional>
 
 #include <st2110/rx_config.hpp>
 #include <st2110/video_signaling.hpp>
+
+static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
+    st2110::PtpReferenceClock ptp{};
+    ptp.clock_identity = {0x39, 0xA7, 0x94, 0xFF, 0xFE, 0x07, 0xCB, 0xD0};
+    ptp.domain_number = 127;
+    ptp.traceable = false;
+    return ptp;
+}
 
 static st2110::VideoStreamSignaling make_signaling() {
     st2110::VideoStreamSignaling s{};
@@ -21,7 +30,7 @@ static st2110::VideoStreamSignaling make_signaling() {
     s.timestamp_mode = st2110::TimestampMode::New;
 
     s.reference_clock.kind = st2110::ReferenceClockKind::Ptp;
-    s.reference_clock.ptp = st2110::PtpReferenceClock{};
+    s.reference_clock.ptp = make_valid_ptp_reference_clock();
 
     s.ts_delay_sender_ticks = 0;
     s.sender_type = st2110::VideoSenderType::Narrow;
@@ -39,7 +48,8 @@ static st2110::RxVideoConfig make_rx_config() {
                                  .local_ip = "0.0.0.0",
                                  .dest_ip = "239.1.1.1",
                                  .format = st2110::PixelFormat::UYVY,
-                                 .scan_mode = st2110::VideoScanMode::Progressive};
+                                 .scan_mode = st2110::VideoScanMode::Progressive,
+                                 .packing_mode = st2110::VideoPackingMode::Gpm};
 }
 
 static void test_matching_signaling_and_rx_config_is_ok() {

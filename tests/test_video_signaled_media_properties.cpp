@@ -1,6 +1,7 @@
 #include "st2110/video_signaling.hpp"
 
 #include <cassert>
+#include <cstdint>
 #include <optional>
 #include <string>
 
@@ -9,7 +10,13 @@ using namespace st2110;
 static ReferenceClock make_valid_reference_clock() {
     ReferenceClock clock{};
     clock.kind = ReferenceClockKind::Ptp;
-    clock.ptp = PtpReferenceClock{};
+
+    PtpReferenceClock ptp{};
+    ptp.clock_identity = {0x39, 0xA7, 0x94, 0xFF, 0xFE, 0x07, 0xCB, 0xD0};
+    ptp.domain_number = 127;
+    ptp.traceable = false;
+
+    clock.ptp = ptp;
     return clock;
 }
 

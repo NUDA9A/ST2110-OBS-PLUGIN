@@ -56,21 +56,52 @@ inline Error validate_reference_clock(const ReferenceClock &clock) {
         if (!clock.ptp.has_value() || clock.local_mac.has_value() || clock.raw_token.has_value()) {
             return Error::InvalidValue;
         }
+
+        const auto &ptp = *clock.ptp;
+
+        bool all_zero = true;
+        for (uint8_t b : ptp.clock_identity) {
+            if (b != 0) {
+                all_zero = false;
+                break;
+            }
+        }
+
+        if (!ptp.traceable && all_zero) {
+            return Error::InvalidValue;
+        }
+
         return Error::Ok;
     }
+
     case ReferenceClockKind::LocalMac: {
         if (clock.ptp.has_value() || !clock.local_mac.has_value() || clock.raw_token.has_value()) {
             return Error::InvalidValue;
         }
+
+        bool all_zero = true;
+        for (uint8_t b : clock.local_mac->mac) {
+            if (b != 0) {
+                all_zero = false;
+                break;
+            }
+        }
+
+        if (all_zero) {
+            return Error::InvalidValue;
+        }
+
         return Error::Ok;
     }
+
     case ReferenceClockKind::Other: {
         if (clock.ptp.has_value() || clock.local_mac.has_value() || !clock.raw_token.has_value() ||
             clock.raw_token->empty()) {
             return Error::InvalidValue;
-        }
+            }
         return Error::Ok;
     }
+
     default:
         return Error::InvalidValue;
     }

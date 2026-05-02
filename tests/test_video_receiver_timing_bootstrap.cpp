@@ -5,6 +5,14 @@
 
 #include <st2110/video_receiver_timing_signaling.hpp>
 
+static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
+    st2110::PtpReferenceClock ptp{};
+    ptp.clock_identity = {0x39, 0xA7, 0x94, 0xFF, 0xFE, 0x07, 0xCB, 0xD0};
+    ptp.domain_number = 127;
+    ptp.traceable = false;
+    return ptp;
+}
+
 static st2110::VideoStreamSignaling make_valid_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -25,7 +33,7 @@ static st2110::VideoStreamSignaling make_valid_signaling() {
     s.timestamp_mode = st2110::TimestampMode::New;
 
     s.reference_clock.kind = st2110::ReferenceClockKind::Ptp;
-    s.reference_clock.ptp = st2110::PtpReferenceClock{};
+    s.reference_clock.ptp = make_valid_ptp_reference_clock();
     s.reference_clock.local_mac.reset();
     s.reference_clock.raw_token.reset();
 
@@ -73,6 +81,7 @@ static void test_timing_aware_bootstrap_config_is_composed_successfully() {
     assert(cfg.rx_config.fps_den == signaling.media.fps_den);
     assert(cfg.rx_config.format == st2110::PixelFormat::UYVY);
     assert(cfg.rx_config.scan_mode == signaling.scan_mode);
+    assert(cfg.rx_config.packing_mode == signaling.packing_mode);
     assert(cfg.rx_config.udp_port == 5004);
     assert(cfg.rx_config.payload_type == 112);
     assert(cfg.rx_config.local_ip == "127.0.0.1");

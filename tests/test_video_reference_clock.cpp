@@ -4,6 +4,28 @@
 
 #include <st2110/video_signaling.hpp>
 
+static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
+    st2110::PtpReferenceClock ptp{};
+    ptp.clock_identity = {0x39, 0xA7, 0x94, 0xFF, 0xFE, 0x07, 0xCB, 0xD0};
+    ptp.domain_number = 127;
+    ptp.traceable = false;
+    return ptp;
+}
+
+static st2110::PtpReferenceClock make_traceable_ptp_reference_clock() {
+    st2110::PtpReferenceClock ptp{};
+    ptp.clock_identity = {};
+    ptp.domain_number = 0;
+    ptp.traceable = true;
+    return ptp;
+}
+
+static st2110::LocalMacReferenceClock make_valid_localmac_reference_clock() {
+    st2110::LocalMacReferenceClock local_mac{};
+    local_mac.mac = {0x7C, 0xE9, 0xD3, 0x1B, 0x9A, 0xAF};
+    return local_mac;
+}
+
 static st2110::VideoStreamSignaling make_base_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -28,7 +50,14 @@ static st2110::VideoStreamSignaling make_base_signaling() {
 static void test_validate_reference_clock_ptp_ok() {
     st2110::ReferenceClock clock{};
     clock.kind = st2110::ReferenceClockKind::Ptp;
-    clock.ptp = st2110::PtpReferenceClock{};
+    clock.ptp = make_valid_ptp_reference_clock();
+    assert(st2110::validate_reference_clock(clock) == st2110::Error::Ok);
+}
+
+static void test_validate_reference_clock_ptp_traceable_ok() {
+    st2110::ReferenceClock clock{};
+    clock.kind = st2110::ReferenceClockKind::Ptp;
+    clock.ptp = make_traceable_ptp_reference_clock();
     assert(st2110::validate_reference_clock(clock) == st2110::Error::Ok);
 }
 
@@ -38,18 +67,25 @@ static void test_validate_reference_clock_ptp_missing_payload_is_invalid() {
     assert(st2110::validate_reference_clock(clock) == st2110::Error::InvalidValue);
 }
 
-static void test_validate_reference_clock_ptp_with_localmac_is_invalid() {
+static void test_validate_reference_clock_ptp_zero_identity_without_traceable_is_invalid() {
     st2110::ReferenceClock clock{};
     clock.kind = st2110::ReferenceClockKind::Ptp;
     clock.ptp = st2110::PtpReferenceClock{};
-    clock.local_mac = st2110::LocalMacReferenceClock{};
+    assert(st2110::validate_reference_clock(clock) == st2110::Error::InvalidValue);
+}
+
+static void test_validate_reference_clock_ptp_with_localmac_is_invalid() {
+    st2110::ReferenceClock clock{};
+    clock.kind = st2110::ReferenceClockKind::Ptp;
+    clock.ptp = make_valid_ptp_reference_clock();
+    clock.local_mac = make_valid_localmac_reference_clock();
     assert(st2110::validate_reference_clock(clock) == st2110::Error::InvalidValue);
 }
 
 static void test_validate_reference_clock_ptp_with_raw_token_is_invalid() {
     st2110::ReferenceClock clock{};
     clock.kind = st2110::ReferenceClockKind::Ptp;
-    clock.ptp = st2110::PtpReferenceClock{};
+    clock.ptp = make_valid_ptp_reference_clock();
     clock.raw_token = std::string("ts-refclk:ptp=IEEE1588-2008:...");
     assert(st2110::validate_reference_clock(clock) == st2110::Error::InvalidValue);
 }
@@ -57,7 +93,7 @@ static void test_validate_reference_clock_ptp_with_raw_token_is_invalid() {
 static void test_validate_reference_clock_localmac_ok() {
     st2110::ReferenceClock clock{};
     clock.kind = st2110::ReferenceClockKind::LocalMac;
-    clock.local_mac = st2110::LocalMacReferenceClock{};
+    clock.local_mac = make_valid_localmac_reference_clock();
     assert(st2110::validate_reference_clock(clock) == st2110::Error::Ok);
 }
 
@@ -67,11 +103,18 @@ static void test_validate_reference_clock_localmac_missing_payload_is_invalid() 
     assert(st2110::validate_reference_clock(clock) == st2110::Error::InvalidValue);
 }
 
-static void test_validate_reference_clock_localmac_with_ptp_is_invalid() {
+static void test_validate_reference_clock_localmac_zero_mac_is_invalid() {
     st2110::ReferenceClock clock{};
     clock.kind = st2110::ReferenceClockKind::LocalMac;
     clock.local_mac = st2110::LocalMacReferenceClock{};
-    clock.ptp = st2110::PtpReferenceClock{};
+    assert(st2110::validate_reference_clock(clock) == st2110::Error::InvalidValue);
+}
+
+static void test_validate_reference_clock_localmac_with_ptp_is_invalid() {
+    st2110::ReferenceClock clock{};
+    clock.kind = st2110::ReferenceClockKind::LocalMac;
+    clock.local_mac = make_valid_localmac_reference_clock();
+    clock.ptp = make_valid_ptp_reference_clock();
     assert(st2110::validate_reference_clock(clock) == st2110::Error::InvalidValue);
 }
 
@@ -99,14 +142,22 @@ static void test_validate_reference_clock_other_with_ptp_is_invalid() {
     st2110::ReferenceClock clock{};
     clock.kind = st2110::ReferenceClockKind::Other;
     clock.raw_token = std::string("clk:some-future-format");
-    clock.ptp = st2110::PtpReferenceClock{};
+    clock.ptp = make_valid_ptp_reference_clock();
     assert(st2110::validate_reference_clock(clock) == st2110::Error::InvalidValue);
 }
 
 static void test_video_stream_signaling_uses_reference_clock_validation() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.reference_clock.kind = st2110::ReferenceClockKind::Ptp;
-    s.reference_clock.ptp = st2110::PtpReferenceClock{};
+    s.reference_clock.ptp = make_valid_ptp_reference_clock();
+
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
+}
+
+static void test_video_stream_signaling_accepts_traceable_reference_clock() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.reference_clock.kind = st2110::ReferenceClockKind::Ptp;
+    s.reference_clock.ptp = make_traceable_ptp_reference_clock();
 
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
 }
@@ -114,19 +165,23 @@ static void test_video_stream_signaling_uses_reference_clock_validation() {
 static void test_video_stream_signaling_rejects_invalid_reference_clock() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.reference_clock.kind = st2110::ReferenceClockKind::Ptp;
-    s.reference_clock.local_mac = st2110::LocalMacReferenceClock{};
+    s.reference_clock.ptp = std::nullopt;
+    s.reference_clock.local_mac = make_valid_localmac_reference_clock();
 
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
 }
 
 int main() {
     test_validate_reference_clock_ptp_ok();
+    test_validate_reference_clock_ptp_traceable_ok();
     test_validate_reference_clock_ptp_missing_payload_is_invalid();
+    test_validate_reference_clock_ptp_zero_identity_without_traceable_is_invalid();
     test_validate_reference_clock_ptp_with_localmac_is_invalid();
     test_validate_reference_clock_ptp_with_raw_token_is_invalid();
 
     test_validate_reference_clock_localmac_ok();
     test_validate_reference_clock_localmac_missing_payload_is_invalid();
+    test_validate_reference_clock_localmac_zero_mac_is_invalid();
     test_validate_reference_clock_localmac_with_ptp_is_invalid();
 
     test_validate_reference_clock_other_ok();
@@ -135,6 +190,7 @@ int main() {
     test_validate_reference_clock_other_with_ptp_is_invalid();
 
     test_video_stream_signaling_uses_reference_clock_validation();
+    test_video_stream_signaling_accepts_traceable_reference_clock();
     test_video_stream_signaling_rejects_invalid_reference_clock();
     return 0;
 }
