@@ -818,11 +818,31 @@
 
 ### tests/video_sdp_source_filter_scope_test.cpp
 - Роль:
-    - проверяет scope-aware raw SDP `a=source-filter` parsing:
-        - session scope;
-        - media scope;
-        - parsed fields;
-        - raw value preservation.
+    - проверяет raw SDP `a=source-filter` grammar boundary in `video_sdp_media_section.hpp`;
+    - проверяет preservation of parsed source-filter fields together with explicit session/media scope;
+    - проверяет, что source-filter remains transport metadata and does not change final signaling/runtime behavior.
+- Покрывает:
+    - valid session-level source-filter parsing and preservation:
+        - raw value;
+        - scope;
+        - filter mode;
+        - nettype / addrtype;
+        - destination address;
+        - source address list.
+    - valid media-level source-filter parsing and preservation.
+    - simultaneous session-level + media-level source-filter parsing with preserved scope distinction.
+    - invalid filter-mode rejection.
+    - rejection of missing destination/source fields.
+    - rejection of malformed packed source-list forms:
+        - comma-separated packed addresses;
+        - semicolon-separated packed addresses;
+        - trailing packed separators inside one token.
+    - final SDP ingestion/runtime boundary remains untouched:
+        - valid SDP with source-filter still ingests into `VideoStreamSignaling`;
+        - source-filter does not alter video media/signaling projection behavior.
+- Фиксирует:
+    - tightened source-filter grammar validation remains localized in the raw SDP media-section parser;
+    - source-filter continues to live outside `VideoStreamSignaling` and outside backend/socket behavior in the current task.
 
 ### tests/video_sdp_redundancy_boundary_test.cpp
 - Роль:

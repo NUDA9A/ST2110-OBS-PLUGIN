@@ -1003,156 +1003,71 @@
 
 ### libs/st2110core/include/st2110/video_sdp_media_section.hpp
 - Роль:
-    - raw SDP video media-section parsing boundary для выбранного video payload type.
-    - отделяет raw SDP/media-section/session transport ingestion от `VideoStreamSignaling`, structural signaling validation и runtime/bootstrap projection.
-    - сохраняет transport/redundancy-related SDP metadata как raw model, не смешивая ее с essence/timing signaling model.
+    - raw SDP media-section selection / transport-metadata extraction boundary for video SDP before final signaling ingestion.
+    - preserves payload-bound media attributes (`rtpmap`, `fmtp`), timing/reference attributes, session/media transport metadata, redundancy metadata, and unknown attributes without wiring transport behavior into `VideoStreamSignaling`.
+    - now also contains the tightened raw `a=source-filter` grammar boundary:
+        - accepted filter-mode tokens are explicit;
+        - required structural fields must be present;
+        - malformed packed source-list forms are rejected;
+        - original raw value and parsed source-filter fields remain preserved.
 - Связи:
-    - зависит только от `Error` и стандартных utility types;
-    - используется final SDP ingestion layer из `video_sdp_ingestion.hpp`;
-    - не зависит от depacketizer / reorder / pipeline / backend internals.
-    - transport/backend projection по сохраненным raw SDP metadata остается future boundary (`214C` / `214D`).
+    - produces `RawVideoSdpMediaSection` for:
+        - `video_sdp_rtpmap.hpp`;
+        - `video_sdp_fmtp.hpp`;
+        - `video_sdp_timing_attributes.hpp`;
+        - final SDP ingestion in `video_sdp_ingestion.hpp`.
+    - keeps transport/redundancy metadata outside `VideoStreamSignaling`.
 - Сущности:
-    - `RawSdpAttribute`
-        - raw preserved SDP attribute (`name`, `value`).
-    - `RawSdpConnectionData`
-        - raw parsed `c=` connection data:
-            - `network_type`
-            - `address_type`
-            - `connection_address` — original raw connection-address string
-            - `base_address` — parsed base address before optional multicast parameters
-            - `ttl` — optional parsed TTL/address parameter when present
-            - `address_count` — optional parsed address count / numaddr when present
-    - `RawSdpConnectionAddressParameters`
-        - helper parse result for connection-address decomposition:
-            - `base_address`
-            - optional `ttl`
-            - optional `address_count`
-    - `RawSdpAttributeScope`
-        - explicit scope marker for scoped raw SDP attributes:
-            - `Session`
-            - `Media`
-    - `RawSdpScopedAttributeValue`
-        - raw timing/reference/sender attribute value plus its session/media scope.
-    - `RawSdpSourceFilter`
-        - preserved and minimally parsed `a=source-filter` value:
-            - `raw_value`
-            - `Scope { Session, Media }`
-            - `filter_mode`
-            - `network_type`
-            - `address_type`
-            - `destination_address`
-            - `source_addresses`
-    - `RawSdpGroup`
-        - raw parsed `a=group:<semantics> <mid>...`
-        - `semantics`
-        - `mids`
-    - `RawVideoSdpDuplicateMediaCandidate`
-        - minimal raw summary for duplicate RTP video media-section candidates preserved for future redundant-stream selection:
-            - `media_line`
-            - `payload_type`
-            - `media_payload_types`
-            - optional `mid`
-            - optional media-level `c=`, including parsed connection-address components
-            - media-level `source_filters`
-            - selected payload-type-bound `rtpmap`
-            - selected payload-type-bound `fmtp`
-    - `RawVideoSdpMediaSection`
-        - `media_line`
-        - `payload_type`
-        - `media_payload_types`
-        - selected payload-type-bound `rtpmap`
-        - selected payload-type-bound `fmtp`
-        - resolved compatibility timing/reference/sender fields:
-            - `ts_refclk`
-            - `mediaclk`
-            - `tsmode`
-            - `tsdelay`
-            - `tp`
-            - `troff`
-            - `cmax`
-        - explicit scoped timing/reference/sender fields:
-            - `session_ts_refclk` / `media_ts_refclk`
-            - `session_mediaclk` / `media_mediaclk`
-            - `session_tsmode` / `media_tsmode`
-            - `session_tsdelay` / `media_tsdelay`
-            - `session_tp` / `media_tp`
-            - `session_troff` / `media_troff`
-            - `session_cmax` / `media_cmax`
-        - raw transport/redundancy metadata:
-            - `session_connection`, including parsed connection-address components
-            - `media_connection`, including parsed connection-address components
-            - `mid`
-            - `source_filters`
-            - `session_groups`
-            - `duplicate_candidates`
-        - unknown/preserved attributes:
-            - `unknown_session_attributes`
-            - `unknown_attributes`
-    - helper functions:
-        - `strip_cr(...)`
-        - `split_ws(...)`
-        - `parse_payload_type(...)`
-        - `parse_video_m_line_payload_types(...)`
+    - raw SDP transport/attribute structs:
+        - `RawSdpAttribute`
+        - `RawSdpConnectionData`
+        - `RawSdpScopedAttributeValue`
+        - `RawSdpSourceFilter`
+        - `RawSdpGroup`
+        - `RawVideoSdpDuplicateMediaCandidate`
+        - `RawVideoSdpMediaSection`
+    - generic helpers:
+        - `strip_cr(std::string_view)`
+        - `split_ws(std::string_view)`
+        - `parse_payload_type(std::string_view)`
+        - `parse_video_m_line_payload_types(std::string_view)`
         - `contains_payload_type(...)`
         - `parse_payload_bound_attribute_value(...)`
         - `parse_attribute_value(...)`
-        - `trim_left_ws(...)`
-        - `parse_unknown_sdp_attribute(...)`
+        - `trim_left_ws(std::string_view)`
+        - `parse_unknown_sdp_attribute(std::string_view)`
+    - connection-data helpers:
+        - `RawSdpConnectionAddressParameters`
         - `parse_sdp_connection_address_uint64(...)`
         - `parse_connection_address_parameters(...)`
-            - decomposes SDP connection-address into:
-                - original base address
-                - optional TTL
-                - optional address count / numaddr
-            - rejects structurally malformed slash parameter forms;
-            - intentionally does not validate IP syntax, multicast membership, or backend socket support.
         - `parse_connection_data(...)`
-            - parses `c=<nettype> <addrtype> <connection-address>`;
-            - preserves original connection-address string;
-            - also fills parsed `base_address`, optional `ttl`, and optional `address_count`.
+    - source-filter grammar helpers:
+        - `source_filter_address_token_is_structurally_clean(std::string_view)`
+            - rejects empty / packed-list address tokens such as comma- or semicolon-separated forms.
+        - `is_known_source_filter_mode(std::string_view)`
+            - accepts only the currently recognized raw source-filter mode tokens.
+        - `validate_source_filter_attribute_tokens(const std::vector<std::string_view>&)`
+            - validates token count, known filter mode, required structural fields, and source-list token cleanliness.
+        - `parse_source_filter_attribute_value(std::string_view, RawSdpSourceFilter::Scope)`
+            - preserves `raw_value`;
+            - preserves `scope`;
+            - parses `filter_mode`, `network_type`, `address_type`, `destination_address`, `source_addresses`;
+            - remains runtime-agnostic and transport-metadata-only.
+    - group/redundancy helpers:
         - `parse_group_attribute(...)`
         - `has_dup_session_group(...)`
-        - `parse_source_filter_attribute_value(...)`
-            - parses RFC-style source-filter value into scoped raw source-filter model;
-            - preserves `raw_value`;
-            - rejects structurally malformed values;
-            - remains runtime/backend agnostic.
         - `raw_sdp_group_contains_mid(...)`
         - `has_dup_session_group_containing_both_mids(...)`
-            - validates that primary and duplicate media-section `mid` values are both members of the same session-level `group:DUP`.
+    - timing-scope helper:
         - `set_raw_sdp_scoped_timing_attribute(...)`
-            - stores a timing/reference/sender attribute in the appropriate scoped slot;
-            - rejects duplicate values within the same scope;
-            - maintains the existing resolved compatibility field where media-level values override session-level values.
     - main entry point:
-        - `select_raw_video_sdp_media_section(...)`
-            - selects the matching `m=video` section for the requested payload type;
-            - binds payload-type-specific `a=rtpmap` / `a=fmtp`;
-            - captures raw timing/reference/sender-related attributes;
-            - captures session-level and selected media-level timing/reference/sender-related attributes with explicit scope;
-            - preserves legacy resolved timing fields where media-level values override session-level values;
-            - rejects duplicate scoped timing/reference/sender attributes within the same scope;
-            - captures session-level `c=` and selected media-level `c=`;
-            - parses and preserves connection-address base address plus optional TTL/address-count components;
-            - captures `a=mid`;
-            - captures session/media `a=source-filter` with explicit scope and minimally parsed fields;
-            - captures session-level `a=group`, including `DUP`;
-            - preserves unknown session-level and selected-media-level attributes separately;
-            - rejects duplicate session/media `c=`, duplicate selected `mid`, duplicate selected timing attributes and duplicate selected payload bindings;
-            - if multiple matching video media sections exist, rejects them unless the primary selected section and each duplicate candidate have distinct `a=mid` values that are both members of a session-level `group:DUP`;
-            - preserves valid duplicate matching video media sections as `duplicate_candidates` raw summaries for future redundant-stream selection policy.
+        - `select_raw_video_sdp_media_section(std::string_view sdp, uint8_t expected_payload_type)`
+            - selects the matching video media section;
+            - preserves session/media transport metadata including `c=`, `a=source-filter`, `a=mid`, and `a=group:DUP`;
+            - rejects malformed relevant raw transport attributes structurally.
 - Примечание:
-    - это raw SDP boundary, а не signaling model и не validation/runtime layer;
-    - `c=`, `source-filter`, `mid`, `group:DUP` are intentionally preserved outside `VideoStreamSignaling`;
-    - later runtime/backend integration should consume these raw fields through dedicated bootstrap/transport adapters rather than reshaping `VideoStreamSignaling`.
-    - `a=source-filter` is now scope-aware and minimally parsed, but still intentionally not mapped into `VideoStreamSignaling`;
-    - backend/runtime use of parsed source-filter metadata remains future work through `214C`.
-    - duplicate RTP video media sections are now preserved as raw candidate summaries when linked by `group:DUP` membership through actual `mid` values;
-    - final stream selection / redundant receive policy is intentionally not implemented here and remains future work through `214D`.
-    - timing/reference/sender standalone attributes are now scope-aware in the raw SDP boundary;
-    - resolved compatibility fields remain for existing ingestion code, but the authoritative raw model now keeps session/media scoped fields separately.
-    - multicast-style connection-address parameters are now parsed and preserved in the raw SDP boundary;
-    - socket/backend join behavior, multicast validation, TTL application, source filtering, and address-count behavior remain future bootstrap/backend work through `214C`.
+    - `a=source-filter` remains intentionally outside `VideoStreamSignaling`;
+    - socket/backend source-filter application remains future work through the existing transport/bootstrap boundary.
 
 ### libs/st2110core/include/st2110/video_sdp_fmtp.hpp
 - Роль:
