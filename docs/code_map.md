@@ -746,80 +746,51 @@
 
 ### libs/st2110core/include/st2110/video_signaling.hpp
 - Роль:
-    - standards-aware signaling validation/projection boundary для video stream description.
-    - содержит validation helper’ы и explicit adapters/projections от signaling model к runtime/manual config и generic signaling-driven receiver bootstrap.
+    - standards-aware video signaling/model validation and projection boundary.
+    - validates modeled ST 2110 video media-description properties and projects signaling into runtime-facing video config / pipeline config through existing boundaries.
+    - keeps media-description cross-field validation localized in signaling/model space rather than pushing standards rules into runtime `PixelFormat` projection.
 - Связи:
-    - использует signaling model declarations из `signaling_structs.hpp`;
-    - использует `PixelFormat`, `VideoScanMode`, `VideoPackingMode`, `PacketParsePolicy`, `RxVideoConfig`, `DepacketizerConfig`, `VideoUnitReconstructorConfig`, `VideoReceivePipelineConfig`, общие config validation helper’ы.
-    - связывает signaling model с packet parse policy, manual `RxVideoConfig` path, runtime video receive pipeline config path и generic signaling-driven bootstrap composition path.
-    - timing-aware receiver bootstrap overlay lives separately in `video_receiver_timing_signaling.hpp`.
+    - использует `signaling_structs.hpp`, `config_validation.hpp`, `packet_parse.hpp`, `rx_config.hpp`, `depacketizer.hpp`, `video_receive_pipeline.hpp`, `video_unit_reconstructor.hpp`, `pixel_format.hpp`, `video_scan_mode.hpp`;
+    - используется signaling/runtime projection helpers и SDP ingestion path;
+    - ниже него runtime projection still uses `pixel_format_from_video_stream_signaling(...)` and existing packing/runtime support boundaries.
 - Сущности:
-    - structural validation:
-        - `validate_video_sender_signaling(...)`
-            - validates sender type vs `TROFF` / `CMAX` for receiver-side structural signaling validation;
-            - `Narrow` / `NarrowLinear` reject `TROFF` and `CMAX`;
-            - `Wide` accepts absent optional `CMAX` / `TROFF`;
-            - if `CMAX` is present for `Wide`, it must be positive;
-            - stricter sender/conformance policy is intentionally left to a separate future validation mode.
-        - `validate_reference_clock(...)`
-        - `validate_media_clock_mode(...)`
-        - `validate_timestamp_mode(...)`
-        - `validate_video_timing_signaling(...)`
-        - `validate_video_sampling(...)`
-        - `validate_video_bit_depth(...)`
-        - `validate_video_colorimetry(...)`
-        - `validate_video_transfer_characteristic_system(...)`
-        - `validate_video_signal_standard(...)`
-        - `validate_video_range(...)`
-        - `validate_video_media_description(...)`
-        - `validate_video_stream_signaling(...)`
-            - validates media description fields;
-            - validates `scan_mode`;
-            - applies media-description cross-field constraints that depend on scan mode / sampling / colorimetry / TCS;
-            - validates timing, sender signaling, reference clock, and packet-size policy.
-        - `is_420_video_sampling(...)`
-            - helper для распознавания modeled `4:2:0` sampling variants:
-                - `YCbCr420`
-                - `CLYCbCr420`
-                - `ICtCp420`
-        - `validate_video_media_description_cross_field_constraints(...)`
-            - localized signaling/model cross-field validation;
-            - rejects non-progressive signaling for `4:2:0` sampling variants;
-            - validates `KEY` sampling as alpha/key signaling:
-                - requires `colorimetry=ALPHA`;
-                - rejects normal `TCS` presence;
-            - keeps these constraints out of runtime `PixelFormat` projection.
-    - projection boundary:
-        - `pixel_format_from_video_stream_signaling(...) -> std::expected<PixelFormat, Error>`
-            - only the currently supported runtime combination `YCbCr-4:2:2 + integer 8-bit` projects to `PixelFormat::UYVY`;
-            - newly modeled known SDP sampling values remain structurally valid in signaling, but runtime projection returns localized `Unsupported` until corresponding pixel/storage formats are implemented.
-    - signaling -> runtime/manual adapters:
-        - `packet_parse_policy_from_video_stream_signaling(...)`
-        - `depacketizer_config_from_video_stream_signaling(...)`
-        - `video_unit_reconstructor_config_from_video_stream_signaling(...)`
-        - `video_receive_pipeline_config_from_video_stream_signaling(...)`
-        - `rx_video_config_from_video_stream_signaling(...)`
-            - projects dimensions, frame rate, runtime pixel format, scan mode, and packing mode into `RxVideoConfig`;
-            - preserves `signaling.packing_mode` rather than falling back to an implicit manual-config default.
-        - `validate_video_stream_signaling_against_rx_video_config(...)`
-            - validates that manual/runtime `RxVideoConfig` matches signaling-derived fields, including `packing_mode`.
-        - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
-            - generic signaling-driven bootstrap projection for parse policy + rx config + receive pipeline config;
-            - does not itself apply receiver timing capability/requirement checks.
-    - packing-mode handling:
-        - runtime projections to depacketizer / pipeline / bootstrap explicitly validate packing-mode support through `validate_runtime_video_packing_mode_support(...)`;
-        - `rx_video_config_from_video_stream_signaling(...)` now also carries packing mode into manual/backend-facing runtime config;
-        - structural signaling validation itself does **not** reject `BPM`.
+    - `validate_video_sender_signaling(...)`
+    - `validate_reference_clock(...)`
+    - `validate_media_clock_mode(...)`
+    - `validate_timestamp_mode(...)`
+    - `validate_video_timing_signaling(...)`
+    - `validate_video_sampling(...)`
+    - `validate_video_colorimetry(...)`
+    - `validate_video_transfer_characteristic_system(...)`
+    - `validate_video_signal_standard(...)`
+    - `validate_video_range(...)`
+    - `validate_video_bit_depth(...)`
+    - `is_420_video_sampling(...)`
+    - `validate_video_media_description_cross_field_constraints(const VideoMediaDescription&, VideoScanMode)`
+        - keeps localized ST 2110-20 media-description cross-field rules;
+        - accepts `4:2:0` sampling variants only with progressive scan signaling;
+        - requires `KEY` sampling to use `colorimetry=ALPHA` and forbids `TCS` for KEY signals;
+        - now also enforces the `SSN` rule:
+            - normal non-`ALPHA` / non-`ST2115LOGS3` streams accept `SSN=ST2110-20:2017`;
+            - `colorimetry=ALPHA` or `TCS=ST2115LOGS3` requires `SSN=ST2110-20:2022`;
+            - structurally unknown future `SSN` values through `Other + raw_token` remain accepted;
+            - absent `SSN` remains tolerated here and is still a separate follow-up boundary.
+    - `pixel_format_from_video_stream_signaling(...)`
+        - runtime/storage projection boundary remains unchanged;
+        - current MVP runtime support still maps only `YCbCr422 + 8-bit integer` to `PixelFormat::UYVY`;
+        - structurally valid but unsupported signaled formats remain rejected as `Unsupported` only at runtime projection/support boundaries.
+    - `validate_video_media_description(...)`
+    - `validate_video_stream_signaling(...)`
+    - `packet_parse_policy_from_video_stream_signaling(...)`
+    - `validate_video_stream_signaling_against_rx_video_config(...)`
+    - `depacketizer_config_from_video_stream_signaling(...)`
+    - `video_unit_reconstructor_config_from_video_stream_signaling(...)`
+    - `video_receive_pipeline_config_from_video_stream_signaling(...)`
+    - `rx_video_config_from_video_stream_signaling(...)`
+    - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
 - Примечание:
-    - signaling model остается structurally broader than current runtime support;
-    - `BPM` remains valid inside signaling model but is rejected at explicit runtime-support boundaries for depacketizer/pipeline/bootstrap/manual runtime config projections;
-    - manual/backend-facing `RxVideoConfig` now has the same packing-mode axis as signaling-derived receive config, so later backend/factory work does not need to reshape the config contract to support BPM.
-    - generic bootstrap path intentionally remains timing-agnostic; receiver timing validation/composition is layered on top through `video_receiver_timing_signaling.hpp`;
-    - SDP ingestion path is now implemented through `video_sdp_*` boundaries; fuller runtime integration of SDP-derived config and ST 2110-21 receiver behavior remains future work through `S010`, `214C`, `214D`, and `229A`.
-    - ST 2110-20 media-description cross-field constraints are represented at the signaling/model validation layer:
-        - `4:2:0` variants are progressive-only structurally;
-        - `KEY` requires alpha colorimetry and rejects normal TCS.
-    - Unsupported-but-standard runtime combinations, such as progressive `4:2:0`, remain structurally valid but still fail at localized runtime projection/support boundaries.
+    - `SSN` handling is now stricter for known ST 2110-20 combinations without changing modeled enums or runtime projection shape;
+    - this closes the known signaling-validation gap for `SSN` cross-field consistency while preserving forward-compatible `Other` representation.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:

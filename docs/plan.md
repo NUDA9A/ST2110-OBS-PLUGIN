@@ -65,7 +65,7 @@
 - [x] S030: SDP `a=fmtp` parser now uses a localized strict media-parameter parsing boundary in `video_sdp_fmtp.hpp`. It rejects whitespace inside parameter tokens including around `=`, rejects malformed separators such as `sampling=...;width=...` where `;` is not followed by required whitespace, rejects empty parameters caused by doubled/trailing separators, rejects malformed `name=value` tokens, and still preserves unknown syntactically valid parameters.
 - [x] S031: Raw SDP `c=` connection data now preserves the original connection address string and also exposes parsed connection-address components for future backend bootstrap: `base_address`, optional TTL, and optional address count / numaddr. Runtime/backend consumption remains future work through `214C`.
 - [x] S032: SDP timing/reference-clock attributes such as `ts-refclk` and `mediaclk` can be session-level or media-level. The raw SDP ingestion boundary now preserves this scope explicitly and applies localized session/media resolution for the selected video stream. Media-level values override session-level values where allowed; duplicate values within the same scope are rejected; `fmtp` timing media parameters are treated as media-level signaling and conflict only with media-level standalone attributes for the same semantic field.
-- [ ] S033: Video SDP/signaling validation still does not fully enforce the ST 2110-20 `SSN` cross-field rule. `SSN=ST2110-20:2017` is the normal value, while `SSN=ST2110-20:2022` is required when `colorimetry=ALPHA` or `TCS=ST2115LOGS3` is used. Current validation should be tightened locally in the video signaling cross-field validation boundary, without changing runtime `PixelFormat` projection.
+- [x] S033: Video SDP/signaling validation now enforces the ST 2110-20 `SSN` cross-field rule in the existing signaling/media-description validation boundary. `SSN=ST2110-20:2017` is accepted for normal non-`ALPHA` / non-`ST2115LOGS3` streams, while `colorimetry=ALPHA` or `TCS=ST2115LOGS3` requires `SSN=ST2110-20:2022`. Structurally unknown future `SSN` values may still be represented via `Other + raw_token`, and runtime `PixelFormat` projection remains unchanged.
 - [ ] S034: Video SDP/signaling validation still needs stricter `RANGE` handling. For `colorimetry=BT2100`, only `NARROW` and `FULL` are valid; outside the BT2100 context, `FULLPROTECT` is also a known standard value. This should be modeled explicitly in `VideoRange` / SDP mapping and validated as a media-description cross-field constraint.
 - [ ] S035: Video SDP ingestion currently does not model SDP `PAR` from `a=fmtp`. ST 2110-20 defines `PAR` as an optional pixel-aspect-ratio parameter with default `1:1`. This should be added as a signaling/media-description property with default behavior, but without affecting runtime frame storage or depacketizer behavior yet.
 - [ ] S036: SDP media-description `width` and `height` validation should enforce the ST 2110-20 allowed range `1..32767`, not only non-zero dimensions. This must be fixed in the existing video media-description / config validation boundary with minimal changes.
@@ -1267,25 +1267,17 @@
 > - собрать уже найденные standards/SMPTE cleanup issues в один pre-MVP-exit gate;
 > - выполнять эти задачи перед `Track F — MVP exit / readiness for testing`, либо явно документировать оставшиеся ограничения в `202`.
 
-- [ ] 196A: Tighten ST 2110-20 `SSN` cross-field validation
+- [x] 196A: Tighten ST 2110-20 `SSN` cross-field validation
   - enforce the standard relationship between:
     - `SSN`
     - `colorimetry=ALPHA`
     - `TCS=ST2115LOGS3`
-  - expected behavior:
-    - normal non-ALPHA / non-`ST2115LOGS3` streams should use `SSN=ST2110-20:2017`;
-    - streams with `colorimetry=ALPHA` or `TCS=ST2115LOGS3` should require `SSN=ST2110-20:2022`;
-    - structurally unknown future `SSN` values may remain represented through `Other`, but known invalid standard combinations should reject.
-  - prefer minimal changes to existing `.hpp` files:
-    - `video_signaling.hpp`
-    - related tests only
-  - do not change runtime `PixelFormat`, frame storage, depacketizer, or pipeline projection shape.
-  - add focused tests for:
-    - BT709 / SDR with `SSN=ST2110-20:2017` accepted;
-    - BT709 / SDR with `SSN=ST2110-20:2022` rejected;
-    - `ALPHA` requiring `ST2110-20:2022`;
-    - `TCS=ST2115LOGS3` requiring `ST2110-20:2022`;
-    - unsupported runtime projection remaining localized.
+  - implemented behavior:
+    - normal non-`ALPHA` / non-`ST2115LOGS3` streams accept `SSN=ST2110-20:2017`;
+    - normal non-`ALPHA` / non-`ST2115LOGS3` streams reject `SSN=ST2110-20:2022`;
+    - streams with `colorimetry=ALPHA` or `TCS=ST2115LOGS3` require `SSN=ST2110-20:2022`;
+    - structurally unknown future `SSN` values remain representable through `Other`;
+    - runtime `PixelFormat`, frame storage, depacketizer, and pipeline projection shape remain unchanged.
 - [ ] 196B: Tighten `RANGE` modeling and validation
   - model `FULLPROTECT` explicitly as a known `VideoRange` value instead of routing it through `Other`.
   - validate ST 2110-20 range constraints:

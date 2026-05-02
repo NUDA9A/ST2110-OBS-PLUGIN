@@ -445,6 +445,22 @@
 ### tests/test_video_signaling.cpp
 - Роль:
     - проверяет modeled `VideoStreamSignaling` validation.
+- Покрывает:
+    - valid progressive `GPM` signaling;
+    - valid `BPM` signaling at the structural signaling layer;
+    - invalid dimensions;
+    - invalid frame rate;
+    - signaling-valid but runtime-invalid odd-width projection case;
+    - invalid `MAXUDP` signaling;
+    - packet-parse-policy derivation from signaling;
+    - signaling-valid but runtime-unsupported sampling projection case.
+    - tightened ST 2110-20 `SSN` cross-field validation:
+        - `BT709 + SDR + SSN=ST2110-20:2017` accepted;
+        - `BT709 + SDR + SSN=ST2110-20:2022` rejected;
+        - `ALPHA`/KEY signaling requires `SSN=ST2110-20:2022`;
+        - `TCS=ST2115LOGS3` requires `SSN=ST2110-20:2022`.
+    - localized runtime support boundary:
+        - structurally valid `ALPHA`/KEY signaling remains runtime-unsupported only through `pixel_format_from_video_stream_signaling(...)`.
 
 ### tests/test_video_signaling_rx_match.cpp
 - Роль:
@@ -469,6 +485,24 @@
 ### tests/test_video_signaled_media_properties.cpp
 - Роль:
     - проверяет modeled video SDP/media properties separate from runtime `PixelFormat`.
+- Покрывает:
+    - validation of token-backed signaling/media enums:
+        - `sampling`;
+        - `colorimetry`;
+        - `TCS`;
+        - `SSN`;
+        - `RANGE`;
+    - structural `VideoBitDepth` validation including `16f`;
+    - acceptance of a valid BT709/SDR media-description shape with `SSN=ST2110-20:2017`;
+    - acceptance of absent optional signaling/media fields where currently allowed;
+    - rejection of invalid structural media fields;
+    - tightened `SSN` cross-field validation:
+        - normal `BT709 + SDR` rejects `SSN=ST2110-20:2022`;
+        - `ALPHA` signaling accepts `SSN=ST2110-20:2022` and rejects `SSN=ST2110-20:2017`;
+        - `TCS=ST2115LOGS3` accepts `SSN=ST2110-20:2022` and rejects `SSN=ST2110-20:2017`.
+    - runtime projection remains separate:
+        - valid `YCbCr422 + 8-bit` projects to `UYVY`;
+        - structurally valid but unsupported media, including KEY/ALPHA, remain rejected only by runtime projection.
 
 ### tests/test_video_reference_clock.cpp
 - Роль:
@@ -602,9 +636,19 @@
 ### tests/video_sdp_media_cross_field_validation_test.cpp
 - Роль:
     - проверяет ST 2110-20 media-description cross-field validation:
-        - progressive-only 4:2:0 variants;
+        - progressive-only `4:2:0` variants;
         - `KEY + ALPHA`;
-        - rejection of invalid KEY/TCS/colorimetry combinations.
+        - rejection of invalid KEY/TCS/colorimetry combinations;
+        - tightened `SSN` cross-field rule.
+- Покрывает:
+    - `4:2:0` accepted only with progressive scan signaling;
+    - `KEY` requires `colorimetry=ALPHA` and forbids `TCS`;
+    - `BT709 + SDR + SSN=ST2110-20:2017` accepted;
+    - `BT709 + SDR + SSN=ST2110-20:2022` rejected;
+    - `ALPHA` requiring `SSN=ST2110-20:2022`;
+    - `TCS=ST2115LOGS3` requiring `SSN=ST2110-20:2022`;
+    - the same cross-field rules through final SDP ingestion, not only manually constructed signaling objects;
+    - unsupported runtime projection remaining localized after structurally valid KEY/ALPHA acceptance.
 
 ### tests/video_sdp_source_filter_scope_test.cpp
 - Роль:
