@@ -244,8 +244,20 @@ require_fmtp_parameter_value(const RawVideoSdpFmtpParameterToken &token) {
     return *parsed;
 }
 
+[[nodiscard]] inline uint32_t gcd_u32(uint32_t a, uint32_t b) {
+    while (b != 0) {
+        const uint32_t rem = a % b;
+        a = b;
+        b = rem;
+    }
+
+    return a;
+}
+
 [[nodiscard]] inline std::expected<RawVideoSdpExactFrameRate, Error>
 parse_fmtp_exact_frame_rate(std::string_view value) {
+    value = trim_ascii_ws(value);
+
     if (value.empty()) {
         return std::unexpected(Error::InvalidValue);
     }
@@ -264,10 +276,8 @@ parse_fmtp_exact_frame_rate(std::string_view value) {
         return std::unexpected(numerator.error());
     }
 
-    RawVideoSdpExactFrameRate out{.numerator = *numerator, .denominator = 1};
-
     if (slash_pos == std::string_view::npos) {
-        return out;
+        return RawVideoSdpExactFrameRate{.numerator = *numerator, .denominator = 1};
     }
 
     const std::string_view denominator_text = value.substr(slash_pos + 1);
@@ -278,18 +288,18 @@ parse_fmtp_exact_frame_rate(std::string_view value) {
         return std::unexpected(denominator.error());
     }
 
-    out.denominator = *denominator;
-    return out;
-}
-
-[[nodiscard]] inline uint32_t gcd_u32(uint32_t a, uint32_t b) {
-    while (b != 0) {
-        const uint32_t rem = a % b;
-        a = b;
-        b = rem;
+    // Canonical SDP exactframerate form:
+    // - integer frame rates use a single decimal integer, not N/1;
+    // - rational frame rates use the smallest numerator/denominator representation.
+    if (*denominator == 1) {
+        return std::unexpected(Error::InvalidValue);
     }
 
-    return a;
+    if (gcd_u32(*numerator, *denominator) != 1) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return RawVideoSdpExactFrameRate{.numerator = *numerator, .denominator = *denominator};
 }
 
 [[nodiscard]] inline std::expected<RawVideoSdpPixelAspectRatio, Error>
