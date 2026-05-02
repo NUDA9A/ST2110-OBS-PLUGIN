@@ -41,7 +41,7 @@ std::string make_video_sdp(std::string_view session_source_filter_line,
     sdp += "a=rtpmap:112 raw/90000\n";
     sdp += "a=fmtp:112 ";
     sdp += kBaseFmtp;
-    sdp += "\n";
+    sdp += "; TP=2110TPN\n";
 
     return sdp;
 }
@@ -172,6 +172,7 @@ void test_backend_runtime_behavior_remains_untouched() {
     assert(signaling->media.height == 1080);
     assert(signaling->packing_mode == VideoPackingMode::Gpm);
     assert(signaling->scan_mode == VideoScanMode::Progressive);
+    assert(signaling->sender_type == VideoSenderType::Narrow);
 }
 
 } // namespace

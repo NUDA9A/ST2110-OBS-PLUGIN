@@ -1,3 +1,4 @@
+#include "st2110/video_sdp_fmtp.hpp"
 #include "st2110/video_sdp_ingestion.hpp"
 #include "st2110/video_sdp_media_section.hpp"
 #include "st2110/video_sdp_timing_attributes.hpp"
@@ -15,7 +16,7 @@ std::string valid_session_refclk(unsigned domain = 1) {
     return "a=ts-refclk:ptp=IEEE1588-2008:00-11-22-33-44-55-66-77:" + std::to_string(domain) + "\n";
 }
 
-std::string valid_fmtp_line(const std::string &extra = {}) {
+std::string valid_fmtp_line(const std::string &extra = {}, std::string_view sender_type = "2110TPN") {
     std::string line = "a=fmtp:112 "
                        "sampling=YCbCr-4:2:2; "
                        "width=1920; "
@@ -25,7 +26,9 @@ std::string valid_fmtp_line(const std::string &extra = {}) {
                        "colorimetry=BT709; "
                        "PM=2110GPM; "
                        "SSN=ST2110-20:2017; "
-                       "TCS=SDR";
+                       "TCS=SDR; "
+                       "TP=";
+    line += sender_type;
 
     if (!extra.empty()) {
         line += "; ";
@@ -37,7 +40,7 @@ std::string valid_fmtp_line(const std::string &extra = {}) {
 }
 
 std::string make_video_sdp(const std::string &session_attributes = {}, const std::string &media_attributes = {},
-                           const std::string &fmtp_extra = {}) {
+                           const std::string &fmtp_extra = {}, std::string_view sender_type = "2110TPN") {
     std::string sdp;
     sdp += "v=0\n";
     sdp += "o=- 0 0 IN IP4 127.0.0.1\n";
@@ -48,9 +51,16 @@ std::string make_video_sdp(const std::string &session_attributes = {}, const std
     sdp += "c=IN IP4 239.1.1.1\n";
     sdp += "a=mid:primary\n";
     sdp += "a=rtpmap:112 raw/90000\n";
-    sdp += valid_fmtp_line(fmtp_extra);
+    sdp += valid_fmtp_line(fmtp_extra, sender_type);
     sdp += media_attributes;
     return sdp;
+}
+
+void assert_fmtp_sender_type(const RawVideoSdpMediaSection &raw, std::string_view expected_sender_type) {
+    auto fmtp = parse_video_sdp_fmtp_payload(raw.fmtp);
+    assert(fmtp.has_value());
+    assert(fmtp->sender_type.has_value());
+    assert(*fmtp->sender_type == expected_sender_type);
 }
 
 void session_level_reference_clock_and_media_clock_are_preserved_but_session_only_mediaclk_is_rejected_by_final_ingestion() {
@@ -85,6 +95,9 @@ void session_level_reference_clock_and_media_clock_are_preserved_but_session_onl
     assert(timing->media_clock.has_value());
     assert(timing->media_clock->scope == RawSdpAttributeScope::Session);
     assert(timing->media_clock->value.kind == RawVideoSdpMediaClock::Kind::Direct);
+
+    assert(!timing->sender_type.has_value());
+    assert_fmtp_sender_type(*raw, "2110TPN");
 
     assert(!raw_video_sdp_has_media_level_mediaclk(*timing));
 
@@ -135,6 +148,9 @@ void media_level_reference_clock_and_media_clock_override_session_level_values()
     assert(timing->media_clock->scope == RawSdpAttributeScope::Media);
     assert(timing->media_clock->value.kind == RawVideoSdpMediaClock::Kind::Direct);
 
+    assert(!timing->sender_type.has_value());
+    assert_fmtp_sender_type(*raw, "2110TPN");
+
     assert(raw_video_sdp_has_media_level_mediaclk(*timing));
 
     auto signaling = parse_video_stream_signaling_from_sdp(sdp, kPayloadType);
@@ -144,6 +160,7 @@ void media_level_reference_clock_and_media_clock_override_session_level_values()
     assert(signaling->reference_clock.ptp.has_value());
     assert(signaling->reference_clock.ptp->domain_number == 2);
     assert(signaling->media_clock_mode == MediaClockMode::Direct);
+    assert(signaling->sender_type == VideoSenderType::Narrow);
 }
 
 void duplicate_session_level_timing_attribute_is_rejected() {
@@ -182,12 +199,15 @@ void fmtp_media_level_timing_field_overrides_session_level_standalone_attribute(
     assert(timing->timestamp_mode.has_value());
     assert(timing->timestamp_mode->scope == RawSdpAttributeScope::Session);
     assert(timing->timestamp_mode->value.raw_token == "NEW");
+    assert(!timing->sender_type.has_value());
+    assert_fmtp_sender_type(*raw, "2110TPN");
     assert(raw_video_sdp_has_media_level_mediaclk(*timing));
 
     auto signaling = parse_video_stream_signaling_from_sdp(sdp, kPayloadType);
     assert(signaling.has_value());
 
     assert(signaling->timestamp_mode == TimestampMode::Pres);
+    assert(signaling->sender_type == VideoSenderType::Narrow);
 }
 
 void fmtp_timing_field_conflicts_with_media_level_standalone_attribute() {
@@ -203,6 +223,8 @@ void fmtp_timing_field_conflicts_with_media_level_standalone_attribute() {
     assert(timing.has_value());
     assert(timing->timestamp_mode.has_value());
     assert(timing->timestamp_mode->scope == RawSdpAttributeScope::Media);
+    assert(!timing->sender_type.has_value());
+    assert_fmtp_sender_type(*raw, "2110TPN");
     assert(raw_video_sdp_has_media_level_mediaclk(*timing));
 
     auto signaling = parse_video_stream_signaling_from_sdp(sdp, kPayloadType);
@@ -212,12 +234,12 @@ void fmtp_timing_field_conflicts_with_media_level_standalone_attribute() {
 
 void existing_media_level_only_sdp_behavior_remains_unchanged() {
     const std::string sdp = make_video_sdp({}, "a=ts-refclk:ptp=IEEE1588-2008:00-11-22-33-44-55-66-77:3\n"
-                                               "a=mediaclk:direct=0\n"
-                                               "a=tsmode:NEW\n"
-                                               "a=tsdelay:1800\n"
-                                               "a=TP:2110TPW\n"
-                                               "a=TROFF:42\n"
-                                               "a=CMAX:7\n");
+                                           "a=mediaclk:direct=0\n"
+                                           "a=tsmode:NEW\n"
+                                           "a=tsdelay:1800\n"
+                                           "a=TROFF:42\n"
+                                           "a=CMAX:7\n",
+                                           {}, "2110TPW");
 
     auto raw = select_raw_video_sdp_media_section(sdp, kPayloadType);
     assert(raw.has_value());
@@ -248,9 +270,8 @@ void existing_media_level_only_sdp_behavior_remains_unchanged() {
     assert(timing->ts_delay_sender_ticks->scope == RawSdpAttributeScope::Media);
     assert(timing->ts_delay_sender_ticks->value == 1800);
 
-    assert(timing->sender_type.has_value());
-    assert(timing->sender_type->scope == RawSdpAttributeScope::Media);
-    assert(timing->sender_type->value.raw_token == "2110TPW");
+    assert(!timing->sender_type.has_value());
+    assert_fmtp_sender_type(*raw, "2110TPW");
 
     assert(timing->troff_us.has_value());
     assert(timing->troff_us->scope == RawSdpAttributeScope::Media);

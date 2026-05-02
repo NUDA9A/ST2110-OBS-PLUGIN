@@ -40,7 +40,7 @@ static std::string make_video_sdp_with_depth(std::string_view depth_token) {
 
     sdp += depth_token;
 
-    sdp += "; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TCS=SDR; RANGE=FULL\r\n"
+    sdp += "; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TCS=SDR; RANGE=FULL; TP=2110TPN\r\n"
            "a=ts-refclk:ptp=IEEE1588-2008:39-A7-94-FF-FE-07-CB-D0:127\r\n"
            "a=mediaclk:direct=0\r\n";
 

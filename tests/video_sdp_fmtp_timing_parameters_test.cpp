@@ -59,14 +59,30 @@ static std::string make_video_sdp_with_standalone_timing_attributes() {
            "m=video 5004 RTP/AVP 96\r\n"
            "a=rtpmap:96 raw/90000\r\n"
            "a=fmtp:96 sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=60000/1001; depth=10; "
-           "colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TCS=SDR; RANGE=FULL\r\n"
+           "colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TCS=SDR; RANGE=FULL; TP=2110TPW\r\n"
            "a=ts-refclk:ptp=IEEE1588-2008:39-A7-94-FF-FE-07-CB-D0:127\r\n"
            "a=mediaclk:direct=0\r\n"
            "a=tsmode:SAMP\r\n"
            "a=tsdelay:37\r\n"
-           "a=tp:2110TPW\r\n"
            "a=troff:11\r\n"
            "a=cmax:2\r\n";
+}
+
+static void test_fmtp_parser_rejects_zero_troff() {
+    std::string payload = "sampling=YCbCr-4:2:2; "
+                          "width=1920; "
+                          "height=1080; "
+                          "exactframerate=60000/1001; "
+                          "depth=10; "
+                          "colorimetry=BT709; "
+                          "PM=2110GPM; "
+                          "SSN=ST2110-20:2017; "
+                          "TP=2110TPN; "
+                          "TROFF=0";
+
+    auto parsed = parse_video_sdp_fmtp_payload(payload);
+    assert(!parsed.has_value());
+    assert(parsed.error() == Error::InvalidValue);
 }
 
 static void test_fmtp_parser_extracts_known_timing_parameters() {
@@ -188,5 +204,6 @@ int main() {
     test_final_ingestion_maps_fmtp_timing_parameters_to_signaling();
     test_standalone_timing_attributes_remain_supported_as_compatibility_path();
     test_final_ingestion_rejects_conflict_between_fmtp_and_standalone_timing_parameter();
+    test_fmtp_parser_rejects_zero_troff();
     return 0;
 }

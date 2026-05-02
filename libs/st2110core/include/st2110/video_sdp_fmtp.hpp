@@ -717,7 +717,7 @@ parse_video_sdp_fmtp_payload(std::string_view payload) {
                 return std::unexpected(value.error());
             }
 
-            auto parsed = parse_fmtp_uint32(*value);
+            auto parsed = parse_required_positive_fmtp_uint32(*value);
 
             if (!parsed.has_value()) {
                 return std::unexpected(parsed.error());

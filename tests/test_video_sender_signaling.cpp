@@ -46,28 +46,48 @@ static void test_validate_video_sender_signaling_narrow_ok() {
            st2110::Error::Ok);
 }
 
-static void test_validate_video_sender_signaling_narrow_rejects_troff() {
-    assert(st2110::validate_video_sender_signaling(st2110::VideoSenderType::Narrow, 10u, std::nullopt) ==
-           st2110::Error::InvalidValue);
-}
-
-static void test_validate_video_sender_signaling_narrow_rejects_cmax() {
-    assert(st2110::validate_video_sender_signaling(st2110::VideoSenderType::Narrow, std::nullopt, 1u) ==
-           st2110::Error::InvalidValue);
-}
-
 static void test_validate_video_sender_signaling_narrow_linear_ok() {
     assert(st2110::validate_video_sender_signaling(st2110::VideoSenderType::NarrowLinear, std::nullopt, std::nullopt) ==
            st2110::Error::Ok);
 }
 
-static void test_validate_video_sender_signaling_narrow_linear_rejects_troff() {
-    assert(st2110::validate_video_sender_signaling(st2110::VideoSenderType::NarrowLinear, 10u, std::nullopt) ==
+static void test_validate_video_sender_signaling_narrow_accepts_positive_troff() {
+    assert(st2110::validate_video_sender_signaling(st2110::VideoSenderType::Narrow, 10u, std::nullopt) ==
+           st2110::Error::Ok);
+}
+
+static void test_validate_video_sender_signaling_narrow_accepts_positive_cmax() {
+    assert(st2110::validate_video_sender_signaling(st2110::VideoSenderType::Narrow, std::nullopt, 1u) ==
+           st2110::Error::Ok);
+}
+
+static void test_validate_video_sender_signaling_narrow_rejects_zero_troff() {
+    assert(st2110::validate_video_sender_signaling(st2110::VideoSenderType::Narrow, 0u, std::nullopt) ==
            st2110::Error::InvalidValue);
 }
 
-static void test_validate_video_sender_signaling_narrow_linear_rejects_cmax() {
+static void test_validate_video_sender_signaling_narrow_rejects_zero_cmax() {
+    assert(st2110::validate_video_sender_signaling(st2110::VideoSenderType::Narrow, std::nullopt, 0u) ==
+           st2110::Error::InvalidValue);
+}
+
+static void test_validate_video_sender_signaling_narrow_linear_accepts_positive_troff() {
+    assert(st2110::validate_video_sender_signaling(st2110::VideoSenderType::NarrowLinear, 10u, std::nullopt) ==
+           st2110::Error::Ok);
+}
+
+static void test_validate_video_sender_signaling_narrow_linear_accepts_positive_cmax() {
     assert(st2110::validate_video_sender_signaling(st2110::VideoSenderType::NarrowLinear, std::nullopt, 1u) ==
+           st2110::Error::Ok);
+}
+
+static void test_validate_video_sender_signaling_narrow_linear_rejects_zero_troff() {
+    assert(st2110::validate_video_sender_signaling(st2110::VideoSenderType::NarrowLinear, 0u, std::nullopt) ==
+           st2110::Error::InvalidValue);
+}
+
+static void test_validate_video_sender_signaling_narrow_linear_rejects_zero_cmax() {
+    assert(st2110::validate_video_sender_signaling(st2110::VideoSenderType::NarrowLinear, std::nullopt, 0u) ==
            st2110::Error::InvalidValue);
 }
 
@@ -157,12 +177,16 @@ static void test_validate_video_stream_signaling_rejects_missing_ssn_before_send
 
 int main() {
     test_validate_video_sender_signaling_narrow_ok();
-    test_validate_video_sender_signaling_narrow_rejects_troff();
-    test_validate_video_sender_signaling_narrow_rejects_cmax();
+    test_validate_video_sender_signaling_narrow_accepts_positive_troff();
+    test_validate_video_sender_signaling_narrow_accepts_positive_cmax();
+    test_validate_video_sender_signaling_narrow_rejects_zero_troff();
+    test_validate_video_sender_signaling_narrow_rejects_zero_cmax();
 
     test_validate_video_sender_signaling_narrow_linear_ok();
-    test_validate_video_sender_signaling_narrow_linear_rejects_troff();
-    test_validate_video_sender_signaling_narrow_linear_rejects_cmax();
+    test_validate_video_sender_signaling_narrow_linear_accepts_positive_troff();
+    test_validate_video_sender_signaling_narrow_linear_accepts_positive_cmax();
+    test_validate_video_sender_signaling_narrow_linear_rejects_zero_troff();
+    test_validate_video_sender_signaling_narrow_linear_rejects_zero_cmax();
 
     test_validate_video_sender_signaling_wide_accepts_absent_cmax();
     test_validate_video_sender_signaling_wide_accepts_positive_cmax_without_troff();

@@ -242,7 +242,7 @@ static std::string make_sdp_with_fmtp(std::string_view fmtp_payload) {
                        "a=mediaclk:direct=0\n"
                        "a=rtpmap:112 raw/90000\n"
                        "a=fmtp:112 "} +
-           std::string{fmtp_payload} + "\n";
+           std::string{fmtp_payload} + "; TP=2110TPN\n";
 }
 
 static void test_sdp_ingestion_applies_420_cross_field_validation() {
@@ -255,6 +255,7 @@ static void test_sdp_ingestion_applies_420_cross_field_validation() {
     assert(progressive.has_value());
     assert(progressive->media.sampling.known == st2110::VideoSampling::Known::YCbCr420);
     assert(progressive->scan_mode == st2110::VideoScanMode::Progressive);
+    assert(progressive->sender_type == st2110::VideoSenderType::Narrow);
     assert_runtime_projection_is_unsupported(*progressive);
 
     const std::string interlaced_420_sdp =
@@ -268,8 +269,9 @@ static void test_sdp_ingestion_applies_420_cross_field_validation() {
 }
 
 static void test_sdp_ingestion_applies_key_cross_field_validation() {
-    const std::string valid_key_sdp = make_sdp_with_fmtp("sampling=KEY; width=1920; height=1080; exactframerate=25; "
-                                                         "depth=8; colorimetry=ALPHA; PM=2110GPM; SSN=ST2110-20:2022");
+    const std::string valid_key_sdp =
+        make_sdp_with_fmtp("sampling=KEY; width=1920; height=1080; exactframerate=25; "
+                           "depth=8; colorimetry=ALPHA; PM=2110GPM; SSN=ST2110-20:2022");
 
     auto valid_key = st2110::parse_video_stream_signaling_from_sdp(valid_key_sdp, 112);
 
@@ -277,6 +279,7 @@ static void test_sdp_ingestion_applies_key_cross_field_validation() {
     assert(valid_key->media.sampling.known == st2110::VideoSampling::Known::Key);
     assert(valid_key->media.colorimetry.known == st2110::VideoColorimetry::Known::Alpha);
     assert(!valid_key->media.transfer_characteristic_system.has_value());
+    assert(valid_key->sender_type == st2110::VideoSenderType::Narrow);
     assert_runtime_projection_is_unsupported(*valid_key);
 
     const std::string non_alpha_key_sdp =
@@ -308,6 +311,7 @@ static void test_sdp_ingestion_applies_ssn_cross_field_validation() {
         assert(signaling.has_value());
         assert(signaling->media.signal_standard.has_value());
         assert(signaling->media.signal_standard->known == st2110::VideoSignalStandard::Known::St2110_20_2017);
+        assert(signaling->sender_type == st2110::VideoSenderType::Narrow);
     }
 
     {
@@ -337,6 +341,7 @@ static void test_sdp_ingestion_applies_ssn_cross_field_validation() {
 
         auto signaling = st2110::parse_video_stream_signaling_from_sdp(sdp, 112);
         assert(signaling.has_value());
+        assert(signaling->sender_type == st2110::VideoSenderType::Narrow);
         assert_runtime_projection_is_unsupported(*signaling);
     }
 
@@ -360,6 +365,7 @@ static void test_sdp_ingestion_applies_ssn_cross_field_validation() {
         assert(signaling->media.transfer_characteristic_system.has_value());
         assert(signaling->media.transfer_characteristic_system->known ==
                st2110::VideoTransferCharacteristicSystem::Known::St2115LogS3);
+        assert(signaling->sender_type == st2110::VideoSenderType::Narrow);
     }
 }
 
@@ -373,6 +379,7 @@ static void test_sdp_ingestion_applies_range_cross_field_validation() {
         assert(signaling.has_value());
         assert(signaling->media.range.has_value());
         assert(signaling->media.range->known == st2110::VideoRange::Known::Full);
+        assert(signaling->sender_type == st2110::VideoSenderType::Narrow);
     }
 
     {
@@ -394,6 +401,7 @@ static void test_sdp_ingestion_applies_range_cross_field_validation() {
         assert(signaling.has_value());
         assert(signaling->media.range.has_value());
         assert(signaling->media.range->known == st2110::VideoRange::Known::FullProtect);
+        assert(signaling->sender_type == st2110::VideoSenderType::Narrow);
     }
 
     {
@@ -407,6 +415,7 @@ static void test_sdp_ingestion_applies_range_cross_field_validation() {
         assert(signaling->media.range->known == st2110::VideoRange::Known::Other);
         assert(signaling->media.range->raw_token.has_value());
         assert(*signaling->media.range->raw_token == "FUTURE-RANGE");
+        assert(signaling->sender_type == st2110::VideoSenderType::Narrow);
     }
 }
 

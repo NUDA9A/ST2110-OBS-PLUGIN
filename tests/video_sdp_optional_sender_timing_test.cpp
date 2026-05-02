@@ -108,7 +108,31 @@ int main() {
     }
 
     {
-        const auto sdp = make_sdp("; TP=2110TPN; CMAX=9000");
+        const auto sdp = make_sdp("; TP=2110TPN; TROFF=11; CMAX=9000");
+
+        auto parsed = st2110::parse_video_stream_signaling_from_sdp(sdp, 96);
+        assert(parsed.has_value());
+        assert(parsed->sender_type == st2110::VideoSenderType::Narrow);
+        assert(parsed->troff_us.has_value());
+        assert(*parsed->troff_us == 11);
+        assert(parsed->cmax.has_value());
+        assert(*parsed->cmax == 9000);
+    }
+
+    {
+        const auto sdp = make_sdp("; TP=2110TPNL; TROFF=11; CMAX=9000");
+
+        auto parsed = st2110::parse_video_stream_signaling_from_sdp(sdp, 96);
+        assert(parsed.has_value());
+        assert(parsed->sender_type == st2110::VideoSenderType::NarrowLinear);
+        assert(parsed->troff_us.has_value());
+        assert(*parsed->troff_us == 11);
+        assert(parsed->cmax.has_value());
+        assert(*parsed->cmax == 9000);
+    }
+
+    {
+        const auto sdp = make_sdp("; TP=2110TPN; TROFF=0");
 
         auto parsed = st2110::parse_video_stream_signaling_from_sdp(sdp, 96);
         assert(!parsed.has_value());

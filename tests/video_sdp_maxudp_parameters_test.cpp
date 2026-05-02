@@ -29,7 +29,8 @@ static std::string make_base_fmtp_payload() {
            "PM=2110GPM; "
            "SSN=ST2110-20:2017; "
            "TCS=SDR; "
-           "RANGE=FULL";
+           "RANGE=FULL; "
+           "TP=2110TPN";
 }
 
 static std::string make_video_sdp_with_fmtp(std::string_view fmtp_payload) {

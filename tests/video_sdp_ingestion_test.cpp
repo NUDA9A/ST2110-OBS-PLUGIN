@@ -17,12 +17,11 @@ static std::string make_valid_video_sdp() {
            "m=video 5004 RTP/AVP 96\r\n"
            "a=rtpmap:96 raw/90000\r\n"
            "a=fmtp:96 sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=60000/1001; depth=10; "
-           "colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TCS=SDR; RANGE=FULL\r\n"
+           "colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TCS=SDR; RANGE=FULL; TP=2110TPN\r\n"
            "a=ts-refclk:ptp=IEEE1588-2008:39-A7-94-FF-FE-07-CB-D0:127\r\n"
            "a=mediaclk:direct=0\r\n"
            "a=tsmode:SAMP\r\n"
-           "a=tsdelay:37\r\n"
-           "a=TP:2110TPN\r\n";
+           "a=tsdelay:37\r\n";
 }
 
 static std::string make_video_sdp_with_par(std::string_view par_token) {
@@ -33,7 +32,7 @@ static std::string make_video_sdp_with_par(std::string_view par_token) {
                        "m=video 5004 RTP/AVP 96\r\n"
                        "a=rtpmap:96 raw/90000\r\n"
                        "a=fmtp:96 sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=60000/1001; depth=10; "
-                       "colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TCS=SDR; RANGE=FULL; PAR="} +
+                       "colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TCS=SDR; RANGE=FULL; TP=2110TPN; PAR="} +
            std::string{par_token} +
            "\r\n"
            "a=ts-refclk:ptp=IEEE1588-2008:39-A7-94-FF-FE-07-CB-D0:127\r\n"
@@ -205,11 +204,47 @@ static void test_rejects_non_zero_direct_media_clock_offset() {
     assert(signaling_expected.error() == Error::InvalidValue);
 }
 
-static void test_rejects_sender_timing_combination_that_fails_final_validation() {
+static void test_rejects_missing_tp_in_final_ingestion() {
     std::string sdp = make_valid_video_sdp();
 
-    sdp += "a=TROFF:11\r\n"
-           "a=CMAX:2\r\n";
+    const std::string good = "TP=2110TPN";
+    const std::size_t pos = sdp.find(good);
+    assert(pos != std::string::npos);
+    sdp.erase(pos, good.size());
+
+    auto signaling_expected = parse_video_stream_signaling_from_sdp(sdp, 96);
+    assert(!signaling_expected.has_value());
+    assert(signaling_expected.error() == Error::InvalidValue);
+}
+
+static void test_accepts_narrow_sender_troff_and_cmax_in_final_ingestion() {
+    std::string sdp = make_valid_video_sdp();
+
+    const std::string good = "TP=2110TPN";
+    const std::string replacement = "TP=2110TPN; TROFF=11; CMAX=2";
+
+    const std::size_t pos = sdp.find(good);
+    assert(pos != std::string::npos);
+    sdp.replace(pos, good.size(), replacement);
+
+    auto signaling_expected = parse_video_stream_signaling_from_sdp(sdp, 96);
+    assert(signaling_expected.has_value());
+    assert(signaling_expected->sender_type == VideoSenderType::Narrow);
+    assert(signaling_expected->troff_us.has_value());
+    assert(*signaling_expected->troff_us == 11);
+    assert(signaling_expected->cmax.has_value());
+    assert(*signaling_expected->cmax == 2);
+}
+
+static void test_rejects_zero_troff_in_final_ingestion() {
+    std::string sdp = make_valid_video_sdp();
+
+    const std::string good = "TP=2110TPN";
+    const std::string replacement = "TP=2110TPN; TROFF=0";
+
+    const std::size_t pos = sdp.find(good);
+    assert(pos != std::string::npos);
+    sdp.replace(pos, good.size(), replacement);
 
     auto signaling_expected = parse_video_stream_signaling_from_sdp(sdp, 96);
     assert(!signaling_expected.has_value());
@@ -226,6 +261,8 @@ int main() {
     test_rejects_invalid_rtpmap_encoding_name_in_final_ingestion();
     test_propagates_invalid_timing_attribute_error_from_final_ingestion();
     test_rejects_non_zero_direct_media_clock_offset();
-    test_rejects_sender_timing_combination_that_fails_final_validation();
+    test_rejects_missing_tp_in_final_ingestion();
+    test_accepts_narrow_sender_troff_and_cmax_in_final_ingestion();
+    test_rejects_zero_troff_in_final_ingestion();
     return 0;
 }

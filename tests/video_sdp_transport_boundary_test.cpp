@@ -24,7 +24,7 @@ static std::string make_valid_sdp_with_transport() {
                        "a=rtpmap:112 raw/90000\n"
                        "a=fmtp:112 "} +
            std::string{kBaseFmtp} +
-           "\n"
+           "; TP=2110TPN\n"
            "a=media-future:kept\n";
 }
 
@@ -83,6 +83,7 @@ static void test_transport_metadata_does_not_break_video_signaling_ingestion() {
     assert(signaling->media.width == 1920);
     assert(signaling->media.height == 1080);
     assert(signaling->packing_mode == st2110::VideoPackingMode::Gpm);
+    assert(signaling->sender_type == st2110::VideoSenderType::Narrow);
 }
 
 static void test_media_connection_duplicate_is_rejected() {
