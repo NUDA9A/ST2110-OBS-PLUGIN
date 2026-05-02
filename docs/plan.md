@@ -67,7 +67,7 @@
 - [x] S032: SDP timing/reference-clock attributes such as `ts-refclk` and `mediaclk` can be session-level or media-level. The raw SDP ingestion boundary now preserves this scope explicitly and applies localized session/media resolution for the selected video stream. Media-level values override session-level values where allowed; duplicate values within the same scope are rejected; `fmtp` timing media parameters are treated as media-level signaling and conflict only with media-level standalone attributes for the same semantic field.
 - [x] S033: Video SDP/signaling validation now enforces the ST 2110-20 `SSN` cross-field rule in the existing signaling/media-description validation boundary. `SSN=ST2110-20:2017` is accepted for normal non-`ALPHA` / non-`ST2115LOGS3` streams, while `colorimetry=ALPHA` or `TCS=ST2115LOGS3` requires `SSN=ST2110-20:2022`. Structurally unknown future `SSN` values may still be represented via `Other + raw_token`, and runtime `PixelFormat` projection remains unchanged.
 - [x] S034: Video SDP/signaling validation now models `RANGE=FULLPROTECT` explicitly as a known `VideoRange` value and enforces the ST 2110-20 `RANGE` cross-field rule in the existing signaling/media-description validation boundary. With `colorimetry=BT2100`, only `NARROW` and `FULL` are accepted; outside the BT2100 context, `NARROW`, `FULLPROTECT`, and `FULL` are accepted. Structurally unknown future `RANGE` values may still be represented via `Other + raw_token`, and runtime frame storage / depacketizer behavior remains unchanged.
-- [ ] S035: Video SDP ingestion currently does not model SDP `PAR` from `a=fmtp`. ST 2110-20 defines `PAR` as an optional pixel-aspect-ratio parameter with default `1:1`. This should be added as a signaling/media-description property with default behavior, but without affecting runtime frame storage or depacketizer behavior yet.
+- [x] S035: Video SDP ingestion now models SDP `PAR` from `a=fmtp` as an explicit signaling/media-description property. `PAR` is represented as `VideoPixelAspectRatio` in `VideoMediaDescription`, defaults to `1:1` when absent at signaling level, validates positive integer parts, and is parsed/canonicalized locally in the SDP fmtp parser without changing runtime frame storage, `PixelFormat`, depacketizer, placement, or runtime projection behavior.
 - [ ] S036: SDP media-description `width` and `height` validation should enforce the ST 2110-20 allowed range `1..32767`, not only non-zero dimensions. This must be fixed in the existing video media-description / config validation boundary with minimal changes.
 - [ ] S037: SDP `exactframerate` parsing accepts syntactically valid rational values but does not yet enforce the ST 2110-20 canonical form requirements: integer frame rates should be signaled as a single decimal integer, and rational frame rates should use the numerically smallest numerator/denominator representation. This should be tightened locally in `video_sdp_fmtp.hpp`.
 - [ ] S038: ST 2110-10 requires `mediaclk` to be present as a media-level attribute. Current SDP timing scope handling preserves session/media scope, but final ST 2110 video ingestion must not treat session-level `mediaclk` alone as sufficient for standards-clean SDP ingestion. This should be enforced at the SDP ingestion boundary, while raw parsing may continue preserving session-level attributes.
@@ -1286,27 +1286,16 @@
     - absent `RANGE` keeps the existing optional / unspecified signaling-level behavior;
     - unknown future range tokens remain representable through `Other + raw_token`;
   - runtime frame storage, `PixelFormat` projection shape, and depacketizer behavior remain unchanged.
-- [ ] 196C: Add SDP `PAR` media-description modeling
-  - parse optional `PAR=<w>:<h>` from video `a=fmtp`.
-  - represent PAR as a signaling/media-description property, not as runtime frame storage.
-  - apply default `PAR=1:1` when absent.
-  - validate:
-    - both parts are positive integers;
+- [x] 196C: Add SDP `PAR` media-description modeling
+  - parse optional `PAR=<w>:<h>` from video `a=fmtp`;
+  - represent PAR as a signaling/media-description property, not as runtime frame storage;
+  - implemented signaling-level default:
+    - absent `PAR` -> `1:1`;
+  - implemented validation:
+    - both parts must be positive integers;
     - malformed forms are rejected;
-    - canonical/minimal ratio form is preferred if practical without large implementation growth.
-  - prefer minimal changes to existing `.hpp` files:
-    - `signaling_structs.hpp`
-    - `video_sdp_fmtp.hpp`
-    - `video_sdp_signaling_adapter.hpp`
-    - `video_signaling.hpp`
-    - related tests only
-  - do not change `VideoFrame`, `PixelFormat`, depacketizer, placement, or runtime projection behavior.
-  - add focused tests for:
-    - absent `PAR` defaults to `1:1`;
-    - valid `PAR=1:1`;
-    - valid non-square `PAR=12:11`;
-    - malformed `PAR`;
-    - PAR surviving SDP-to-signaling mapping.
+    - canonical/minimal ratio form is applied in the raw fmtp parsing path;
+  - runtime `VideoFrame`, `PixelFormat`, depacketizer, placement, and runtime projection behavior remain unchanged.
 - [ ] 196D: Enforce ST 2110-20 `width` / `height` SDP limits
   - validate signaled video dimensions as `1..32767` in the signaling/media-description boundary.
   - keep lower-level runtime/frame validation separate where it already exists.

@@ -764,30 +764,21 @@
     - `validate_video_transfer_characteristic_system(...)`
     - `validate_video_signal_standard(...)`
     - `validate_video_range(const VideoRange&)`
-        - token-backed structural validation for `VideoRange`;
-        - known values including `FullProtect` require no raw token;
-        - `Other` requires non-empty `raw_token`.
+    - `validate_video_pixel_aspect_ratio(const VideoPixelAspectRatio&)`
+        - validates modeled PAR / pixel aspect ratio;
+        - requires both parts to be positive integers;
+        - keeps PAR validation structural and separate from runtime pixel/storage behavior.
     - `validate_video_bit_depth(...)`
     - `is_420_video_sampling(...)`
     - `validate_video_media_description_cross_field_constraints(const VideoMediaDescription&, VideoScanMode)`
-        - keeps localized ST 2110-20 media-description cross-field rules;
-        - accepts `4:2:0` sampling variants only with progressive scan signaling;
-        - requires `KEY` sampling to use `colorimetry=ALPHA` and forbids `TCS` for KEY signals;
-        - enforces the `SSN` rule:
-            - normal non-`ALPHA` / non-`ST2115LOGS3` streams accept `SSN=ST2110-20:2017`;
-            - `colorimetry=ALPHA` or `TCS=ST2115LOGS3` requires `SSN=ST2110-20:2022`;
-            - structurally unknown future `SSN` values through `Other + raw_token` remain accepted;
-            - absent `SSN` remains tolerated here and is still a separate follow-up boundary;
-        - now also enforces the `RANGE` rule:
-            - absent `RANGE` remains accepted at signaling level;
-            - `RANGE=Other + raw_token` remains structurally accepted for forward compatibility;
-            - with `colorimetry=BT2100`, only `Narrow` / `Full` are accepted;
-            - outside the BT2100 context, `Narrow` / `FullProtect` / `Full` are accepted.
+        - localized ST 2110-20 media-description cross-field rules for scan mode, KEY/ALPHA, `SSN`, and `RANGE`;
+        - does not turn `PAR` into a runtime/storage concern.
     - `pixel_format_from_video_stream_signaling(...)`
         - runtime/storage projection boundary remains unchanged;
         - current MVP runtime support still maps only `YCbCr422 + 8-bit integer` to `PixelFormat::UYVY`;
-        - structurally valid but unsupported signaled formats remain rejected as `Unsupported` only at runtime projection/support boundaries.
+        - PAR does not affect runtime projection.
     - `validate_video_media_description(...)`
+        - now includes structural PAR validation.
     - `validate_video_stream_signaling(...)`
     - `packet_parse_policy_from_video_stream_signaling(...)`
     - `validate_video_stream_signaling_against_rx_video_config(...)`
@@ -797,8 +788,8 @@
     - `rx_video_config_from_video_stream_signaling(...)`
     - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
 - Примечание:
-    - known `RANGE` handling is now tighter and explicit without changing runtime projection shape;
-    - `RANGE` defaulting remains an external caller/standards interpretation concern rather than a hidden adapter/validator mutation.
+    - `PAR` is now an explicit signaling/media-description property with default `1:1`;
+    - runtime frame storage, `PixelFormat`, depacketizer, placement, and runtime projection behavior remain unchanged.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -909,7 +900,10 @@
         - `Known::FullProtect`
         - `Known::Full`
         - `Known::Other`
-        - now models `FULLPROTECT` explicitly instead of routing it through `Other`.
+    - `VideoPixelAspectRatio`
+        - `width`
+        - `height`
+        - explicit modeled PAR / pixel-aspect-ratio signaling property.
     - `VideoMediaDescription`
         - `sampling`
         - `width`, `height`
@@ -919,13 +913,15 @@
         - `transfer_characteristic_system`
         - `signal_standard`
         - `range`
-            - remains optional at the signaling-model layer;
-            - unknown future tokens remain representable through `Other + raw_token`.
+        - `pixel_aspect_ratio`
+            - signaling/media-description axis only;
+            - defaults to `1:1` in the model;
+            - is not a runtime frame-storage axis.
     - `VideoStreamSignaling`
     - `VideoReceiverBootstrapConfig`
 - Примечание:
-    - this header remains the place where known SDP/media-description axes are represented explicitly;
-    - `RANGE` now has explicit known coverage for `FULLPROTECT` without changing runtime frame/depacketizer behavior.
+    - known SDP/media-description axes continue to be modeled explicitly in this header;
+    - `PAR` / pixel aspect ratio is now explicit in the signaling model without changing runtime video buffer/pixel layout behavior.
 
 ### libs/st2110core/include/st2110/video_receiver_timing.hpp
 - Роль:
@@ -1151,92 +1147,48 @@
 
 ### libs/st2110core/include/st2110/video_sdp_fmtp.hpp
 - Роль:
-    - pure SDP `a=fmtp` parsing layer для video payload type.
-    - отделяет parsing одного `a=fmtp` attribute payload от raw media-section selection, `VideoStreamSignaling` mapping, structural validation и runtime/bootstrap projection.
+    - strict parser for raw video `a=fmtp` payload into a normalized raw-SDP parameter model.
+    - keeps token parsing / numeric parsing / duplicate rejection localized before higher-level signaling mapping.
 - Связи:
-    - использует `Error` и raw SDP helper’ы из `video_sdp_media_section.hpp`;
-    - используется SDP ingestion/composition layer из `video_sdp_ingestion.hpp`;
-    - не зависит от `VideoStreamSignaling`, depacketizer, reorder buffer и receive pipeline internals.
+    - используется raw SDP ingestion path and `video_sdp_signaling_adapter.hpp`;
+    - depends on `error.hpp` and `video_sdp_media_section.hpp`.
 - Сущности:
     - `RawVideoSdpExactFrameRate`
-        - raw parsed representation of `exactframerate` (`numerator`, `denominator`).
+    - `RawVideoSdpPixelAspectRatio`
+        - `width`
+        - `height`
+        - raw parsed PAR value after positive-integer parsing and canonical reduction.
     - `RawVideoSdpFmtpUnknownParameter`
-        - preserved unknown fmtp parameter (`name`, optional `value`).
     - `RawVideoSdpFmtpParameters`
-        - required raw parsed fields:
-            - `sampling`
-            - `width`
-            - `height`
-            - `exactframerate`
-            - `depth`
-            - `depth_floating_point`
-            - `colorimetry`
-            - `packing_mode`
-            - `signal_standard`
-        - optional raw parsed fields:
-            - `transfer_characteristic_system`
-            - `range`
-            - `max_udp_datagram_bytes`
-        - flag fields:
-            - `interlace`
-            - `segmented`
-        - optional known timing/sender fmtp parameters:
-            - `timestamp_mode`
-            - `ts_delay_sender_ticks`
-            - `sender_type`
-            - `troff_us`
-            - `cmax`
-        - `unknown_parameters`
-    - helper structs:
-        - `RawVideoSdpFmtpDepthValue`
-            - raw parsed depth representation (`bits`, `floating_point`).
-        - `RawVideoSdpFmtpParameterToken`
-            - strict parsed `fmtp` parameter token:
-                - `name`
-                - optional `value`
-    - helper functions:
+        - required known fields such as `sampling`, `width`, `height`, `exactframerate`, `depth`, `colorimetry`, `packing_mode`, `signal_standard`;
+        - optional known fields such as `transfer_characteristic_system`, `range`, `pixel_aspect_ratio`, timing/sender parameters, `max_udp_datagram_bytes`;
+        - preserved `unknown_parameters`.
+    - helper parsers / tokenizers:
         - `trim_ascii_ws(...)`
         - `parse_fmtp_uint64(...)`
         - `parse_fmtp_uint32(...)`
-        - `is_fmtp_ascii_ws(...)`
-        - `contains_fmtp_ascii_ws(...)`
         - `split_strict_video_sdp_fmtp_parameters(...)`
-            - strict splitter for `a=fmtp` media-parameter payloads;
-            - trims only the external payload edges;
-            - requires `;` separators to be followed by at least one space or tab;
-            - rejects empty parameters and whitespace inside parameter tokens.
         - `parse_strict_video_sdp_fmtp_parameter_token(...)`
-            - parses one strict parameter token into `name` / optional `value`;
-            - rejects whitespace inside the token;
-            - rejects empty names, empty values for `name=`, and multiple `=` characters.
         - `require_fmtp_parameter_value(...)`
-            - helper for known parameters that must have a non-empty value.
         - `parse_required_positive_fmtp_uint32(...)`
         - `parse_fmtp_exact_frame_rate(...)`
-            - parses integer or rational `exactframerate` values and rejects zero numerator/denominator.
+        - `gcd_u32(...)`
+        - `parse_fmtp_pixel_aspect_ratio(...)`
+            - parses `PAR=<w>:<h>`;
+            - rejects malformed or non-positive forms;
+            - reduces to canonical/minimal ratio form when practical (for example `2:2 -> 1:1`).
         - `parse_fmtp_depth(...)`
-            - parses integer depths and standard `16f`;
-            - rejects malformed depth tokens and non-16 floating-point depths.
         - `parse_fmtp_attribute_payload_for_pt(...)`
-    - main parsing entry points:
+    - entry points:
         - `parse_video_sdp_fmtp_payload(...)`
-            - parses one raw fmtp payload string into `RawVideoSdpFmtpParameters`;
-            - recognizes known media-description fields and known timing/sender parameters;
-            - preserves truly unknown parameters.
-            - recognizes `MAXUDP` as a known packet-size / UDP-datagram-size parameter;
+            - parses known video fmtp parameters;
+            - now parses optional `PAR`;
+            - preserves absent `PAR` as raw `std::nullopt`;
+            - rejects duplicate `PAR`.
         - `parse_video_sdp_fmtp_attribute(...)`
-            - parses one full `a=fmtp:<pt> ...` line for the selected payload type;
-            - returns `nullopt` on payload-type mismatch.
 - Примечание:
-    - это raw SDP/fmtp parsing layer, а не signaling validation и не mapping layer;
-    - known ST 2110 timing/sender fmtp parameters no longer remain only in `unknown_parameters`;
-    - parser is now intentionally strict at the local raw `fmtp` boundary:
-        - duplicate known keys/flags are `InvalidValue`;
-        - malformed numeric fields are `InvalidValue`;
-        - whitespace around `=` or inside parameter tokens is `InvalidValue`;
-        - `;` without following whitespace is `InvalidValue`;
-        - empty parameters from doubled/trailing separators are `InvalidValue`;
-        - unknown syntactically valid parameters are still preserved for forward compatibility.
+    - raw fmtp parsing remains a strict boundary distinct from signaling-model defaults;
+    - signaling-level default `PAR=1:1` is applied later in the signaling model rather than being synthesized in the raw fmtp structure when `PAR` is absent.
 
 ### libs/st2110core/include/st2110/video_sdp_signaling_adapter.hpp
 - Роль:
@@ -1250,17 +1202,13 @@
     - `video_packing_mode_from_raw_video_sdp_fmtp(...)`
     - `video_media_description_from_raw_video_sdp_fmtp(...)`
         - maps known `sampling`, `colorimetry`, `TCS`, `SSN`, and `RANGE` tokens into explicit enums;
-        - now maps:
-            - `RANGE=NARROW` -> `VideoRange::Known::Narrow`
-            - `RANGE=FULLPROTECT` -> `VideoRange::Known::FullProtect`
-            - `RANGE=FULL` -> `VideoRange::Known::Full`
-        - preserves unknown future `RANGE` tokens through `VideoRange::Known::Other + raw_token`;
-        - keeps absent `RANGE` as `std::nullopt` rather than synthesizing a default in the adapter.
+        - maps optional raw `pixel_aspect_ratio` into `VideoMediaDescription::pixel_aspect_ratio`;
+        - keeps absent raw `PAR` as signaling-model default `1:1` via the default-initialized `VideoMediaDescription`.
     - `video_stream_signaling_from_raw_video_sdp_fmtp(...)`
         - runs existing media-description and cross-field validation after token mapping.
 - Примечание:
-    - adapter is still responsible only for raw-token mapping and basic structural conversion;
-    - standards cross-field policy for `RANGE` remains localized in `video_signaling.hpp`, not duplicated here.
+    - adapter remains responsible for raw-token mapping and structural conversion;
+    - `PAR` is now preserved through SDP-to-signaling mapping without affecting runtime pixel/storage/depacketizer behavior.
 
 ### libs/st2110core/include/st2110/video_sdp_timing_attributes.hpp
 - Роль:

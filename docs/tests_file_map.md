@@ -493,18 +493,19 @@
         - `SSN`;
         - `RANGE`.
     - structural `VideoBitDepth` validation including `16f`;
+    - structural `VideoPixelAspectRatio` validation:
+        - `1:1` accepted;
+        - non-square ratios such as `12:11` accepted;
+        - zero parts rejected.
     - acceptance of a valid BT709/SDR media-description shape with `SSN=ST2110-20:2017`;
     - acceptance of absent optional signaling/media fields where currently allowed;
     - rejection of invalid structural media fields;
-    - tightened `SSN` cross-field validation:
-        - normal `BT709 + SDR` rejects `SSN=ST2110-20:2022`;
-        - `ALPHA` signaling accepts `SSN=ST2110-20:2022` and rejects `SSN=ST2110-20:2017`;
-        - `TCS=ST2115LOGS3` accepts `SSN=ST2110-20:2022` and rejects `SSN=ST2110-20:2017`.
-    - tightened `RANGE` modeling and cross-field validation:
-        - `RANGE=FULLPROTECT` is a known enum value, not `Other`;
-        - `BT2100 + RANGE=FULL` accepted;
-        - `BT2100 + RANGE=FULLPROTECT` rejected;
-        - non-BT2100 `RANGE=FULLPROTECT` accepted.
+    - tightened `SSN` cross-field validation;
+    - tightened `RANGE` modeling and cross-field validation.
+    - PAR/pixel-aspect-ratio as a signaling/media-description property:
+        - non-square PAR accepted structurally;
+        - invalid PAR rejected structurally;
+        - runtime projection remains independent from PAR.
     - runtime projection remains separate:
         - valid `YCbCr422 + 8-bit` projects to `UYVY`;
         - structurally valid but unsupported media, including KEY/ALPHA, remain rejected only by runtime projection.
@@ -584,13 +585,31 @@
 
 ### tests/video_sdp_fmtp_test.cpp
 - Роль:
-    - проверяет raw SDP `a=fmtp` parsing for video media-description fields.
+    - проверяет strict raw parser for video `a=fmtp`.
+- Покрывает:
+    - parsing of required and optional known fmtp parameters;
+    - preservation of unknown syntactically valid parameters;
+    - integer and rational `exactframerate`;
+    - `PAR` parsing:
+        - valid `PAR=1:1`;
+        - valid non-square `PAR=12:11`;
+        - canonical/minimal reduction where practical (for example `2:2 -> 1:1`);
+        - malformed `PAR` rejection;
+        - duplicate `PAR` rejection.
+    - attribute-level parsing for matching / non-matching payload types;
+    - malformed numeric and duplicate known-parameter rejection.
+- Фиксирует:
+    - raw fmtp parser keeps absent `PAR` as absent raw property;
+    - signaling-level defaulting to `1:1` is left to later mapping/model layers.
 
 ### tests/video_sdp_signaling_adapter_test.cpp
 - Роль:
     - проверяет adapter from raw SDP/fmtp media-description fields to `VideoStreamSignaling`.
 - Покрывает:
     - mapping of known progressive video fmtp fields into explicit signaling enums/values;
+    - default signaling-model `PAR=1:1` when raw `PAR` is absent;
+    - mapping of explicit square `PAR=1:1`;
+    - mapping of non-square `PAR=12:11`;
     - mapping of `FULLPROTECT` into `VideoRange::Known::FullProtect`;
     - interlaced / PsF scan-mode derivation;
     - packing-mode mapping;
@@ -598,8 +617,8 @@
     - preservation of unknown future tokens through `Other + raw_token`, including unknown `RANGE` tokens;
     - rejection of malformed depth outside the signaling model.
 - Фиксирует:
-    - token-to-model mapping remains localized in the SDP adapter;
-    - standards cross-field rejection for `RANGE` is still handled by signaling validation, not by ad hoc adapter special-casing.
+    - SDP-to-signaling adapter preserves PAR as a media-description property;
+    - runtime/storage behavior remains outside this mapping boundary.
 
 ### tests/video_sdp_timing_attributes_test.cpp
 - Роль:
@@ -611,7 +630,18 @@
 
 ### tests/video_sdp_ingestion_test.cpp
 - Роль:
-    - проверяет final SDP-to-`VideoStreamSignaling` ingestion composition.
+    - проверяет final SDP-to-`VideoStreamSignaling` ingestion entry point and composition with raw media-section parsing.
+- Покрывает:
+    - full valid video SDP ingestion into signaling;
+    - composition equivalence between raw-media-section path and final SDP entry point;
+    - signaling-level default `PAR=1:1` when absent in SDP;
+    - explicit square `PAR=1:1`;
+    - non-square `PAR=12:11` surviving final SDP-to-signaling mapping;
+    - malformed `PAR` rejection through final ingestion;
+    - propagation of invalid RTP/timing/media errors from final ingestion.
+- Фиксирует:
+    - `PAR` survives the full SDP ingestion path as signaling/media-description data;
+    - runtime video projection/bootstrapping behavior is unchanged by PAR modeling.
 
 ### tests/video_sdp_fmtp_timing_parameters_test.cpp
 - Роль:
