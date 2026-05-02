@@ -53,7 +53,7 @@ std::string make_video_sdp(const std::string &session_attributes = {}, const std
     return sdp;
 }
 
-void session_level_reference_clock_and_media_clock_are_preserved_and_applied() {
+void session_level_reference_clock_and_media_clock_are_preserved_but_session_only_mediaclk_is_rejected_by_final_ingestion() {
     const std::string sdp = make_video_sdp(valid_session_refclk(1) + "a=mediaclk:direct=0\n");
 
     auto raw = select_raw_video_sdp_media_section(sdp, kPayloadType);
@@ -86,13 +86,11 @@ void session_level_reference_clock_and_media_clock_are_preserved_and_applied() {
     assert(timing->media_clock->scope == RawSdpAttributeScope::Session);
     assert(timing->media_clock->value.kind == RawVideoSdpMediaClock::Kind::Direct);
 
-    auto signaling = parse_video_stream_signaling_from_sdp(sdp, kPayloadType);
-    assert(signaling.has_value());
+    assert(!raw_video_sdp_has_media_level_mediaclk(*timing));
 
-    assert(signaling->reference_clock.kind == ReferenceClockKind::Ptp);
-    assert(signaling->reference_clock.ptp.has_value());
-    assert(signaling->reference_clock.ptp->domain_number == 1);
-    assert(signaling->media_clock_mode == MediaClockMode::Direct);
+    auto signaling = parse_video_stream_signaling_from_sdp(sdp, kPayloadType);
+    assert(!signaling.has_value());
+    assert(signaling.error() == Error::InvalidValue);
 }
 
 void media_level_reference_clock_and_media_clock_override_session_level_values() {
@@ -137,6 +135,8 @@ void media_level_reference_clock_and_media_clock_override_session_level_values()
     assert(timing->media_clock->scope == RawSdpAttributeScope::Media);
     assert(timing->media_clock->value.kind == RawVideoSdpMediaClock::Kind::Direct);
 
+    assert(raw_video_sdp_has_media_level_mediaclk(*timing));
+
     auto signaling = parse_video_stream_signaling_from_sdp(sdp, kPayloadType);
     assert(signaling.has_value());
 
@@ -164,7 +164,9 @@ void duplicate_media_level_timing_attribute_is_rejected() {
 }
 
 void fmtp_media_level_timing_field_overrides_session_level_standalone_attribute() {
-    const std::string sdp = make_video_sdp(valid_session_refclk(1) + "a=tsmode:NEW\n", {}, "TSMODE=PRES");
+    const std::string sdp =
+        make_video_sdp(valid_session_refclk(1) + "a=mediaclk:direct=0\n" + "a=tsmode:NEW\n", "a=mediaclk:direct=0\n",
+                       "TSMODE=PRES");
 
     auto raw = select_raw_video_sdp_media_section(sdp, kPayloadType);
     assert(raw.has_value());
@@ -180,6 +182,7 @@ void fmtp_media_level_timing_field_overrides_session_level_standalone_attribute(
     assert(timing->timestamp_mode.has_value());
     assert(timing->timestamp_mode->scope == RawSdpAttributeScope::Session);
     assert(timing->timestamp_mode->value.raw_token == "NEW");
+    assert(raw_video_sdp_has_media_level_mediaclk(*timing));
 
     auto signaling = parse_video_stream_signaling_from_sdp(sdp, kPayloadType);
     assert(signaling.has_value());
@@ -188,7 +191,10 @@ void fmtp_media_level_timing_field_overrides_session_level_standalone_attribute(
 }
 
 void fmtp_timing_field_conflicts_with_media_level_standalone_attribute() {
-    const std::string sdp = make_video_sdp(valid_session_refclk(1), "a=tsmode:NEW\n", "TSMODE=PRES");
+    const std::string sdp =
+        make_video_sdp(valid_session_refclk(1) + "a=mediaclk:direct=0\n", "a=mediaclk:direct=0\n"
+                                                                           "a=tsmode:NEW\n",
+                       "TSMODE=PRES");
 
     auto raw = select_raw_video_sdp_media_section(sdp, kPayloadType);
     assert(raw.has_value());
@@ -197,6 +203,7 @@ void fmtp_timing_field_conflicts_with_media_level_standalone_attribute() {
     assert(timing.has_value());
     assert(timing->timestamp_mode.has_value());
     assert(timing->timestamp_mode->scope == RawSdpAttributeScope::Media);
+    assert(raw_video_sdp_has_media_level_mediaclk(*timing));
 
     auto signaling = parse_video_stream_signaling_from_sdp(sdp, kPayloadType);
     assert(!signaling.has_value());
@@ -231,6 +238,7 @@ void existing_media_level_only_sdp_behavior_remains_unchanged() {
 
     assert(timing->media_clock.has_value());
     assert(timing->media_clock->scope == RawSdpAttributeScope::Media);
+    assert(raw_video_sdp_has_media_level_mediaclk(*timing));
 
     assert(timing->timestamp_mode.has_value());
     assert(timing->timestamp_mode->scope == RawSdpAttributeScope::Media);
@@ -269,7 +277,7 @@ void existing_media_level_only_sdp_behavior_remains_unchanged() {
 } // namespace
 
 int main() {
-    session_level_reference_clock_and_media_clock_are_preserved_and_applied();
+    session_level_reference_clock_and_media_clock_are_preserved_but_session_only_mediaclk_is_rejected_by_final_ingestion();
     media_level_reference_clock_and_media_clock_override_session_level_values();
     duplicate_session_level_timing_attribute_is_rejected();
     duplicate_media_level_timing_attribute_is_rejected();

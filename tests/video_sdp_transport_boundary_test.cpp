@@ -18,6 +18,7 @@ static std::string make_valid_sdp_with_transport() {
                        "m=video 50000 RTP/AVP 112\n"
                        "c=IN IP4 239.20.20.20/32\n"
                        "a=ts-refclk:ptp=IEEE1588-2008:traceable\n"
+                       "a=mediaclk:direct=0\n"
                        "a=mid:primary\n"
                        "a=source-filter: incl IN IP4 239.20.20.20 192.0.2.10\n"
                        "a=rtpmap:112 raw/90000\n"
