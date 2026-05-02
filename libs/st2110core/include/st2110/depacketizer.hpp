@@ -29,6 +29,7 @@ struct DepacketizerConfig {
 
 struct DepacketizerAssemblyState {
     std::optional<VideoAssemblyKey> current_key{};
+    std::optional<VideoAssemblyCursor> write_cursor{};
 };
 
 class Depacketizer {
@@ -158,6 +159,7 @@ class Depacketizer {
     void begin_unit(const VideoAssemblyKey &key) {
         assembler_.begin(key.rtp_timestamp);
         assembly_state_.current_key = key;
+        assembly_state_.write_cursor.reset();
     }
 
     void handle_end_result(FrameAssemblerEndResult &&end_res, std::vector<AssembledVideoUnit> &out) {
@@ -185,6 +187,11 @@ class Depacketizer {
     }
 
     void write_packet_segments(const PacketView &packet) {
+        std::vector<VideoFrameWriteOp> write_ops{};
+        write_ops.reserve(packet.segment_count);
+
+        auto cursor = assembly_state_.write_cursor;
+
         for (std::size_t i = 0; i < packet.segment_count; ++i) {
             auto expected_op =
                 map_video_segment_to_frame_write(cfg_.packing_mode, cfg_.format, cfg_.scan_mode, packet.segments[i]);
@@ -195,9 +202,24 @@ class Depacketizer {
                 }
                 throw std::logic_error("Unsupported video segment placement for current format/scan mode");
             }
-            auto op = *expected_op;
+
+            if (Error err =
+                    validate_and_advance_video_assembly_cursor(cfg_.scan_mode, cursor, packet.segments[i], *expected_op);
+                err != Error::Ok) {
+                if (err == Error::InvalidValue) {
+                    throw std::invalid_argument("Invalid cross-packet video segment order for current assembly unit");
+                }
+                throw std::logic_error("Unsupported cross-packet video segment order for current video scan mode");
+                }
+
+            write_ops.push_back(*expected_op);
+        }
+
+        for (const auto &op : write_ops) {
             assembler_.write_segment(op.plane, op.row, op.byte_offset, op.bytes);
         }
+
+        assembly_state_.write_cursor = std::move(cursor);
     }
 
     DepacketizerConfig cfg_;

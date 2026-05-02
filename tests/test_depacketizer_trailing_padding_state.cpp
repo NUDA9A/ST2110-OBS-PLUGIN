@@ -60,7 +60,7 @@ static st2110::PacketView parse_packet(uint16_t seq, uint32_t rtp_timestamp, boo
 
 static st2110::Depacketizer make_depacketizer() {
     st2110::DepacketizerConfig cfg{};
-    cfg.width = 2; // UYVY => active row = 4 bytes
+    cfg.width = 4; // UYVY => active row = 8 bytes
     cfg.height = 1;
     cfg.format = st2110::PixelFormat::UYVY;
     cfg.partial_frame_policy = st2110::PartialFramePolicy::EmitWithFlag;
@@ -131,10 +131,13 @@ static void test_invalid_key_transition_packet_does_not_close_previous_unit() {
     assert(dep.current_unit_rtp_timestamp().has_value());
     assert(*dep.current_unit_rtp_timestamp() == 100u);
 
-    // Finish the original unit with a valid marker packet of the same key
+    // Finish the original unit with a valid later fragment of the same row/key
     {
-        const st2110::PacketView final_pkt = parse_packet(3, 100, true, {1, 2, 3, 4}, {});
-        auto out = dep.push(final_pkt);
+        const st2110::PacketView final_pkt = parse_packet(3, 100, true, {5, 6, 7, 8}, {});
+        auto final = final_pkt;
+        final.segments[0].header.offset = 2; // advance within the same row
+
+        auto out = dep.push(final);
 
         assert(out.size() == 1);
         assert(out[0].rtp_timestamp == 100u);

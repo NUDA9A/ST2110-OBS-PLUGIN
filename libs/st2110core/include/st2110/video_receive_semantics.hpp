@@ -1,11 +1,14 @@
 #ifndef ST2110_OBS_PLUGIN_VIDEO_RECEIVE_SEMANTICS_HPP
 #define ST2110_OBS_PLUGIN_VIDEO_RECEIVE_SEMANTICS_HPP
 
+#include <cstddef>
 #include <expected>
+#include <optional>
 
 #include "error.hpp"
 #include "packet_view.hpp"
 #include "video_scan_mode.hpp"
+#include "video_segment_placement.hpp"
 
 namespace st2110 {
 enum class VideoAssemblyUnitKind { Frame, Field, Segment };
@@ -23,6 +26,59 @@ struct VideoAssemblyKey {
 
     bool operator==(const VideoAssemblyKey &) const = default;
 };
+
+struct VideoAssemblyCursor {
+    uint16_t last_srd_row_number = 0;
+    uint16_t last_srd_offset = 0;
+    uint32_t last_write_row = 0;
+    std::size_t last_write_end_byte_offset = 0;
+};
+
+[[nodiscard]] inline Error validate_and_advance_video_assembly_cursor(VideoScanMode scan_mode,
+                                                                     std::optional<VideoAssemblyCursor> &cursor,
+                                                                     const SrdSegmentView &segment,
+                                                                     const VideoFrameWriteOp &op) {
+    switch (scan_mode) {
+    case VideoScanMode::Progressive: {
+        const VideoAssemblyCursor next{
+            .last_srd_row_number = segment.header.row_number,
+            .last_srd_offset = segment.header.offset,
+            .last_write_row = op.row,
+            .last_write_end_byte_offset = op.byte_offset + op.bytes.size(),
+        };
+
+        if (!cursor.has_value()) {
+            cursor = next;
+            return Error::Ok;
+        }
+
+        if (segment.header.row_number < cursor->last_srd_row_number) {
+            return Error::InvalidValue;
+        }
+
+        if (segment.header.row_number == cursor->last_srd_row_number &&
+            segment.header.offset <= cursor->last_srd_offset) {
+            return Error::InvalidValue;
+            }
+
+        if (op.row < cursor->last_write_row) {
+            return Error::InvalidValue;
+        }
+
+        if (op.row == cursor->last_write_row && op.byte_offset < cursor->last_write_end_byte_offset) {
+            return Error::InvalidValue;
+        }
+
+        *cursor = next;
+        return Error::Ok;
+    }
+    case VideoScanMode::Interlaced:
+    case VideoScanMode::PsF:
+        return Error::Unsupported;
+    default:
+        return Error::InvalidValue;
+    }
+}
 
 [[nodiscard]] inline std::expected<VideoAssemblyUnitKind, Error> video_assembly_unit_kind(VideoScanMode mode) {
     switch (mode) {
