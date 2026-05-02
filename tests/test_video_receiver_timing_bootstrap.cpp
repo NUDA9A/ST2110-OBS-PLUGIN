@@ -13,6 +13,10 @@ static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
     return ptp;
 }
 
+static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStandard::Known known) {
+    return st2110::VideoSignalStandard{known, std::nullopt};
+}
+
 static st2110::VideoStreamSignaling make_valid_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -24,6 +28,7 @@ static st2110::VideoStreamSignaling make_valid_signaling() {
     s.media.depth.bits = 8;
     s.media.depth.floating_point = false;
     s.media.colorimetry.known = st2110::VideoColorimetry::Known::Bt709;
+    s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
 
     s.scan_mode = st2110::VideoScanMode::Progressive;
     s.packing_mode = st2110::VideoPackingMode::Gpm;
@@ -109,6 +114,19 @@ static void test_timing_aware_bootstrap_config_is_composed_successfully() {
     assert(cfg.timing_config.requirements.consume_sender_cmax == timing_cfg.requirements.consume_sender_cmax);
 }
 
+static void test_timing_aware_bootstrap_rejects_missing_ssn() {
+    auto signaling = make_valid_signaling();
+    signaling.media.signal_standard = std::nullopt;
+
+    auto timing_cfg = make_valid_timing_config();
+
+    auto res = st2110::video_receiver_bootstrap_config_from_video_stream_signaling(
+        signaling, timing_cfg, 5004, 112, "127.0.0.1", "239.0.0.1", st2110::PartialFramePolicy::EmitWithFlag);
+
+    assert(!res.has_value());
+    assert(res.error() == st2110::Error::InvalidValue);
+}
+
 static void test_timing_aware_bootstrap_rejects_unsupported_sender_type() {
     auto signaling = make_valid_signaling();
     signaling.sender_type = st2110::VideoSenderType::Wide;
@@ -140,6 +158,7 @@ static void test_timing_aware_bootstrap_rejects_unconsumed_ts_delay() {
 
 int main() {
     test_timing_aware_bootstrap_config_is_composed_successfully();
+    test_timing_aware_bootstrap_rejects_missing_ssn();
     test_timing_aware_bootstrap_rejects_unsupported_sender_type();
     test_timing_aware_bootstrap_rejects_unconsumed_ts_delay();
     return 0;

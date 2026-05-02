@@ -14,6 +14,10 @@ static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
     return ptp;
 }
 
+static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStandard::Known known) {
+    return st2110::VideoSignalStandard{known, std::nullopt};
+}
+
 static st2110::VideoStreamSignaling make_base_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -24,6 +28,7 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     s.media.fps_den = 1001;
     s.media.depth = st2110::VideoBitDepth{8, false};
     s.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Bt709, std::nullopt};
+    s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
 
     s.scan_mode = st2110::VideoScanMode::Progressive;
 
@@ -73,14 +78,20 @@ static void test_invalid_signaling_is_rejected_before_projection() {
     assert(cfg.error() == st2110::Error::InvalidValue);
 }
 
+static void test_missing_ssn_is_rejected_before_projection() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.signal_standard = std::nullopt;
+
+    auto cfg = st2110::rx_video_config_from_video_stream_signaling(s, 5004, 112, "0.0.0.0", "239.1.1.1");
+
+    assert(!cfg.has_value());
+    assert(cfg.error() == st2110::Error::InvalidValue);
+}
+
 static void test_invalid_transport_args_are_rejected_after_projection() {
     const st2110::VideoStreamSignaling s = make_base_signaling();
 
-    auto cfg = st2110::rx_video_config_from_video_stream_signaling(s,
-                                                                   0,
-                                                                   112,
-                                                                   "0.0.0.0",
-                                                                   "239.1.1.1");
+    auto cfg = st2110::rx_video_config_from_video_stream_signaling(s, 0, 112, "0.0.0.0", "239.1.1.1");
 
     assert(!cfg.has_value());
     assert(cfg.error() == st2110::Error::InvalidValue);
@@ -100,9 +111,7 @@ static void test_projection_preserves_scan_mode_without_reinterpreting_it() {
 static void test_projection_rejects_invalid_payload_type() {
     const st2110::VideoStreamSignaling s = make_base_signaling();
 
-    auto cfg = st2110::rx_video_config_from_video_stream_signaling(s, 5004,
-                                                                   34,
-                                                                   "0.0.0.0", "239.1.1.1");
+    auto cfg = st2110::rx_video_config_from_video_stream_signaling(s, 5004, 34, "0.0.0.0", "239.1.1.1");
 
     assert(!cfg.has_value());
     assert(cfg.error() == st2110::Error::InvalidValue);
@@ -121,6 +130,7 @@ static void test_projection_rejects_unsupported_pixel_format_mapping() {
 int main() {
     test_valid_signaling_projects_to_rx_config();
     test_invalid_signaling_is_rejected_before_projection();
+    test_missing_ssn_is_rejected_before_projection();
     test_invalid_transport_args_are_rejected_after_projection();
     test_projection_preserves_scan_mode_without_reinterpreting_it();
     test_projection_rejects_invalid_payload_type();

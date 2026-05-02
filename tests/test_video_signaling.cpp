@@ -18,6 +18,15 @@ static st2110::LocalMacReferenceClock make_valid_localmac_reference_clock() {
     return local_mac;
 }
 
+static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStandard::Known known) {
+    return st2110::VideoSignalStandard{known, std::nullopt};
+}
+
+static st2110::VideoTransferCharacteristicSystem
+make_tcs(st2110::VideoTransferCharacteristicSystem::Known known) {
+    return st2110::VideoTransferCharacteristicSystem{known, std::nullopt};
+}
+
 static st2110::VideoStreamSignaling make_base_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -28,6 +37,7 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     s.media.fps_den = 1001;
     s.media.depth = st2110::VideoBitDepth{8, false};
     s.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Bt709, std::nullopt};
+    s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
 
     s.scan_mode = st2110::VideoScanMode::Progressive;
 
@@ -47,19 +57,17 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     return s;
 }
 
-static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStandard::Known known) {
-    return st2110::VideoSignalStandard{known, std::nullopt};
-}
-
-static st2110::VideoTransferCharacteristicSystem
-make_tcs(st2110::VideoTransferCharacteristicSystem::Known known) {
-    return st2110::VideoTransferCharacteristicSystem{known, std::nullopt};
-}
-
 static void test_valid_progressive_gpm_signaling_is_accepted() {
     st2110::VideoStreamSignaling s = make_base_signaling();
 
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
+}
+
+static void test_missing_ssn_is_rejected_by_standards_clean_validation() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.signal_standard = std::nullopt;
+
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
 }
 
 static void test_valid_bpm_signaling_is_accepted() {
@@ -314,6 +322,7 @@ static void test_st2115logs3_requires_st2110_20_2022() {
 
 int main() {
     test_valid_progressive_gpm_signaling_is_accepted();
+    test_missing_ssn_is_rejected_by_standards_clean_validation();
     test_valid_bpm_signaling_is_accepted();
     test_min_signaled_dimensions_are_accepted_structurally();
     test_max_signaled_dimensions_are_accepted_structurally();

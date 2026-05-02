@@ -192,6 +192,14 @@ inline Error validate_video_signal_standard(const VideoSignalStandard &ssn) {
     return Error::Ok;
 }
 
+inline Error validate_required_video_signal_standard(const std::optional<VideoSignalStandard> &ssn) {
+    if (!ssn.has_value()) {
+        return Error::InvalidValue;
+    }
+
+    return validate_video_signal_standard(*ssn);
+}
+
 inline Error validate_video_range(const VideoRange &range) {
     if (range.known == VideoRange::Known::Other) {
         if (!range.raw_token.has_value() || range.raw_token->empty()) {
@@ -377,10 +385,8 @@ inline Error validate_video_media_description(const VideoMediaDescription &media
             return err;
             }
     }
-    if (media.signal_standard.has_value()) {
-        if (Error err = validate_video_signal_standard(*media.signal_standard); err != Error::Ok) {
-            return err;
-        }
+    if (Error err = validate_required_video_signal_standard(media.signal_standard); err != Error::Ok) {
+        return err;
     }
     if (media.range.has_value()) {
         if (Error err = validate_video_range(*media.range); err != Error::Ok) {

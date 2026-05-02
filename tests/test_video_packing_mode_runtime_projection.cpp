@@ -12,6 +12,10 @@ static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
     return ptp;
 }
 
+static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStandard::Known known) {
+    return st2110::VideoSignalStandard{known, std::nullopt};
+}
+
 static st2110::VideoStreamSignaling make_base_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -22,6 +26,7 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     s.media.fps_den = 1001;
     s.media.depth = st2110::VideoBitDepth{8, false};
     s.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Bt709, std::nullopt};
+    s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
 
     s.scan_mode = st2110::VideoScanMode::Progressive;
     s.packing_mode = st2110::VideoPackingMode::Gpm;
@@ -129,6 +134,26 @@ static void test_bpm_is_rejected_by_runtime_bootstrap_projection() {
     assert(cfg.error() == st2110::Error::Unsupported);
 }
 
+static void test_missing_ssn_is_rejected_before_runtime_projection() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.signal_standard = std::nullopt;
+
+    auto dep_cfg =
+        st2110::depacketizer_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
+    assert(!dep_cfg.has_value());
+    assert(dep_cfg.error() == st2110::Error::InvalidValue);
+
+    auto pipe_cfg =
+        st2110::video_receive_pipeline_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
+    assert(!pipe_cfg.has_value());
+    assert(pipe_cfg.error() == st2110::Error::InvalidValue);
+
+    auto boot_cfg = st2110::video_receiver_bootstrap_config_from_video_stream_signaling(
+        s, 5004, 112, "0.0.0.0", "239.1.1.1", st2110::PartialFramePolicy::EmitWithFlag);
+    assert(!boot_cfg.has_value());
+    assert(boot_cfg.error() == st2110::Error::InvalidValue);
+}
+
 int main() {
     test_gpm_projects_to_depacketizer_config_with_runtime_packing_mode();
     test_gpm_projects_to_receive_pipeline_config_with_runtime_packing_mode();
@@ -138,5 +163,6 @@ int main() {
     test_bpm_is_rejected_by_runtime_depacketizer_projection();
     test_bpm_is_rejected_by_runtime_receive_pipeline_projection();
     test_bpm_is_rejected_by_runtime_bootstrap_projection();
+    test_missing_ssn_is_rejected_before_runtime_projection();
     return 0;
 }

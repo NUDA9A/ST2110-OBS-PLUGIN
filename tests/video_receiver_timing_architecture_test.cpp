@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -32,6 +33,10 @@ PtpReferenceClock make_valid_ptp_reference_clock() {
     return ptp;
 }
 
+VideoSignalStandard make_signal_standard(VideoSignalStandard::Known known) {
+    return VideoSignalStandard{known, std::nullopt};
+}
+
 VideoStreamSignaling make_valid_signaling() {
     VideoStreamSignaling signaling{};
 
@@ -43,6 +48,7 @@ VideoStreamSignaling make_valid_signaling() {
     signaling.media.depth.bits = 8;
     signaling.media.depth.floating_point = false;
     signaling.media.colorimetry.known = VideoColorimetry::Known::Bt709;
+    signaling.media.signal_standard = make_signal_standard(VideoSignalStandard::Known::St2110_20_2017);
 
     signaling.scan_mode = VideoScanMode::Progressive;
     signaling.packing_mode = VideoPackingMode::Gpm;

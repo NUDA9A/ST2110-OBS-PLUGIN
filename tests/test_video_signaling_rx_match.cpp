@@ -13,6 +13,10 @@ static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
     return ptp;
 }
 
+static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStandard::Known known) {
+    return st2110::VideoSignalStandard{known, std::nullopt};
+}
+
 static st2110::VideoStreamSignaling make_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -23,6 +27,7 @@ static st2110::VideoStreamSignaling make_signaling() {
     s.media.fps_den = 1001;
     s.media.depth = st2110::VideoBitDepth{8, false};
     s.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Bt709, std::nullopt};
+    s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
 
     s.scan_mode = st2110::VideoScanMode::Progressive;
     s.packing_mode = st2110::VideoPackingMode::Gpm;
@@ -96,11 +101,21 @@ static void test_height_mismatch_is_invalid() {
     assert(st2110::validate_video_stream_signaling_against_rx_video_config(s, cfg) == st2110::Error::InvalidValue);
 }
 
+static void test_missing_ssn_in_signaling_is_invalid_before_rx_match() {
+    st2110::VideoStreamSignaling s = make_signaling();
+    st2110::RxVideoConfig cfg = make_rx_config();
+
+    s.media.signal_standard = std::nullopt;
+
+    assert(st2110::validate_video_stream_signaling_against_rx_video_config(s, cfg) == st2110::Error::InvalidValue);
+}
+
 int main() {
     test_matching_signaling_and_rx_config_is_ok();
     test_width_mismatch_is_invalid();
     test_scan_mode_mismatch_is_invalid();
     test_frame_rate_mismatch_is_invalid();
     test_height_mismatch_is_invalid();
+    test_missing_ssn_in_signaling_is_invalid_before_rx_match();
     return 0;
 }

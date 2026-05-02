@@ -11,6 +11,10 @@ static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
     return ptp;
 }
 
+static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStandard::Known known) {
+    return st2110::VideoSignalStandard{known, std::nullopt};
+}
+
 static st2110::VideoStreamSignaling make_base_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -21,6 +25,7 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     s.media.fps_den = 1001;
     s.media.depth = st2110::VideoBitDepth{8, false};
     s.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Bt709, std::nullopt};
+    s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
 
     s.scan_mode = st2110::VideoScanMode::Progressive;
     s.packing_mode = st2110::VideoPackingMode::Gpm;
@@ -140,6 +145,16 @@ static void test_validate_video_stream_signaling_rejects_wide_sender_with_zero_c
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
 }
 
+static void test_validate_video_stream_signaling_rejects_missing_ssn_before_sender_validation() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.signal_standard = std::nullopt;
+    s.sender_type = st2110::VideoSenderType::Wide;
+    s.cmax = 4u;
+    s.troff_us = 10u;
+
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
+}
+
 int main() {
     test_validate_video_sender_signaling_narrow_ok();
     test_validate_video_sender_signaling_narrow_rejects_troff();
@@ -161,6 +176,7 @@ int main() {
     test_validate_video_stream_signaling_accepts_wide_sender_without_cmax();
     test_validate_video_stream_signaling_accepts_wide_sender_with_troff_but_without_cmax();
     test_validate_video_stream_signaling_rejects_wide_sender_with_zero_cmax();
+    test_validate_video_stream_signaling_rejects_missing_ssn_before_sender_validation();
 
     return 0;
 }

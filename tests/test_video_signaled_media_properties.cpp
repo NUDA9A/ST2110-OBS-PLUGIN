@@ -190,13 +190,19 @@ static void test_video_stream_signaling_accepts_extended_media_properties() {
     assert(validate_video_stream_signaling(signaling) == Error::Ok);
 }
 
-static void test_video_stream_signaling_accepts_absent_optional_media_fields() {
+static void test_video_stream_signaling_accepts_absent_optional_tcs_and_range_fields() {
     VideoStreamSignaling signaling = make_valid_signaling();
     signaling.media.transfer_characteristic_system = std::nullopt;
-    signaling.media.signal_standard = std::nullopt;
     signaling.media.range = std::nullopt;
 
     assert(validate_video_stream_signaling(signaling) == Error::Ok);
+}
+
+static void test_video_stream_signaling_rejects_missing_signal_standard() {
+    VideoStreamSignaling signaling = make_valid_signaling();
+    signaling.media.signal_standard = std::nullopt;
+
+    assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
 }
 
 static void test_video_stream_signaling_accepts_non_square_pixel_aspect_ratio() {
@@ -419,7 +425,8 @@ int main() {
     test_signaled_dimension_limits_accept_min_and_max_values();
     test_signaled_dimension_limits_reject_zero_and_overflow_values();
     test_video_stream_signaling_accepts_extended_media_properties();
-    test_video_stream_signaling_accepts_absent_optional_media_fields();
+    test_video_stream_signaling_accepts_absent_optional_tcs_and_range_fields();
+    test_video_stream_signaling_rejects_missing_signal_standard();
     test_video_stream_signaling_accepts_non_square_pixel_aspect_ratio();
     test_video_stream_signaling_rejects_invalid_pixel_aspect_ratio();
     test_video_stream_signaling_accepts_signaled_dimension_limits();

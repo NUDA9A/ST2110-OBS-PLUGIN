@@ -20,6 +20,10 @@ static st2110::ReferenceClock make_valid_reference_clock() {
     return clock;
 }
 
+static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStandard::Known known) {
+    return st2110::VideoSignalStandard{known, std::nullopt};
+}
+
 static st2110::VideoStreamSignaling make_base_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -30,6 +34,7 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     s.media.fps_den = 1001;
     s.media.depth = st2110::VideoBitDepth{8, false};
     s.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Bt709, std::nullopt};
+    s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
 
     s.scan_mode = st2110::VideoScanMode::Progressive;
     s.packing_mode = st2110::VideoPackingMode::Gpm;
@@ -106,7 +111,27 @@ static void test_invalid_signaling_is_rejected_before_runtime_projection() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.reference_clock.ptp = std::nullopt;
 
-    auto dep_cfg = st2110::depacketizer_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
+    auto dep_cfg =
+        st2110::depacketizer_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
+    assert(!dep_cfg.has_value());
+    assert(dep_cfg.error() == st2110::Error::InvalidValue);
+
+    auto rec_cfg = st2110::video_unit_reconstructor_config_from_video_stream_signaling(s);
+    assert(!rec_cfg.has_value());
+    assert(rec_cfg.error() == st2110::Error::InvalidValue);
+
+    auto pipe_cfg =
+        st2110::video_receive_pipeline_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
+    assert(!pipe_cfg.has_value());
+    assert(pipe_cfg.error() == st2110::Error::InvalidValue);
+}
+
+static void test_missing_ssn_is_rejected_before_runtime_projection() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.signal_standard = std::nullopt;
+
+    auto dep_cfg =
+        st2110::depacketizer_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
     assert(!dep_cfg.has_value());
     assert(dep_cfg.error() == st2110::Error::InvalidValue);
 
@@ -124,7 +149,8 @@ static void test_structurally_valid_but_unmappable_runtime_format_is_unsupported
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.media.depth = st2110::VideoBitDepth{10, false};
 
-    auto dep_cfg = st2110::depacketizer_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
+    auto dep_cfg =
+        st2110::depacketizer_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
     assert(!dep_cfg.has_value());
     assert(dep_cfg.error() == st2110::Error::Unsupported);
 
@@ -144,6 +170,7 @@ int main() {
     test_pipeline_config_is_projected_from_signaling();
     test_pipeline_projection_preserves_interlaced_scan_mode_structurally();
     test_invalid_signaling_is_rejected_before_runtime_projection();
+    test_missing_ssn_is_rejected_before_runtime_projection();
     test_structurally_valid_but_unmappable_runtime_format_is_unsupported();
     return 0;
 }

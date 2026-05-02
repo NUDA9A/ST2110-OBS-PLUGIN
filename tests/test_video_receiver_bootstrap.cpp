@@ -12,6 +12,10 @@ static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
     return ptp;
 }
 
+static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStandard::Known known) {
+    return st2110::VideoSignalStandard{known, std::nullopt};
+}
+
 static st2110::VideoStreamSignaling make_base_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -22,6 +26,7 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     s.media.fps_den = 1001;
     s.media.depth = st2110::VideoBitDepth{8, false};
     s.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Bt709, std::nullopt};
+    s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
 
     s.scan_mode = st2110::VideoScanMode::Progressive;
     s.packing_mode = st2110::VideoPackingMode::Gpm;
@@ -102,16 +107,22 @@ static void test_bootstrap_rejects_invalid_signaling_before_projection() {
     assert(bootstrap.error() == st2110::Error::InvalidValue);
 }
 
+static void test_bootstrap_rejects_missing_ssn_before_projection() {
+    st2110::VideoStreamSignaling signaling = make_base_signaling();
+    signaling.media.signal_standard = std::nullopt;
+
+    auto bootstrap = st2110::video_receiver_bootstrap_config_from_video_stream_signaling(
+        signaling, 5004, 112, "0.0.0.0", "239.1.1.1", st2110::PartialFramePolicy::EmitWithFlag);
+
+    assert(!bootstrap.has_value());
+    assert(bootstrap.error() == st2110::Error::InvalidValue);
+}
+
 static void test_bootstrap_rejects_invalid_transport_inputs_after_signaling_projection() {
     const st2110::VideoStreamSignaling signaling = make_base_signaling();
 
     auto bootstrap = st2110::video_receiver_bootstrap_config_from_video_stream_signaling(
-        signaling,
-        0,
-        112,
-        "0.0.0.0",
-        "239.1.1.1",
-        st2110::PartialFramePolicy::EmitWithFlag);
+        signaling, 0, 112, "0.0.0.0", "239.1.1.1", st2110::PartialFramePolicy::EmitWithFlag);
 
     assert(!bootstrap.has_value());
     assert(bootstrap.error() == st2110::Error::InvalidValue);
@@ -134,6 +145,7 @@ int main() {
     test_valid_bootstrap_composes_all_receiver_inputs();
     test_bootstrap_preserves_absent_maxudp_override();
     test_bootstrap_rejects_invalid_signaling_before_projection();
+    test_bootstrap_rejects_missing_ssn_before_projection();
     test_bootstrap_rejects_invalid_transport_inputs_after_signaling_projection();
     test_bootstrap_returns_unsupported_for_structurally_valid_but_runtime_unmapped_signaling();
     return 0;

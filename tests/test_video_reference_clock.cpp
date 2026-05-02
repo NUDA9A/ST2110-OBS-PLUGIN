@@ -26,6 +26,10 @@ static st2110::LocalMacReferenceClock make_valid_localmac_reference_clock() {
     return local_mac;
 }
 
+static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStandard::Known known) {
+    return st2110::VideoSignalStandard{known, std::nullopt};
+}
+
 static st2110::VideoStreamSignaling make_base_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -36,6 +40,7 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     s.media.fps_den = 1001;
     s.media.depth = st2110::VideoBitDepth{8, false};
     s.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Bt709, std::nullopt};
+    s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
 
     s.scan_mode = st2110::VideoScanMode::Progressive;
     s.packing_mode = st2110::VideoPackingMode::Gpm;
@@ -171,6 +176,15 @@ static void test_video_stream_signaling_rejects_invalid_reference_clock() {
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
 }
 
+static void test_video_stream_signaling_rejects_missing_ssn_before_reference_clock_use() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.signal_standard = std::nullopt;
+    s.reference_clock.kind = st2110::ReferenceClockKind::Ptp;
+    s.reference_clock.ptp = make_valid_ptp_reference_clock();
+
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
+}
+
 int main() {
     test_validate_reference_clock_ptp_ok();
     test_validate_reference_clock_ptp_traceable_ok();
@@ -192,5 +206,6 @@ int main() {
     test_video_stream_signaling_uses_reference_clock_validation();
     test_video_stream_signaling_accepts_traceable_reference_clock();
     test_video_stream_signaling_rejects_invalid_reference_clock();
+    test_video_stream_signaling_rejects_missing_ssn_before_reference_clock_use();
     return 0;
 }
