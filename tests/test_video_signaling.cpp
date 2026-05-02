@@ -167,25 +167,68 @@ static void test_odd_width_is_structurally_valid_but_runtime_projection_rejects_
     assert(cfg.error() == st2110::Error::InvalidValue);
 }
 
-static void test_invalid_maxudp_config_is_rejected() {
+static void test_standard_sized_maxudp_is_accepted() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.media.width = 1920;
     s.media.height = 1080;
     s.media.fps_num = 25;
     s.media.fps_den = 1;
-    s.max_udp_datagram_bytes = 8;
+    s.max_udp_datagram_bytes = st2110::standardUdpDatagramSizeLimitBytes;
+
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
+}
+
+static void test_extended_sized_maxudp_is_accepted() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.width = 1920;
+    s.media.height = 1080;
+    s.media.fps_num = 25;
+    s.media.fps_den = 1;
+    s.max_udp_datagram_bytes = st2110::extendedUdpDatagramSizeLimitBytes;
+
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
+}
+
+static void test_non_boundary_maxudp_is_rejected() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.width = 1920;
+    s.media.height = 1080;
+    s.media.fps_num = 25;
+    s.media.fps_den = 1;
+    s.max_udp_datagram_bytes = 4096;
 
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
 }
 
-static void test_packet_parse_policy_is_derived_from_signaling() {
+static void test_above_extended_maxudp_is_rejected() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.width = 1920;
+    s.media.height = 1080;
+    s.media.fps_num = 25;
+    s.media.fps_den = 1;
+    s.max_udp_datagram_bytes = st2110::extendedUdpDatagramSizeLimitBytes + 1;
+
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
+}
+
+static void test_standard_maxudp_policy_is_derived_from_signaling() {
     st2110::VideoStreamSignaling s{};
-    s.max_udp_datagram_bytes = 4096;
+    s.max_udp_datagram_bytes = st2110::standardUdpDatagramSizeLimitBytes;
 
     st2110::PacketParsePolicy p = st2110::packet_parse_policy_from_video_stream_signaling(s);
 
     assert(p.max_udp_datagram_bytes.has_value());
-    assert(*p.max_udp_datagram_bytes == 4096u);
+    assert(*p.max_udp_datagram_bytes == st2110::standardUdpDatagramSizeLimitBytes);
+}
+
+static void test_extended_maxudp_policy_is_derived_from_signaling() {
+    st2110::VideoStreamSignaling s{};
+    s.max_udp_datagram_bytes = st2110::extendedUdpDatagramSizeLimitBytes;
+
+    st2110::PacketParsePolicy p = st2110::packet_parse_policy_from_video_stream_signaling(s);
+
+    assert(p.max_udp_datagram_bytes.has_value());
+    assert(*p.max_udp_datagram_bytes == st2110::extendedUdpDatagramSizeLimitBytes);
 }
 
 static void test_absent_maxudp_produces_empty_policy_override() {
@@ -278,9 +321,15 @@ int main() {
     test_overflow_dimensions_are_rejected_structurally();
     test_invalid_frame_rate_is_rejected();
     test_odd_width_is_structurally_valid_but_runtime_projection_rejects_it();
-    test_invalid_maxudp_config_is_rejected();
-    test_packet_parse_policy_is_derived_from_signaling();
+
+    test_standard_sized_maxudp_is_accepted();
+    test_extended_sized_maxudp_is_accepted();
+    test_non_boundary_maxudp_is_rejected();
+    test_above_extended_maxudp_is_rejected();
+    test_standard_maxudp_policy_is_derived_from_signaling();
+    test_extended_maxudp_policy_is_derived_from_signaling();
     test_absent_maxudp_produces_empty_policy_override();
+
     test_unsupported_sampling_is_structurally_valid_but_not_runtime_mappable();
 
     test_bt709_sdr_with_st2110_20_2017_is_accepted();

@@ -83,7 +83,22 @@ static void test_fmtp_parser_rejects_malformed_maxudp() {
     assert(parsed.error() == Error::InvalidValue);
 }
 
-static void test_final_ingestion_maps_maxudp_to_signaling() {
+static void test_final_ingestion_maps_standard_maxudp_to_signaling() {
+    const std::string payload = make_base_fmtp_payload() + "; MAXUDP=1460";
+
+    const std::string sdp = make_video_sdp_with_fmtp(payload);
+
+    auto signaling_expected = parse_video_stream_signaling_from_sdp(sdp, 96);
+    assert(signaling_expected.has_value());
+
+    const auto &signaling = *signaling_expected;
+
+    assert(signaling.max_udp_datagram_bytes.has_value());
+    assert(*signaling.max_udp_datagram_bytes == standardUdpDatagramSizeLimitBytes);
+    assert(validate_video_stream_signaling(signaling) == Error::Ok);
+}
+
+static void test_final_ingestion_maps_extended_maxudp_to_signaling() {
     const std::string payload = make_base_fmtp_payload() + "; MAXUDP=8960";
 
     const std::string sdp = make_video_sdp_with_fmtp(payload);
@@ -94,12 +109,26 @@ static void test_final_ingestion_maps_maxudp_to_signaling() {
     const auto &signaling = *signaling_expected;
 
     assert(signaling.max_udp_datagram_bytes.has_value());
-    assert(*signaling.max_udp_datagram_bytes == 8960);
-
+    assert(*signaling.max_udp_datagram_bytes == extendedUdpDatagramSizeLimitBytes);
     assert(validate_video_stream_signaling(signaling) == Error::Ok);
 }
 
-static void test_packet_parse_policy_uses_signaled_maxudp() {
+static void test_packet_parse_policy_uses_signaled_standard_maxudp() {
+    const std::string payload = make_base_fmtp_payload() + "; MAXUDP=1460";
+
+    const std::string sdp = make_video_sdp_with_fmtp(payload);
+
+    auto signaling_expected = parse_video_stream_signaling_from_sdp(sdp, 96);
+    assert(signaling_expected.has_value());
+
+    PacketParsePolicy policy = packet_parse_policy_from_video_stream_signaling(*signaling_expected);
+
+    assert(policy.max_udp_datagram_bytes.has_value());
+    assert(*policy.max_udp_datagram_bytes == standardUdpDatagramSizeLimitBytes);
+    assert(effective_max_udp_datagram_bytes(policy) == standardUdpDatagramSizeLimitBytes);
+}
+
+static void test_packet_parse_policy_uses_signaled_extended_maxudp() {
     const std::string payload = make_base_fmtp_payload() + "; MAXUDP=8960";
 
     const std::string sdp = make_video_sdp_with_fmtp(payload);
@@ -110,8 +139,8 @@ static void test_packet_parse_policy_uses_signaled_maxudp() {
     PacketParsePolicy policy = packet_parse_policy_from_video_stream_signaling(*signaling_expected);
 
     assert(policy.max_udp_datagram_bytes.has_value());
-    assert(*policy.max_udp_datagram_bytes == 8960);
-    assert(effective_max_udp_datagram_bytes(policy) == 8960);
+    assert(*policy.max_udp_datagram_bytes == extendedUdpDatagramSizeLimitBytes);
+    assert(effective_max_udp_datagram_bytes(policy) == extendedUdpDatagramSizeLimitBytes);
 }
 
 static void test_absent_maxudp_preserves_default_packet_parse_policy() {
@@ -130,8 +159,18 @@ static void test_absent_maxudp_preserves_default_packet_parse_policy() {
     assert(effective_max_udp_datagram_bytes(policy) == standardUdpDatagramSizeLimitBytes);
 }
 
-static void test_final_ingestion_rejects_too_small_maxudp_via_signaling_validation() {
-    const std::string payload = make_base_fmtp_payload() + "; MAXUDP=1";
+static void test_final_ingestion_rejects_non_boundary_maxudp_via_signaling_validation() {
+    const std::string payload = make_base_fmtp_payload() + "; MAXUDP=4096";
+
+    const std::string sdp = make_video_sdp_with_fmtp(payload);
+
+    auto signaling_expected = parse_video_stream_signaling_from_sdp(sdp, 96);
+    assert(!signaling_expected.has_value());
+    assert(signaling_expected.error() == Error::InvalidValue);
+}
+
+static void test_final_ingestion_rejects_maxudp_above_extended_limit_via_signaling_validation() {
+    const std::string payload = make_base_fmtp_payload() + "; MAXUDP=8961";
 
     const std::string sdp = make_video_sdp_with_fmtp(payload);
 
@@ -144,10 +183,16 @@ int main() {
     test_fmtp_parser_extracts_maxudp_as_known_parameter();
     test_fmtp_parser_rejects_duplicate_maxudp();
     test_fmtp_parser_rejects_malformed_maxudp();
-    test_final_ingestion_maps_maxudp_to_signaling();
-    test_packet_parse_policy_uses_signaled_maxudp();
+
+    test_final_ingestion_maps_standard_maxudp_to_signaling();
+    test_final_ingestion_maps_extended_maxudp_to_signaling();
+
+    test_packet_parse_policy_uses_signaled_standard_maxudp();
+    test_packet_parse_policy_uses_signaled_extended_maxudp();
     test_absent_maxudp_preserves_default_packet_parse_policy();
-    test_final_ingestion_rejects_too_small_maxudp_via_signaling_validation();
+
+    test_final_ingestion_rejects_non_boundary_maxudp_via_signaling_validation();
+    test_final_ingestion_rejects_maxudp_above_extended_limit_via_signaling_validation();
 
     return 0;
 }

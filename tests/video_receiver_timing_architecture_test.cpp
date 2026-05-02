@@ -46,7 +46,7 @@ VideoStreamSignaling make_valid_signaling() {
 
     signaling.scan_mode = VideoScanMode::Progressive;
     signaling.packing_mode = VideoPackingMode::Gpm;
-    signaling.max_udp_datagram_bytes = 1200;
+    signaling.max_udp_datagram_bytes = standardUdpDatagramSizeLimitBytes;
 
     signaling.media_clock_mode = MediaClockMode::Direct;
     signaling.timestamp_mode = TimestampMode::New;

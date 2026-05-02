@@ -29,9 +29,15 @@ struct PacketParsePolicy {
 }
 
 [[nodiscard]] inline Error validate_packet_parse_policy_config(const PacketParsePolicy &policy) {
-    if (policy.max_udp_datagram_bytes.has_value() && *policy.max_udp_datagram_bytes < minParsableUdpDatagramBytes) {
-        return Error::InvalidValue;
+    if (!policy.max_udp_datagram_bytes.has_value()) {
+        return Error::Ok;
     }
+
+    const std::size_t bytes = *policy.max_udp_datagram_bytes;
+    if (bytes != standardUdpDatagramSizeLimitBytes &&
+        bytes != extendedUdpDatagramSizeLimitBytes) {
+        return Error::InvalidValue;
+        }
 
     return Error::Ok;
 }
