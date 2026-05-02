@@ -72,7 +72,7 @@
 - [x] S037: SDP `exactframerate` parsing in `video_sdp_fmtp.hpp` now enforces the ST 2110-20 canonical form. Integer frame rates are accepted only as a single decimal integer (for example `25`), rational frame rates are accepted only in the smallest numerator/denominator representation (for example `30000/1001`), zero numerator/denominator and malformed forms are rejected as `InvalidValue`, and this tightening remains localized to SDP fmtp parsing without changing timestamp mapping or runtime cadence behavior.
 - [x] S038: Final ST 2110 video SDP ingestion now requires `mediaclk` to be present as a media-level SDP attribute, as required by ST 2110-10. Raw SDP timing parsing continues to preserve session/media scope non-destructively, and session-level `mediaclk` may still exist in the raw model, but session-level-only `mediaclk` no longer makes final video SDP ingestion standards-clean. Media-level `mediaclk` continues to override a session-level value where both are present.
 - [x] S039: Final ST 2110 video SDP ingestion now requires `ts-refclk`, and the accepted known reference-clock forms are validated strictly. Raw SDP timing parsing preserves unknown/open-ended forms only through the existing `Other` model path, while malformed known `ptp=` / `localmac=` forms are rejected as `InvalidValue`. Final ingestion now rejects SDP without `ts-refclk`, and modeled `ReferenceClock` validation also rejects empty/all-zero known reference-clock payloads unless the PTP form is explicitly `traceable`.
-- [ ] S040: SDP `MAXUDP` parsing is now wired through the correct path, but the accepted value still needs final policy validation against ST 2110-10 Standard UDP Size Limit / Extended UDP Size Limit semantics. This should reuse the existing `PacketParsePolicy` / packet-size validation path and avoid adding a parallel size policy.
+- [x] S040: SDP `MAXUDP` parsing is now wired through the correct path, and accepted values are now finalized against ST 2110-10 Standard UDP Size Limit / Extended UDP Size Limit semantics through the existing `PacketParsePolicy` boundary. Absent `MAXUDP` defaults to the Standard UDP Size Limit; when present, only Standard and Extended UDP size-limit values are accepted; no parallel size policy was introduced.
 - [ ] S041: Raw SDP `a=source-filter` parsing preserves useful structure, but the raw parser should be tightened for known source-filter grammar details such as accepted filter-mode tokens and malformed source-list forms. Runtime/backend source-filter application remains future work through the existing transport/bootstrap boundary.
 - [x] S042: Runtime video packet admission currently does not validate RTP payload type against the configured / signaled payload type before reorder/depacketizer use. `RxVideoConfig::payload_type` is validated and `RtpHeaderView::payload_type` is parsed, but the receive path lacks an explicit boundary that rejects or drops packets with a mismatching RTP payload type. This boundary now exists in the socket video datagram receive path before reorder/pipeline ingestion.
 - [ ] S043: Raw video SDP `m=video` parsing / final SDP ingestion currently accepts payload type values without enforcing the ST 2110 dynamic RTP payload type range `96..127` for raw video streams, and does not validate the media-line port/protocol shape. This should be tightened locally in the raw SDP media-section / final ingestion boundary without mixing transport socket behavior into `VideoStreamSignaling`.
@@ -1343,7 +1343,7 @@
     - malformed PTP GMID/domain rejected;
     - valid localmac accepted;
     - malformed localmac rejected.
-- [ ] 196H: Finalize `MAXUDP` value policy against ST 2110-10 limits
+- [x] 196H: Finalize `MAXUDP` value policy against ST 2110-10 limits
   - reuse the existing `MAXUDP -> VideoStreamSignaling::max_udp_datagram_bytes -> PacketParsePolicy` path.
   - validate values against current project policy for:
     - Standard UDP Size Limit;
@@ -1353,14 +1353,14 @@
   - prefer minimal changes to existing `.hpp` files:
     - `packet_parse.hpp`
     - `video_signaling.hpp`
-    - possibly `video_sdp_fmtp.hpp` only if parsing accepts malformed numeric values
+    - `video_sdp_fmtp.hpp` unchanged because malformed numeric values are already rejected in parsing
     - related tests only
   - do not introduce a parallel runtime config mechanism.
   - add focused tests for:
     - absent `MAXUDP` uses Standard UDP Size Limit;
     - valid standard-sized `MAXUDP`;
-    - valid extended-sized `MAXUDP` if current policy supports it;
-    - `MAXUDP` above Extended UDP Size Limit rejected;
+    - valid extended-sized `MAXUDP`;
+    - non-boundary / above-Extended `MAXUDP` values rejected by current project policy;
     - packet parse policy receives the final effective limit.
 - [ ] 196I: Tighten raw SDP `a=source-filter` grammar validation
   - keep source-filter as raw transport metadata, outside `VideoStreamSignaling`.

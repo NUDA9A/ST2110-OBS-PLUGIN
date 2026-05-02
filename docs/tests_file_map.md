@@ -267,9 +267,18 @@
 ### tests/test_packet_parse_policy.cpp
 - Роль:
     - проверяет packet-size policy boundary:
-        - UDP datagram size policy;
-        - default/effective max size;
-        - oversize rejection.
+        - UDP datagram size semantics;
+        - absent `MAXUDP` defaulting to Standard UDP Size Limit;
+        - acceptance of explicit Standard / Extended limits only;
+        - oversize rejection before wire parse.
+- Покрывает:
+    - `udp_datagram_size_bytes(...)` adds UDP header bytes;
+    - absent policy override => effective Standard UDP Size Limit;
+    - explicit Standard UDP Size Limit accepted and enforced;
+    - explicit Extended UDP Size Limit accepted and enforced;
+    - non-boundary numeric policy values rejected by config validation;
+    - oversized packet rejected at packet-policy stage before wire parsing;
+    - invalid policy config rejected before packet checks.
 
 ### tests/test_packet_parse_integration_stats.cpp
 - Роль:
@@ -455,8 +464,13 @@
         - width/height `32768` rejected structurally.
     - invalid frame rate;
     - signaling-valid but runtime-invalid odd-width projection case;
-    - invalid `MAXUDP` signaling;
-    - packet-parse-policy derivation from signaling;
+    - finalized `MAXUDP` signaling policy:
+        - Standard UDP Size Limit accepted;
+        - Extended UDP Size Limit accepted;
+        - non-boundary numeric values rejected;
+        - values above Extended UDP Size Limit rejected;
+        - packet-parse-policy derivation from signaling for Standard / Extended values;
+        - absent `MAXUDP` keeps empty policy override and therefore Standard-by-default behavior.
     - signaling-valid but runtime-unsupported sampling projection case.
     - tightened ST 2110-20 `SSN` cross-field validation:
         - `BT709 + SDR + SSN=ST2110-20:2017` accepted;
@@ -718,7 +732,18 @@
 ### tests/video_sdp_maxudp_parameters_test.cpp
 - Роль:
     - проверяет parsing/mapping of `MAXUDP` from SDP `a=fmtp`;
-    - проверяет propagation into signaling and packet parse policy.
+    - проверяет propagation into signaling and packet parse policy;
+    - проверяет финальную policy semantics for absent / Standard / Extended values.
+- Покрывает:
+    - raw fmtp parser extracts `MAXUDP` as known parameter rather than leaving it in unknown parameters;
+    - duplicate `MAXUDP` rejected;
+    - malformed numeric `MAXUDP` rejected in raw fmtp parsing;
+    - final SDP ingestion maps Standard UDP Size Limit `MAXUDP` into signaling;
+    - final SDP ingestion maps Extended UDP Size Limit `MAXUDP` into signaling;
+    - packet parse policy receives the final Standard / Extended effective limit from signaling;
+    - absent `MAXUDP` preserves empty signaling/policy override and therefore Standard-by-default behavior;
+    - final SDP ingestion rejects non-boundary numeric `MAXUDP` values via signaling validation;
+    - final SDP ingestion rejects values above Extended UDP Size Limit via signaling validation.
 
 ### tests/video_sdp_depth_16f_test.cpp
 - Роль:

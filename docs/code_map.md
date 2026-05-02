@@ -353,9 +353,14 @@
 ### libs/st2110core/include/st2110/packet_parse.hpp
 - Роль:
     - интегрированный entry point для packet parsing с optional packet-size policy и stats recording.
+    - теперь также является финальной boundary для ST 2110-10-aligned `MAXUDP` value policy:
+        - отсутствие override => Standard UDP Size Limit;
+        - explicit override currently accepted only for Standard / Extended UDP Size Limit values;
+        - произвольные numeric datagram caps не принимаются.
 - Связи:
     - опирается на `PacketView::from_udp_datagram()` / `parse_packet_view_staged()`;
-    - использует `PacketParseStats`.
+    - использует `PacketParseStats`;
+    - используется signaling path’ом через `VideoStreamSignaling::max_udp_datagram_bytes`.
 - Сущности:
     - константы:
         - `udpHeaderBytes`
@@ -367,8 +372,15 @@
         - `max_udp_datagram_bytes`
     - `udp_datagram_size_bytes(ByteSpan)`
     - `effective_max_udp_datagram_bytes(const PacketParsePolicy&)`
+        - defaults to `standardUdpDatagramSizeLimitBytes` when override is absent.
     - `validate_packet_parse_policy_config(const PacketParsePolicy&)`
+        - accepts:
+            - absent override;
+            - `standardUdpDatagramSizeLimitBytes`;
+            - `extendedUdpDatagramSizeLimitBytes`;
+        - rejects other numeric values as `InvalidValue`.
     - `validate_packet_parse_policy(ByteSpan, const PacketParsePolicy&)`
+        - enforces actual UDP datagram size against the final effective limit.
     - `parse_packet_view(ByteSpan, const PacketParsePolicy& = {})`
     - `parse_packet_view(ByteSpan, PacketParseStats&, const PacketParsePolicy& = {})`
 
