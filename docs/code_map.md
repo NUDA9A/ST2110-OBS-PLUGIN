@@ -196,7 +196,7 @@
 ### libs/st2110core/include/st2110/depacketizer.hpp
 - Роль:
     - packet-to-video-unit assembly layer.
-    - собирает `PacketView` в `AssembledVideoUnit`, используя mode-aware grouping/completion, packing-aware + format-aware placement, packing-aware + mode-aware packet padding validation, and now assembly-unit-local cross-packet write-order validation.
+    - собирает `PacketView` в `AssembledVideoUnit`, используя mode-aware grouping/completion, packing-aware + format-aware placement, packing-aware + mode-aware packet padding validation, assembly-unit-local cross-packet write-order validation, and now packet-atomic segment-write validation.
 - Связи:
     - зависит от `PacketView`, `FrameAssembler`, `VideoReceiveSemantics`, `VideoSegmentPlacement`, `VideoPacketPadding`, `VideoPackingMode`, `Stats`.
     - выше него находится `VideoReceivePipeline`, ниже — packet parsing.
@@ -225,12 +225,13 @@
         - валидирует trailing payload padding через `validate_video_packet_trailing_padding(cfg_.packing_mode, cfg_.scan_mode, ...)` до изменения assembly state;
         - вычисляет frame-write operations через `map_video_segment_to_frame_write(cfg_.packing_mode, cfg_.format, cfg_.scan_mode, ...)`;
         - валидирует и продвигает assembly-unit write cursor через `validate_and_advance_video_assembly_cursor(...)` до любого `assembler_.write_segment(...)`;
-        - only after full packet validation writes all packet segments into the current assembler;
+        - collects all packet `VideoFrameWriteOp`s first and only after full packet validation applies all writes into `FrameAssembler`;
+        - invalid later segment in the same packet therefore writes none of that packet’s segments;
         - пока runtime-реализация только для `Progressive + GPM`, non-progressive и `BPM` локализованно отвергаются через уже существующие boundaries.
 - Примечание:
-    - cross-packet row/offset monotonicity is now enforced inside depacketizer assembly state rather than only within one packet;
-    - rejected regressing packets do not emit a unit and do not corrupt already-assembled frame state;
-    - `S046` remains separate: same-packet atomicity for later intra-packet failures is still its own follow-up.
+    - cross-packet row/offset monotonicity remains enforced inside depacketizer assembly state rather than only packet-locally;
+    - packet rejection now happens before any write mutation for the rejected packet, including intra-packet later-segment failures;
+    - `FrameAssembler` remains byte-oriented and format-agnostic.
 
 ### libs/st2110core/include/st2110/endian.hpp
 - Роль:

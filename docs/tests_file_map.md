@@ -428,7 +428,8 @@
 ### tests/test_depacketizer_writes.cpp
 - Роль:
     - проверяет depacketizer segment writes into assembled frame storage;
-    - теперь также покрывает assembly-unit-local cross-packet SRD row/offset monotonicity for the current `Progressive + GPM` path.
+    - покрывает assembly-unit-local cross-packet SRD row/offset monotonicity for the current `Progressive + GPM` path;
+    - теперь также фиксирует packet-atomic write behavior: invalid later segment must write none of that packet’s segments.
 - Покрывает:
     - single-packet complete frame emission;
     - valid multi-packet same-row fragmentation with strictly increasing offset;
@@ -436,11 +437,12 @@
     - rejection of a later packet with lower row number;
     - rejection of a later packet with the same row and lower/equal offset;
     - proof that rejected regressing packets do not corrupt already-assembled frame bytes and do not prevent later valid completion of the same unit;
-    - existing multi-segment packet write behavior;
+    - valid multi-segment packet write behavior;
     - timestamp/key transition behavior for starting a new unit.
 - Фиксирует:
     - cross-packet SRD monotonicity is enforced in depacketizer assembly state, not only packet-locally;
-    - packet rejection happens before write mutation for the rejected packet.
+    - packet rejection happens before write mutation for the rejected packet;
+    - valid progressive packet behavior remains unchanged.
 
 ### tests/test_depacketizer_stats.cpp
 - Роль:
@@ -460,7 +462,7 @@
 
 ### tests/test_depacketizer_trailing_padding_state.cpp
 - Роль:
-    - regression coverage for depacketizer state integrity when packet rejection happens before frame mutation because of invalid trailing padding / invalid transition conditions.
+    - regression coverage for depacketizer state integrity when packet rejection happens before frame mutation because of invalid trailing padding, invalid transition conditions, or packet-level validation failure.
 - Покрывает:
     - invalid first packet with forbidden trailing padding does not open a unit;
     - invalid key-transition packet with forbidden trailing padding does not close or replace the previous in-progress unit;
@@ -468,7 +470,7 @@
     - rejected packet does not count as a used packet and does not corrupt assembler/depacketizer state.
 - Фиксирует:
     - packet-level rejection before assembly mutation preserves current depacketizer state;
-    - this remains compatible with the localized cross-packet row/offset ordering boundary.
+    - this remains compatible with both the localized cross-packet row/offset ordering boundary and packet-atomic segment-write behavior.
 
 ### tests/test_video_unit_reconstructor.cpp
 - Роль:

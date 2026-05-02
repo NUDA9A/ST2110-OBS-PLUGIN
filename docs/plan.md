@@ -78,7 +78,7 @@
 - [x] S043: Raw video SDP `m=video` parsing / final SDP ingestion now tightens the media-line validation locally in the raw SDP media-section boundary. Selected ST 2110 video payload types are accepted only in the dynamic RTP payload type range `96..127`, the `m=video` port token must be structurally valid, and the media-line protocol is currently constrained to the explicitly supported RTP profile `RTP/AVP`. Raw media-line text remains preserved for future transport/bootstrap use, and no socket bind/join behavior was mixed into this boundary.
 - [x] S044: Runtime UDP datagram handling now has a local RTP/RTCP tolerance boundary before media packet parsing/pipeline use. RTCP-like datagrams are classified and tolerated locally, counted as control datagrams, not fed into `PacketView::from_udp_datagram()` / `parse_packet_view_staged(...)`, and not counted as malformed ST 2110-20 media packets. Actual RTCP semantic interpretation remains out of MVP.
 - [x] S045: Cross-packet SRD ordering validation is now enforced inside the depacketizer assembly-unit boundary instead of remaining packet-local only. For the current `Progressive + GPM` MVP path, `SRD Row Number` is rejected if it goes backwards within the current assembly unit, and within the same row `SRD Offset` must strictly increase across successive segments/packets. Regressing or overlapping later segments are rejected before any write mutates the current frame assembly state.
-- [ ] S046: `Depacketizer::write_packet_segments()` mutates the current `FrameAssembler` segment-by-segment. If a later SRD segment in the same packet fails placement/bounds validation, earlier segments from that packet may already have been written into the current frame/unit. Packet segment placement should be validated atomically before mutating assembly state.
+- [x] S046: `Depacketizer::write_packet_segments()` now validates/maps the whole packet atomically before mutating the current `FrameAssembler`. All `VideoFrameWriteOp`s for the packet are collected and validated first, including assembly-unit-local ordering checks, and only then are writes applied. An invalid later SRD segment in the same packet no longer partially mutates the current assembly unit.
 - [ ] S047: `VideoMediaDescription::signal_standard` is optional in the standards-aware signaling model, so manually constructed `VideoStreamSignaling` can validate without an `SSN` even though ST 2110-20 requires the `SSN` media type parameter for conforming video streams. SDP parsing requires `SSN`, but generic signaling-model validation should either require it for standards-clean video signaling or make the synthetic/manual fallback explicit.
 - [ ] S048: ST 2110-21 sender timing signaling is currently modeled too loosely in one place and too strictly in another. Final SDP ingestion can silently default absent `TP` to `VideoSenderType::Narrow`, even though `TP` is required by ST 2110-21 for video RTP streams. At the same time, `validate_video_sender_signaling()` rejects `TROFF` / `CMAX` for `Narrow` and `NarrowLinear`, although ST 2110-21 defines these as optional media type parameters with default assumptions when absent. This validation should be rechecked and corrected against ST 2110-21.
 - [ ] S049: Raw SDP `c=` connection data parsing preserves useful transport metadata but is still too permissive structurally. It accepts arbitrary `nettype` / `addrtype` tokens and parses slash parameters without validating whether the form is appropriate for the address type / multicast shape. This should be tightened in the raw SDP transport boundary while keeping backend socket behavior separate.
@@ -1452,7 +1452,7 @@
     - later packet with same row and lower/equal offset rejected;
     - row advance accepted;
     - rejection does not emit or corrupt a frame.
-- [ ] 196N: Make depacketizer packet segment writes atomic
+- [x] 196N: Make depacketizer packet segment writes atomic
   - refactor `Depacketizer::write_packet_segments()` so one packet is fully validated/mapped before any segment is written into `FrameAssembler`.
   - collect all `VideoFrameWriteOp`s first.
   - only after all placement/bounds checks succeed, apply writes.
@@ -1460,7 +1460,7 @@
   - keep `FrameAssembler` byte-oriented and format-agnostic.
   - prefer minimal changes:
     - `depacketizer.hpp`
-    - optionally `video_segment_placement.hpp` only if row/bounds validation helper belongs there
+    - `video_segment_placement.hpp` unchanged
     - related tests only
   - add focused tests for:
     - packet with all valid segments writes successfully;
