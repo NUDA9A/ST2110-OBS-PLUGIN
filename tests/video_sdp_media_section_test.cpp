@@ -169,11 +169,62 @@ static void test_preserves_unknown_attributes() {
     assert(section.unknown_attributes[1].value == "value");
 }
 
+static void test_rejects_non_dynamic_payload_type_for_video_media_line() {
+    constexpr std::string_view sdp = "v=0\r\n"
+                                     "m=video 50000 RTP/AVP 34\r\n"
+                                     "a=rtpmap:34 raw/90000\r\n"
+                                     "a=fmtp:34 sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; "
+                                     "depth=8; PM=2110GPM; SSN=ST2110-20:2022\r\n";
+
+    expect_invalid(select_raw_video_sdp_media_section(sdp, 34));
+}
+
+static void test_rejects_malformed_video_media_line_port_token() {
+    constexpr std::string_view bad_alpha_port = "v=0\r\n"
+                                                "m=video abc RTP/AVP 112\r\n"
+                                                "a=rtpmap:112 raw/90000\r\n"
+                                                "a=fmtp:112 sampling=YCbCr-4:2:2; width=1920; height=1080; "
+                                                "exactframerate=25; depth=8; PM=2110GPM; SSN=ST2110-20:2022\r\n";
+
+    expect_invalid(select_raw_video_sdp_media_section(bad_alpha_port, 112));
+
+    constexpr std::string_view bad_zero_port = "v=0\r\n"
+                                               "m=video 0 RTP/AVP 112\r\n"
+                                               "a=rtpmap:112 raw/90000\r\n"
+                                               "a=fmtp:112 sampling=YCbCr-4:2:2; width=1920; height=1080; "
+                                               "exactframerate=25; depth=8; PM=2110GPM; SSN=ST2110-20:2022\r\n";
+
+    expect_invalid(select_raw_video_sdp_media_section(bad_zero_port, 112));
+
+    constexpr std::string_view bad_slash_port = "v=0\r\n"
+                                                "m=video 50000/2 RTP/AVP 112\r\n"
+                                                "a=rtpmap:112 raw/90000\r\n"
+                                                "a=fmtp:112 sampling=YCbCr-4:2:2; width=1920; height=1080; "
+                                                "exactframerate=25; depth=8; PM=2110GPM; SSN=ST2110-20:2022\r\n";
+
+    expect_invalid(select_raw_video_sdp_media_section(bad_slash_port, 112));
+}
+
+static void test_rejects_unexpected_video_media_line_protocol() {
+    constexpr std::string_view sdp = "v=0\r\n"
+                                     "m=video 50000 RTP/SAVP 112\r\n"
+                                     "a=rtpmap:112 raw/90000\r\n"
+                                     "a=fmtp:112 sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; "
+                                     "depth=8; PM=2110GPM; SSN=ST2110-20:2022\r\n";
+
+    expect_invalid(select_raw_video_sdp_media_section(sdp, 112));
+}
+
 int main() {
     test_selects_matching_video_media_section();
     test_rejects_payload_type_mismatch();
     test_rejects_missing_required_rtpmap_association();
     test_rejects_duplicate_relevant_attributes();
     test_preserves_unknown_attributes();
+
+    test_rejects_non_dynamic_payload_type_for_video_media_line();
+    test_rejects_malformed_video_media_line_port_token();
+    test_rejects_unexpected_video_media_line_protocol();
+
     return 0;
 }

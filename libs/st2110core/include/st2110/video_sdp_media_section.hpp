@@ -160,6 +160,33 @@ struct RawVideoSdpMediaSection {
     return static_cast<uint8_t>(value);
 }
 
+[[nodiscard]] inline std::expected<uint16_t, Error> parse_sdp_media_port_token(std::string_view token) {
+    if (token.empty() || token.find('/') != std::string_view::npos) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    unsigned value = 0;
+
+    const char *first = token.data();
+    const char *last = token.data() + token.size();
+
+    const auto [ptr, ec] = std::from_chars(first, last, value);
+
+    if (ec != std::errc{} || ptr != last || value == 0 || value > std::numeric_limits<uint16_t>::max()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return static_cast<uint16_t>(value);
+}
+
+[[nodiscard]] inline Error validate_video_sdp_media_protocol_token(std::string_view token) {
+    return token == "RTP/AVP" ? Error::Ok : Error::InvalidValue;
+}
+
+[[nodiscard]] inline Error validate_video_sdp_media_payload_type(uint8_t payload_type) {
+    return payload_type >= 96 && payload_type <= 127 ? Error::Ok : Error::InvalidValue;
+}
+
 [[nodiscard]] inline std::expected<std::vector<uint8_t>, Error>
 parse_video_m_line_payload_types(std::string_view line) {
     line = strip_cr(line);
@@ -188,6 +215,14 @@ parse_video_m_line_payload_types(std::string_view line) {
         return std::unexpected(Error::InvalidValue);
     }
 
+    if (auto parsed_port = parse_sdp_media_port_token(tokens[1]); !parsed_port.has_value()) {
+        return std::unexpected(parsed_port.error());
+    }
+
+    if (Error err = validate_video_sdp_media_protocol_token(tokens[2]); err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
     std::vector<uint8_t> payload_types{};
     payload_types.reserve(tokens.size() - 3);
 
@@ -196,6 +231,10 @@ parse_video_m_line_payload_types(std::string_view line) {
 
         if (!payload_type.has_value()) {
             return std::unexpected(Error::InvalidValue);
+        }
+
+        if (Error err = validate_video_sdp_media_payload_type(*payload_type); err != Error::Ok) {
+            return std::unexpected(err);
         }
 
         payload_types.push_back(*payload_type);
