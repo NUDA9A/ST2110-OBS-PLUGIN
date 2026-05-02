@@ -28,6 +28,83 @@ static std::string make_valid_sdp_with_transport() {
            "a=media-future:kept\n";
 }
 
+static void test_parse_connection_data_accepts_valid_ipv4_unicast() {
+    auto parsed = st2110::parse_connection_data("c=IN IP4 192.0.2.10");
+
+    assert(parsed.has_value());
+    assert(parsed->network_type == "IN");
+    assert(parsed->address_type == "IP4");
+    assert(parsed->connection_address == "192.0.2.10");
+    assert(parsed->base_address == "192.0.2.10");
+    assert(!parsed->ttl.has_value());
+    assert(!parsed->address_count.has_value());
+}
+
+static void test_parse_connection_data_accepts_valid_ipv4_multicast_with_ttl() {
+    auto parsed = st2110::parse_connection_data("c=IN IP4 239.1.1.1/32");
+
+    assert(parsed.has_value());
+    assert(parsed->network_type == "IN");
+    assert(parsed->address_type == "IP4");
+    assert(parsed->connection_address == "239.1.1.1/32");
+    assert(parsed->base_address == "239.1.1.1");
+    assert(parsed->ttl.has_value());
+    assert(*parsed->ttl == 32);
+    assert(!parsed->address_count.has_value());
+}
+
+static void test_parse_connection_data_rejects_malformed_nettype_or_addrtype() {
+    {
+        auto parsed = st2110::parse_connection_data("c=OUT IP4 192.0.2.10");
+        assert(!parsed.has_value());
+        assert(parsed.error() == st2110::Error::InvalidValue);
+    }
+
+    {
+        auto parsed = st2110::parse_connection_data("c=IN IPX 192.0.2.10");
+        assert(!parsed.has_value());
+        assert(parsed.error() == st2110::Error::InvalidValue);
+    }
+}
+
+static void test_parse_connection_data_rejects_malformed_slash_parameter_forms() {
+    {
+        auto parsed = st2110::parse_connection_data("c=IN IP4 192.0.2.10/32");
+        assert(!parsed.has_value());
+        assert(parsed.error() == st2110::Error::InvalidValue);
+    }
+
+    {
+        auto parsed = st2110::parse_connection_data("c=IN IP4 239.1.1.1/");
+        assert(!parsed.has_value());
+        assert(parsed.error() == st2110::Error::InvalidValue);
+    }
+
+    {
+        auto parsed = st2110::parse_connection_data("c=IN IP4 239.1.1.1/300");
+        assert(!parsed.has_value());
+        assert(parsed.error() == st2110::Error::InvalidValue);
+    }
+
+    {
+        auto parsed = st2110::parse_connection_data("c=IN IP4 239.1.1.1/32/");
+        assert(!parsed.has_value());
+        assert(parsed.error() == st2110::Error::InvalidValue);
+    }
+
+    {
+        auto parsed = st2110::parse_connection_data("c=IN IP4 239.1.1.1/32/0");
+        assert(!parsed.has_value());
+        assert(parsed.error() == st2110::Error::InvalidValue);
+    }
+
+    {
+        auto parsed = st2110::parse_connection_data("c=IN IP6 2001:db8::10/2");
+        assert(!parsed.has_value());
+        assert(parsed.error() == st2110::Error::InvalidValue);
+    }
+}
+
 static void test_selected_section_preserves_session_and_media_connection_data() {
     auto raw = st2110::select_raw_video_sdp_media_section(make_valid_sdp_with_transport(), 112);
 
@@ -150,6 +227,10 @@ static void test_other_media_section_transport_is_not_leaked_into_selected_secti
 }
 
 int main() {
+    test_parse_connection_data_accepts_valid_ipv4_unicast();
+    test_parse_connection_data_accepts_valid_ipv4_multicast_with_ttl();
+    test_parse_connection_data_rejects_malformed_nettype_or_addrtype();
+    test_parse_connection_data_rejects_malformed_slash_parameter_forms();
     test_selected_section_preserves_session_and_media_connection_data();
     test_selected_section_preserves_mid_source_filter_and_dup_group();
     test_session_and_media_unknown_attributes_are_preserved_separately();

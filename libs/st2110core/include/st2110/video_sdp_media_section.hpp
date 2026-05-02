@@ -11,6 +11,7 @@
 #include <system_error>
 #include <utility>
 #include <vector>
+#include <array>
 
 #include "error.hpp"
 
@@ -364,8 +365,67 @@ struct RawSdpConnectionAddressParameters {
     return out;
 }
 
+[[nodiscard]] inline std::expected<std::array<uint8_t, 4>, Error>
+parse_ipv4_address_octets(std::string_view address) {
+    std::array<uint8_t, 4> out{};
+
+    std::size_t part_start = 0;
+
+    for (std::size_t i = 0; i < 4; ++i) {
+        const std::size_t dot_pos = address.find('.', part_start);
+
+        const std::string_view part =
+            (i == 3) ? address.substr(part_start)
+                     : (dot_pos == std::string_view::npos ? std::string_view{}
+                                                          : address.substr(part_start, dot_pos - part_start));
+
+        if (part.empty()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        auto parsed = parse_sdp_connection_address_uint64(part);
+
+        if (!parsed.has_value() || *parsed > std::numeric_limits<uint8_t>::max()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        out[i] = static_cast<uint8_t>(*parsed);
+
+        if (i < 3) {
+            if (dot_pos == std::string_view::npos) {
+                return std::unexpected(Error::InvalidValue);
+            }
+
+            part_start = dot_pos + 1;
+        }
+    }
+
+    return out;
+}
+
+[[nodiscard]] inline bool is_ipv4_multicast_base_address(std::string_view address) {
+    auto octets = parse_ipv4_address_octets(address);
+
+    if (!octets.has_value()) {
+        return false;
+    }
+
+    return (*octets)[0] >= 224 && (*octets)[0] <= 239;
+}
+
+[[nodiscard]] inline bool is_ipv6_multicast_base_address(std::string_view address) {
+    if (address.size() < 2 || address.find(':') == std::string_view::npos) {
+        return false;
+    }
+
+    const char c0 = address[0];
+    const char c1 = address[1];
+
+    return (c0 == 'f' || c0 == 'F') && (c1 == 'f' || c1 == 'F');
+}
+
 [[nodiscard]] inline std::expected<RawSdpConnectionAddressParameters, Error>
-parse_connection_address_parameters(std::string_view connection_address) {
+parse_connection_address_parameters(std::string_view address_type, std::string_view connection_address) {
     connection_address = strip_cr(connection_address);
 
     if (connection_address.empty()) {
@@ -376,12 +436,8 @@ parse_connection_address_parameters(std::string_view connection_address) {
 
     const std::size_t first_slash = connection_address.find('/');
 
-    if (first_slash == std::string_view::npos) {
-        res.base_address = std::string(connection_address);
-        return res;
-    }
-
-    const std::string_view base_address = connection_address.substr(0, first_slash);
+    const std::string_view base_address =
+        (first_slash == std::string_view::npos) ? connection_address : connection_address.substr(0, first_slash);
 
     if (base_address.empty()) {
         return std::unexpected(Error::InvalidValue);
@@ -389,50 +445,89 @@ parse_connection_address_parameters(std::string_view connection_address) {
 
     res.base_address = std::string(base_address);
 
-    const std::size_t ttl_start = first_slash + 1;
-    const std::size_t second_slash = connection_address.find('/', ttl_start);
+    if (address_type == "IP4") {
+        auto parsed_ipv4 = parse_ipv4_address_octets(base_address);
 
-    const std::string_view ttl_text = second_slash == std::string_view::npos
-                                          ? connection_address.substr(ttl_start)
-                                          : connection_address.substr(ttl_start, second_slash - ttl_start);
+        if (!parsed_ipv4.has_value()) {
+            return std::unexpected(parsed_ipv4.error());
+        }
 
-    auto parsed_ttl = parse_sdp_connection_address_uint64(ttl_text);
+        if (first_slash == std::string_view::npos) {
+            return res;
+        }
 
-    if (!parsed_ttl.has_value()) {
-        return std::unexpected(parsed_ttl.error());
-    }
+        if (!is_ipv4_multicast_base_address(base_address)) {
+            return std::unexpected(Error::InvalidValue);
+        }
 
-    if (*parsed_ttl > std::numeric_limits<uint8_t>::max()) {
-        return std::unexpected(Error::InvalidValue);
-    }
+        const std::size_t ttl_start = first_slash + 1;
+        const std::size_t second_slash = connection_address.find('/', ttl_start);
 
-    res.ttl = static_cast<uint8_t>(*parsed_ttl);
+        const std::string_view ttl_text =
+            (second_slash == std::string_view::npos)
+                ? connection_address.substr(ttl_start)
+                : connection_address.substr(ttl_start, second_slash - ttl_start);
 
-    if (second_slash == std::string_view::npos) {
+        auto parsed_ttl = parse_sdp_connection_address_uint64(ttl_text);
+
+        if (!parsed_ttl.has_value() || *parsed_ttl > std::numeric_limits<uint8_t>::max()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        res.ttl = static_cast<uint8_t>(*parsed_ttl);
+
+        if (second_slash == std::string_view::npos) {
+            return res;
+        }
+
+        const std::size_t address_count_start = second_slash + 1;
+
+        if (connection_address.find('/', address_count_start) != std::string_view::npos) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        const std::string_view address_count_text = connection_address.substr(address_count_start);
+
+        auto parsed_address_count = parse_sdp_connection_address_uint64(address_count_text);
+
+        if (!parsed_address_count.has_value() || *parsed_address_count == 0 ||
+            *parsed_address_count > std::numeric_limits<uint32_t>::max()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        res.address_count = static_cast<uint32_t>(*parsed_address_count);
         return res;
     }
 
-    const std::size_t address_count_start = second_slash + 1;
+    if (address_type == "IP6") {
+        if (first_slash == std::string_view::npos) {
+            return res;
+        }
 
-    if (connection_address.find('/', address_count_start) != std::string_view::npos) {
-        return std::unexpected(Error::InvalidValue);
+        if (!is_ipv6_multicast_base_address(base_address)) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        const std::size_t address_count_start = first_slash + 1;
+
+        if (connection_address.find('/', address_count_start) != std::string_view::npos) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        const std::string_view address_count_text = connection_address.substr(address_count_start);
+
+        auto parsed_address_count = parse_sdp_connection_address_uint64(address_count_text);
+
+        if (!parsed_address_count.has_value() || *parsed_address_count == 0 ||
+            *parsed_address_count > std::numeric_limits<uint32_t>::max()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        res.address_count = static_cast<uint32_t>(*parsed_address_count);
+        return res;
     }
 
-    const std::string_view address_count_text = connection_address.substr(address_count_start);
-
-    auto parsed_address_count = parse_sdp_connection_address_uint64(address_count_text);
-
-    if (!parsed_address_count.has_value()) {
-        return std::unexpected(parsed_address_count.error());
-    }
-
-    if (*parsed_address_count == 0 || *parsed_address_count > std::numeric_limits<uint32_t>::max()) {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    res.address_count = static_cast<uint32_t>(*parsed_address_count);
-
-    return res;
+    return std::unexpected(Error::InvalidValue);
 }
 
 [[nodiscard]] inline std::expected<RawSdpConnectionData, Error> parse_connection_data(std::string_view line) {
@@ -449,7 +544,15 @@ parse_connection_address_parameters(std::string_view connection_address) {
         return std::unexpected(Error::InvalidValue);
     }
 
-    auto parsed_connection_address = parse_connection_address_parameters(tokens[2]);
+    if (tokens[0] != "IN") {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (tokens[1] != "IP4" && tokens[1] != "IP6") {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    auto parsed_connection_address = parse_connection_address_parameters(tokens[1], tokens[2]);
 
     if (!parsed_connection_address.has_value()) {
         return std::unexpected(parsed_connection_address.error());
