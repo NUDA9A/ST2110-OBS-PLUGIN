@@ -1005,7 +1005,12 @@
 - Роль:
     - raw SDP media-section selection / transport-metadata extraction boundary for video SDP before final signaling ingestion.
     - preserves payload-bound media attributes (`rtpmap`, `fmtp`), timing/reference attributes, session/media transport metadata, redundancy metadata, and unknown attributes without wiring transport behavior into `VideoStreamSignaling`.
-    - now also contains the tightened raw `a=source-filter` grammar boundary:
+    - now also contains the tightened raw `m=video` media-line validation boundary for current ST 2110 video SDP scope:
+        - structural port-token validation;
+        - explicit RTP profile validation;
+        - dynamic RTP payload-type validation for selected video payload types;
+        - original raw media-line text remains preserved.
+    - still contains the tightened raw `a=source-filter` grammar boundary:
         - accepted filter-mode tokens are explicit;
         - required structural fields must be present;
         - malformed packed source-list forms are rejected;
@@ -1036,6 +1041,20 @@
         - `parse_attribute_value(...)`
         - `trim_left_ws(std::string_view)`
         - `parse_unknown_sdp_attribute(std::string_view)`
+    - raw `m=video` media-line helpers:
+        - `parse_sdp_media_port_token(std::string_view)`
+            - validates the current single-port token form and rejects malformed or unsupported forms such as zero, non-decimal, or slash-separated port forms.
+        - `validate_video_sdp_media_protocol_token(std::string_view)`
+            - accepts only the currently supported RTP profile token for the raw video SDP boundary.
+        - `validate_video_sdp_media_payload_type(uint8_t)`
+            - accepts only dynamic RTP payload types for current ST 2110 raw video SDP media-line validation.
+        - `parse_video_m_line_payload_types(std::string_view)`
+            - validates:
+                - `m=video` shape;
+                - media-line port token;
+                - media-line protocol token;
+                - dynamic RTP payload-type range for selected video streams;
+            - preserves the original `media_line` text via higher-level selection code.
     - connection-data helpers:
         - `RawSdpConnectionAddressParameters`
         - `parse_sdp_connection_address_uint64(...)`
@@ -1043,16 +1062,9 @@
         - `parse_connection_data(...)`
     - source-filter grammar helpers:
         - `source_filter_address_token_is_structurally_clean(std::string_view)`
-            - rejects empty / packed-list address tokens such as comma- or semicolon-separated forms.
         - `is_known_source_filter_mode(std::string_view)`
-            - accepts only the currently recognized raw source-filter mode tokens.
         - `validate_source_filter_attribute_tokens(const std::vector<std::string_view>&)`
-            - validates token count, known filter mode, required structural fields, and source-list token cleanliness.
         - `parse_source_filter_attribute_value(std::string_view, RawSdpSourceFilter::Scope)`
-            - preserves `raw_value`;
-            - preserves `scope`;
-            - parses `filter_mode`, `network_type`, `address_type`, `destination_address`, `source_addresses`;
-            - remains runtime-agnostic and transport-metadata-only.
     - group/redundancy helpers:
         - `parse_group_attribute(...)`
         - `has_dup_session_group(...)`
@@ -1064,10 +1076,11 @@
         - `select_raw_video_sdp_media_section(std::string_view sdp, uint8_t expected_payload_type)`
             - selects the matching video media section;
             - preserves session/media transport metadata including `c=`, `a=source-filter`, `a=mid`, and `a=group:DUP`;
-            - rejects malformed relevant raw transport attributes structurally.
+            - rejects malformed relevant raw transport/media-section attributes structurally.
 - Примечание:
     - `a=source-filter` remains intentionally outside `VideoStreamSignaling`;
-    - socket/backend source-filter application remains future work through the existing transport/bootstrap boundary.
+    - raw `m=video` validation remains in the SDP/raw-media-section boundary and does not mix in socket bind/join/runtime behavior;
+    - socket/backend transport behavior remains future work through the existing transport/bootstrap boundary.
 
 ### libs/st2110core/include/st2110/video_sdp_fmtp.hpp
 - Роль:

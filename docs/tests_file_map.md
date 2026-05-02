@@ -624,9 +624,29 @@
 
 ### tests/video_sdp_media_section_test.cpp
 - Роль:
-    - проверяет raw SDP video media-section selection by payload type;
+    - проверяет raw SDP video media-section selection boundary in `video_sdp_media_section.hpp`;
     - проверяет payload-bound `rtpmap` / `fmtp`;
-    - проверяет unknown attribute preservation and duplicate rejection.
+    - проверяет preservation of raw media-line and unknown attributes;
+    - проверяет tightened raw `m=video` validation for ST 2110 video SDP.
+- Покрывает:
+    - selection of the matching `m=video` section by expected payload type;
+    - preservation of the selected raw `media_line`;
+    - parsing/preservation of:
+        - `rtpmap`;
+        - `fmtp`;
+        - timing/sender attributes where applicable;
+        - unknown media attributes.
+    - rejection of payload-type mismatch between selected media section and expected payload type.
+    - rejection of missing required `rtpmap` association for the selected payload type.
+    - rejection of duplicate relevant media attributes.
+    - tightened raw `m=video` validation:
+        - valid `m=video 50000 RTP/AVP 112` accepted;
+        - non-dynamic RTP payload type rejected for ST 2110 raw video;
+        - malformed media-line port rejected;
+        - unsupported media-line protocol rejected.
+- Фиксирует:
+    - raw SDP media-section parsing now performs explicit ST 2110 video `m=video` validation without moving this policy into socket/runtime code;
+    - raw media-line text remains preserved for future transport/bootstrap use.
 
 ### tests/video_sdp_fmtp_test.cpp
 - Роль:

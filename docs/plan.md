@@ -75,7 +75,7 @@
 - [x] S040: SDP `MAXUDP` parsing is now wired through the correct path, and accepted values are now finalized against ST 2110-10 Standard UDP Size Limit / Extended UDP Size Limit semantics through the existing `PacketParsePolicy` boundary. Absent `MAXUDP` defaults to the Standard UDP Size Limit; when present, only Standard and Extended UDP size-limit values are accepted; no parallel size policy was introduced.
 - [x] S041: Raw SDP `a=source-filter` parser is now tightened for known grammar details while remaining a raw transport-metadata boundary. Accepted filter-mode tokens are validated explicitly, required `nettype` / `addrtype` / destination / source-list presence is checked, malformed packed source-list forms are rejected, and the original raw value plus parsed fields remain preserved. Runtime/backend source-filter application remains future work through the existing transport/bootstrap boundary.
 - [x] S042: Runtime video packet admission now has an explicit RTP payload-type boundary separated from generic RTP parsing. `RtpHeaderView` / `PacketView` parsing still only parses RTP/PT structure, while `packet_admission.hpp` performs stream-specific payload-type admission against the configured/signaled expected payload type. Wrong-PT packets are ignored/dropped locally before reorder/depacketizer use, without mutating depacketizer state.
-- [ ] S043: Raw video SDP `m=video` parsing / final SDP ingestion currently accepts payload type values without enforcing the ST 2110 dynamic RTP payload type range `96..127` for raw video streams, and does not validate the media-line port/protocol shape. This should be tightened locally in the raw SDP media-section / final ingestion boundary without mixing transport socket behavior into `VideoStreamSignaling`.
+- [x] S043: Raw video SDP `m=video` parsing / final SDP ingestion now tightens the media-line validation locally in the raw SDP media-section boundary. Selected ST 2110 video payload types are accepted only in the dynamic RTP payload type range `96..127`, the `m=video` port token must be structurally valid, and the media-line protocol is currently constrained to the explicitly supported RTP profile `RTP/AVP`. Raw media-line text remains preserved for future transport/bootstrap use, and no socket bind/join behavior was mixed into this boundary.
 - [x] S044: The receive/parser architecture currently has no explicit RTCP tolerance / datagram classification boundary. ST 2110-10 permits RTCP and requires receivers to tolerate its presence, but the current packet parser path treats every UDP datagram as an RTP/ST2110-20 media packet. A local classifier/drop boundary is now present in the socket video datagram receive path so RTCP-like packets are ignored instead of being treated as malformed media packets.
 - [ ] S045: SRD ordering validation is currently packet-local only. ST 2110-20 also requires SRD Row Number to increase within the frame/field/segment and SRD Offset to increase within the same sample row across successive RTP packets. The depacketizer currently does not track previous row/offset state inside the current assembly unit, so cross-packet row/offset regressions or overlaps can be accepted.
 - [ ] S046: `Depacketizer::write_packet_segments()` mutates the current `FrameAssembler` segment-by-segment. If a later SRD segment in the same packet fails placement/bounds validation, earlier segments from that packet may already have been written into the current frame/unit. Packet segment placement should be validated atomically before mutating assembly state.
@@ -1397,7 +1397,7 @@
     - mismatching payload type rejected/dropped;
     - payload type validation remains separate from generic RTP parsing;
     - depacketizer is not entered for wrong-PT packets.
-- [ ] 196K: Tighten raw SDP `m=video` media-line validation for ST 2110 video
+- [x] 196K: Tighten raw SDP `m=video` media-line validation for ST 2110 video
   - keep this in the raw SDP media-section / final ingestion boundary.
   - validate at least:
     - selected video payload type is in the dynamic RTP payload type range `96..127`;
@@ -1407,7 +1407,7 @@
   - do not mix socket bind/join behavior into this task.
   - prefer minimal changes to:
     - `video_sdp_media_section.hpp`
-    - `video_sdp_ingestion.hpp` only if final ingestion needs an extra validation call
+    - `video_sdp_ingestion.hpp` unchanged because final ingestion already passes through the raw media-section selection boundary
     - related tests only
   - add focused tests for:
     - valid `m=video 50000 RTP/AVP 112`;
