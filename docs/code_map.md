@@ -1317,57 +1317,59 @@
 
 ### libs/st2110core/include/st2110/video_sdp_ingestion.hpp
 - Роль:
-    - final SDP-to-`VideoStreamSignaling` ingestion entry point для video.
-    - композиционный слой, который связывает уже существующие raw SDP parsing boundaries и signaling model mapping.
-    - отделяет SDP ingestion от transport/network config injection, runtime/bootstrap projection и receiver pipeline internals.
+    - final standards-aware SDP-to-`VideoStreamSignaling` ingestion boundary for ST 2110 video streams.
+    - combines:
+        - raw media-section selection;
+        - fmtp parsing;
+        - SDP media-description to signaling mapping;
+        - rtpmap validation;
+        - timing/reference-clock mapping;
+        - final signaling validation.
+    - keeps final SDP standards gates above runtime pipeline/depacketizer boundaries.
 - Связи:
-    - использует:
-        - `video_sdp_media_section.hpp` для выбора raw video media section по payload type;
-        - `video_sdp_fmtp.hpp` для parsing `a=fmtp`;
-        - `video_sdp_rtpmap.hpp` для parsing/binding `a=rtpmap`;
-        - `video_sdp_timing_attributes.hpp` для raw timing/reference/sender-timing attributes;
-        - `video_sdp_signaling_adapter.hpp` для mapping fmtp media-description fields в `VideoStreamSignaling`;
-        - `video_signaling.hpp` / `signaling_structs.hpp` для final structural signaling validation.
-    - не зависит от depacketizer / reorder buffer / receive pipeline internals.
+    - использует `video_sdp_media_section.hpp`, `video_sdp_fmtp.hpp`, `video_sdp_rtpmap.hpp`, `video_sdp_signaling_adapter.hpp`, `video_sdp_timing_attributes.hpp`, `video_signaling.hpp`, `signaling_structs.hpp`, `error.hpp`;
+    - используется as final entry point for SDP-driven video signaling ingestion.
 - Сущности:
     - `ascii_iequals(...)`
-        - ASCII-only helper для case-insensitive comparison в SDP token validation.
-    - `validate_video_sdp_rtpmap_for_video_signaling(const RawVideoSdpRtpMap&)`
-        - final ingestion validation для video `a=rtpmap`;
-        - currently requires `raw/90000`;
-        - rejects `encoding_parameters` to avoid silently ignoring unmodeled semantics.
-    - hex parsing helpers:
+    - `validate_video_sdp_rtpmap_for_video_signaling(...)`
+        - requires `raw/90000`;
+        - rejects extra encoding parameters for current ST 2110-20 video ingestion path.
+    - hex / octet helpers:
         - `hex_nibble(...)`
         - `parse_hex_byte(...)`
         - `parse_separated_hex_octets<N>(...)`
-        - используются для mapping raw PTP GMID / localmac forms into modeled clock identity fields.
-    - timing/signaling mapping helpers:
+    - raw timing/reference mapping helpers:
         - `reference_clock_from_raw_video_sdp_reference_clock(...)`
         - `media_clock_mode_from_raw_video_sdp_media_clock(...)`
         - `timestamp_mode_from_raw_video_sdp_timestamp_mode(...)`
         - `sender_type_from_raw_video_sdp_sender_type(...)`
+    - signaling application helpers:
         - `apply_video_sdp_timing_attributes_to_signaling(...)`
-            - consumes scoped parsed timing attributes after session/media resolution;
         - `apply_video_sdp_fmtp_timing_sender_fields_to_signaling(...)`
-            - maps known timing/sender fields parsed from `a=fmtp` into `VideoStreamSignaling`.
-        - `validate_no_duplicate_fmtp_and_standalone_timing_fields(...)`
-            - rejects duplicate/conflicting semantic timing/sender fields when both `a=fmtp` media type parameters and media-level standalone compatibility attributes provide the same field;
-            - allows `a=fmtp` media type parameters to override session-level standalone compatibility attributes because `fmtp` is media-level signaling.
-    - final entry points:
-        - `video_stream_signaling_from_raw_video_sdp_media_section(const RawVideoSdpMediaSection&)`
-            - composes already-bound raw media-section fields into a validated `VideoStreamSignaling`.
-        - `parse_video_stream_signaling_from_sdp(std::string_view, uint8_t)`
-            - selects the matching video media section and maps it into `VideoStreamSignaling`.
+    - timing-scope helpers:
+        - `raw_video_sdp_timing_value_is_media_scoped(...)`
+        - `raw_video_sdp_has_media_level_mediaclk(const RawVideoSdpTimingAttributes&)`
+            - returns `true` only when the resolved raw timing model contains `mediaclk` with media scope;
+            - used as a final ST 2110-10 ingestion gate.
+    - `validate_no_duplicate_fmtp_and_standalone_timing_fields(...)`
+        - keeps conflict policy localized:
+            - fmtp timing media parameters may override session-level standalone attributes;
+            - fmtp timing media parameters must not coexist with same-semantic media-level standalone timing attributes.
+    - `video_stream_signaling_from_raw_video_sdp_media_section(...)`
+        - final SDP ingestion pipeline:
+            - parses fmtp;
+            - maps fmtp to `VideoStreamSignaling`;
+            - validates selected `rtpmap`;
+            - parses scoped timing attributes;
+            - now requires media-level `mediaclk` before final signaling application;
+            - applies standalone timing attributes and fmtp timing fields;
+            - validates final `VideoStreamSignaling`.
+    - `parse_video_stream_signaling_from_sdp(...)`
+        - top-level final SDP ingestion entry point by payload type.
 - Примечание:
-    - это final SDP ingestion boundary, а не runtime receiver bootstrap;
-    - transport/network fields and receiver local policy inputs still belong to signaling-to-runtime/bootstrap projection layers;
-    - current `rtpmap` and timing interpretation intentionally remains conservative and localized.
-    - known timing/sender fields may now come from `a=fmtp` media type parameters or from standalone compatibility attributes, but duplicate/conflicting semantic sources are rejected at this composition boundary.
-    - raw transport/redundancy metadata parsed by `video_sdp_media_section.hpp` is preserved at the raw SDP boundary and intentionally not mapped into `VideoStreamSignaling`; backend/runtime consumption remains future work through dedicated bootstrap/transport adapters.
-    - duplicate candidate media sections preserved by `video_sdp_media_section.hpp` are intentionally ignored by final `VideoStreamSignaling` ingestion for now; redundant-stream selection remains a future bootstrap/transport policy boundary through `214D`.
-    - session-level standalone timing/reference-clock attributes are now applied to the selected video stream when no media-level value overrides them;
-    - media-level standalone values override session-level standalone values at the SDP ingestion boundary;
-    - `fmtp` timing media parameters are applied after standalone timing attributes and may override session-level standalone values, while conflicts with media-level standalone values are rejected.
+    - raw SDP parsing remains scope-aware and non-destructive;
+    - session-level `mediaclk` may still be preserved in the raw model, but final ST 2110 video ingestion is now standards-clean only when a media-level `mediaclk` is present;
+    - timing interpretation remains outside runtime pipeline / depacketizer boundaries.
 
 ### libs/st2110core/include/st2110/video_timestamp_mapping.hpp
 - Роль:

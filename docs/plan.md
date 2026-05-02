@@ -70,7 +70,7 @@
 - [x] S035: Video SDP ingestion now models SDP `PAR` from `a=fmtp` as an explicit signaling/media-description property. `PAR` is represented as `VideoPixelAspectRatio` in `VideoMediaDescription`, defaults to `1:1` when absent at signaling level, validates positive integer parts, and is parsed/canonicalized locally in the SDP fmtp parser without changing runtime frame storage, `PixelFormat`, depacketizer, placement, or runtime projection behavior.
 - [x] S036: Signaled video `width` / `height` are now validated in the standards-aware signaling/media-description boundary as `1..32767`, matching the ST 2110-20 SDP limits. This is kept separate from lower-level runtime/frame validation such as the current UYVY-specific even-width runtime constraint.
 - [x] S037: SDP `exactframerate` parsing in `video_sdp_fmtp.hpp` now enforces the ST 2110-20 canonical form. Integer frame rates are accepted only as a single decimal integer (for example `25`), rational frame rates are accepted only in the smallest numerator/denominator representation (for example `30000/1001`), zero numerator/denominator and malformed forms are rejected as `InvalidValue`, and this tightening remains localized to SDP fmtp parsing without changing timestamp mapping or runtime cadence behavior.
-- [ ] S038: ST 2110-10 requires `mediaclk` to be present as a media-level attribute. Current SDP timing scope handling preserves session/media scope, but final ST 2110 video ingestion must not treat session-level `mediaclk` alone as sufficient for standards-clean SDP ingestion. This should be enforced at the SDP ingestion boundary, while raw parsing may continue preserving session-level attributes.
+- [x] S038: Final ST 2110 video SDP ingestion now requires `mediaclk` to be present as a media-level SDP attribute, as required by ST 2110-10. Raw SDP timing parsing continues to preserve session/media scope non-destructively, and session-level `mediaclk` may still exist in the raw model, but session-level-only `mediaclk` no longer makes final video SDP ingestion standards-clean. Media-level `mediaclk` continues to override a session-level value where both are present.
 - [ ] S039: ST 2110-10 requires `ts-refclk` to be present for all stream descriptions, and the accepted `ptp` / `localmac` forms should be validated more strictly. Current raw parsing and modeled reference-clock validation should be tightened so missing or malformed reference-clock signaling does not silently pass final video SDP ingestion.
 - [ ] S040: SDP `MAXUDP` parsing is now wired through the correct path, but the accepted value still needs final policy validation against ST 2110-10 Standard UDP Size Limit / Extended UDP Size Limit semantics. This should reuse the existing `PacketParsePolicy` / packet-size validation path and avoid adding a parallel size policy.
 - [ ] S041: Raw SDP `a=source-filter` parsing preserves useful structure, but the raw parser should be tightened for known source-filter grammar details such as accepted filter-mode tokens and malformed source-list forms. Runtime/backend source-filter application remains future work through the existing transport/bootstrap boundary.
@@ -1321,21 +1321,12 @@
     - reducible rational such as `60000/2002` rejected;
     - zero numerator/denominator rejected;
     - existing valid SDP examples remaining accepted.
-- [ ] 196F: Require media-level `mediaclk` for final ST 2110 video SDP ingestion
-  - keep raw SDP parsing scope-aware and non-destructive.
-  - final `VideoStreamSignaling` ingestion should require a selected media-level `a=mediaclk`, as required by ST 2110-10.
-  - session-level `mediaclk` may remain preserved in the raw model, but must not by itself make final ST 2110 video ingestion standards-clean.
-  - prefer minimal changes to existing `.hpp` files:
-    - `video_sdp_media_section.hpp` only if helper access is needed
-    - `video_sdp_timing_attributes.hpp`
-    - `video_sdp_ingestion.hpp`
-    - related tests only
-  - do not move timing interpretation into runtime pipeline or depacketizer.
-  - add focused tests for:
-    - media-level `mediaclk:direct=0` accepted;
-    - session-level-only `mediaclk` rejected by final video ingestion;
-    - media-level value overriding session-level value still works where applicable;
-    - existing media-level-only SDP behavior remains unchanged.
+- [x] 196F: Require media-level `mediaclk` for final ST 2110 video SDP ingestion
+  - keep raw SDP parsing scope-aware and non-destructive;
+  - final `VideoStreamSignaling` ingestion now requires a selected media-level `a=mediaclk`, as required by ST 2110-10;
+  - session-level `mediaclk` may remain preserved in the raw model, but does not by itself make final ST 2110 video ingestion standards-clean;
+  - media-level value continues to override a session-level value where both are present;
+  - timing interpretation remains localized in SDP timing/ingestion boundaries and is not moved into runtime pipeline or depacketizer.
 - [ ] 196G: Tighten required `ts-refclk` / reference-clock validation
   - final ST 2110 video SDP ingestion should require `ts-refclk`.
   - validate known reference-clock forms more strictly:

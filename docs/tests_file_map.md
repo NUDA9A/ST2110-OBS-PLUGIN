@@ -712,6 +712,19 @@
         - `mid`;
         - `group:DUP`;
         - unknown attributes.
+- Покрывает:
+    - preservation of session and media `c=` connection data separately;
+    - preservation of `mid`, `source-filter`, and session-level `group:DUP`;
+    - separate preservation of unknown session-level and media-level attributes;
+    - duplicate rejection for:
+        - media connection;
+        - session connection;
+        - `mid`.
+    - transport metadata isolation across media sections.
+    - compatibility with final video SDP ingestion when the selected media section is otherwise standards-clean, including media-level `mediaclk`.
+- Фиксирует:
+    - raw transport/redundancy metadata stays outside `VideoStreamSignaling`;
+    - transport metadata does not break final video signaling ingestion when the selected media section includes the required media-level `mediaclk`.
 
 ### tests/video_sdp_media_cross_field_validation_test.cpp
 - Роль:
@@ -761,7 +774,23 @@
 
 ### tests/video_sdp_timing_scope_test.cpp
 - Роль:
-    - проверяет session/media scope preservation and resolution for timing/reference/sender attributes.
+    - проверяет session/media scope preservation and final-ingestion policy for SDP timing attributes.
+- Покрывает:
+    - session-level `ts-refclk` / `mediaclk` preservation in the raw selected media-section model;
+    - session-level-only `mediaclk` remaining preserved in raw timing parsing but being rejected by final video SDP ingestion;
+    - media-level `ts-refclk` / `mediaclk` overriding session-level values in the resolved raw timing model;
+    - duplicate rejection within the same scope for timing attributes;
+    - media-level timing requirement helper behavior:
+        - media-level `mediaclk` detected as sufficient;
+        - session-level-only `mediaclk` not treated as media-level presence.
+    - conflict policy between fmtp timing fields and standalone timing attributes:
+        - fmtp timing field may override session-level standalone attribute;
+        - fmtp timing field conflicts with same-semantic media-level standalone attribute.
+    - existing media-level-only SDP timing behavior remaining unchanged.
+- Фиксирует:
+    - raw timing parsing remains scope-aware and non-destructive;
+    - final ST 2110 video SDP ingestion now requires media-level `mediaclk`;
+    - media-level timing values still override session-level values where applicable.
 
 ### tests/video_sdp_connection_data_test.cpp
 - Роль:
