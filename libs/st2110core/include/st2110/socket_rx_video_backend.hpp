@@ -5,6 +5,7 @@
 #include "backend_factory.hpp"
 #include "bytes.hpp"
 #include "fixed_reorder_buffer.hpp"
+#include "packet_admission.hpp"
 #include "packet_parse.hpp"
 #include "socket_runtime.hpp"
 #include "socket_rx_single_media_backend_base.hpp"
@@ -67,14 +68,15 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public
             return;
         }
 
-        if (!datagram_matches_configured_payload_type(udp_payload, *configured_video_payload_type_)) {
-            record_ignored_nonmedia_datagram();
-            return;
-        }
-
         auto packet = parse_packet_view_staged(udp_payload);
         if (!packet) {
             record_rejected_packet(packet.error().error, packet.error().stage);
+            return;
+        }
+
+        if (Error err = validate_video_packet_payload_type_admission(*packet, *configured_video_payload_type_);
+            err != Error::Ok) {
+            record_ignored_nonmedia_datagram();
             return;
         }
 
