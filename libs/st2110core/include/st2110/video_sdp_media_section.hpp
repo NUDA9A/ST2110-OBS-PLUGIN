@@ -424,6 +424,49 @@ parse_connection_address_parameters(std::string_view connection_address) {
                                 .address_count = parsed_connection_address->address_count};
 }
 
+[[nodiscard]] inline bool source_filter_address_token_is_structurally_clean(std::string_view token) {
+    if (token.empty()) {
+        return false;
+    }
+
+    for (const char c : token) {
+        if (c == ',' || c == ';') {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+[[nodiscard]] inline bool is_known_source_filter_mode(std::string_view mode) {
+    return mode == "incl" || mode == "excl";
+}
+
+[[nodiscard]] inline Error
+validate_source_filter_attribute_tokens(const std::vector<std::string_view> &tokens) {
+    if (tokens.size() < 5) {
+        return Error::InvalidValue;
+    }
+
+    if (!is_known_source_filter_mode(tokens[0])) {
+        return Error::InvalidValue;
+    }
+
+    for (std::size_t i = 1; i < 4; ++i) {
+        if (tokens[i].empty()) {
+            return Error::InvalidValue;
+        }
+    }
+
+    for (std::size_t i = 4; i < tokens.size(); ++i) {
+        if (!source_filter_address_token_is_structurally_clean(tokens[i])) {
+            return Error::InvalidValue;
+        }
+    }
+
+    return Error::Ok;
+}
+
 [[nodiscard]] inline std::expected<RawSdpSourceFilter, Error>
 parse_source_filter_attribute_value(std::string_view value, RawSdpSourceFilter::Scope scope) {
     value = strip_cr(value);
@@ -442,8 +485,8 @@ parse_source_filter_attribute_value(std::string_view value, RawSdpSourceFilter::
     // - do not reject because multicast/socket support is missing;
     // - preserve the original value;
     // - only reject structurally malformed values.
-    if (tokens.size() < 5) {
-        return std::unexpected(Error::InvalidValue);
+    if (Error err = validate_source_filter_attribute_tokens(tokens); err != Error::Ok) {
+        return std::unexpected(err);
     }
 
     RawSdpSourceFilter res{.raw_value = std::string(value),
