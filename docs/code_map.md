@@ -1965,16 +1965,18 @@
         - configured expected video payload type
 - Поведение:
     - receive path is ordered as:
-        - RTCP-like datagram filtering;
+        - RTCP-like datagram tolerance/classification;
         - generic video packet parsing through `parse_packet_view_staged(...)`;
         - explicit video RTP payload-type admission through `validate_video_packet_payload_type_admission(...)`;
         - reorder admission;
         - depacketizer/pipeline drain;
         - reconstructed-frame delivery.
+    - RTCP-like datagrams are counted as control datagrams and are not fed into media packet parsing.
+    - malformed/unsupported media datagrams that do reach parsing are accounted for separately as rejected media packets.
     - wrong-PT packets are ignored/dropped/accounted for locally before reorder/depacketizer and do not mutate depacketizer state.
 - Примечание:
-    - generic RTP parsing and stream-specific packet admission are now explicitly separated;
-    - current payload-type admission is still equality-based for one selected stream and remains localized in the runtime receive path.
+    - generic RTP parsing, UDP control/media classification, and stream-specific packet admission are now explicitly separated;
+    - actual RTCP semantic interpretation remains outside MVP.
 
 ### libs/st2110core/include/st2110/socket_rx_audio_backend.hpp
 - Роль:
@@ -2127,62 +2129,60 @@
 
 ### libs/st2110core/include/st2110/socket_rx_single_media_backend_base.hpp
 - Роль:
-    - общий single-media socket receive backend runtime boundary для `SocketRxVideoBackend` и `SocketRxAudioBackend`.
-    - централизует общий socket lifecycle/runtime/state/stats слой без смешивания с essence-specific parser/depacketizer/delivery logic.
+    - shared socket receive runtime base for single-media backends.
+    - owns common socket lifecycle, receive-thread loop, receive buffer ownership, and backend-local stats/accounting.
+    - now also localizes the UDP datagram pre-parse classification/tolerance boundary shared by socket receive paths:
+        - RTCP-like datagrams are identified before media packet parsing;
+        - control datagrams can be ignored/counted separately;
+        - stream-specific media admission stays above generic parsing in concrete media backends.
 - Связи:
-    - реализует `IRxBackend`;
-    - использует `ISocketRxPortFactory` / `ISocketRxPort` из `socket_runtime.hpp`;
-    - используется concrete final backend’ами:
-        - `socket_rx_video_backend.hpp`;
-        - `socket_rx_audio_backend.hpp`.
+    - inherits `IRxBackend`;
+    - uses:
+        - `backend.hpp`
+        - `bytes.hpp`
+        - `packet_parse.hpp`
+        - `socket_runtime.hpp`
+        - `stats.hpp`
+    - consumed by concrete socket backends such as `socket_rx_video_backend.hpp`.
 - Сущности:
-    - `SocketRxSingleMediaBackendBase`
-        - public/common backend API:
-            - `backend_name()`;
-            - `capabilities()`;
-            - `state()`;
-            - `stats()`;
-            - `stop()`.
-        - common lifecycle/runtime helpers:
-            - `validate_common_start_preconditions()`;
-            - `create_port()`;
-            - `media_active()`;
-            - `set_media_active(bool)`;
-            - `start_common_runtime(...)`;
-            - `run_receive_loop(std::stop_token)`;
-            - `clear_common_runtime_objects()`;
-            - `reset_stats()`.
-        - common stats helpers:
-            - `record_received_datagram(...)`;
-            - `record_ignored_control_datagram()`;
-            - `record_ignored_nonmedia_datagram()`;
-            - `record_rejected_packet(...)`;
-            - `record_accepted_media_packet()`;
-            - `record_rejected_media_packet()`;
-            - `record_parsed_packet_ok()`;
-            - `record_delivered_video_frame()`;
-            - `record_delivered_media_unit()`;
-            - `build_base_stats_snapshot_locked()`.
-        - common socket receive helpers shared by video/audio:
-            - `make_receive_buffer(const PacketParsePolicy&)`;
-            - `is_rtcp_like_datagram(ByteSpan)`;
-            - `datagram_matches_configured_payload_type(ByteSpan, uint8_t)`.
-        - virtual hooks for essence-specific behavior:
-            - `process_received_datagram(ByteSpan)`;
-            - `clear_media_runtime_objects()`;
-            - `augment_stats_snapshot_locked(BackendStats&)`.
+    - lifecycle/runtime helpers:
+        - `validate_common_start_preconditions()`
+        - `create_port()`
+        - `start_common_runtime(...)`
+        - `run_receive_loop(std::stop_token) noexcept`
+        - `clear_common_runtime_objects() noexcept`
+        - `reset_stats() noexcept`
+    - stats/accounting helpers:
+        - `record_received_datagram(...)`
+        - `record_ignored_control_datagram() noexcept`
+        - `record_ignored_nonmedia_datagram() noexcept`
+        - `record_rejected_packet(...)`
+        - `record_accepted_media_packet() noexcept`
+        - `record_rejected_media_packet() noexcept`
+        - `record_parsed_packet_ok() noexcept`
+        - `record_delivered_video_frame() noexcept`
+        - `record_delivered_media_unit() noexcept`
+        - `build_base_stats_snapshot_locked() const noexcept`
+    - receive-buffer helper:
+        - `make_receive_buffer(const PacketParsePolicy&)`
+    - pre-parse datagram classification helpers:
+        - `is_rtcp_like_datagram(ByteSpan) noexcept`
+            - recognizes RTP-version-2 datagrams with RTCP packet-type range and keeps them out of media packet parsing;
+        - `datagram_matches_configured_payload_type(ByteSpan, std::uint8_t) noexcept`
+            - remains a small raw helper in the common base, while the explicit parsed-packet payload-type admission boundary for video lives above generic parsing.
+    - abstract extension points:
+        - `process_received_datagram(ByteSpan) noexcept`
+        - `clear_media_runtime_objects() noexcept`
+        - `augment_stats_snapshot_locked(BackendStats&) const noexcept`
+- Поведение:
+    - common receive loop:
+        - receives UDP datagrams from the socket runtime;
+        - records receive counters;
+        - passes each datagram to the concrete media runtime path.
+    - RTCP-like datagrams can be classified and tolerated locally before `PacketView` parsing and do not need RTCP semantic interpretation in MVP.
 - Примечание:
-    - RTCP-like datagram filtering remains in the common socket base;
-    - stream-specific RTP payload-type admission for the video path now lives above generic parsing in `packet_admission.hpp` / `socket_rx_video_backend.hpp`, not as the primary video admission rule in the common base.
-    - common runtime owns:
-        - `port_factory_`;
-        - `port_`;
-        - `receive_buffer_`;
-        - `receive_thread_`;
-        - `state_`;
-        - `stats_`;
-    - concrete backend’ы add only media-specific runtime state above this boundary;
-    - generic media-packet accounting now exists separately from the video-specific stage-aware packet-parse accounting path.
+    - this file now carries the shared UDP control/media pre-parse tolerance boundary;
+    - malformed media packet handling remains separate from tolerated RTCP-like control datagrams.
 
 ### libs/st2110core/src/socket_rx_single_media_backend_base.cpp
 - Роль:

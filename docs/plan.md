@@ -76,7 +76,7 @@
 - [x] S041: Raw SDP `a=source-filter` parser is now tightened for known grammar details while remaining a raw transport-metadata boundary. Accepted filter-mode tokens are validated explicitly, required `nettype` / `addrtype` / destination / source-list presence is checked, malformed packed source-list forms are rejected, and the original raw value plus parsed fields remain preserved. Runtime/backend source-filter application remains future work through the existing transport/bootstrap boundary.
 - [x] S042: Runtime video packet admission now has an explicit RTP payload-type boundary separated from generic RTP parsing. `RtpHeaderView` / `PacketView` parsing still only parses RTP/PT structure, while `packet_admission.hpp` performs stream-specific payload-type admission against the configured/signaled expected payload type. Wrong-PT packets are ignored/dropped locally before reorder/depacketizer use, without mutating depacketizer state.
 - [x] S043: Raw video SDP `m=video` parsing / final SDP ingestion now tightens the media-line validation locally in the raw SDP media-section boundary. Selected ST 2110 video payload types are accepted only in the dynamic RTP payload type range `96..127`, the `m=video` port token must be structurally valid, and the media-line protocol is currently constrained to the explicitly supported RTP profile `RTP/AVP`. Raw media-line text remains preserved for future transport/bootstrap use, and no socket bind/join behavior was mixed into this boundary.
-- [x] S044: The receive/parser architecture currently has no explicit RTCP tolerance / datagram classification boundary. ST 2110-10 permits RTCP and requires receivers to tolerate its presence, but the current packet parser path treats every UDP datagram as an RTP/ST2110-20 media packet. A local classifier/drop boundary is now present in the socket video datagram receive path so RTCP-like packets are ignored instead of being treated as malformed media packets.
+- [x] S044: Runtime UDP datagram handling now has a local RTP/RTCP tolerance boundary before media packet parsing/pipeline use. RTCP-like datagrams are classified and tolerated locally, counted as control datagrams, not fed into `PacketView::from_udp_datagram()` / `parse_packet_view_staged(...)`, and not counted as malformed ST 2110-20 media packets. Actual RTCP semantic interpretation remains out of MVP.
 - [ ] S045: SRD ordering validation is currently packet-local only. ST 2110-20 also requires SRD Row Number to increase within the frame/field/segment and SRD Offset to increase within the same sample row across successive RTP packets. The depacketizer currently does not track previous row/offset state inside the current assembly unit, so cross-packet row/offset regressions or overlaps can be accepted.
 - [ ] S046: `Depacketizer::write_packet_segments()` mutates the current `FrameAssembler` segment-by-segment. If a later SRD segment in the same packet fails placement/bounds validation, earlier segments from that packet may already have been written into the current frame/unit. Packet segment placement should be validated atomically before mutating assembly state.
 - [ ] S047: `VideoMediaDescription::signal_standard` is optional in the standards-aware signaling model, so manually constructed `VideoStreamSignaling` can validate without an `SSN` even though ST 2110-20 requires the `SSN` media type parameter for conforming video streams. SDP parsing requires `SSN`, but generic signaling-model validation should either require it for standards-clean video signaling or make the synthetic/manual fallback explicit.
@@ -1415,7 +1415,7 @@
     - malformed port rejected;
     - unexpected protocol rejected;
     - existing valid SDP ingestion remains unchanged.
-- [ ] 196L: Add RTCP tolerance / UDP datagram classification boundary
+- [x] 196L: Add RTCP tolerance / UDP datagram classification boundary
   - define a local classifier before media packet parsing / pipeline use:
     - RTP media packet candidate;
     - RTCP packet candidate;
@@ -1426,8 +1426,8 @@
     - not counted as malformed ST 2110-20 media packets.
   - keep actual RTCP semantic interpretation out of MVP unless later needed.
   - prefer minimal changes:
-    - new small helper/header if useful, for example `rtp_datagram_classifier.hpp`
-    - parser stats extension only if needed
+    - no new helper/header was required because the local classification boundary is already localized in the shared socket receive runtime base
+    - parser stats unchanged
     - related tests only
   - add focused tests for:
     - valid RTP media packet classified as media;

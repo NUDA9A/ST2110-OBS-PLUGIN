@@ -1186,47 +1186,31 @@
 
 ### tests/test_socket_rx_video_backend.cpp
 - Роль:
-    - проверяет lifecycle, config projection, datagram receive composition, periodic stats snapshot behavior, graceful stop/cleanup behavior, and default-factory behavior of socket video backend through injected and real Linux socket-port paths.
+    - проверяет concrete socket video backend lifecycle, open-config projection, receive-loop behavior, backend-local stats, and end-to-end packet-to-frame delivery through the socket receive path.
+    - now also covers the local UDP datagram classification/tolerance boundary for RTCP-like control traffic versus media-packet parsing.
 - Покрывает:
-    - injected-factory path:
+    - backend interface/lifecycle behavior:
         - stop before successful start;
-        - repeated stop after clean shutdown;
-        - IPv4 multicast projection;
-        - IPv4 multicast projection with explicit interface/local address;
-        - IPv6 multicast projection;
-        - projection failure;
-        - port-open failure and retry;
-        - null created port rejection;
-        - close-failure behavior during `stop()`;
-        - restart after successful stop.
-    - backend receive-path composition:
-        - reordered packet delivery into the existing video receive pipeline;
-        - explicit RTCP-like/control datagram ignore behavior;
-        - explicit RTP payload-type admission;
-        - malformed media datagram reject behavior;
-        - RTP timestamp mapping before sink delivery.
-    - backend stats snapshot behavior:
-        - zero snapshot on idle/stopped backend;
-        - received datagram / byte counters;
-        - ignored control / non-media counters;
-        - parsed/rejected packet counters;
-        - delivered frame counters;
-        - nested packet-parse / reorder / depacketizer stats;
-        - reset of per-run stats after stop and restart.
-    - graceful stop / cleanup guarantees:
-        - `stop()` before successful `start_video()` succeeds and keeps backend stopped;
-        - repeated `stop()` after successful shutdown remains a no-op/success without extra close calls;
-        - close failure does not falsely clear active backend state;
-        - retry after failed start remains valid.
-    - factory/default path:
-        - descriptor and backend-creation shape;
-        - Linux default backend bind-failure path on real Linux socket port;
-        - Linux default backend recovery after multicast join failure;
-        - Linux default backend successful IPv4 unicast frame receive path with stats snapshot.
+        - repeated stop;
+        - injected socket-port factory usage;
+        - IPv4/IPv6 multicast projection;
+        - unicast projection;
+        - retry after open failure;
+        - null created-port rejection;
+        - close-failure propagation;
+        - restart after clean stop.
+    - receive/runtime data path:
+        - valid media packet delivery into a reconstructed frame;
+        - backend-local stats progression across receive, parse, reorder, depacketizer, and frame-delivery stages;
+        - wrong payload-type datagrams ignored/dropped before depacketizer state mutation.
+    - UDP datagram classification / RTCP tolerance:
+        - RTCP-like datagram is tolerated and counted as control traffic;
+        - RTCP-like datagram does not enter `parse_packet_view_staged(...)` / media parsing;
+        - RTCP-like datagram does not reach reorder/depacketizer/frame delivery;
+        - short malformed media datagram is rejected as malformed media, not as tolerated RTCP.
 - Фиксирует:
-    - `SocketRxVideoBackend` keeps graceful stop and runtime cleanup localized inside backend/runtime boundaries;
-    - socket close is performed through `ISocketRxPort`, not by leaking native-socket handling into backend callers;
-    - datagram classification, receive/runtime cleanup, and sink delivery remain separate concerns.
+    - control datagrams and malformed media datagrams are accounted for through distinct local boundaries;
+    - RTCP tolerance remains a local receive/runtime behavior, without introducing RTCP semantic interpretation into MVP.
 
 ### tests/test_socket_runtime_interface.cpp
 - Роль:
