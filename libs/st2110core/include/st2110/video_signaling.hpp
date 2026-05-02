@@ -174,6 +174,14 @@ inline Error validate_video_range(const VideoRange &range) {
     return Error::Ok;
 }
 
+inline Error validate_video_pixel_aspect_ratio(const VideoPixelAspectRatio &par) {
+    if (par.width == 0 || par.height == 0) {
+        return Error::InvalidValue;
+    }
+
+    return Error::Ok;
+}
+
 inline Error validate_video_bit_depth(const VideoBitDepth &depth) {
     if (depth.floating_point) {
         if (depth.bits != 16) {
@@ -322,7 +330,7 @@ inline Error validate_video_media_description(const VideoMediaDescription &media
         if (Error err = validate_video_transfer_characteristic_system(*media.transfer_characteristic_system);
             err != Error::Ok) {
             return err;
-        }
+            }
     }
     if (media.signal_standard.has_value()) {
         if (Error err = validate_video_signal_standard(*media.signal_standard); err != Error::Ok) {
@@ -333,6 +341,9 @@ inline Error validate_video_media_description(const VideoMediaDescription &media
         if (Error err = validate_video_range(*media.range); err != Error::Ok) {
             return err;
         }
+    }
+    if (Error err = validate_video_pixel_aspect_ratio(media.pixel_aspect_ratio); err != Error::Ok) {
+        return err;
     }
     if (Error err = config_validation::validate_video_dimensions(media.width, media.height); err != Error::Ok) {
         return err;

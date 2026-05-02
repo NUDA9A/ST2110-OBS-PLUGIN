@@ -111,6 +111,11 @@ struct VideoRange {
     std::optional<std::string> raw_token{};
 };
 
+struct VideoPixelAspectRatio {
+    uint32_t width = 1;
+    uint32_t height = 1;
+};
+
 struct VideoMediaDescription {
     VideoSampling sampling{};
     uint32_t width = 0;
@@ -122,6 +127,7 @@ struct VideoMediaDescription {
     std::optional<VideoTransferCharacteristicSystem> transfer_characteristic_system{};
     std::optional<VideoSignalStandard> signal_standard{};
     std::optional<VideoRange> range{};
+    VideoPixelAspectRatio pixel_aspect_ratio{};
 };
 
 struct VideoStreamSignaling {

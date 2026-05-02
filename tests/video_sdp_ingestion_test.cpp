@@ -25,6 +25,21 @@ static std::string make_valid_video_sdp() {
            "a=TP:2110TPN\r\n";
 }
 
+static std::string make_video_sdp_with_par(std::string_view par_token) {
+    return std::string{"v=0\r\n"
+                       "o=- 0 0 IN IP4 127.0.0.1\r\n"
+                       "s=ST2110 test\r\n"
+                       "t=0 0\r\n"
+                       "m=video 5004 RTP/AVP 96\r\n"
+                       "a=rtpmap:96 raw/90000\r\n"
+                       "a=fmtp:96 sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=60000/1001; depth=10; "
+                       "colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; TCS=SDR; RANGE=FULL; PAR="} +
+           std::string{par_token} +
+           "\r\n"
+           "a=ts-refclk:ptp=IEEE1588-2008:39-A7-94-FF-FE-07-CB-D0:127\r\n"
+           "a=mediaclk:direct=0\r\n";
+}
+
 static void test_parses_full_valid_video_sdp_into_signaling() {
     const std::string sdp = make_valid_video_sdp();
 
@@ -44,6 +59,8 @@ static void test_parses_full_valid_video_sdp_into_signaling() {
     assert(signaling.media.sampling.known == VideoSampling::Known::YCbCr422);
     assert(signaling.media.depth.bits == 10);
     assert(signaling.media.colorimetry.known == VideoColorimetry::Known::Bt709);
+    assert(signaling.media.pixel_aspect_ratio.width == 1);
+    assert(signaling.media.pixel_aspect_ratio.height == 1);
 
     assert(signaling.reference_clock.kind == ReferenceClockKind::Ptp);
     assert(signaling.reference_clock.ptp.has_value());
@@ -81,6 +98,8 @@ static void test_raw_media_section_composition_matches_full_sdp_entry_point() {
     assert(from_raw.media.height == from_sdp.media.height);
     assert(from_raw.media.fps_num == from_sdp.media.fps_num);
     assert(from_raw.media.fps_den == from_sdp.media.fps_den);
+    assert(from_raw.media.pixel_aspect_ratio.width == from_sdp.media.pixel_aspect_ratio.width);
+    assert(from_raw.media.pixel_aspect_ratio.height == from_sdp.media.pixel_aspect_ratio.height);
 
     assert(from_raw.scan_mode == from_sdp.scan_mode);
     assert(from_raw.packing_mode == from_sdp.packing_mode);
@@ -93,6 +112,37 @@ static void test_raw_media_section_composition_matches_full_sdp_entry_point() {
     assert(from_raw.ts_delay_sender_ticks == from_sdp.ts_delay_sender_ticks);
     assert(from_raw.troff_us == from_sdp.troff_us);
     assert(from_raw.cmax == from_sdp.cmax);
+}
+
+static void test_final_ingestion_maps_non_square_par_into_signaling() {
+    const std::string sdp = make_video_sdp_with_par("12:11");
+
+    auto signaling_expected = parse_video_stream_signaling_from_sdp(sdp, 96);
+    assert(signaling_expected.has_value());
+
+    const auto &signaling = *signaling_expected;
+    assert(signaling.media.pixel_aspect_ratio.width == 12);
+    assert(signaling.media.pixel_aspect_ratio.height == 11);
+    assert(validate_video_stream_signaling(signaling) == Error::Ok);
+}
+
+static void test_final_ingestion_accepts_explicit_square_par() {
+    const std::string sdp = make_video_sdp_with_par("1:1");
+
+    auto signaling_expected = parse_video_stream_signaling_from_sdp(sdp, 96);
+    assert(signaling_expected.has_value());
+
+    const auto &signaling = *signaling_expected;
+    assert(signaling.media.pixel_aspect_ratio.width == 1);
+    assert(signaling.media.pixel_aspect_ratio.height == 1);
+}
+
+static void test_final_ingestion_rejects_malformed_par() {
+    const std::string sdp = make_video_sdp_with_par("1:");
+
+    auto signaling_expected = parse_video_stream_signaling_from_sdp(sdp, 96);
+    assert(!signaling_expected.has_value());
+    assert(signaling_expected.error() == Error::InvalidValue);
 }
 
 static void test_rejects_invalid_rtpmap_clock_rate_in_final_ingestion() {
@@ -169,6 +219,9 @@ static void test_rejects_sender_timing_combination_that_fails_final_validation()
 int main() {
     test_parses_full_valid_video_sdp_into_signaling();
     test_raw_media_section_composition_matches_full_sdp_entry_point();
+    test_final_ingestion_maps_non_square_par_into_signaling();
+    test_final_ingestion_accepts_explicit_square_par();
+    test_final_ingestion_rejects_malformed_par();
     test_rejects_invalid_rtpmap_clock_rate_in_final_ingestion();
     test_rejects_invalid_rtpmap_encoding_name_in_final_ingestion();
     test_propagates_invalid_timing_attribute_error_from_final_ingestion();

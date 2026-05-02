@@ -28,6 +28,11 @@ struct RawVideoSdpExactFrameRate {
     uint32_t denominator = 1;
 };
 
+struct RawVideoSdpPixelAspectRatio {
+    uint32_t width = 1;
+    uint32_t height = 1;
+};
+
 struct RawVideoSdpFmtpUnknownParameter {
     std::string name{};
     std::optional<std::string> value{};
@@ -45,6 +50,7 @@ struct RawVideoSdpFmtpParameters {
     std::string signal_standard{};
     std::optional<std::string> transfer_characteristic_system{};
     std::optional<std::string> range{};
+    std::optional<RawVideoSdpPixelAspectRatio> pixel_aspect_ratio{};
     bool interlace = false;
     bool segmented = false;
 
@@ -276,6 +282,49 @@ parse_fmtp_exact_frame_rate(std::string_view value) {
     return out;
 }
 
+[[nodiscard]] inline uint32_t gcd_u32(uint32_t a, uint32_t b) {
+    while (b != 0) {
+        const uint32_t rem = a % b;
+        a = b;
+        b = rem;
+    }
+
+    return a;
+}
+
+[[nodiscard]] inline std::expected<RawVideoSdpPixelAspectRatio, Error>
+parse_fmtp_pixel_aspect_ratio(std::string_view value) {
+    value = trim_ascii_ws(value);
+
+    if (value.empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    const std::size_t colon_pos = value.find(':');
+
+    if (colon_pos == std::string_view::npos || colon_pos == 0 || colon_pos + 1 >= value.size() ||
+        value.find(':', colon_pos + 1) != std::string_view::npos) {
+        return std::unexpected(Error::InvalidValue);
+        }
+
+    auto width = parse_required_positive_fmtp_uint32(value.substr(0, colon_pos));
+    if (!width.has_value()) {
+        return std::unexpected(width.error());
+    }
+
+    auto height = parse_required_positive_fmtp_uint32(value.substr(colon_pos + 1));
+    if (!height.has_value()) {
+        return std::unexpected(height.error());
+    }
+
+    const uint32_t divisor = gcd_u32(*width, *height);
+
+    return RawVideoSdpPixelAspectRatio{
+        .width = *width / divisor,
+        .height = *height / divisor,
+    };
+}
+
 struct RawVideoSdpFmtpDepthValue {
     uint16_t bits = 0;
     bool floating_point = false;
@@ -381,6 +430,7 @@ parse_video_sdp_fmtp_payload(std::string_view payload) {
     std::optional<std::string> signal_standard;
     std::optional<std::string> tcs;
     std::optional<std::string> range;
+    std::optional<RawVideoSdpPixelAspectRatio> pixel_aspect_ratio;
     std::optional<std::string> timestamp_mode;
     std::optional<uint64_t> ts_delay_sender_ticks;
     std::optional<std::string> sender_type;
@@ -571,6 +621,27 @@ parse_video_sdp_fmtp_payload(std::string_view payload) {
             }
 
             range = std::string(*value);
+            continue;
+        }
+
+        if (token.name == "PAR") {
+            if (pixel_aspect_ratio.has_value()) {
+                return std::unexpected(Error::InvalidValue);
+            }
+
+            auto value = require_fmtp_parameter_value(token);
+
+            if (!value.has_value()) {
+                return std::unexpected(value.error());
+            }
+
+            auto parsed = parse_fmtp_pixel_aspect_ratio(*value);
+
+            if (!parsed.has_value()) {
+                return std::unexpected(parsed.error());
+            }
+
+            pixel_aspect_ratio = *parsed;
             continue;
         }
 
@@ -767,6 +838,10 @@ parse_video_sdp_fmtp_payload(std::string_view payload) {
 
     if (range.has_value()) {
         res.range = std::move(*range);
+    }
+
+    if (pixel_aspect_ratio.has_value()) {
+        res.pixel_aspect_ratio = *pixel_aspect_ratio;
     }
 
     if (timestamp_mode.has_value()) {

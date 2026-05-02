@@ -23,6 +23,10 @@ static VideoTransferCharacteristicSystem make_tcs(VideoTransferCharacteristicSys
 
 static VideoRange make_range(VideoRange::Known known) { return VideoRange{known, std::nullopt}; }
 
+static VideoPixelAspectRatio make_par(uint32_t width, uint32_t height) {
+    return VideoPixelAspectRatio{.width = width, .height = height};
+}
+
 static VideoStreamSignaling make_valid_signaling() {
     VideoStreamSignaling signaling{};
 
@@ -33,6 +37,7 @@ static VideoStreamSignaling make_valid_signaling() {
         VideoTransferCharacteristicSystem{VideoTransferCharacteristicSystem::Known::SDR, std::nullopt};
     signaling.media.signal_standard = VideoSignalStandard{VideoSignalStandard::Known::St2110_20_2017, std::nullopt};
     signaling.media.range = VideoRange{VideoRange::Known::Narrow, std::nullopt};
+    signaling.media.pixel_aspect_ratio = make_par(1, 1);
 
     signaling.media.width = 1920;
     signaling.media.height = 1080;
@@ -150,6 +155,17 @@ static void test_token_backed_video_media_fields_validate_known_and_other_cases(
     }
 }
 
+static void test_pixel_aspect_ratio_accepts_valid_values() {
+    assert(validate_video_pixel_aspect_ratio(make_par(1, 1)) == Error::Ok);
+    assert(validate_video_pixel_aspect_ratio(make_par(12, 11)) == Error::Ok);
+}
+
+static void test_pixel_aspect_ratio_rejects_invalid_values() {
+    assert(validate_video_pixel_aspect_ratio(make_par(0, 1)) == Error::InvalidValue);
+    assert(validate_video_pixel_aspect_ratio(make_par(1, 0)) == Error::InvalidValue);
+    assert(validate_video_pixel_aspect_ratio(make_par(0, 0)) == Error::InvalidValue);
+}
+
 static void test_video_stream_signaling_accepts_extended_media_properties() {
     VideoStreamSignaling signaling = make_valid_signaling();
     assert(validate_video_stream_signaling(signaling) == Error::Ok);
@@ -162,6 +178,20 @@ static void test_video_stream_signaling_accepts_absent_optional_media_fields() {
     signaling.media.range = std::nullopt;
 
     assert(validate_video_stream_signaling(signaling) == Error::Ok);
+}
+
+static void test_video_stream_signaling_accepts_non_square_pixel_aspect_ratio() {
+    VideoStreamSignaling signaling = make_valid_signaling();
+    signaling.media.pixel_aspect_ratio = make_par(12, 11);
+
+    assert(validate_video_stream_signaling(signaling) == Error::Ok);
+}
+
+static void test_video_stream_signaling_rejects_invalid_pixel_aspect_ratio() {
+    VideoStreamSignaling signaling = make_valid_signaling();
+    signaling.media.pixel_aspect_ratio = make_par(0, 1);
+
+    assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
 }
 
 static void test_video_stream_signaling_rejects_invalid_sampling() {
@@ -262,6 +292,16 @@ static void test_pixel_format_projection_accepts_ycbcr422_8bit() {
     assert(*projected == PixelFormat::UYVY);
 }
 
+static void test_pixel_format_projection_remains_independent_from_pixel_aspect_ratio() {
+    VideoStreamSignaling signaling = make_valid_signaling();
+    signaling.media.depth = VideoBitDepth{8, false};
+    signaling.media.pixel_aspect_ratio = make_par(12, 11);
+
+    const auto projected = pixel_format_from_video_stream_signaling(signaling);
+    assert(projected.has_value());
+    assert(*projected == PixelFormat::UYVY);
+}
+
 static void test_pixel_format_projection_rejects_structurally_valid_but_unsupported_media() {
     {
         VideoStreamSignaling signaling = make_valid_signaling();
@@ -303,8 +343,12 @@ int main() {
     test_bit_depth_accepts_supported_structural_values();
     test_bit_depth_rejects_invalid_values();
     test_token_backed_video_media_fields_validate_known_and_other_cases();
+    test_pixel_aspect_ratio_accepts_valid_values();
+    test_pixel_aspect_ratio_rejects_invalid_values();
     test_video_stream_signaling_accepts_extended_media_properties();
     test_video_stream_signaling_accepts_absent_optional_media_fields();
+    test_video_stream_signaling_accepts_non_square_pixel_aspect_ratio();
+    test_video_stream_signaling_rejects_invalid_pixel_aspect_ratio();
     test_video_stream_signaling_rejects_invalid_sampling();
     test_video_stream_signaling_rejects_invalid_bit_depth();
     test_video_stream_signaling_rejects_invalid_optional_media_field();
@@ -317,6 +361,7 @@ int main() {
     test_video_stream_signaling_rejects_bt2100_with_fullprotect_range();
     test_video_stream_signaling_accepts_non_bt2100_fullprotect_range();
     test_pixel_format_projection_accepts_ycbcr422_8bit();
+    test_pixel_format_projection_remains_independent_from_pixel_aspect_ratio();
     test_pixel_format_projection_rejects_structurally_valid_but_unsupported_media();
     return 0;
 }

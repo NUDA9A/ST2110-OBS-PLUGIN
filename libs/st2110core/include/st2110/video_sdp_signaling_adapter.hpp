@@ -73,6 +73,11 @@ video_media_description_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters 
     res.fps_num = raw.exactframerate.numerator;
     res.fps_den = raw.exactframerate.denominator;
 
+    if (raw.pixel_aspect_ratio.has_value()) {
+        res.pixel_aspect_ratio.width = raw.pixel_aspect_ratio->width;
+        res.pixel_aspect_ratio.height = raw.pixel_aspect_ratio->height;
+    }
+
     VideoBitDepth depth{};
     if (raw.depth == 0 || raw.depth > 255) {
         return std::unexpected(Error::InvalidValue);

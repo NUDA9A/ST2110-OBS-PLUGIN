@@ -18,6 +18,7 @@ void test_parse_fmtp_payload_with_required_optional_flags_and_unknowns() {
                                      "SSN=ST2110-20:2017; "
                                      "TCS=SDR; "
                                      "RANGE=NARROW; "
+                                     "PAR=12:11; "
                                      "interlace; "
                                      "segmented; "
                                      "FOO=bar; "
@@ -43,6 +44,10 @@ void test_parse_fmtp_payload_with_required_optional_flags_and_unknowns() {
 
     assert(fmtp.range.has_value());
     assert(*fmtp.range == "NARROW");
+
+    assert(fmtp.pixel_aspect_ratio.has_value());
+    assert(fmtp.pixel_aspect_ratio->width == 12);
+    assert(fmtp.pixel_aspect_ratio->height == 11);
 
     assert(fmtp.interlace);
     assert(fmtp.segmented);
@@ -73,6 +78,61 @@ void test_parse_fmtp_payload_accepts_integer_exactframerate() {
     const auto &fmtp = *parsed;
     assert(fmtp.exactframerate.numerator == 30000);
     assert(fmtp.exactframerate.denominator == 1);
+    assert(!fmtp.pixel_aspect_ratio.has_value());
+}
+
+void test_parse_fmtp_payload_accepts_valid_par_1_to_1() {
+    const std::string_view payload = "sampling=YCbCr-4:2:2; "
+                                     "width=1920; "
+                                     "height=1080; "
+                                     "exactframerate=25; "
+                                     "depth=10; "
+                                     "colorimetry=BT709; "
+                                     "PM=2110GPM; "
+                                     "SSN=ST2110-20:2017; "
+                                     "PAR=1:1";
+
+    auto parsed = parse_video_sdp_fmtp_payload(payload);
+    assert(parsed.has_value());
+    assert(parsed->pixel_aspect_ratio.has_value());
+    assert(parsed->pixel_aspect_ratio->width == 1);
+    assert(parsed->pixel_aspect_ratio->height == 1);
+}
+
+void test_parse_fmtp_payload_accepts_valid_non_square_par() {
+    const std::string_view payload = "sampling=YCbCr-4:2:2; "
+                                     "width=1920; "
+                                     "height=1080; "
+                                     "exactframerate=25; "
+                                     "depth=10; "
+                                     "colorimetry=BT709; "
+                                     "PM=2110GPM; "
+                                     "SSN=ST2110-20:2017; "
+                                     "PAR=12:11";
+
+    auto parsed = parse_video_sdp_fmtp_payload(payload);
+    assert(parsed.has_value());
+    assert(parsed->pixel_aspect_ratio.has_value());
+    assert(parsed->pixel_aspect_ratio->width == 12);
+    assert(parsed->pixel_aspect_ratio->height == 11);
+}
+
+void test_parse_fmtp_payload_canonicalizes_par_ratio_when_possible() {
+    const std::string_view payload = "sampling=YCbCr-4:2:2; "
+                                     "width=1920; "
+                                     "height=1080; "
+                                     "exactframerate=25; "
+                                     "depth=10; "
+                                     "colorimetry=BT709; "
+                                     "PM=2110GPM; "
+                                     "SSN=ST2110-20:2017; "
+                                     "PAR=2:2";
+
+    auto parsed = parse_video_sdp_fmtp_payload(payload);
+    assert(parsed.has_value());
+    assert(parsed->pixel_aspect_ratio.has_value());
+    assert(parsed->pixel_aspect_ratio->width == 1);
+    assert(parsed->pixel_aspect_ratio->height == 1);
 }
 
 void test_parse_fmtp_attribute_parses_matching_payload_type() {
@@ -84,7 +144,8 @@ void test_parse_fmtp_attribute_parses_matching_payload_type() {
                                   "depth=10; "
                                   "colorimetry=BT709; "
                                   "PM=2110GPM; "
-                                  "SSN=ST2110-20:2017";
+                                  "SSN=ST2110-20:2017; "
+                                  "PAR=12:11";
 
     auto parsed = parse_video_sdp_fmtp_attribute(line, 112);
     assert(parsed.has_value());
@@ -95,6 +156,9 @@ void test_parse_fmtp_attribute_parses_matching_payload_type() {
     assert(fmtp.height == 1080);
     assert(fmtp.exactframerate.numerator == 60000);
     assert(fmtp.exactframerate.denominator == 1001);
+    assert(fmtp.pixel_aspect_ratio.has_value());
+    assert(fmtp.pixel_aspect_ratio->width == 12);
+    assert(fmtp.pixel_aspect_ratio->height == 11);
 }
 
 void test_parse_fmtp_attribute_returns_nullopt_for_payload_type_mismatch() {
@@ -143,6 +207,24 @@ void test_parse_fmtp_payload_rejects_malformed_exactframerate() {
     assert(parsed.error() == Error::InvalidValue);
 }
 
+void test_parse_fmtp_payload_rejects_malformed_par() {
+    const std::string_view malformed_payloads[] = {
+        "sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; depth=10; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; PAR=1",
+        "sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; depth=10; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; PAR=1:",
+        "sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; depth=10; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; PAR=:1",
+        "sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; depth=10; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; PAR=0:1",
+        "sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; depth=10; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; PAR=1:0",
+        "sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; depth=10; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; PAR=1:2:3",
+        "sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; depth=10; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017; PAR=a:b",
+    };
+
+    for (const auto payload : malformed_payloads) {
+        auto parsed = parse_video_sdp_fmtp_payload(payload);
+        assert(!parsed.has_value());
+        assert(parsed.error() == Error::InvalidValue);
+    }
+}
+
 void test_parse_fmtp_payload_rejects_duplicate_known_key() {
     const std::string_view payload = "sampling=YCbCr-4:2:2; "
                                      "sampling=RGB; "
@@ -153,6 +235,23 @@ void test_parse_fmtp_payload_rejects_duplicate_known_key() {
                                      "colorimetry=BT709; "
                                      "PM=2110GPM; "
                                      "SSN=ST2110-20:2017";
+
+    auto parsed = parse_video_sdp_fmtp_payload(payload);
+    assert(!parsed.has_value());
+    assert(parsed.error() == Error::InvalidValue);
+}
+
+void test_parse_fmtp_payload_rejects_duplicate_par() {
+    const std::string_view payload = "sampling=YCbCr-4:2:2; "
+                                     "width=1920; "
+                                     "height=1080; "
+                                     "exactframerate=25; "
+                                     "depth=10; "
+                                     "colorimetry=BT709; "
+                                     "PM=2110GPM; "
+                                     "SSN=ST2110-20:2017; "
+                                     "PAR=1:1; "
+                                     "PAR=12:11";
 
     auto parsed = parse_video_sdp_fmtp_payload(payload);
     assert(!parsed.has_value());
@@ -194,11 +293,16 @@ void test_parse_fmtp_payload_rejects_missing_required_key() {
 int main() {
     test_parse_fmtp_payload_with_required_optional_flags_and_unknowns();
     test_parse_fmtp_payload_accepts_integer_exactframerate();
+    test_parse_fmtp_payload_accepts_valid_par_1_to_1();
+    test_parse_fmtp_payload_accepts_valid_non_square_par();
+    test_parse_fmtp_payload_canonicalizes_par_ratio_when_possible();
     test_parse_fmtp_attribute_parses_matching_payload_type();
     test_parse_fmtp_attribute_returns_nullopt_for_payload_type_mismatch();
     test_parse_fmtp_payload_rejects_malformed_numeric_value();
     test_parse_fmtp_payload_rejects_malformed_exactframerate();
+    test_parse_fmtp_payload_rejects_malformed_par();
     test_parse_fmtp_payload_rejects_duplicate_known_key();
+    test_parse_fmtp_payload_rejects_duplicate_par();
     test_parse_fmtp_payload_rejects_duplicate_flag();
     test_parse_fmtp_payload_rejects_missing_required_key();
     return 0;
