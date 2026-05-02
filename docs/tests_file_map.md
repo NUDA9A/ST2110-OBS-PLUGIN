@@ -641,8 +641,17 @@
         - structural validation.
 - Покрывает:
     - direct sender-field validation for `Narrow`, `NarrowLinear`, and `Wide`;
-    - stream-level signaling validation for valid and invalid wide-sender cases;
+    - corrected ST 2110-21 optional-parameter semantics:
+        - `TROFF` is allowed for `Narrow`, `NarrowLinear`, and `Wide` when present and positive;
+        - `CMAX` is allowed for `Narrow`, `NarrowLinear`, and `Wide` when present and valid for the local modeled policy;
+        - absent optional sender parameters remain accepted;
+        - `TROFF=0` rejected;
+        - `CMAX=0` rejected.
+    - stream-level signaling validation for valid and invalid sender-timing cases;
     - missing `SSN` rejection remains explicit and happens before stream-level sender-timing acceptance is treated as standards-clean signaling.
+- Фиксирует:
+    - generic signaling validation no longer hardcodes a stricter sender-class policy than ST 2110-21 optional-parameter semantics;
+    - stricter receiver/conformance checks must remain outside this generic signaling-validation boundary.
 
 ### tests/test_video_timing_signaling.cpp
 - Роль:
@@ -711,24 +720,14 @@
     - проверяет preservation of raw media-line and unknown attributes;
     - проверяет tightened raw `m=video` validation for ST 2110 video SDP.
 - Покрывает:
-    - selection of the matching `m=video` section by expected payload type;
-    - preservation of the selected raw `media_line`;
-    - parsing/preservation of:
-        - `rtpmap`;
-        - `fmtp`;
-        - timing/sender attributes where applicable;
-        - unknown media attributes.
-    - rejection of payload-type mismatch between selected media section and expected payload type.
-    - rejection of missing required `rtpmap` association for the selected payload type.
-    - rejection of duplicate relevant media attributes.
-    - tightened raw `m=video` validation:
-        - valid `m=video 50000 RTP/AVP 112` accepted;
-        - non-dynamic RTP payload type rejected for ST 2110 raw video;
-        - malformed media-line port rejected;
-        - unsupported media-line protocol rejected.
+    - selection of the correct `m=video` section by expected payload type;
+    - dynamic RTP payload-type requirement for selected video SDP;
+    - media-line protocol validation;
+    - preservation of raw `rtpmap`, `fmtp`, and unknown media attributes without prematurely collapsing them into final signaling;
+    - preservation of scoped standalone timing/reference-clock attributes separately from fmtp media parameters.
 - Фиксирует:
-    - raw SDP media-section parsing now performs explicit ST 2110 video `m=video` validation without moving this policy into socket/runtime code;
-    - raw media-line text remains preserved for future transport/bootstrap use.
+    - raw media-section parsing remains a non-destructive SDP boundary;
+    - final requirements such as mandatory `TP` for standards-clean video SDP ingestion remain above this raw selection layer.
 
 ### tests/video_sdp_fmtp_test.cpp
 - Роль:
@@ -963,20 +962,23 @@
 
 ### tests/video_sdp_timing_scope_test.cpp
 - Роль:
-    - проверяет session/media scope preservation and final-ingestion policy for SDP timing attributes.
+    - проверяет session/media scope resolution for standalone SDP timing/reference-clock attributes and their interaction with fmtp timing/sender media parameters.
 - Покрывает:
-    - session-level `ts-refclk` / `mediaclk` preservation in the raw selected media-section model;
-    - session-level-only `mediaclk` remaining preserved in raw timing parsing but being rejected by final video SDP ingestion;
-    - media-level `ts-refclk` / `mediaclk` overriding session-level values in the resolved raw timing model;
-    - duplicate rejection within the same scope for timing attributes;
-    - conflict policy between fmtp timing fields and standalone timing attributes:
-        - fmtp timing field may override session-level standalone attribute;
-        - fmtp timing field conflicts with same-semantic media-level standalone attribute.
-    - existing media-level-only SDP timing behavior remaining unchanged.
+    - preservation of session-level `ts-refclk` / `mediaclk` in the raw SDP model;
+    - media-level override of session-level `ts-refclk` / `mediaclk`;
+    - rejection of duplicate standalone timing attributes within the same scope;
+    - explicit separation between:
+        - standalone timing parsing in `video_sdp_timing_attributes.hpp`;
+        - fmtp timing/sender parsing in `video_sdp_fmtp.hpp`;
+        - final merge/conflict handling in `video_sdp_ingestion.hpp`.
+    - `TSMODE` from fmtp overriding session-level standalone `tsmode`;
+    - conflict rejection when fmtp timing field duplicates a media-level standalone timing field;
+    - standards-clean final-ingestion requirement that `mediaclk` must be media-level;
+    - existing media-level-only SDP timing behavior for `ts-refclk`, `mediaclk`, `tsmode`, `tsdelay`, `TROFF`, `CMAX`, and `TP=2110TPW`.
 - Фиксирует:
-    - raw timing parsing remains scope-aware and non-destructive;
-    - final ST 2110 video SDP ingestion now requires both a resolved `ts-refclk` and a media-level `mediaclk`;
-    - media-level timing values still override session-level values where applicable.
+    - `parse_video_sdp_timing_attributes(...)` parses standalone SDP timing attributes only;
+    - `TP` from `a=fmtp` is not expected to appear inside the standalone raw timing model and is merged only at final SDP ingestion;
+    - final signaling still carries the correct `sender_type` after fmtp merge.
 
 ### tests/video_sdp_connection_data_test.cpp
 - Роль:

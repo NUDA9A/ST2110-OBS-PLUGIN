@@ -80,7 +80,7 @@
 - [x] S045: Cross-packet SRD ordering validation is now enforced inside the depacketizer assembly-unit boundary instead of remaining packet-local only. For the current `Progressive + GPM` MVP path, `SRD Row Number` is rejected if it goes backwards within the current assembly unit, and within the same row `SRD Offset` must strictly increase across successive segments/packets. Regressing or overlapping later segments are rejected before any write mutates the current frame assembly state.
 - [x] S046: `Depacketizer::write_packet_segments()` now validates/maps the whole packet atomically before mutating the current `FrameAssembler`. All `VideoFrameWriteOp`s for the packet are collected and validated first, including assembly-unit-local ordering checks, and only then are writes applied. An invalid later SRD segment in the same packet no longer partially mutates the current assembly unit.
 - [x] S047: Standards-clean `VideoStreamSignaling` validation now requires `VideoMediaDescription::signal_standard` explicitly. The gap between SDP ingestion, which already required `SSN`, and manually constructed signaling objects is closed in `video_signaling.hpp` through an explicit required-`SSN` validation helper. No implicit synthetic/manual fallback path is used by generic signaling validation or by final SDP/runtime/bootstrap projection paths. Cross-field `SSN` rules about `ST2110-20:2017` vs `ST2110-20:2022` remain separate from this boundary.
-- [ ] S048: ST 2110-21 sender timing signaling is currently modeled too loosely in one place and too strictly in another. Final SDP ingestion can silently default absent `TP` to `VideoSenderType::Narrow`, even though `TP` is required by ST 2110-21 for video RTP streams. At the same time, `validate_video_sender_signaling()` rejects `TROFF` / `CMAX` for `Narrow` and `NarrowLinear`, although ST 2110-21 defines these as optional media type parameters with default assumptions when absent. This validation should be rechecked and corrected against ST 2110-21.
+- [x] S048: ST 2110-21 sender timing signaling is now corrected in the existing video SDP ingestion / signaling validation boundaries. Final SDP ingestion no longer silently defaults absent `TP` to `VideoSenderType::Narrow`; standards-clean video SDP now requires `TP` to be explicitly present in `a=fmtp`. At the same time, `validate_video_sender_signaling()` no longer rejects `TROFF` / `CMAX` for `Narrow` or `NarrowLinear` solely by sender class; these parameters are treated according to ST 2110-21 optional-parameter semantics, with validation remaining localized to “present and structurally/policy valid” cases. `TROFF=0` is rejected, malformed/invalid `CMAX` remains rejected by the local modeled policy, and stricter receiver/conformance checks remain separated in the receiver-timing boundary rather than being pushed into normal SDP ingestion.
 - [ ] S049: Raw SDP `c=` connection data parsing preserves useful transport metadata but is still too permissive structurally. It accepts arbitrary `nettype` / `addrtype` tokens and parses slash parameters without validating whether the form is appropriate for the address type / multicast shape. This should be tightened in the raw SDP transport boundary while keeping backend socket behavior separate.
 - [x] S050: Backend lifecycle boundary is no longer skeleton-oriented. `IRxVideoBackend::start_video(...)`, `IRxAudioBackend::start_audio(...)`, and `IRxBackend::stop()` now use an explicit result-returning, state-aware lifecycle boundary via `RxBackendState` / `RxBackendLifecycleResult`, with localized policy for repeated start, stop-before-start, repeated stop, and retry after failed start. Future socket/MTL runtime work must extend this existing boundary rather than reintroducing silent no-op behavior, ad hoc logging-only failure handling, or sink-coupled runtime error reporting.
 - [x] S051: The socket platform boundary is no longer deferred behind concrete Linux receive-loop work. An OS-neutral socket runtime boundary now exists in `socket_runtime.hpp`, modeling socket address family, bind endpoint, multicast membership, socket-open config, config projection from `RxVideoConfig`, and abstract receive-port lifecycle separately from Linux/Winsock implementation details. Future Linux and Windows socket backends must fill this boundary rather than reshaping public backend/runtime contracts.
@@ -1479,21 +1479,21 @@
     - missing `SSN` rejected by standards-clean signaling validation;
     - SDP-derived signaling still passes when `SSN` is present;
     - final runtime/bootstrap/timing projection helpers reject missing `SSN` before downstream projection logic.
-- [ ] 196P: Correct ST 2110-21 `TP` / `TROFF` / `CMAX` sender timing validation
-  - re-check `validate_video_sender_signaling(...)` and final SDP ingestion behavior against ST 2110-21.
-  - final video SDP ingestion should not silently treat absent `TP` as `2110TPN`.
-  - `TP` should be required for ST 2110-21-conforming video RTP streams.
-  - `TROFF` and `CMAX` should be validated according to ST 2110-21 optional-parameter semantics and sender-class defaults, rather than being rejected for `Narrow` / `NarrowLinear` solely because current structural validation says so.
-  - validate numeric constraints:
+- [x] 196P: Correct ST 2110-21 `TP` / `TROFF` / `CMAX` sender timing validation
+  - re-checked `validate_video_sender_signaling(...)` and final SDP ingestion behavior against ST 2110-21;
+  - final video SDP ingestion no longer silently treats absent `TP` as `2110TPN`;
+  - `TP` is now required for ST 2110-21-conforming video RTP SDP ingestion;
+  - `TROFF` and `CMAX` are now validated according to ST 2110-21 optional-parameter semantics and local modeled policy, rather than being rejected for `Narrow` / `NarrowLinear` solely by sender class;
+  - numeric constraints are now explicit:
     - `TROFF`, when present, must be a positive integer microsecond value;
-    - `CMAX`, when present, must be valid for the local modeled policy.
-  - keep stricter sender/conformance policy separate from normal receiver ingestion if needed.
-  - prefer minimal changes:
+    - `CMAX`, when present, must be valid for the local modeled policy;
+  - stricter sender/conformance policy remains separate from normal receiver ingestion;
+  - changes stayed localized to:
     - `video_signaling.hpp`
     - `video_sdp_ingestion.hpp`
-    - `video_sdp_fmtp.hpp` only if parser-level numeric positivity must change
-    - related tests only
-  - add focused tests for:
+    - `video_sdp_fmtp.hpp`
+    - related tests
+  - focused tests now cover:
     - missing `TP` rejected by final ST 2110 video SDP ingestion;
     - `TP=2110TPN`, `TP=2110TPNL`, `TP=2110TPW` accepted;
     - `TROFF` accepted where standard-valid;

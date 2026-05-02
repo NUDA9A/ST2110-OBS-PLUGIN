@@ -779,66 +779,28 @@
 
 ### libs/st2110core/include/st2110/video_signaling.hpp
 - Роль:
-    - standards-aware video signaling validation and signaling-to-runtime/bootstrap projection boundary for ST 2110 video.
-    - keeps modeled video media-description properties separate from runtime `PixelFormat` / depacketizer / backend config.
-    - now also closes the standards-clean `SSN` requirement gap between SDP-derived signaling and manually constructed signaling objects.
+    - structural validation and runtime projection boundary for modeled `VideoStreamSignaling`;
+    - keeps standards-aware signaling validation separate from runtime support/projection limits.
 - Связи:
-    - uses:
-        - `config_validation.hpp`
-        - `packet_parse.hpp`
-        - `rx_config.hpp`
-        - `depacketizer.hpp`
-        - `video_receive_pipeline.hpp`
-        - `video_unit_reconstructor.hpp`
-        - `signaling_structs.hpp`
-    - feeds:
-        - `PacketParsePolicy`
-        - `RxVideoConfig`
-        - `DepacketizerConfig`
-        - `VideoUnitReconstructorConfig`
-        - `VideoReceivePipelineConfig`
-        - `VideoReceiverBootstrapConfig`
-    - remains separate from raw SDP parsing/ingestion boundaries, but is used by final SDP-derived signaling paths.
+    - validates modeled signaling produced manually or by SDP ingestion;
+    - feeds runtime projection/helpers for RX config, depacketizer, receive pipeline, and bootstrap.
 - Сущности:
-    - signaling/media validation helpers:
+    - sender/timing validation:
         - `validate_video_sender_signaling(...)`
-        - `validate_reference_clock(...)`
-        - `validate_media_clock_mode(...)`
-        - `validate_timestamp_mode(...)`
         - `validate_video_timing_signaling(...)`
-        - `validate_video_sampling(...)`
-        - `validate_video_colorimetry(...)`
-        - `validate_video_transfer_characteristic_system(...)`
-        - `validate_video_signal_standard(...)`
-        - `validate_required_video_signal_standard(...)`
-            - explicit standards-clean boundary:
-                - `media.signal_standard == nullopt` is rejected as `InvalidValue`;
-                - known/other `SSN` token validation is delegated to `validate_video_signal_standard(...)`.
-        - `validate_video_range(...)`
-        - `validate_video_pixel_aspect_ratio(...)`
-        - `validate_video_media_description_dimensions(...)`
-        - `validate_video_bit_depth(...)`
-        - `validate_video_media_description_cross_field_constraints(...)`
-        - `validate_video_media_description(...)`
         - `validate_video_stream_signaling(...)`
-    - signaling/runtime mapping helpers:
+    - runtime projection helpers:
         - `pixel_format_from_video_stream_signaling(...)`
-        - `packet_parse_policy_from_video_stream_signaling(...)`
-        - `validate_video_stream_signaling_against_rx_video_config(...)`
-        - `depacketizer_config_from_video_stream_signaling(...)`
-        - `video_unit_reconstructor_config_from_video_stream_signaling(...)`
-        - `video_receive_pipeline_config_from_video_stream_signaling(...)`
         - `rx_video_config_from_video_stream_signaling(...)`
+        - `depacketizer_config_from_video_stream_signaling(...)`
+        - `video_receive_pipeline_config_from_video_stream_signaling(...)`
         - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
-- Поведение:
-    - generic signaling validation is now standards-clean by default:
-        - `SSN` is required;
-        - malformed or missing `SSN` returns `InvalidValue`;
-        - cross-field `SSN` constraints remain handled separately in existing media-description cross-field logic.
-    - downstream runtime/projection/bootstrap helpers all reuse the same signaling validation boundary first, so missing `SSN` is rejected before runtime mapping/projection code runs.
 - Примечание:
-    - no separate synthetic/manual “SSN-optional” validation path was introduced in this task;
-    - final SDP ingestion remains on the standards-clean path and does not rely on a relaxed manual fallback.
+    - sender-type validation no longer rejects `TROFF` / `CMAX` for `Narrow` or `NarrowLinear` solely by sender class;
+    - `TROFF` and `CMAX` are treated as optional sender parameters, with validation applied only when they are present;
+    - `TROFF=0` remains rejected;
+    - invalid present `CMAX` remains rejected by the local modeled policy;
+    - stricter ST 2110-21 receiver/conformance policy remains outside this generic signaling-validation boundary.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -1124,53 +1086,48 @@
 
 ### libs/st2110core/include/st2110/video_sdp_fmtp.hpp
 - Роль:
-    - strict parser for raw video `a=fmtp` payload into a normalized raw-SDP parameter model.
-    - keeps token parsing / numeric parsing / duplicate rejection localized before higher-level signaling mapping.
+    - strict parser for ST 2110 video `a=fmtp` media type parameters;
+    - separates raw SDP media-parameter parsing from final signaling validation/ingestion;
+    - carries sender/timing fmtp parameters as explicit raw fields rather than leaving them in unknown parameters.
 - Связи:
-    - используется raw SDP ingestion path and `video_sdp_signaling_adapter.hpp`;
-    - depends on `error.hpp` and `video_sdp_media_section.hpp`.
+    - uses `video_sdp_media_section.hpp` low-level SDP helpers;
+    - feeds `video_sdp_signaling_adapter.hpp` and final ingestion in `video_sdp_ingestion.hpp`.
 - Сущности:
-    - `RawVideoSdpExactFrameRate`
-    - `RawVideoSdpPixelAspectRatio`
-        - `width`
-        - `height`
-        - raw parsed PAR value after positive-integer parsing and canonical reduction.
-    - `RawVideoSdpFmtpUnknownParameter`
     - `RawVideoSdpFmtpParameters`
-        - required known fields such as `sampling`, `width`, `height`, `exactframerate`, `depth`, `colorimetry`, `packing_mode`, `signal_standard`;
-        - optional known fields such as `transfer_characteristic_system`, `range`, `pixel_aspect_ratio`, timing/sender parameters, `max_udp_datagram_bytes`;
-        - preserved `unknown_parameters`.
-    - helper parsers / tokenizers:
-        - `trim_ascii_ws(...)`
-        - `parse_fmtp_uint64(...)`
-        - `parse_fmtp_uint32(...)`
-        - `split_strict_video_sdp_fmtp_parameters(...)`
-        - `parse_strict_video_sdp_fmtp_parameter_token(...)`
-        - `require_fmtp_parameter_value(...)`
-        - `parse_required_positive_fmtp_uint32(...)`
-        - `gcd_u32(...)`
-        - `parse_fmtp_exact_frame_rate(...)`
-            - parses `exactframerate`;
-            - accepts integer form only as a single decimal integer;
-            - accepts rational form only when numerator/denominator are positive and already canonical/minimal;
-            - rejects `N/1`, reducible rationals, zero parts, and malformed forms.
-        - `parse_fmtp_pixel_aspect_ratio(...)`
-            - parses `PAR=<w>:<h>`;
-            - rejects malformed or non-positive forms;
-            - reduces to canonical/minimal ratio form when practical (for example `2:2 -> 1:1`).
-        - `parse_fmtp_depth(...)`
-        - `parse_fmtp_attribute_payload_for_pt(...)`
-    - entry points:
-        - `parse_video_sdp_fmtp_payload(...)`
-            - parses known video fmtp parameters;
-            - now enforces canonical `exactframerate` syntax locally;
-            - parses optional `PAR`;
-            - preserves absent `PAR` as raw `std::nullopt`;
-            - rejects duplicate `PAR`.
-        - `parse_video_sdp_fmtp_attribute(...)`
+        - core media-description properties:
+            - `sampling`
+            - `width`
+            - `height`
+            - `exactframerate`
+            - `depth`
+            - `depth_floating_point`
+            - `colorimetry`
+            - `packing_mode`
+            - `signal_standard`
+            - optional `transfer_characteristic_system`
+            - optional `range`
+            - optional `pixel_aspect_ratio`
+            - `interlace`
+            - `segmented`
+        - timing/sender/media-parameter fields:
+            - optional `timestamp_mode`
+            - optional `ts_delay_sender_ticks`
+            - optional `sender_type`
+            - optional `troff_us`
+            - optional `cmax`
+            - optional `max_udp_datagram_bytes`
+        - `unknown_parameters`
+    - parsing helpers for:
+        - strict fmtp parameter splitting/tokenization;
+        - canonical `exactframerate`;
+        - `PAR`;
+        - `depth`, including `16f`;
+        - positive-only `TROFF` parsing at fmtp-parser boundary;
+        - raw numeric `CMAX` parsing, with sender/conformance policy kept for later signaling validation.
 - Примечание:
-    - raw fmtp parsing remains a strict boundary distinct from signaling-model defaults;
-    - `exactframerate` canonicalization rules are enforced here, without changing timestamp mapping or runtime cadence behavior.
+    - `TP`, `TROFF`, `CMAX`, `TSMODE`, and `TSDELAY` from `a=fmtp` are modeled explicitly here;
+    - this file does not decide final SDP-ingestion requirements by itself;
+    - absence/presence rules and cross-source merge/conflict behavior stay in final ingestion.
 
 ### libs/st2110core/include/st2110/video_sdp_signaling_adapter.hpp
 - Роль:
@@ -1194,61 +1151,32 @@
 
 ### libs/st2110core/include/st2110/video_sdp_timing_attributes.hpp
 - Роль:
-    - raw parsing and scoped-resolution boundary for SDP timing/reference/sender attributes.
-    - keeps strict raw parsing of known `ts-refclk` / `mediaclk` / sender-timing attributes separate from final signaling projection.
+    - parses standalone video SDP timing/reference-clock attributes into an explicit scoped raw model;
+    - preserves session-vs-media scope for timing attributes before final SDP ingestion.
 - Связи:
-    - использует `error.hpp` и `video_sdp_media_section.hpp`;
-    - используется `video_sdp_ingestion.hpp` as the raw timing parser feeding final SDP-to-signaling ingestion.
+    - consumes `RawVideoSdpMediaSection` from `video_sdp_media_section.hpp`;
+    - feeds final SDP ingestion in `video_sdp_ingestion.hpp`.
 - Сущности:
-    - `RawVideoSdpPtpReferenceClock`
-        - `version`
-        - `gmid`
-        - optional `domain`
-    - `RawVideoSdpReferenceClock`
-        - `Kind::{Ptp, LocalMac, Other}`
-        - `raw_value`
-        - optional `ptp`
-        - optional `local_mac`
-    - `RawVideoSdpMediaClock`
-        - `Kind::{Direct, Sender, Other}`
-        - `raw_value`
-        - optional `direct_offset`
-    - `RawVideoSdpTimestampModeValue`
-    - `RawVideoSdpSenderTypeValue`
-    - `RawVideoSdpScopedTimingValue<T>`
-        - resolved timing value plus explicit `RawSdpAttributeScope`
-    - `RawVideoSdpTimingAttributes`
-        - resolved scoped timing/reference/sender attributes for the selected video stream
-    - helpers:
-        - `trim(...)`
-        - `parse_video_sdp_decimal_uint8(...)`
-        - `is_hex_digit_ascii(...)`
-        - `is_eui_with_dash_separators<N>(...)`
-        - `validate_raw_video_sdp_ptp_gmid(...)`
-        - `validate_raw_video_sdp_localmac(...)`
-        - `raw_video_sdp_has_reference_clock(...)`
-        - `parse_video_sdp_reference_clock(...)`
-            - strict known-form parsing for:
-                - `ptp=IEEE1588-2008:<gmid>[:domain]`
-                - `ptp=IEEE1588-2008:traceable`
-                - `localmac=<EUI-48 MAC>`
-            - malformed known forms reject as `InvalidValue`
-            - non-known/open-ended forms remain preservable through `Kind::Other`
-        - `parse_video_sdp_media_clock(...)`
-        - `parse_video_sdp_timestamp_mode(...)`
-        - `parse_video_sdp_sender_type(...)`
-        - `parse_video_sdp_ts_delay(...)`
-        - `parse_video_sdp_troff(...)`
-        - `parse_video_sdp_cmax(...)`
-        - `resolve_raw_sdp_scoped_timing_attribute(...)`
-    - entry point:
-        - `parse_video_sdp_timing_attributes(const RawVideoSdpMediaSection&)`
-            - resolves session/media scope for timing/reference attributes;
-            - preserves media-over-session precedence;
-            - parses strict known reference-clock forms before final signaling ingestion.
+    - raw timing/reference-clock models:
+        - `RawVideoSdpReferenceClock`
+        - `RawVideoSdpMediaClock`
+        - `RawVideoSdpTimestampModeValue`
+        - `RawVideoSdpSenderTypeValue`
+        - `RawVideoSdpScopedTimingValue<T>`
+        - `RawVideoSdpTimingAttributes`
+    - parsers for standalone SDP attributes:
+        - `ts-refclk`
+        - `mediaclk`
+        - `tsmode`
+        - `tsdelay`
+        - `TP`
+        - `TROFF`
+        - `CMAX`
+    - `parse_video_sdp_timing_attributes(...)`
+        - resolves session/media override rules for standalone attributes only.
 - Примечание:
-    - this file remains a raw SDP timing parser/resolution boundary, not a runtime timing/PTP behavior layer;
-    - strict parsing of known `ts-refclk` forms is now localized here.
+    - this boundary intentionally does not merge `TP` / `TSMODE` / `TSDELAY` / `TROFF` / `CMAX` from `a=fmtp`;
+    - fmtp timing/sender media parameters remain separate in `RawVideoSdpFmtpParameters` and are merged only in final SDP ingestion.
 
 ### libs/st2110core/include/st2110/video_sdp_rtpmap.hpp
 - Роль:
@@ -1283,50 +1211,32 @@
 
 ### libs/st2110core/include/st2110/video_sdp_ingestion.hpp
 - Роль:
-    - final standards-aware SDP-to-`VideoStreamSignaling` ingestion boundary for ST 2110 video streams.
-    - combines raw media-section selection, fmtp parsing/mapping, rtpmap validation, scoped timing parsing, timing/signaling application, and final signaling validation.
+    - final standards-aware SDP ingestion entry point for ST 2110 video;
+    - merges raw media-section parsing, fmtp media-parameter parsing, standalone timing/reference-clock parsing, and final signaling validation into `VideoStreamSignaling`.
 - Связи:
-    - использует `video_sdp_media_section.hpp`, `video_sdp_fmtp.hpp`, `video_sdp_rtpmap.hpp`, `video_sdp_signaling_adapter.hpp`, `video_sdp_timing_attributes.hpp`, `video_signaling.hpp`, `signaling_structs.hpp`, `error.hpp`;
-    - используется as top-level video SDP ingestion entry point by payload type.
+    - consumes:
+        - `video_sdp_media_section.hpp`
+        - `video_sdp_rtpmap.hpp`
+        - `video_sdp_fmtp.hpp`
+        - `video_sdp_timing_attributes.hpp`
+        - `video_sdp_signaling_adapter.hpp`
+        - `video_signaling.hpp`
 - Сущности:
-    - `ascii_iequals(...)`
-    - `validate_video_sdp_rtpmap_for_video_signaling(...)`
-        - requires `raw/90000`;
-        - rejects extra encoding parameters for the current ST 2110-20 video ingestion path.
-    - raw reference-clock mapping helpers:
-        - `hex_nibble(...)`
-        - `parse_hex_byte(...)`
-        - `parse_separated_hex_octets<N>(...)`
-        - `reference_clock_from_raw_video_sdp_reference_clock(...)`
-            - maps strict raw `ptp` / `localmac` forms into modeled `ReferenceClock`
-        - `media_clock_mode_from_raw_video_sdp_media_clock(...)`
-        - `timestamp_mode_from_raw_video_sdp_timestamp_mode(...)`
-        - `sender_type_from_raw_video_sdp_sender_type(...)`
-    - signaling application helpers:
-        - `apply_video_sdp_timing_attributes_to_signaling(...)`
-        - `apply_video_sdp_fmtp_timing_sender_fields_to_signaling(...)`
-    - timing-scope helpers:
-        - `raw_video_sdp_timing_value_is_media_scoped(...)`
-        - `raw_video_sdp_has_media_level_mediaclk(...)`
+    - mapping helpers for:
+        - reference clock
+        - media clock mode
+        - timestamp mode
+        - sender type
     - `validate_no_duplicate_fmtp_and_standalone_timing_fields(...)`
-        - fmtp timing media parameters may override session-level standalone attributes;
-        - same-semantic media-level coexistence remains invalid.
+        - rejects conflicts only when a fmtp timing/sender field coexists with the same semantic field at media-level standalone SDP scope;
+        - still allows fmtp media parameters to override session-level standalone compatibility attributes.
     - `video_stream_signaling_from_raw_video_sdp_media_section(...)`
-        - final SDP ingestion pipeline:
-            - parses fmtp;
-            - maps fmtp to `VideoStreamSignaling`;
-            - validates selected `rtpmap`;
-            - parses scoped timing attributes;
-            - now requires both:
-                - resolved `ts-refclk`
-                - media-level `mediaclk`
-            - applies standalone timing attributes and fmtp timing fields;
-            - validates final `VideoStreamSignaling`.
     - `parse_video_stream_signaling_from_sdp(...)`
-        - top-level final SDP ingestion entry point by payload type.
 - Примечание:
-    - raw SDP scope preservation remains non-destructive;
-    - final ST 2110 video ingestion is now standards-clean only when `ts-refclk` is present and `mediaclk` is present at media level.
+    - final SDP ingestion now requires explicit `TP` in video `a=fmtp`;
+    - absent `TP` is no longer silently treated as `2110TPN`;
+    - standalone timing attributes are applied first, then fmtp timing/sender fields are merged on top through an explicit final-ingestion boundary;
+    - media-level `mediaclk` remains mandatory for standards-clean final ingestion.
 
 ### libs/st2110core/include/st2110/video_timestamp_mapping.hpp
 - Роль:
