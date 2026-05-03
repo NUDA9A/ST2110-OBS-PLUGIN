@@ -1,3 +1,4 @@
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <condition_variable>
@@ -45,7 +46,7 @@ class FakeSocketRxPort final : public st2110::ISocketRxPort {
         return state_->is_open;
     }
 
-    st2110::Error open(const st2110::SocketRxOpenConfig &cfg) override {
+    st2110::Error open(const st2110::SocketRxOpenConfig& cfg) override {
         (void)cfg;
 
         std::lock_guard lock(state_->mutex_);
@@ -91,7 +92,7 @@ class FakeSocketRxPort final : public st2110::ISocketRxPort {
                     buffer[i] = datagram[i];
                 }
 
-                return st2110::SocketReceiveResult{datagram.size()};
+                return st2110::SocketReceiveResult{.size_bytes = datagram.size()};
             }
 
             state_->cv_.wait(lock);
@@ -118,7 +119,7 @@ class FakeSocketRxPortFactory final : public st2110::ISocketRxPortFactory {
 
 class FakeVideoSink final : public st2110::IVideoFrameSink {
   public:
-    void on_video_frame(const st2110::VideoFrameView &frame) override {
+    void on_video_frame(const st2110::VideoFrameView& frame) override {
         (void)frame;
         std::lock_guard lock(mutex_);
         ++frame_count_;
@@ -135,7 +136,7 @@ class FakeVideoSink final : public st2110::IVideoFrameSink {
 };
 
 template <class Predicate>
-bool wait_until(Predicate &&predicate, std::chrono::milliseconds timeout) {
+bool wait_until(Predicate&& predicate, std::chrono::milliseconds timeout) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
         if (predicate()) {
@@ -146,7 +147,7 @@ bool wait_until(Predicate &&predicate, std::chrono::milliseconds timeout) {
     return predicate();
 }
 
-void enqueue_datagram(const std::shared_ptr<FakeSocketRxPortState> &state, std::vector<std::uint8_t> datagram) {
+void enqueue_datagram(const std::shared_ptr<FakeSocketRxPortState>& state, std::vector<std::uint8_t> datagram) {
     {
         std::lock_guard lock(state->mutex_);
         state->queued_datagrams.push_back(std::move(datagram));
@@ -154,7 +155,7 @@ void enqueue_datagram(const std::shared_ptr<FakeSocketRxPortState> &state, std::
     state->cv_.notify_all();
 }
 
-std::size_t current_receive_count(const std::shared_ptr<FakeSocketRxPortState> &state) {
+std::size_t current_receive_count(const std::shared_ptr<FakeSocketRxPortState>& state) {
     std::lock_guard lock(state->mutex_);
     return static_cast<std::size_t>(state->receive_count);
 }
@@ -175,6 +176,18 @@ st2110::RxVideoConfig make_receive_ipv4_unicast_video_config(uint16_t port,
     cfg.scan_mode = st2110::VideoScanMode::Progressive;
     cfg.packing_mode = st2110::VideoPackingMode::Gpm;
     return cfg;
+}
+
+st2110::SocketRxVideoOperationalConfig
+make_receive_video_operational_config(uint16_t port, uint32_t width = 4, uint8_t payload_type = 112) {
+    const auto rx_cfg = make_receive_ipv4_unicast_video_config(port, width, payload_type);
+    auto operational = st2110::socket_rx_video_operational_config_from_rx_video_config(
+        rx_cfg,
+        st2110::PacketParsePolicy{},
+        st2110::PartialFramePolicy::Drop,
+        st2110::VideoRtpTimestampMapperConfig{});
+    assert(operational.has_value());
+    return *operational;
 }
 
 std::vector<std::uint8_t> build_single_segment_video_datagram(uint8_t payload_type,
@@ -274,7 +287,7 @@ void test_depacketizer_is_not_entered_for_wrong_payload_type() {
     st2110::SocketRxVideoBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
 
     FakeVideoSink sink;
-    const auto cfg = make_receive_ipv4_unicast_video_config(5004, 4, 112);
+    const auto cfg = make_receive_video_operational_config(5004, 4, 112);
 
     auto started = backend.start_video(cfg, sink);
     assert(started.has_value());
@@ -283,8 +296,8 @@ void test_depacketizer_is_not_entered_for_wrong_payload_type() {
     const std::array<std::uint8_t, 8> pixels{0x10u, 0x80u, 0x20u, 0x90u, 0x30u, 0xA0u, 0x40u, 0xB0u};
     enqueue_datagram(state, build_single_segment_video_datagram(111, 10, 90000, pixels, true, 0, 0));
 
-    const bool received = wait_until([&] { return current_receive_count(state) >= 1; },
-                                     std::chrono::milliseconds(200));
+    const bool received =
+        wait_until([&] { return current_receive_count(state) >= 1; }, std::chrono::milliseconds(200));
     assert(received);
 
     const auto stats = backend.stats();
