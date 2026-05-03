@@ -4,6 +4,7 @@
 #include "config_validation.hpp"
 #include "error.hpp"
 #include "rx_config.hpp"
+#include "packet_parse.hpp"
 
 #include <charconv>
 #include <cstddef>
@@ -300,6 +301,24 @@ struct SocketRxOpenConfig {
         if (cfg.multicast_membership->family != cfg.bind_endpoint.family) {
             return Error::InvalidValue;
         }
+    }
+
+    return Error::Ok;
+}
+
+struct SocketRxOperationalCommonConfig {
+    SocketRxOpenConfig open_config{};
+    PacketParsePolicy packet_parse_policy{};
+};
+
+[[nodiscard]] inline Error
+validate_socket_rx_operational_common_config(const SocketRxOperationalCommonConfig &cfg) {
+    if (const Error err = validate_socket_rx_open_config(cfg.open_config); err != Error::Ok) {
+        return err;
+    }
+
+    if (const Error err = validate_packet_parse_policy_config(cfg.packet_parse_policy); err != Error::Ok) {
+        return err;
     }
 
     return Error::Ok;

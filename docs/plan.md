@@ -1566,7 +1566,7 @@
     - malformed slash-parameter forms rejected;
     - existing session/media `c=` preservation remains unchanged.
 ### 197A. Reset socket RX operational-start architecture onto explicit operational configs
-- [ ] 197A1: Define common socket RX operational transport/policy model
+- [x] 197A1: Define common socket RX operational transport/policy model
   - ввести явную общую абстракцию для socket operational input, без media-specific payload/runtime деталей;
   - рекомендованная форма:
     - `SocketRxOperationalCommonConfig`

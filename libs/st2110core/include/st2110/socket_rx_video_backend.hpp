@@ -17,6 +17,13 @@
 #include <vector>
 
 namespace st2110 {
+struct SocketRxVideoOperationalConfig {
+    SocketRxOperationalCommonConfig common{};
+    RxVideoConfig rx_config{};
+    VideoReceivePipelineConfig receive_pipeline_config{};
+    VideoRtpTimestampMapperConfig timestamp_mapper_config{};
+};
+
 class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public IRxVideoBackend {
   public:
     SocketRxVideoBackend()
