@@ -162,43 +162,8 @@ int main() {
     {
         const std::string sdp = "v=0\r\n"
                                 "m=audio 5004 RTP/AVP 111\r\n"
-                                "a=ptime:1\r\n";
-
-        auto raw = select_raw_audio_sdp_media_section(sdp, 111);
-
-        assert(!raw.has_value());
-        assert(raw.error() == Error::InvalidValue);
-    }
-
-    {
-        const std::string sdp = "v=0\r\n"
-                                "m=audio 5004 RTP/AVP 111\r\n"
-                                "a=rtpmap:111 L24/48000/2\r\n"
-                                "a=rtpmap:111 L24/48000/2\r\n";
-
-        auto raw = select_raw_audio_sdp_media_section(sdp, 111);
-
-        assert(!raw.has_value());
-        assert(raw.error() == Error::InvalidValue);
-    }
-
-    {
-        const std::string sdp = "v=0\r\n"
-                                "m=audio 5004 RTP/AVP 111\r\n"
                                 "a=rtpmap:111 L24/48000/2\r\n"
                                 "a=ptime:1\r\n"
-                                "a=ptime:1\r\n";
-
-        auto raw = select_raw_audio_sdp_media_section(sdp, 111);
-
-        assert(!raw.has_value());
-        assert(raw.error() == Error::InvalidValue);
-    }
-
-    {
-        const std::string sdp = "v=0\r\n"
-                                "m=audio 5004 RTP/AVP 111\r\n"
-                                "a=rtpmap:111 L24/48000/2\r\n"
                                 "a=fmtp:111 channel-order=SMPTE2110.(ST)\r\n"
                                 "a=fmtp:111 channel-order=SMPTE2110.(ST)\r\n";
 
@@ -270,6 +235,86 @@ int main() {
                                 "m=audio 5004 RTP/AVP 111\r\n"
                                 "a=rtpmap:111 L24/48000/2\r\n"
                                 "a=ptime:0.0001\r\n";
+
+        auto raw = select_raw_audio_sdp_media_section(sdp, 111);
+
+        assert(!raw.has_value());
+        assert(raw.error() == Error::InvalidValue);
+    }
+
+    {
+        const std::string sdp = "v=0\r\n"
+                                "m=audio 5004 RTP/AVP 96 127\r\n"
+                                "a=rtpmap:127 L24/48000/2\r\n";
+
+        auto raw = select_raw_audio_sdp_media_section(sdp, 127);
+
+        assert(raw.has_value());
+        assert(raw->payload_type == 127);
+        assert(raw->media_payload_types.size() == 2);
+        assert(raw->media_payload_types[0] == 96);
+        assert(raw->media_payload_types[1] == 127);
+    }
+
+    {
+        const std::string sdp = "v=0\r\n"
+                                "m=audio 0 RTP/AVP 111\r\n"
+                                "a=rtpmap:111 L24/48000/2\r\n";
+
+        auto raw = select_raw_audio_sdp_media_section(sdp, 111);
+
+        assert(!raw.has_value());
+        assert(raw.error() == Error::InvalidValue);
+    }
+
+    {
+        const std::string sdp = "v=0\r\n"
+                                "m=audio 5004/2 RTP/AVP 111\r\n"
+                                "a=rtpmap:111 L24/48000/2\r\n";
+
+        auto raw = select_raw_audio_sdp_media_section(sdp, 111);
+
+        assert(!raw.has_value());
+        assert(raw.error() == Error::InvalidValue);
+    }
+
+    {
+        const std::string sdp = "v=0\r\n"
+                                "m=audio abc RTP/AVP 111\r\n"
+                                "a=rtpmap:111 L24/48000/2\r\n";
+
+        auto raw = select_raw_audio_sdp_media_section(sdp, 111);
+
+        assert(!raw.has_value());
+        assert(raw.error() == Error::InvalidValue);
+    }
+
+    {
+        const std::string sdp = "v=0\r\n"
+                                "m=audio 5004 RTP/SAVP 111\r\n"
+                                "a=rtpmap:111 L24/48000/2\r\n";
+
+        auto raw = select_raw_audio_sdp_media_section(sdp, 111);
+
+        assert(!raw.has_value());
+        assert(raw.error() == Error::InvalidValue);
+    }
+
+    {
+        const std::string sdp = "v=0\r\n"
+                                "m=audio 5004 RTP/AVP 95\r\n"
+                                "a=rtpmap:95 L24/48000/2\r\n";
+
+        auto raw = select_raw_audio_sdp_media_section(sdp, 95);
+
+        assert(!raw.has_value());
+        assert(raw.error() == Error::InvalidValue);
+    }
+
+    {
+        const std::string sdp = "v=0\r\n"
+                                "m=audio 5004 RTP/AVP 96 95 111\r\n"
+                                "a=rtpmap:111 L24/48000/2\r\n";
 
         auto raw = select_raw_audio_sdp_media_section(sdp, 111);
 
