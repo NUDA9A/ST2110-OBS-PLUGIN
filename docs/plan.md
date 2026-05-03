@@ -1709,7 +1709,7 @@
       - bootstrap config;
       - or localized default helper with a named constant + validation boundary.
     - backend должен получать это значение явно, а не зашивать literal в construction path.
-- [ ] 197C: Make initial RTP-to-`TimestampNs` anchoring explicit in socket RX runtime
+- [x] 197C: Make initial RTP-to-`TimestampNs` anchoring explicit in socket RX runtime
   - тип расхождения:
     - со стандартным timing смыслом + с правилами/архитектурой.
   - конкретное расхождение:
