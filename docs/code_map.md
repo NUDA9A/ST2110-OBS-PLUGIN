@@ -1206,194 +1206,94 @@
 
 ### libs/st2110core/include/st2110/video_signaling.hpp
 - Роль:
-    - standards-aware signaling validation and signaling-to-runtime projection boundary for `VideoStreamSignaling`.
-    - отделяет:
-        - structural / cross-field validation modeled video signaling;
-        - sender/timing/reference-clock validation;
-        - runtime support / projection limits;
-        - composition of packet-parse / RX / pipeline / timestamp-mapper / bootstrap configs
-          от raw SDP parsing/ingestion и от packet/depacketizer runtime implementation.
-    - keeps structurally valid signaling separate from current runtime support limits such as:
-        - supported `PixelFormat`;
-        - supported `VideoPackingMode`;
-        - concrete runtime `RxVideoConfig` constraints.
+    - standards-aware modeled video signaling validation and signaling-to-runtime/bootstrap projection layer.
+    - validates structural and selected cross-field ST 2110 signaling rules while keeping runtime support checks localized in explicit projection/support boundaries.
+    - now also makes the initial RTP timestamp anchoring policy explicit in signaling-derived timestamp-mapper projection.
 - Связи:
     - использует:
-        - `signaling_structs.hpp` for:
-            - `VideoStreamSignaling`;
-            - `VideoMediaDescription`;
-            - timing/reference-clock structs;
-            - `VideoReceiverBootstrapConfig`;
-        - `config_validation.hpp` for generic config/frame-rate/scan-mode validation;
-        - `packet_parse.hpp` for `PacketParsePolicy` and `MAXUDP` policy validation/projection;
+        - `signaling_structs.hpp` for the modeled signaling/bootstrapping types;
+        - `config_validation.hpp` for generic frame-rate and scan-mode validation;
+        - `packet_parse.hpp` for `PacketParsePolicy` and `MAXUDP` validation/projection;
         - `rx_config.hpp` for `RxVideoConfig`;
         - `pixel_format.hpp` for runtime pixel-format projection;
-        - `depacketizer.hpp` for `DepacketizerConfig` and `PartialFramePolicy`;
-        - `video_receive_pipeline.hpp` for `VideoReceivePipelineConfig`;
+        - `depacketizer.hpp` for `DepacketizerConfig`;
         - `video_unit_reconstructor.hpp` for `VideoUnitReconstructorConfig`;
-        - `video_scan_mode.hpp` for modeled scan-mode axis.
-    - используется:
-        - `video_sdp_signaling_adapter.hpp` / `video_sdp_ingestion.hpp` как final validation/projection layer above raw SDP parsing;
-        - `video_receiver_timing_signaling.hpp`, который reuses generic signaling/bootstrap projection from this file and overlays receiver-timing policy by replacing `VideoReceiverBootstrapConfig::timing_config`.
-    - покрывается тестами:
-        - `tests/test_video_signaling.cpp`;
-        - `tests/test_video_signaled_media_properties.cpp`;
-        - `tests/test_video_reference_clock.cpp`;
-        - `tests/test_video_sender_signaling.cpp`;
-        - `tests/test_video_signaling_rx_match.cpp`;
-        - `tests/test_video_signaling_to_rx_config.cpp`;
-        - `tests/test_video_signaling_to_pipeline_config.cpp`;
-        - `tests/test_video_receiver_bootstrap.cpp`;
-        - indirectly timing-aware composition is extended in `tests/test_video_receiver_timing_bootstrap.cpp`.
+        - `video_receive_pipeline.hpp` for `VideoReceivePipelineConfig`;
+        - `video_scan_mode.hpp` for modeled scan-mode boundary.
+    - uses timestamp-mapper and bootstrap types indirectly through `signaling_structs.hpp`.
+    - используется higher layers such as:
+        - SDP-to-signaling ingestion;
+        - receiver bootstrap composition;
+        - operational adapters for socket runtime.
 - Сущности:
-    - sender / timing / reference-clock validation:
-        - `validate_video_sender_signaling(VideoSenderType sender_type, const std::optional<uint32_t>& troff_us, const std::optional<uint32_t>& cmax) -> Error`
-            - validates sender timing fields by modeled structural policy.
-            - current behavior:
-                - `Narrow`, `NarrowLinear`, `Wide` are recognized;
-                - present `troff_us == 0` -> `InvalidValue`;
-                - present `cmax == 0` -> `InvalidValue`;
-                - absent optional sender parameters are accepted;
-                - unknown sender-type enum -> `InvalidValue`.
-            - does not impose stricter receiver/conformance policy; that remains outside this file.
-        - `validate_reference_clock(const ReferenceClock&) -> Error`
-            - validates modeled `ReferenceClock`.
-            - current behavior:
-                - `Ptp`:
-                    - requires `ptp`;
-                    - rejects simultaneous `local_mac` or `raw_token`;
-                    - rejects all-zero clock identity unless `traceable=true`;
-                - `LocalMac`:
-                    - requires `local_mac`;
-                    - rejects simultaneous `ptp` or `raw_token`;
-                    - rejects all-zero MAC;
-                - `Other`:
-                    - requires non-empty `raw_token`;
-                    - rejects simultaneous typed payloads.
-        - `validate_media_clock_mode(MediaClockMode) -> Error`
-        - `validate_timestamp_mode(TimestampMode) -> Error`
-        - `validate_video_timing_signaling(MediaClockMode media_clock_mode, TimestampMode timestamp_mode, uint32_t ts_delay_sender_ticks) -> Error`
-            - validates modeled timing-mode enums;
-            - currently `ts_delay_sender_ticks` is carried structurally but has no extra numeric rule here beyond type/range of the model.
-    - media-description field validation:
-        - `validate_video_sampling(const VideoSampling&) -> Error`
-        - `validate_video_colorimetry(const VideoColorimetry&) -> Error`
-        - `validate_video_transfer_characteristic_system(const VideoTransferCharacteristicSystem&) -> Error`
-        - `validate_video_signal_standard(const VideoSignalStandard&) -> Error`
-        - `validate_required_video_signal_standard(const std::optional<VideoSignalStandard>&) -> Error`
-        - `validate_video_range(const VideoRange&) -> Error`
-        - `validate_video_pixel_aspect_ratio(const VideoPixelAspectRatio&) -> Error`
-        - `validate_video_media_description_dimensions(uint32_t width, uint32_t height) -> Error`
-            - signaled-dimensions boundary;
-            - currently accepts only `1..32767` for both width and height.
-        - `validate_video_bit_depth(const VideoBitDepth&) -> Error`
-            - accepts:
-                - integer depths `8`, `10`, `12`, `16`;
-                - floating-point only `16f` as `{bits=16, floating_point=true}`;
-            - rejects unsupported structural combinations.
-        - `validate_video_media_description(const VideoMediaDescription&) -> Error`
-            - aggregate media-description validation entry point;
-            - validates token-backed fields, required `SSN`, `PAR`, dimensions, and frame rate.
-    - media cross-field constraints:
-        - `is_420_video_sampling(const VideoSampling&) -> bool`
-            - helper for progressive-only `4:2:0` signaling rule.
-        - `validate_video_media_description_cross_field_constraints(const VideoMediaDescription&, VideoScanMode scan_mode) -> Error`
-            - validates modeled cross-field constraints that belong to signaling/model layer.
-            - current behavior includes:
-                - `4:2:0` sampling variants accepted only with `VideoScanMode::Progressive`;
-                - `KEY` sampling requires:
-                    - `colorimetry=ALPHA`;
-                    - no `TCS`;
-                - `ALPHA` colorimetry or `ST2115LOGS3` TCS require `SSN=ST2110-20:2022`;
-                - normal non-`ALPHA` / non-`ST2115LOGS3` streams reject `SSN=ST2110-20:2022`;
-                - `RANGE` cross-field rule:
-                    - with `BT2100`, only `NARROW` or `FULL` accepted;
-                    - outside `BT2100`, `NARROW`, `FULLPROTECT`, and `FULL` accepted;
-                - unknown enum cases or invalid combinations -> `InvalidValue`.
-    - runtime format / support projection:
-        - `pixel_format_from_video_stream_signaling(const VideoStreamSignaling&) -> std::expected<PixelFormat, Error>`
-            - projects structurally valid signaling into current runtime/storage pixel format.
-            - current behavior:
-                - only `YCbCr422 + 8-bit integer` maps to `PixelFormat::UYVY`;
-                - recognized but unsupported structurally valid media -> `Unsupported`;
-                - invalid structural media -> propagated validation error.
-            - keeps runtime support separate from signaling validity.
-    - full signaling validation:
-        - `validate_video_stream_signaling(const VideoStreamSignaling&) -> Error`
-            - main standards-aware signaling validation entry point.
-            - validates:
+    - validation helpers for signaling subdomains:
+        - `validate_video_sender_signaling(...)`
+            - validates known sender types;
+            - accepts optional `TROFF` / `CMAX` presence for `Narrow`, `NarrowLinear`, and `Wide`;
+            - rejects present zero values;
+            - keeps stricter sender/conformance policy out of generic signaling validation.
+        - `validate_reference_clock(...)`
+        - `validate_media_clock_mode(...)`
+        - `validate_timestamp_mode(...)`
+        - `validate_video_timing_signaling(...)`
+        - token-backed modeled-type validators:
+            - `validate_video_sampling(...)`
+            - `validate_video_colorimetry(...)`
+            - `validate_video_transfer_characteristic_system(...)`
+            - `validate_video_signal_standard(...)`
+            - `validate_required_video_signal_standard(...)`
+            - `validate_video_range(...)`
+            - `validate_video_pixel_aspect_ratio(...)`
+            - `validate_video_media_description_dimensions(...)`
+            - `validate_video_bit_depth(...)`
+        - cross-field helpers:
+            - `is_420_video_sampling(...)`
+            - `validate_video_media_description_cross_field_constraints(...)`
+                - keeps `4:2:0` progressive-only constraint at the signaling/model layer;
+                - keeps KEY/alpha/TCS consistency at the signaling/model layer;
+                - enforces modeled `SSN` cross-field behavior;
+                - enforces modeled `RANGE` cross-field behavior.
+    - runtime projection helpers:
+        - `pixel_format_from_video_stream_signaling(...) -> std::expected<PixelFormat, Error>`
+            - current runtime projection maps only supported combinations, presently `YCbCr422 + 8-bit -> UYVY`;
+            - structurally known but runtime-unsupported media returns `Unsupported`.
+        - `validate_video_media_description(...)`
+        - `validate_video_stream_signaling(...)`
+            - validates full signaling object including:
                 - media-description structure;
-                - `VideoScanMode`;
-                - media cross-field constraints;
-                - timing-mode enums;
-                - sender timing fields;
+                - scan mode;
+                - timing fields;
+                - sender signaling;
                 - reference clock;
-                - `MAXUDP` policy through `PacketParsePolicy`.
-            - rejects structurally invalid signaling before any runtime projection.
-    - packet-parse policy projection:
-        - `packet_parse_policy_from_video_stream_signaling(const VideoStreamSignaling&) -> PacketParsePolicy`
-            - projects `VideoStreamSignaling::max_udp_datagram_bytes` into `PacketParsePolicy`.
-            - absent signaling override remains absent policy override.
-    - signaling vs manual runtime-config consistency:
-        - `validate_video_stream_signaling_against_rx_video_config(const VideoStreamSignaling&, const RxVideoConfig&) -> Error`
-            - validates both signaling and runtime config first;
-            - projects runtime `PixelFormat` from signaling;
-            - then checks exact match for:
-                - `format`;
-                - `scan_mode`;
-                - `width`;
-                - `height`;
-                - `fps_num`;
-                - `fps_den`;
-                - `packing_mode`.
-    - signaling-to-runtime projection helpers:
-        - `depacketizer_config_from_video_stream_signaling(const VideoStreamSignaling&, PartialFramePolicy) -> std::expected<DepacketizerConfig, Error>`
-            - validates signaling;
-            - validates current runtime packing-mode support;
-            - projects runtime pixel format;
-            - returns `DepacketizerConfig` with explicit `scan_mode` and `packing_mode`.
-        - `video_unit_reconstructor_config_from_video_stream_signaling(const VideoStreamSignaling&) -> std::expected<VideoUnitReconstructorConfig, Error>`
-            - validates signaling;
-            - projects runtime pixel format;
-            - preserves modeled `scan_mode`.
-        - `video_receive_pipeline_config_from_video_stream_signaling(const VideoStreamSignaling&, PartialFramePolicy) -> std::expected<VideoReceivePipelineConfig, Error>`
-            - validates signaling;
-            - validates runtime packing-mode support;
-            - projects composed depacketizer + reconstructor configs.
-        - `rx_video_config_from_video_stream_signaling(const VideoStreamSignaling&, uint16_t udp_port, uint8_t payload_type, std::string local_ip, std::string dest_ip) -> std::expected<RxVideoConfig, Error>`
-            - validates signaling;
-            - projects runtime pixel format;
-            - builds manual/backend-facing `RxVideoConfig`;
-            - validates resulting transport/runtime config.
+                - `MAXUDP` policy boundary.
+        - `packet_parse_policy_from_video_stream_signaling(...) -> PacketParsePolicy`
+            - projects `MAXUDP` into packet-size policy.
+        - `validate_video_stream_signaling_against_rx_video_config(...)`
+            - validates consistency between modeled signaling and manual/runtime `RxVideoConfig`.
+        - `depacketizer_config_from_video_stream_signaling(...)`
+        - `video_unit_reconstructor_config_from_video_stream_signaling(...)`
+        - `video_receive_pipeline_config_from_video_stream_signaling(...)`
+        - `rx_video_config_from_video_stream_signaling(...)`
+    - timestamp-mapper projection:
         - `video_rtp_timestamp_mapper_config_from_video_stream_signaling(const VideoStreamSignaling&) -> std::expected<VideoRtpTimestampMapperConfig, Error>`
-            - validates signaling;
-            - derives the current explicit video RTP timestamp-mapper config:
-                - `rtp_clock_rate = 90000`
-                - `anchor_rtp_timestamp = 0`
-                - `anchor_timestamp_ns = 0`;
-            - validates the resulting mapper config before returning it.
-        - `video_receiver_bootstrap_config_from_video_stream_signaling(const VideoStreamSignaling&, uint16_t udp_port, uint8_t payload_type, std::string local_ip, std::string dest_ip, PartialFramePolicy partial_frame_policy) -> std::expected<VideoReceiverBootstrapConfig, Error>`
-            - generic signaling-driven bootstrap composition;
-            - validates signaling and runtime packing-mode support;
-            - derives:
-                - `PacketParsePolicy`;
+            - validates signaling first;
+            - currently projects the explicit named policy
+              `video_rtp_timestamp_mapper_config_first_observed_local_zero()`;
+            - validates the final timestamp-mapper config before returning it.
+    - bootstrap composition:
+        - `video_receiver_bootstrap_config_from_video_stream_signaling(...) -> std::expected<VideoReceiverBootstrapConfig, Error>`
+            - validates signaling and current runtime packing-mode support first;
+            - projects:
+                - packet-parse policy;
                 - `RxVideoConfig`;
-                - `VideoReceivePipelineConfig`;
-                - `VideoRtpTimestampMapperConfig`;
-            - returns composed `VideoReceiverBootstrapConfig`;
-            - currently sets default generic `timing_config = VideoReceiverTimingConfig{}` so the bootstrap object is operationally richer even before the timing-aware wrapper is applied.
+                - receive pipeline config;
+                - timestamp-mapper config with explicit initial-anchor policy;
+            - returns final `VideoReceiverBootstrapConfig`.
 - Примечание:
-    - this file is both:
-        - the standards-aware validation boundary for modeled video signaling;
-        - the generic signaling-to-runtime/bootstrap projection boundary.
-    - it intentionally keeps “structurally valid signaling” distinct from “currently supported runtime mapping”:
-        - `BPM` can be structurally valid in signaling, while runtime support still rejects it through `validate_runtime_video_packing_mode_support(...)`;
-        - many valid media-description combinations remain representable even when `pixel_format_from_video_stream_signaling(...)` returns `Unsupported`.
-    - bootstrap composition here is now richer than the older `packet_parse_policy + rx_config + receive_pipeline_config` shape:
-        - timestamp-mapper config is projected explicitly;
-        - generic default timing config is carried explicitly;
-        - timing-aware policy still remains an overlay in `video_receiver_timing_signaling.hpp`, not hidden inside this file.
-    - stricter receiver-side ST 2110-21 acceptance/conformance policy remains outside this file in the dedicated receiver-timing boundary, not inside generic signaling validation.
+    - this file remains a signaling/projection layer, not a concrete backend/runtime implementation.
+    - current signaling-derived timestamp-mapper projection explicitly chooses:
+        - first observed RTP timestamp becomes local zero.
+    - if a future standards-aware bootstrap/reference-derived absolute relation is modeled, it should appear as another explicit projection choice through the existing `VideoRtpTimestampMapperConfig` boundary rather than as a hidden backend default.
 
 ### libs/st2110core/include/st2110/video_unit_reconstructor.hpp
 - Роль:
@@ -2723,112 +2623,90 @@
 
 ### libs/st2110core/include/st2110/video_timestamp_mapping.hpp
 - Роль:
-    - explicit boundary для преобразования RTP timestamp domain в internal `TimestampNs`.
-    - отделяет:
-        - RTP-domain timestamp progression и wraparound handling;
-        - arithmetic conversion RTP ticks -> nanoseconds;
-        - synthetic/manual fps-based timestamp generation
-          от depacketizer packet grouping, frame assembly, reconstructor и receiver-side playout timing.
-    - keeps standards-facing RTP timestamp mapping separate from synthetic cadence helpers, чтобы fps-based scaffolding logic не становился заменой ST 2110 timestamp semantics.
+    - standards-aware video RTP timestamp mapping boundary plus synthetic fps-based timestamp helper boundary for tests/scaffolding.
+    - explicitly separates:
+        - RTP-domain timestamp mapping;
+        - initial anchoring policy;
+        - synthetic non-RTP cadence mapping.
+    - now models the initial RTP-to-`TimestampNs` anchoring mode explicitly instead of relying on a hidden `0/0` anchor convention.
 - Связи:
     - использует:
-        - `error.hpp` для explicit validation/result reporting;
-        - `timestamp.hpp` для `TimestampNs`.
-    - напрямую покрывается тестами:
-        - `tests/video_timestamp_mapping_test.cpp`;
-        - `tests/video_timestamp_mapping_invariants_test.cpp`.
-    - архитектурно сочетается с `video_playout_timing.hpp`:
-        - mapped media timestamps are intended to flow into receiver-side playout/reconstruction timing above reconstructed-frame boundaries;
-        - invariants coverage explicitly checks this layering through `video_reconstructed_frame_timing(...)`.
-    - пока не встроен в actual `VideoReceivePipeline` / backend runtime path;
-      future integration should remain above depacketizer/reconstructor output boundaries, not inside packet parsing or segment placement.
+        - `rtp_timestamp_anchor_policy.hpp` for the shared enum `RtpTimestampInitialAnchorMode` and its validation;
+        - `timestamp.hpp` for `TimestampNs`;
+        - `error.hpp` for `Error`.
+    - используется:
+        - `video_signaling.hpp` to build signaling-derived timestamp-mapper config;
+        - `socket_rx_video_backend.hpp` as the concrete runtime timestamp-mapping component for delivered frames;
+        - video playout/reconstruction timing helpers above the mapped media timestamp boundary.
 - Сущности:
-    - `videoTimestampNanosecondsPerSecond`
-        - common conversion constant:
-            - `1'000'000'000`.
+    - constant:
+        - `videoTimestampNanosecondsPerSecond`
     - `VideoRtpTimestampMapperConfig`
-        - config for standards-facing RTP timestamp mapping:
+        - explicit video RTP timestamp mapper config.
+        - fields:
             - `rtp_clock_rate`
+            - `initial_anchor_mode`
             - `anchor_rtp_timestamp`
             - `anchor_timestamp_ns`
+        - defaults:
+            - `rtp_clock_rate = 90000`
+            - `initial_anchor_mode = RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero`.
     - `validate_video_rtp_timestamp_mapper_config(const VideoRtpTimestampMapperConfig&) -> Error`
-        - validates RTP timestamp mapper config;
-        - current rule:
-            - `rtp_clock_rate` must be non-zero.
-    - arithmetic helpers:
-        - `checked_video_timestamp_add_u64(uint64_t a, uint64_t b) -> std::expected<uint64_t, Error>`
-            - checked addition with overflow rejection.
-        - `checked_video_timestamp_mul_u64(uint64_t a, uint64_t b) -> std::expected<uint64_t, Error>`
-            - checked multiplication with overflow rejection.
-        - `forward_rtp_timestamp_delta(uint32_t previous, uint32_t current) -> std::expected<uint32_t, Error>`
-            - computes forward RTP timestamp delta in 32-bit modulo arithmetic.
-            - behavior:
-                - accepts normal forward movement;
-                - accepts normal wraparound;
-                - rejects backward or ambiguous jumps where raw delta is `>= 0x80000000`.
-        - `rtp_ticks_to_timestamp_ns(uint64_t ticks, uint32_t rtp_clock_rate, TimestampNs anchor_timestamp_ns) -> std::expected<TimestampNs, Error>`
-            - converts RTP ticks to absolute nanoseconds relative to an anchor timestamp;
-            - splits:
-                - whole seconds;
-                - remainder ticks;
-            - uses integer arithmetic and checked overflow handling;
-            - rejects zero RTP clock rate and nanosecond overflow.
+        - validates:
+            - non-zero `rtp_clock_rate`;
+            - valid `initial_anchor_mode`;
+            - for `ConfiguredReference`:
+                - configured anchor fields are allowed;
+            - for `FirstObservedBecomesLocalZero`:
+                - `anchor_rtp_timestamp == 0`
+                - `anchor_timestamp_ns == 0`.
+    - `video_rtp_timestamp_mapper_config_first_observed_local_zero() -> VideoRtpTimestampMapperConfig`
+        - named helper for the current local-zero-on-first-observation policy.
+    - arithmetic / delta helpers:
+        - `checked_video_timestamp_add_u64(...)`
+        - `checked_video_timestamp_mul_u64(...)`
+        - `forward_rtp_timestamp_delta(...)`
+            - computes forward RTP delta with 32-bit modulo arithmetic;
+            - accepts normal wraparound;
+            - rejects ambiguous/backward deltas at or above half range.
+        - `rtp_ticks_to_timestamp_ns(...)`
+            - converts RTP ticks to nanoseconds relative to an explicit anchor timestamp.
     - `VideoRtpTimestampMapper`
-        - stateful standards-facing RTP timestamp mapper.
-        - constructor:
-            - `explicit VideoRtpTimestampMapper(VideoRtpTimestampMapperConfig cfg)`
-            - initializes through `reset(cfg)`.
+        - stateful video RTP timestamp mapper.
         - `map(uint32_t rtp_timestamp) -> std::expected<TimestampNs, Error>`
-            - maps current RTP timestamp to internal nanoseconds.
-            - behavior:
-                - returns config error if mapper config is invalid;
-                - computes forward delta from `last_raw_rtp_timestamp_`;
-                - accumulates `ticks_since_anchor_`;
-                - preserves continuity across normal 32-bit wraparound;
-                - rejects backward / ambiguous movement;
-                - rejects tick accumulator overflow;
-                - returns absolute timestamp via `rtp_ticks_to_timestamp_ns(...)`.
-            - notable current behavior:
-                - mapping the anchor RTP timestamp returns `anchor_timestamp_ns`;
-                - repeated valid forward mapping is monotonic for monotonic RTP progression.
-        - `reset(VideoRtpTimestampMapperConfig cfg)`
-            - replaces mapper config;
-            - recomputes stored config validation result;
-            - resets:
-                - `last_raw_rtp_timestamp_` to `anchor_rtp_timestamp`;
-                - `ticks_since_anchor_` to `0`.
-    - `SyntheticVideoTimestampMapperConfig`
-        - config for explicit fps-based synthetic/manual timestamp generation:
+            - returns config error if mapper config is invalid;
+            - in `FirstObservedBecomesLocalZero` mode:
+                - first observed RTP timestamp maps to `0`;
+                - runtime origin becomes explicit from that first packet;
+            - in `ConfiguredReference` mode:
+                - mapping starts relative to `anchor_rtp_timestamp` / `anchor_timestamp_ns`;
+            - accumulates forward RTP deltas across normal progression and wraparound;
+            - rejects backward/ambiguous movement and overflow.
+        - `reset(VideoRtpTimestampMapperConfig)`
+            - replaces mapper config and revalidates it;
+            - clears prior runtime-origin / cadence state.
+        - internal state:
+            - `cfg_`
+            - `config_error_`
+            - `has_runtime_origin_`
+            - `last_raw_rtp_timestamp_`
+            - `ticks_since_anchor_`
+    - synthetic cadence helpers:
+        - `SyntheticVideoTimestampMapperConfig`
             - `fps_num`
             - `fps_den`
             - `anchor_timestamp_ns`
-    - `validate_synthetic_video_timestamp_mapper_config(const SyntheticVideoTimestampMapperConfig&) -> Error`
-        - validates synthetic mapper config;
-        - current rule:
-            - `fps_num` and `fps_den` must both be non-zero.
-    - `synthetic_unit_index_to_timestamp_ns(uint64_t unit_index, const SyntheticVideoTimestampMapperConfig&) -> std::expected<TimestampNs, Error>`
-        - maps a synthetic unit index to nanoseconds using explicit fps cadence.
-        - behavior:
-            - validates config first;
-            - when `__int128` is available, computes via wide intermediate arithmetic;
-            - otherwise uses checked 64-bit staged arithmetic;
-            - rejects overflow and invalid config.
-    - `SyntheticVideoTimestampMapper`
-        - stateless synthetic/manual mapper for tests, scaffolding, and other non-standards-facing cadence generation.
-        - constructor:
-            - `explicit SyntheticVideoTimestampMapper(SyntheticVideoTimestampMapperConfig cfg)`
-            - stores config and precomputes config validation result.
-        - `map_unit_index(uint64_t unit_index) const -> std::expected<TimestampNs, Error>`
-            - returns config error if invalid;
-            - otherwise delegates to `synthetic_unit_index_to_timestamp_ns(...)`.
+        - `validate_synthetic_video_timestamp_mapper_config(...)`
+        - `synthetic_unit_index_to_timestamp_ns(...)`
+            - maps unit index to nanoseconds from explicit fps cadence;
+            - uses `__int128` path where available, with checked fallback otherwise.
+        - `SyntheticVideoTimestampMapper`
+            - `map_unit_index(uint64_t) -> std::expected<TimestampNs, Error>`.
 - Примечание:
-    - this file models two intentionally separate timestamp paths:
-        - RTP-domain mapping for standards-facing receive timing;
-        - synthetic fps-based mapping for tests/scaffolding.
-    - current RTP mapper is intentionally simple and monotonic:
-        - it accepts normal forward wraparound;
-        - it rejects backward or half-range-ambiguous jumps instead of trying to infer sender discontinuities or resynchronization.
-    - receiver-side playout/reconstruction delay policy is not implemented here and must remain in the separate `video_playout_timing.hpp` boundary above mapped media timestamps.
+    - default video mapper behavior is no longer “implicitly configured-reference with anchor `0/0`”.
+    - the current default is explicitly:
+        - first observed RTP timestamp becomes local zero.
+    - synthetic mapper remains intentionally separate from standards-facing RTP mapping and should not be treated as the receive-path timestamp authority.
 
 ### libs/st2110core/include/st2110/video_playout_timing.hpp
 - Роль:
@@ -3058,102 +2936,55 @@
 
 ### libs/st2110core/include/st2110/audio_receiver_bootstrap.hpp
 - Роль:
-    - explicit audio receiver bootstrap composition boundary.
-    - связывает standards-aware `AudioStreamSignaling` с полным signaling-derived bootstrap source для текущего socket audio receive path.
-    - агрегирует в одном result object не только runtime `RxAudioConfig`, но и уже derived operational runtime components:
-        - packet-parse policy;
-        - audio RTP packet policy;
-        - frame assembler config;
-        - reorder buffer config;
-        - RTP timestamp mapper config;
-        - parsed/effective channel-order model.
-    - отделяет signaling/bootstrap projection от:
-        - raw SDP parsing;
-        - backend-local default construction;
-        - socket backend start/runtime lifecycle;
-        - audio packet reorder/assembly execution;
-        - sink delivery.
+    - explicit signaling-driven bootstrap boundary для audio receive path.
+    - собирает из `AudioStreamSignaling` полный receiver bootstrap aggregate без скрытой реконструкции runtime-параметров внутри concrete backend’а.
+    - now also makes the initial RTP-to-`TimestampNs` anchoring policy explicit at bootstrap time through `AudioRtpTimestampMapperConfig`.
 - Связи:
-    - использует `audio_channel_order.hpp` for:
-        - `ParsedAudioChannelOrder`;
-        - `effective_audio_channel_order_from_audio_stream_signaling(...)`.
-    - использует `audio_signaling.hpp` for:
-        - `AudioStreamSignaling`.
-    - использует `audio_signaling_rx_config.hpp` for:
-        - `rx_audio_config_from_audio_stream_signaling(...)`.
-    - использует `rx_config.hpp` for:
-        - `RxAudioConfig`;
-        - `AudioSampleFormat`.
-    - использует `packet_parse.hpp` for:
-        - `PacketParsePolicy`.
-    - использует `audio_packet.hpp` for:
-        - `AudioRtpPacketPolicy`;
-        - `audio_rtp_packet_policy_from_rx_audio_config(...)`.
-    - использует `audio_frame_assembler.hpp` for:
-        - `AudioFrameAssemblerConfig`;
-        - `AudioSampleStorageFormat`;
-        - `validate_audio_frame_assembler_config(...)`.
-    - использует `audio_reorder_buffer.hpp` for:
-        - `AudioReorderBufferConfig`;
-        - `validate_audio_reorder_buffer_config(...)`.
-    - использует `audio_timestamp_mapping.hpp` for:
-        - `AudioRtpTimestampMapperConfig`;
-        - `validate_audio_rtp_timestamp_mapper_config(...)`.
-    - использует `error.hpp` through `std::expected<..., Error>`.
-    - downstream operational consumer path now goes through:
-        - `socket_rx_audio_backend.hpp` via `socket_rx_audio_operational_config_from_audio_receiver_bootstrap(...)`.
-    - current test target remains `tests/audio_receiver_bootstrap_test.cpp`.
+    - использует:
+        - `audio_signaling.hpp` for `AudioStreamSignaling` and signaling validation/projection prerequisites;
+        - `audio_signaling_rx_config.hpp` for `rx_audio_config_from_audio_stream_signaling(...)`;
+        - `audio_channel_order.hpp` for effective channel-order derivation;
+        - `audio_packet.hpp` for `AudioRtpPacketPolicy` and `audio_rtp_packet_policy_from_rx_audio_config(...)`;
+        - `audio_frame_assembler.hpp` for `AudioFrameAssemblerConfig` and validation;
+        - `audio_reorder_buffer.hpp` for `AudioReorderBufferConfig` and validation;
+        - `audio_timestamp_mapping.hpp` for `AudioRtpTimestampMapperConfig`, validation, and the named helper
+          `audio_rtp_timestamp_mapper_config_first_observed_local_zero(...)`;
+        - `packet_parse.hpp` for `PacketParsePolicy`;
+        - `rx_config.hpp` for `RxAudioConfig`;
+        - `error.hpp` for `Error`.
+    - используется `socket_rx_audio_backend.hpp` как upstream bootstrap input for:
+        - `socket_rx_audio_operational_config_from_audio_receiver_bootstrap(...)`.
+    - отделяет signaling/bootstrap composition от concrete socket backend runtime construction.
 - Сущности:
     - `AudioReceiverBootstrapConfig`
-        - aggregated bootstrap result:
+        - aggregate bootstrap result for audio receive runtime.
+        - carries:
             - `packet_parse_policy`
             - `rx_config`
             - `audio_packet_policy`
             - `frame_assembler_config`
             - `reorder_buffer_config`
             - `timestamp_mapper_config`
-            - `channel_order`.
-        - acts as richer signaling/bootstrap source for later socket operational projection instead of leaving these runtime components to backend-local reconstruction.
-    - `audio_receiver_bootstrap_config_from_audio_stream_signaling(...) -> std::expected<AudioReceiverBootstrapConfig, Error>`
-        - input:
-            - `const AudioStreamSignaling& signaling`
-            - `uint16_t udp_port`
-            - `uint8_t payload_type`
-            - `std::string local_ip`
-            - `std::string dest_ip`
-            - optional runtime `AudioSampleFormat format = AudioSampleFormat::LinearPcm`
+            - `channel_order`
+    - `audio_receiver_bootstrap_config_from_audio_stream_signaling(const AudioStreamSignaling&, uint16_t udp_port, uint8_t payload_type, std::string local_ip, std::string dest_ip, AudioSampleFormat format = AudioSampleFormat::LinearPcm) -> std::expected<AudioReceiverBootstrapConfig, Error>`
+        - validates/projects final audio bootstrap object from signaling plus transport inputs.
         - behavior:
-            - projects runtime config through `rx_audio_config_from_audio_stream_signaling(...)`;
-            - derives effective channel-order through `effective_audio_channel_order_from_audio_stream_signaling(...)`;
-            - derives `AudioRtpPacketPolicy` through `audio_rtp_packet_policy_from_rx_audio_config(...)`;
-            - constructs explicit current bootstrap/runtime defaults for:
-                - `PacketParsePolicy{}`:
-                    - current audio bootstrap does not yet derive packet-size policy from richer signaling input;
-                - `AudioFrameAssemblerConfig{ .storage_format = AudioSampleStorageFormat::InterleavedS32 }`;
-                - `AudioReorderBufferConfig{}`:
-                    - current default reorder window remains explicit in this bootstrap boundary, not hidden in backend start;
-                - `AudioRtpTimestampMapperConfig{ .rtp_clock_rate = rx_config->sampling_rate_hz, .anchor_rtp_timestamp = 0, .anchor_timestamp_ns = 0 }`.
-            - explicitly validates derived assembler/reorder/timestamp-mapper configs before returning the bootstrap object.
-            - returns one aggregated bootstrap object only when all projection/derivation stages succeed.
-        - keeps local runtime/transport inputs explicit at the bootstrap call site:
-            - `udp_port`
-            - `payload_type`
-            - `local_ip`
-            - `dest_ip`
-            - runtime `AudioSampleFormat`.
-        - propagates validation/projection failures from the existing lower boundaries unchanged.
+            - derives `RxAudioConfig` from signaling through `rx_audio_config_from_audio_stream_signaling(...)`;
+            - derives effective audio channel order through `effective_audio_channel_order_from_audio_stream_signaling(...)`;
+            - derives `AudioRtpPacketPolicy` from the projected `RxAudioConfig`;
+            - constructs explicit assembler config:
+                - `storage_format = AudioSampleStorageFormat::InterleavedS32`;
+            - constructs explicit reorder-buffer config via `AudioReorderBufferConfig{}`;
+            - constructs explicit timestamp-mapper config via
+              `audio_rtp_timestamp_mapper_config_first_observed_local_zero(rx_config->sampling_rate_hz)`;
+            - validates each derived runtime component before returning the aggregate.
+        - error behavior:
+            - propagates projection/validation failures directly;
+            - does not silently invent fallback transport/runtime values inside the backend layer.
 - Примечание:
-    - this file is no longer a thin `RxAudioConfig + channel_order` wrapper; it is now the signaling-derived bootstrap source for full socket operational projection on the audio path.
-    - the file still does not parse SDP directly; raw SDP parsing/mapping remains outside this file.
-    - it does not implement:
-        - audio packet parsing;
-        - reorder execution;
-        - PCM decode/storage writes;
-        - timestamp mapping execution;
-        - backend socket lifecycle;
-        - OBS/backend sink delivery.
-    - current defaults that remain here are explicit bootstrap-layer defaults, not backend-hidden defaults.
-    - future richer audio signaling/runtime axes should be threaded into this bootstrap boundary so socket operational projection can consume them without backend-local reconstruction.
+    - bootstrap now explicitly chooses the current local runtime anchoring policy for audio:
+        - first observed RTP timestamp becomes local zero.
+    - this file does not implement socket/runtime behavior by itself; it only composes the bootstrap result shape and defaults for later operational projection.
 
 ### libs/st2110core/include/st2110/audio_sdp_media_section.hpp
 - Роль:
@@ -3826,83 +3657,93 @@
 
 ### libs/st2110core/include/st2110/audio_timestamp_mapping.hpp
 - Роль:
-    - explicit audio timing boundary for the current ST 2110-30 receive path.
-    - covers two adjacent but separate responsibilities:
-        - mapping RTP audio timestamps to internal `TimestampNs`;
-        - receiver-side playout timing decisions for already-timed audio blocks.
-    - keeps timestamp-domain conversion and playout-delay calculation separate from:
-        - RTP/audio packet parsing;
-        - reorder/jitter buffering;
-        - audio block assembly / PCM decode;
-        - backend socket transport;
-        - sink delivery.
+    - standards-aware audio RTP timestamp mapping boundary plus receiver-side audio playout-timing helpers.
+    - explicitly separates:
+        - RTP-domain timestamp mapping;
+        - initial anchoring policy;
+        - receiver playout delay policy.
+    - now models the initial RTP-to-`TimestampNs` anchoring mode explicitly instead of relying on a hidden `0/0` anchor convention.
 - Связи:
-    - использует `error.hpp` for strict validation/result reporting.
-    - использует `timestamp.hpp` for `TimestampNs`.
-    - current runtime consumer is `socket_rx_audio_backend.hpp`, which uses `AudioRtpTimestampMapper` to map assembled block RTP timestamps before sink delivery.
-    - timing results can be combined with assembled audio blocks without coupling timestamp logic to `audio_frame_assembler.hpp`.
-    - тестируется `tests/audio_timestamp_mapping_test.cpp`.
+    - использует:
+        - `rtp_timestamp_anchor_policy.hpp` for the shared enum `RtpTimestampInitialAnchorMode` and its validation;
+        - `timestamp.hpp` for `TimestampNs`;
+        - `error.hpp` for `Error`.
+    - используется:
+        - `audio_receiver_bootstrap.hpp` to build default bootstrap timestamp-mapper config;
+        - `socket_rx_audio_backend.hpp` as the concrete runtime timestamp-mapping component for delivered audio blocks;
+        - tests covering both configured-reference and first-observed-local-zero policies.
 - Сущности:
-    - timing constants:
+    - constants:
         - `audioTimestampNanosecondsPerSecond`
-            - fixed nanoseconds-per-second conversion constant.
         - `audioRtpTimestampAmbiguousDelta`
-            - threshold used to reject backward/ambiguous 32-bit RTP timestamp deltas.
     - `AudioRtpTimestampMapperConfig`
-        - RTP-to-internal timestamp mapping config:
+        - explicit audio RTP timestamp mapper config.
+        - fields:
             - `rtp_clock_rate`
+            - `initial_anchor_mode`
             - `anchor_rtp_timestamp`
-            - `anchor_timestamp_ns`.
+            - `anchor_timestamp_ns`
+        - default policy:
+            - `initial_anchor_mode = RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero`.
     - `validate_audio_rtp_timestamp_mapper_config(const AudioRtpTimestampMapperConfig&) -> Error`
-        - validates mapper config;
-        - currently requires non-zero RTP clock rate.
+        - validates:
+            - non-zero `rtp_clock_rate`;
+            - valid `initial_anchor_mode`;
+            - for `ConfiguredReference`:
+                - configured anchor fields are allowed;
+            - for `FirstObservedBecomesLocalZero`:
+                - `anchor_rtp_timestamp == 0`
+                - `anchor_timestamp_ns == 0`.
+    - `audio_rtp_timestamp_mapper_config_first_observed_local_zero(uint32_t rtp_clock_rate) -> AudioRtpTimestampMapperConfig`
+        - named helper for the current local-zero-on-first-observation policy.
+        - constructs an explicit config rather than requiring callers to encode the policy via raw literals.
     - `forward_audio_rtp_timestamp_delta(uint32_t previous, uint32_t current) -> std::expected<uint64_t, Error>`
-        - computes forward RTP timestamp delta with 32-bit wraparound semantics;
-        - rejects ambiguous deltas `>= 0x80000000`;
-        - therefore rejects backward/ambiguous timestamp movement.
+        - computes forward RTP delta with 32-bit modulo arithmetic;
+        - rejects ambiguous/backward deltas at or above half range.
     - `audio_rtp_ticks_to_timestamp_ns(uint64_t ticks, uint32_t rtp_clock_rate) -> std::expected<TimestampNs, Error>`
-        - converts RTP clock ticks to nanoseconds using configured RTP clock rate;
-        - handles whole-seconds and remainder-ticks parts explicitly;
-        - rejects zero RTP clock rate and arithmetic overflow.
+        - converts RTP ticks to nanoseconds using the explicit audio RTP clock rate;
+        - rejects zero clock rate and overflow.
     - `AudioRtpTimestampMapper`
-        - stateful mapper from successive RTP timestamps to monotonic internal `TimestampNs`.
-        - `AudioRtpTimestampMapper(AudioRtpTimestampMapperConfig)`
+        - stateful audio RTP timestamp mapper.
         - `map(uint32_t rtp_timestamp) -> std::expected<TimestampNs, Error>`
-            - validates config on use;
-            - for first packet, maps relative to configured anchor RTP timestamp;
-            - for later packets, advances from the last seen RTP timestamp;
-            - accumulates forward RTP ticks since anchor;
-            - converts accumulated ticks to nanoseconds;
-            - rejects backward/ambiguous movement and overflow;
-            - updates internal last-seen mapping state only on success.
+            - validates config first;
+            - in `FirstObservedBecomesLocalZero` mode:
+                - first observed RTP timestamp maps to `0`;
+                - runtime origin becomes explicit from that first packet;
+            - in `ConfiguredReference` mode:
+                - mapping starts relative to `anchor_rtp_timestamp` / `anchor_timestamp_ns`;
+            - accumulates forward RTP deltas across normal progression and wraparound;
+            - rejects backward/ambiguous movement and overflow.
         - `reset(AudioRtpTimestampMapperConfig) -> Error`
-            - validates new config;
-            - reanchors mapper state and clears prior progression.
-    - playout timing model:
+            - revalidates and replaces mapper policy/config;
+            - clears prior runtime-origin / cadence state.
+        - internal state:
+            - `cfg_`
+            - `has_last_timestamp_`
+            - `last_rtp_timestamp_`
+            - `last_timestamp_ns_`
+            - `accumulated_ticks_since_anchor_`
+    - receiver playout timing types/helpers:
         - `AudioReceiverPlayoutTimingConfig`
-            - `playout_delay_ns`.
+            - `playout_delay_ns`
         - `AudioReceiverPlayoutTimingDecision`
             - `media_timestamp_ns`
-            - `playout_timestamp_ns`.
-        - `validate_audio_receiver_playout_timing_config(const AudioReceiverPlayoutTimingConfig&) -> Error`
-            - current playout config validation hook;
-            - currently accepts all modeled values.
-        - `audio_receiver_playout_timing_decision(TimestampNs media_timestamp_ns, const AudioReceiverPlayoutTimingConfig&) -> std::expected<AudioReceiverPlayoutTimingDecision, Error>`
-            - adds receiver playout delay to media timestamp;
+            - `playout_timestamp_ns`
+        - `validate_audio_receiver_playout_timing_config(...)`
+        - `audio_receiver_playout_timing_decision(...)`
+            - applies receiver playout delay above mapped media timestamp;
             - rejects overflow.
-    - block timing composition:
         - `AudioBlockTiming`
             - `rtp_timestamp`
             - `media_timestamp_ns`
-            - `playout_timestamp_ns`.
-        - `audio_block_timing(uint32_t rtp_timestamp, TimestampNs media_timestamp_ns, const AudioReceiverPlayoutTimingConfig&) -> std::expected<AudioBlockTiming, Error>`
-            - combines media timestamp and playout timing decision into one audio-block timing summary;
-            - intentionally stays independent from concrete assembler/storage types.
+            - `playout_timestamp_ns`
+        - `audio_block_timing(...)`
+            - combines RTP timestamp identity with mapped media timestamp and playout decision.
 - Примечание:
-    - this file intentionally separates RTP-domain timestamp mapping from receiver playout timing; playout delay is not folded into `AudioRtpTimestampMapper`.
-    - current timing boundary is audio-specific and uses configured audio RTP clock rate rather than video timing assumptions.
-    - mapper state is monotonic-forward only by policy: backward or ambiguous RTP timestamp movement is rejected rather than silently coerced.
-    - current runtime usage maps RTP timestamps after audio block assembly, but the timing boundary itself remains independent from packet decode and audio storage code.
+    - default audio mapper behavior is no longer “implicitly configured-reference with anchor `0/0`”.
+    - the current default is explicitly:
+        - first observed RTP timestamp becomes local zero.
+    - receiver playout timing remains a separate boundary layered above RTP timestamp mapping.
 
 ### libs/st2110core/include/st2110/socket_rx_video_backend.hpp
 - Роль:
@@ -4075,55 +3916,58 @@
 
 ### libs/st2110core/include/st2110/socket_rx_audio_backend.hpp
 - Роль:
-    - concrete socket-based single-media audio receive backend for the current ST 2110-30 MVP path.
-    - теперь это operational-only socket backend boundary:
-        - concrete backend стартует только от заранее собранного `SocketRxAudioOperationalConfig`;
-        - projection/build of socket/audio runtime pieces вынесен в explicit adapter helpers above runtime start.
-    - composes the existing socket runtime boundary with the current audio receive pipeline:
+    - concrete socket-based single-media audio receive backend for the current ST 2110-30 receive path.
+    - works only through explicit operational input boundary and does not build hidden audio runtime defaults inside the concrete backend start path.
+    - composes the common socket single-media runtime base with the current audio receive pipeline:
         - socket open/receive runtime;
-        - packet-parse-policy enforcement on received UDP datagrams;
-        - RTCP-like / wrong-payload-type filtering;
+        - explicit packet-parse-policy enforcement;
+        - configured RTP payload-type admission prefilter;
         - audio RTP packet parsing;
-        - audio reorder buffering;
+        - audio reorder;
         - audio frame/block assembly;
-        - RTP timestamp to `TimestampNs` mapping;
+        - RTP timestamp to internal `TimestampNs` mapping through explicit anchoring policy;
         - final sink delivery.
-    - keeps audio-specific receive behavior above `ISocketRxPort`, while reusing the common single-media socket backend runtime/lifecycle layer.
 - Связи:
     - наследуется от `SocketRxSingleMediaBackendBase` for:
         - common socket runtime lifecycle;
-        - receive thread;
-        - datagram receive loop;
-        - backend stats skeleton;
-        - common packet/control/nonmedia filtering helpers.
+        - receive thread and receive loop;
+        - base backend stats accounting;
+        - RTCP-like datagram filtering;
+        - receive-buffer allocation from explicit packet-parse policy;
+        - default socket-port factory selection boundary.
     - реализует `ISocketRxAudioBackend` from `backend.hpp`, а не generic `IRxAudioBackend`.
     - использует:
-        - `audio_channel_order.hpp` for `ParsedAudioChannelOrder` and channel-order validation;
-        - `audio_receiver_bootstrap.hpp` for `AudioReceiverBootstrapConfig`;
-        - `audio_packet.hpp` for `AudioRtpPacketPolicy`, `audio_rtp_packet_policy_from_rx_audio_config(...)`, and `parse_audio_rtp_packet_view(...)`;
-        - `audio_reorder_buffer.hpp` for `AudioFixedWindowReorderBuffer` and `AudioReorderBufferConfig`;
-        - `audio_frame_assembler.hpp` for `AudioFrameAssembler`, `AssembledAudioBlock`, and assembler config;
-        - `audio_timestamp_mapping.hpp` for `AudioRtpTimestampMapper` and timestamp mapper config;
         - `socket_runtime.hpp` for:
             - `SocketRxOperationalCommonConfig`;
             - `SocketRxOpenConfig`;
             - `validate_socket_rx_operational_common_config(...)`;
             - `socket_rx_open_config_from_audio_config(...)`;
             - `socket_rx_open_config_equal(...)`;
-        - `socket_rx_single_media_backend_base.hpp` for common runtime/start-stop behavior;
-        - `backend_factory.hpp` for `IRxBackendFactory` / `RxBackendDescriptor`.
-    - test coverage is in `tests/test_socket_rx_audio_backend.cpp`.
+        - `audio_receiver_bootstrap.hpp` for `AudioReceiverBootstrapConfig`;
+        - `audio_packet.hpp` for:
+            - `AudioRtpPacketPolicy`;
+            - `audio_rtp_packet_policy_from_rx_audio_config(...)`;
+            - `parse_audio_rtp_packet_view(...)`;
+        - `audio_frame_assembler.hpp` for block assembly;
+        - `audio_reorder_buffer.hpp` for reorder-buffer config and runtime object;
+        - `audio_timestamp_mapping.hpp` for:
+            - `AudioRtpTimestampMapperConfig`;
+            - `AudioRtpTimestampMapper`;
+            - explicit initial-anchor policy semantics;
+        - `audio_channel_order.hpp` for validated channel-order boundary;
+        - `packet_parse.hpp` for common receive packet-size policy enforcement.
 - Сущности:
     - `SocketRxAudioOperationalConfig`
-        - explicit audio socket-backend operational input:
-            - `common`
-            - `rx_config`
-            - `audio_packet_policy`
-            - `frame_assembler_config`
-            - `reorder_buffer_config`
-            - `timestamp_mapper_config`
-            - `channel_order`.
-        - keeps already-modeled runtime/signaling-derived axes explicit at backend start boundary instead of rebuilding them inside the backend.
+        - explicit audio-specific operational input model above the concrete socket backend.
+        - carries:
+            - common socket transport/policy part in `common`;
+            - media-specific runtime part in:
+                - `rx_config`
+                - `audio_packet_policy`
+                - `frame_assembler_config`
+                - `reorder_buffer_config`
+                - `timestamp_mapper_config`
+                - `channel_order`.
     - `validate_socket_rx_audio_operational_config(const SocketRxAudioOperationalConfig&) -> Error`
         - validates:
             - common socket operational config;
@@ -4132,30 +3976,24 @@
             - `AudioFrameAssemblerConfig`;
             - `AudioReorderBufferConfig`;
             - `AudioRtpTimestampMapperConfig`;
-            - parsed channel order against `rx_config.channel_count`.
-        - also enforces consistency between explicit operational pieces and `rx_config`:
-            - `common.open_config` must equal `socket_rx_open_config_from_audio_config(rx_config)`;
-            - `audio_packet_policy` must match `audio_rtp_packet_policy_from_rx_audio_config(rx_config)`;
-            - current assembler storage format is constrained to `AudioSampleStorageFormat::InterleavedS32`;
-            - current timestamp mapper policy is constrained to:
-                - `rtp_clock_rate == rx_config.sampling_rate_hz`
-                - `anchor_rtp_timestamp == 0`
-                - `anchor_timestamp_ns == 0`.
-    - operational projection helpers:
-        - `socket_rx_audio_operational_config_from_audio_receiver_bootstrap(const AudioReceiverBootstrapConfig&) -> std::expected<SocketRxAudioOperationalConfig, Error>`
-            - projects full backend operational config from signaling/bootstrap-derived audio bootstrap;
-            - reuses explicit bootstrap-modeled:
-                - packet-parse policy;
-                - RX config;
-                - audio packet policy;
-                - assembler config;
-                - reorder config;
-                - timestamp mapper config;
-                - channel order.
-        - `socket_rx_audio_operational_config_from_rx_audio_config(const RxAudioConfig&, const PacketParsePolicy&, const AudioFrameAssemblerConfig&, const AudioReorderBufferConfig&, const AudioRtpTimestampMapperConfig&, const ParsedAudioChannelOrder&) -> std::expected<SocketRxAudioOperationalConfig, Error>`
-            - explicit manual adapter path from poorer manual runtime config plus explicit additional operational pieces;
-            - derives only `SocketRxOpenConfig` and `AudioRtpPacketPolicy` from `RxAudioConfig`;
-            - does not invent hidden packet-parse / assembler / reorder / timestamp / channel-order defaults locally.
+            - parsed channel order against configured channel count;
+            - socket open projection consistency against `socket_rx_open_config_from_audio_config(...)`;
+            - packet-policy consistency projected from `RxAudioConfig`;
+            - current assembler storage requirement:
+                - `AudioSampleStorageFormat::InterleavedS32`;
+            - timestamp-mapper clock-rate consistency:
+                - `cfg.timestamp_mapper_config.rtp_clock_rate == cfg.rx_config.sampling_rate_hz`.
+    - `socket_rx_audio_operational_config_from_audio_receiver_bootstrap(const AudioReceiverBootstrapConfig&) -> std::expected<SocketRxAudioOperationalConfig, Error>`
+        - projects signaling/bootstrap-derived audio runtime state into final socket operational config;
+        - preserves explicit bootstrap-chosen timestamp anchoring policy and anchor fields;
+        - derives `common.open_config` through `socket_rx_open_config_from_audio_config(...)`;
+        - validates the final operational object before returning it.
+    - `socket_rx_audio_operational_config_from_rx_audio_config(const RxAudioConfig&, const PacketParsePolicy&, const AudioFrameAssemblerConfig&, const AudioReorderBufferConfig&, const AudioRtpTimestampMapperConfig&, const ParsedAudioChannelOrder&) -> std::expected<SocketRxAudioOperationalConfig, Error>`
+        - explicit manual-config adapter for non-bootstrap callers;
+        - derives `common.open_config` through `socket_rx_open_config_from_audio_config(...)`;
+        - derives packet policy from `RxAudioConfig`;
+        - consumes caller-provided reorder / assembler / timestamp / channel-order inputs explicitly;
+        - validates the final operational object before returning it.
     - `SocketRxAudioBackend`
         - final concrete audio backend.
         - constructors:
@@ -4164,65 +4002,62 @@
                 - advertises `RxMediaKind::Audio` and audio-only capabilities.
             - injected-factory constructor
                 - accepts `std::unique_ptr<ISocketRxPortFactory>`;
-                - keeps concrete socket-port dependency injectable for tests and future runtime/platform variants.
+                - keeps socket port dependency injectable for tests and future runtime/platform variants.
         - `start_audio(const SocketRxAudioOperationalConfig&, IAudioFrameSink&) -> RxBackendLifecycleResult`
-            - validates common backend start preconditions via the base class;
+            - validates common backend start preconditions through the base class;
             - validates the full operational config;
-            - creates one socket receive port from the configured/injected factory;
+            - creates one socket receive port from the current factory;
             - rejects null port creation as `InvalidValue`;
             - delegates concrete startup to `start_audio_runtime(...)`.
     - overridden runtime hooks:
         - `clear_media_runtime_objects() noexcept`
-            - clears common socket runtime state through the base class;
-            - clears all audio-specific runtime objects and cached operational/runtime fields:
-                - packet parse policy;
-                - audio packet policy;
+            - clears common socket runtime state through `clear_common_runtime_objects()`;
+            - clears all audio-specific runtime objects and cached operational state:
+                - packet policy;
                 - reorder buffer;
                 - frame assembler;
                 - timestamp mapper;
-                - sink pointer;
-                - cached payload type / sampling rate / packet-time / samples-per-packet / channel count.
+                - configured payload type;
+                - configured sampling rate / packet time / samples-per-packet / channel count;
+                - packet parse policy;
+                - sink pointer.
         - `process_received_datagram(ByteSpan) noexcept`
             - audio datagram receive-path entry from the common receive loop.
             - behavior:
                 - returns immediately if required audio runtime objects are not initialized;
                 - ignores RTCP-like datagrams through the common base helper;
-                - explicitly enforces `PacketParsePolicy` on the received datagram before payload-type/audio packet parsing;
-                - ignores datagrams whose RTP payload type does not match the configured audio payload type;
-                - parses one audio RTP packet via `parse_audio_rtp_packet_view(...)`;
-                - pushes accepted packets into the audio reorder buffer;
-                - records accepted/rejected datagram stats through the common backend base;
-                - drains ready reordered packets toward assembly/sink delivery.
-    - audio runtime construction:
+                - explicitly enforces `packet_parse_policy_` through `validate_packet_parse_policy(...)`;
+                - applies configured payload-type prefilter through `datagram_matches_configured_payload_type(...)`;
+                - parses one packet via `parse_audio_rtp_packet_view(...)`;
+                - rejected packet parse/reorder failures are recorded as media-packet rejection;
+                - accepted packets are pushed into reorder and drained toward sink delivery.
+    - runtime construction / delivery helpers:
         - `start_audio_runtime(...) -> RxBackendLifecycleResult`
-            - allocates receive buffer from explicit `cfg.common.packet_parse_policy`;
-            - constructs audio-specific runtime objects from explicit operational config:
-                - `AudioFixedWindowReorderBuffer(cfg.reorder_buffer_config)`
-                - `AudioFrameAssembler(cfg.frame_assembler_config)`
-                - `AudioRtpTimestampMapper(cfg.timestamp_mapper_config)`;
-            - stores explicit operational/runtime fields:
-                - `packet_parse_policy_`
-                - `audio_packet_policy_`
-                - sink pointer
-                - cached payload type / sampling rate / packet time / samples per packet / channel count;
-            - then starts the common socket runtime via `start_common_runtime(...)`;
-            - on common-runtime start failure, clears all media runtime objects again before returning the error.
-    - receive-pipeline helpers:
+            - allocates receive buffer from `cfg.common.packet_parse_policy`;
+            - constructs:
+                - `AudioFixedWindowReorderBuffer`
+                - `AudioFrameAssembler`
+                - `AudioRtpTimestampMapper`
+            - caches:
+                - packet-parse policy;
+                - packet policy;
+                - sink pointer;
+                - configured payload/runtime values;
+            - starts the common socket runtime via `start_common_runtime(...)`;
+            - on common-runtime start failure, clears media runtime objects before returning the error.
         - `drain_reorder_buffer_to_sink() noexcept`
-            - repeatedly pops ready packets from the audio reorder buffer;
-            - assembles each ready packet into an `AssembledAudioBlock`;
-            - rejected assembly result increments rejected-media-packet stats and is skipped;
-            - successful assembled blocks go to `deliver_assembled_audio_block(...)`.
+            - repeatedly pops ready packets from reorder;
+            - feeds them into `AudioFrameAssembler::push(...)`;
+            - rejects invalid assembly results locally;
+            - forwards complete assembled blocks to `deliver_assembled_audio_block(...)`.
         - `deliver_assembled_audio_block(AssembledAudioBlock&&) noexcept`
-            - delivers only when:
-                - sink exists;
-                - block is marked `complete`.
+            - delivers only complete blocks;
             - maps RTP timestamp to `TimestampNs`;
-            - sends `block.buffer.view(timestamp_ns)` to `IAudioFrameSink::on_audio_frame(...)`;
-            - records delivered media-unit stats.
+            - calls `IAudioFrameSink::on_audio_frame(...)`;
+            - records delivered media-unit stats through the common base helper.
         - `map_block_timestamp_ns(uint32_t) noexcept -> TimestampNs`
             - uses `AudioRtpTimestampMapper` when present;
-            - falls back to `0` on absent mapper or mapping failure.
+            - returns `0` when mapper is absent or mapping fails.
     - cached runtime state:
         - `packet_parse_policy_`
         - optional `audio_packet_policy_`
@@ -4230,12 +4065,7 @@
         - `audio_frame_assembler_`
         - optional `audio_timestamp_mapper_`
         - `audio_sink_`
-        - optional cached configured values:
-            - `configured_audio_payload_type_`
-            - `configured_sampling_rate_hz_`
-            - `configured_packet_time_us_`
-            - `configured_samples_per_packet_`
-            - `configured_channel_count_`
+        - optional configured payload/runtime value cache for current stream.
     - `SocketRxAudioBackendFactory`
         - final `IRxBackendFactory` for the socket audio backend.
         - `descriptor()`
@@ -4247,11 +4077,9 @@
         - `create_backend()`
             - creates one default `SocketRxAudioBackend`.
 - Примечание:
-    - concrete backend no longer exposes a manual `start_audio(const RxAudioConfig&, ...)` path.
-    - manual startup remains possible only through the explicit adapter `socket_rx_audio_operational_config_from_rx_audio_config(...)`, which keeps the manual path visibly poorer and explicit instead of relying on hidden backend-local defaults.
-    - bootstrap-driven startup remains richer because `AudioReceiverBootstrapConfig` already carries explicit packet policy, packet model, reorder, timestamp, and channel-order axes into the socket operational projection.
-    - current backend still performs a cheap RTP payload-type prefilter on raw datagrams before full audio packet parsing; this keeps wrong-PT traffic localized as nonmedia datagrams and out of reorder/assembler state.
-    - incomplete assembled audio blocks are not delivered by this backend; current MVP delivery path is complete-block-only.
+    - concrete backend start path is operational-only.
+    - timestamp anchoring policy is now explicit in `AudioRtpTimestampMapperConfig` and is preserved through bootstrap/manual operational projection rather than being encoded via unexplained `0/0` anchor literals inside the backend.
+    - delivery path remains complete-block-only for the current MVP runtime.
 
 ### libs/st2110core/include/st2110/socket_runtime.hpp
 - Роль:
@@ -4824,3 +4652,31 @@
     - this file models only the named policy boundary and its validation; it does not implement reordering itself.
     - current default `32` remains present, but only as a named explicit support/default boundary rather than as a literal in backend runtime construction.
     - future work may widen this boundary into richer video runtime/support policy without needing to reshape the concrete backend API again.
+
+### libs/st2110core/include/st2110/rtp_timestamp_anchor_policy.hpp
+- Роль:
+    - shared explicit policy boundary for initial RTP-to-`TimestampNs` anchoring.
+    - factors the initial-anchor mode out of audio/video timestamp mappers so the policy is modeled once and reused consistently.
+- Связи:
+    - использует `error.hpp` for validation result reporting.
+    - используется:
+        - `audio_timestamp_mapping.hpp`;
+        - `video_timestamp_mapping.hpp`;
+        - signaling/bootstrap/runtime projection paths that need to carry or validate the initial anchor policy explicitly.
+- Сущности:
+    - `RtpTimestampInitialAnchorMode`
+        - explicit initial anchoring mode enum:
+            - `ConfiguredReference`
+                - use caller-provided reference relation:
+                    - `anchor_rtp_timestamp`
+                    - `anchor_timestamp_ns`
+            - `FirstObservedBecomesLocalZero`
+                - first observed RTP timestamp becomes local `0 ns` origin.
+    - `validate_rtp_timestamp_initial_anchor_mode(RtpTimestampInitialAnchorMode) -> Error`
+        - validates known enum values;
+        - rejects unknown values as `InvalidValue`.
+- Примечание:
+    - this file is intentionally small and policy-only.
+    - it does not map timestamps by itself; concrete mapping behavior remains in:
+        - `audio_timestamp_mapping.hpp`
+        - `video_timestamp_mapping.hpp`.
