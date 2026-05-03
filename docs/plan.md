@@ -1199,17 +1199,64 @@
 - [x] 123: Add graceful stop and cleanup reuse
 
 ### C3. MTL video RX
-- [ ] 130: CMake option `ST2110_WITH_MTL` + build guard
-- [ ] 131: Implement `MtlRxVideoBackend` skeleton + smoke test
-- [ ] 132: Implement minimal start/stop using MTL ST20P RX (get_frame/put_frame)
-- [ ] 133: Map MTL frame -> `VideoFrame`/`VideoFrameView` and deliver to sink
-- [ ] 134: Basic stats (frames, drops if available)
+- [ ] 130: Add `ST2110_WITH_MTL` build option + localized MTL dependency/build guard
+  - keep the existing public backend model unchanged:
+    - `RxBackendKind::Mtl` stays in the public backend-kind axis;
+    - existing backend lifecycle/state/stats/factory contracts stay unchanged;
+  - when `ST2110_WITH_MTL=OFF`, the project must build cleanly without MTL headers/libs and without compiling MTL backend code;
+  - when `ST2110_WITH_MTL=ON`, MTL dependency wiring must stay localized to build/factory/runtime code rather than leaking into app/bootstrap code;
+  - keep temporary build/runtime unavailability localized through factory/build selection, not by removing `mtl` from public parsing/selection.
+- [ ] 131: Implement `MtlRxVideoBackend` skeleton + focused smoke test
+  - reuse existing backend lifecycle/state/stats/factory contracts;
+  - do not introduce a parallel backend API;
+  - keep MTL device/session ownership explicit inside the backend;
+  - keep current MVP support boundary explicit:
+    - only configs that can be projected into current MTL ST20P RX path;
+    - only video output compatible with the current project `VideoFrameView` / `PixelFormat` boundary.
+- [ ] 132: Implement minimal MTL video start/stop using ST20P RX frame API
+  - use `mtl_init` / `mtl_uninit` for device lifecycle;
+  - use `st20p_rx_create` / `st20p_rx_free` for session lifecycle;
+  - use blocking `st20p_rx_get_frame` / `st20p_rx_put_frame` receive flow;
+  - keep start-failure cleanup, retry-after-failure behavior, and stop/shutdown semantics explicit;
+  - keep MTL-specific lifecycle handling localized in the backend/runtime layer.
+- [ ] 133: Map MTL video frame to current `VideoFrameView` and deliver to sink
+  - for the current MVP path, support only MTL video output that can be exposed through the existing `VideoFrameView` contract without reshaping public frame APIs;
+  - keep `rtp_timestamp` -> `TimestampNs` mapping on the existing timestamp-mapping boundary;
+  - deliver frames synchronously within the valid lifetime of the MTL frame before `st20p_rx_put_frame`;
+  - keep any current unsupported video format / scan-mode / packing-mode combinations as explicit localized `Unsupported` branches.
+- [ ] 134: Add meaningful backend-local MTL video stats
+  - populate delivery counters and MTL session stats that are actually available/meaningful;
+  - do not force socket packet-parse / reorder / depacketizer stats concepts onto the MTL video backend;
+  - keep unavailable MTL counters explicit rather than inventing synthetic values.
 
 ### C4. MTL audio RX
-- [ ] 140: Investigate minimal viable MTL audio receive path/API
-- [ ] 141: Implement `MtlRxAudioBackend` skeleton + smoke test
-- [ ] 142: Implement minimal audio start/stop and frame/block delivery
-- [ ] 143: Add basic audio stats
+- [ ] 140: Define the minimal viable MTL audio RX path and current support boundary
+  - replace the old vague “investigate” wording with a concrete architecture task;
+  - minimal viable MTL audio RX path is:
+    - `mtl_init` / `mtl_uninit`;
+    - `st30p_rx_create` / `st30p_rx_free`;
+    - blocking `st30p_rx_get_frame` / `st30p_rx_put_frame`;
+  - define the projection boundary from current `RxAudioConfig` / `AudioPcmBitDepth` into MTL `st30p_rx_ops` / `st30_fmt`;
+  - keep current MVP support aligned to the already-modeled Level A receiver baseline:
+    - `48 kHz`;
+    - `1 ms`;
+    - `1..8` channels;
+    - linear PCM only;
+  - keep unsupported sampling rates / packet times / channel counts / wire formats explicit and localized.
+- [ ] 141: Implement `MtlRxAudioBackend` skeleton + focused smoke test
+  - reuse existing backend lifecycle/state/stats/factory contracts;
+  - do not introduce a parallel audio backend API;
+  - keep MTL device/session ownership explicit inside the backend;
+  - keep current MVP support limits explicit rather than implicit.
+- [ ] 142: Implement minimal audio start/stop and frame/block delivery using ST30P RX
+  - use blocking `st30p_rx_get_frame` / `st30p_rx_put_frame` receive flow;
+  - map supported MTL PCM frame data into the current `AudioBuffer` / `AudioFrameView` contract;
+  - keep the current `InterleavedS32` storage boundary explicit and localize any required PCM16/PCM24 -> S32 conversion there;
+  - keep unsupported MTL audio formats such as non-current wire-format cases out of the generic backend API and localized in the MTL audio backend support boundary.
+- [ ] 143: Add meaningful backend-local MTL audio stats
+  - populate delivery counters and MTL session stats that are actually available/meaningful;
+  - do not force socket/video packet-parse stats concepts onto the MTL audio backend;
+  - keep unavailable counters explicit rather than synthetic.
 
 ---
 
