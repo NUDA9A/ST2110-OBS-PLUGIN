@@ -1279,31 +1279,36 @@
 
 ### tests/test_socket_rx_video_backend.cpp
 - Роль:
-    - проверяет concrete socket video backend lifecycle, open-config projection, receive-loop behavior, backend-local stats, and end-to-end packet-to-frame delivery through the socket receive path.
-    - now also covers the local UDP datagram classification/tolerance boundary for RTCP-like control traffic versus media-packet parsing.
+    - regression / integration tests для `SocketRxVideoBackend` после перехода на socket-specific operational-only start boundary.
+    - проверяет runtime lifecycle, operational config validation, open-config projection, receive-path frame delivery и базовую runtime observability через `BackendStats`.
 - Покрывает:
-    - backend interface/lifecycle behavior:
-        - stop before successful start;
-        - repeated stop;
-        - injected socket-port factory usage;
-        - IPv4/IPv6 multicast projection;
-        - unicast projection;
-        - retry after open failure;
-        - null created-port rejection;
-        - close-failure propagation;
-        - restart after clean stop.
-    - receive/runtime data path:
-        - valid media packet delivery into a reconstructed frame;
-        - backend-local stats progression across receive, parse, reorder, depacketizer, and frame-delivery stages;
-        - wrong payload-type datagrams ignored/dropped before depacketizer state mutation.
-    - UDP datagram classification / RTCP tolerance:
-        - RTCP-like datagram is tolerated and counted as control traffic;
-        - RTCP-like datagram does not enter `parse_packet_view_staged(...)` / media parsing;
-        - RTCP-like datagram does not reach reorder/depacketizer/frame delivery;
-        - short malformed media datagram is rejected as malformed media, not as tolerated RTCP.
+    - compile-time / API-shape regression:
+        - `SocketRxVideoBackend` implements `ISocketRxVideoBackend`;
+        - concrete socket backend больше не наследуется от `IRxVideoBackend`;
+        - у concrete socket backend нет manual `start_video(const RxVideoConfig&, ...)`;
+        - operational start имеет сигнатуру `start_video(const SocketRxVideoOperationalConfig&, IVideoFrameSink&)`.
+    - operational config boundary:
+        - fully consistent `SocketRxVideoOperationalConfig` accepted by `validate_socket_rx_video_operational_config(...)`;
+        - consistent config accepted by backend start;
+        - mismatched `common.open_config` vs `rx_config` rejected as `InvalidValue`;
+        - mismatched `receive_pipeline_config` vs `rx_config` rejected as `InvalidValue`.
+    - backend lifecycle / runtime behavior:
+        - stop before start and repeated stop are accepted and keep backend stopped;
+        - repeated start on already-active backend returns `InvalidBackendState`;
+        - null created port is rejected.
+    - projection/runtime integration:
+        - backend opens socket using the prebuilt operational `open_config` without rebuilding hidden transport defaults locally.
+    - receive path:
+        - valid operational start + valid packet path delivers one video frame to the sink;
+        - timestamp mapping from operational timestamp-mapper config is applied to delivered frames;
+        - backend stats reflect delivered frame / media-unit accounting.
+    - packet-size-policy threading through runtime:
+        - receive runtime uses the packet-size policy carried in operational config when allocating/using its receive path state;
+        - malformed large datagram is rejected in runtime without frame delivery.
 - Фиксирует:
-    - control datagrams and malformed media datagrams are accounted for through distinct local boundaries;
-    - RTCP tolerance remains a local receive/runtime behavior, without introducing RTCP semantic interpretation into MVP.
+    - concrete socket video backend is now operational-only at its public start boundary;
+    - config cross-consistency is validated before socket-port creation/open;
+    - backend consumes explicit operational runtime pieces instead of rebuilding hidden defaults locally.
 
 ### tests/test_socket_runtime_interface.cpp
 - Роль:
@@ -1349,67 +1354,97 @@
 
 ### tests/test_socket_rx_audio_backend.cpp
 - Роль:
-    - regression / architecture test для `SocketRxAudioBackend` поверх общего `SocketRxSingleMediaBackendBase`.
+    - regression / integration tests для `SocketRxAudioBackend` после перехода на socket-specific operational-only start boundary.
+    - проверяет runtime lifecycle, operational audio config validation, open-config projection, receive-path block delivery и базовую runtime observability через `BackendStats`.
 - Покрывает:
-    - interface / type shape:
-        - `SocketRxAudioBackend` final;
-        - `IRxAudioBackend` / `IRxBackend` convertibility;
-        - constructor shape with default and injected socket port factory;
-        - `SocketRxAudioBackendFactory` descriptor/creation shape.
-    - lifecycle/runtime policy through the common socket single-media base:
-        - stop before successful start;
-        - repeated stop;
-        - repeated start on already-active audio backend;
-        - failed start remains stopped and retryable;
-        - stop propagates close failure without losing active state;
-        - successful stop allows restart.
-    - socket-open projection for audio configs:
-        - IPv4 multicast;
-        - IPv4 multicast with interface address;
-        - IPv4 unicast;
-        - IPv6 multicast.
-    - explicit failure mapping:
-        - projection failure;
-        - null created port;
-        - port open failure.
-    - audio receive-path integration:
-        - reordered RTP audio packets are delivered to the sink in sequence order;
-        - audio RTP timestamps are mapped to `TimestampNs`;
-        - RTCP-like datagrams are ignored before media delivery;
-        - wrong RTP payload type is ignored before media delivery;
-        - malformed audio media packet is rejected without stopping later delivery.
-    - backend stats behavior for the audio path:
-        - `packets_parsed_ok`;
-        - `packets_rejected`;
-        - `control_datagrams_ignored`;
-        - `nonmedia_datagrams_ignored`;
-        - `datagrams_dropped`;
-        - `media_units_delivered`;
-        - `frames_delivered` remains zero for audio delivery.
-    - default runtime path:
-        - Linux build opens/closes one real IPv4 unicast socket port;
-        - unsupported build uses the stub factory path.
+    - compile-time / API-shape regression:
+        - `SocketRxAudioBackend` implements `ISocketRxAudioBackend`;
+        - concrete socket backend больше не наследуется от `IRxAudioBackend`;
+        - у concrete socket backend нет manual `start_audio(const RxAudioConfig&, ...)`;
+        - operational start имеет сигнатуру `start_audio(const SocketRxAudioOperationalConfig&, IAudioFrameSink&)`.
+    - operational config boundary:
+        - fully consistent `SocketRxAudioOperationalConfig` accepted by `validate_socket_rx_audio_operational_config(...)`;
+        - consistent config accepted by backend start;
+        - mismatched `audio_packet_policy` vs `rx_config` rejected as `InvalidValue`;
+        - invalid `reorder_buffer_config` rejected as `InvalidValue`;
+        - mismatched `timestamp_mapper_config` vs `rx_config` rejected as `InvalidValue`.
+    - backend lifecycle / runtime behavior:
+        - stop before start and repeated stop are accepted and keep backend stopped;
+        - repeated start on already-active backend returns `InvalidBackendState`;
+        - null created port is rejected.
+    - projection/runtime integration:
+        - backend opens socket using the prebuilt operational `open_config` without rebuilding hidden transport defaults locally.
+    - receive path:
+        - valid operational start + valid RTP audio packet path delivers one assembled audio block to the sink;
+        - delivered block preserves expected sampling rate, channel count, samples-per-channel, sample stride, decoded sample values, and mapped timestamp;
+        - backend stats reflect delivered media-unit accounting.
+    - packet-size-policy threading through runtime:
+        - receive runtime uses the packet-size policy carried in operational config when allocating/using its receive path state;
+        - malformed large datagram is rejected in runtime without audio-frame delivery.
 - Фиксирует:
-    - `SocketRxAudioBackend` now reuses the shared socket lifecycle/runtime boundary while also connecting the existing audio packet/reorder/assembler/timestamp helpers into one backend receive path;
-    - remaining follow-up work is not basic audio socket runtime integration anymore, but explicit wire-format modeling and future observability/policy extensions.
+    - concrete socket audio backend is now operational-only at its public start boundary;
+    - audio operational config is validated for explicit cross-consistency before socket-port creation/open;
+    - backend consumes explicit audio runtime components instead of rebuilding hidden defaults locally.
 
 ### tests/test_video_packet_admission.cpp
 - Роль:
-    - проверяет explicit video RTP payload-type admission boundary separate from generic RTP / `PacketView` parsing.
-    - проверяет, что wrong-PT packets are dropped locally before reorder/depacketizer use in the socket video receive path.
+    - regression tests для explicit RTP payload-type admission boundary in the video receive path.
+    - проверяет, что payload-type admission remains separate from generic RTP/ST 2110-20 parsing and that wrong-PT packets are ignored before reorder/depacketizer use.
 - Покрывает:
-    - matching dynamic payload type accepted through:
-        - `validate_rtp_payload_type_admission(...)`;
-        - `validate_video_packet_payload_type_admission(...)`.
-    - mismatching payload type rejected by the admission helper.
-    - payload-type admission remains separate from generic RTP parsing:
-        - structurally valid RTP/ST2110 packet with a different PT still parses successfully into `PacketView`;
-        - stream-specific admission then rejects it.
-    - socket video backend runtime path:
-        - wrong-PT datagram is counted as ignored/dropped locally;
-        - reorder buffer is not entered;
-        - depacketizer is not entered;
-        - no media units / frames are delivered.
+    - helper-level admission boundary:
+        - matching dynamic RTP payload type accepted by `validate_rtp_payload_type_admission(...)`;
+        - matching video packet accepted by `validate_video_packet_payload_type_admission(...)`;
+        - mismatching payload type rejected as `InvalidValue`.
+    - separation of concerns:
+        - generic `PacketView` parsing still succeeds for structurally valid RTP/ST 2110-20 packets regardless of whether the payload type matches the configured stream;
+        - payload-type admission remains a separate stream-specific boundary above generic packet parsing.
+    - runtime backend behavior with the new operational start boundary:
+        - `SocketRxVideoBackend` is started from `SocketRxVideoOperationalConfig`, not manual `RxVideoConfig`;
+        - wrong-payload-type packet is treated as non-media datagram and dropped locally;
+        - wrong-PT packet does not enter reorder/depacketizer state;
+        - no frame is delivered to the sink;
+        - backend stats record:
+            - one received datagram;
+            - one ignored non-media datagram;
+            - zero parsed-ok media packets;
+            - zero rejected media packets;
+            - zero depacketizer/reorder activity.
 - Фиксирует:
-    - `PacketView::rtp.payload_type` is parsed by the generic RTP/packet parser;
-    - stream membership by PT is decided later by the explicit admission boundary.
+    - payload-type admission is an explicit receive-path boundary distinct from generic RTP parsing;
+    - wrong-PT packets are ignored before reorder/depacketizer mutation even after the backend’s move to the operational-only socket start API.
+
+### tests/test_socket_rx_operational_architecture.cpp
+- Роль:
+    - architecture regression test для новой socket operational boundary.
+    - фиксирует, что adapter / projection layer и generic single-media socket runtime layer остаются разделенными по ответственности.
+- Покрывает:
+    - `SocketRxSingleMediaBackendBase` remains media-agnostic:
+        - base class is still only an `IRxBackend`-level generic runtime base;
+        - base class does not become `ISocketRxVideoBackend` or `ISocketRxAudioBackend`;
+        - generic receive-buffer sizing remains driven only by common `PacketParsePolicy`.
+    - video bootstrap/manual -> operational adapters:
+        - `socket_rx_video_operational_config_from_video_receiver_bootstrap(...)` preserves already-modeled axes:
+            - `packet_parse_policy`;
+            - `rx_config`;
+            - `receive_pipeline_config`;
+            - `timestamp_mapper_config`;
+            - transport projection through `open_config`.
+        - `socket_rx_video_operational_config_from_rx_video_config(...)` preserves explicit runtime inputs such as:
+            - `PartialFramePolicy`;
+            - `PacketParsePolicy`;
+            - timestamp-mapper config;
+            - modeled `scan_mode` / `packing_mode`.
+    - audio bootstrap/manual -> operational adapters:
+        - `socket_rx_audio_operational_config_from_audio_receiver_bootstrap(...)` preserves already-modeled axes:
+            - `packet_parse_policy`;
+            - `audio_packet_policy`;
+            - `frame_assembler_config`;
+            - `reorder_buffer_config`;
+            - `timestamp_mapper_config`;
+            - `channel_order`;
+            - transport projection through `open_config`.
+        - `socket_rx_audio_operational_config_from_rx_audio_config(...)` preserves explicit caller-supplied runtime inputs instead of replacing them with backend-local defaults.
+- Фиксирует:
+    - socket backend no longer owns adapter/default-building responsibility;
+    - bootstrap/manual-to-operational projection is now an explicit named boundary;
+    - generic socket single-media base remains transport/runtime-oriented rather than media-policy-building.

@@ -1678,7 +1678,7 @@
     - расширить `AudioReceiverBootstrapConfig` до полного operational projection source where needed;
     - не терять `channel_order` and other already-modeled signaling/runtime axes before backend start;
   - manual config path must remain explicit and visibly poorer than bootstrap path only where this is truly intended, not because the backend silently rebuilds missing defaults.
-- [ ] 197A9: Add focused regression/architecture tests for the new start boundary
+- [x] 197A9: Add focused regression/architecture tests for the new start boundary
   - video tests:
     - operational config accepted when fully consistent;
     - mismatched `open_config` vs `rx_config` rejected;
