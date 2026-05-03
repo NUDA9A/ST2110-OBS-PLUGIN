@@ -3792,11 +3792,20 @@
         - `fixed_reorder_buffer.hpp` for `FixedWindowReorderBuffer` / `IReorderBuffer`;
         - `packet_admission.hpp` for explicit configured-payload-type admission;
         - `packet_parse.hpp` and `packet_view.hpp` parsing path through `parse_packet_view_staged(...)`;
-        - `socket_runtime.hpp` for `SocketRxOpenConfig` and `socket_rx_open_config_from_video_config(...)`;
+        - `socket_runtime.hpp` for `SocketRxOpenConfig`, `SocketRxOperationalCommonConfig`, and `socket_rx_open_config_from_video_config(...)`;
         - `video_receive_pipeline.hpp` for depacketize + reconstruct delivery path;
         - `video_timestamp_mapping.hpp` for `VideoRtpTimestampMapper`.
     - test coverage lives in `tests/test_socket_rx_video_backend.cpp`.
 - Сущности:
+    - `SocketRxVideoOperationalConfig`
+        - explicit video-specific operational input model above the concrete socket backend.
+        - carries:
+            - common socket transport/policy part in `common`;
+            - media-specific runtime part in:
+                - `rx_config`
+                - `receive_pipeline_config`
+                - `timestamp_mapper_config`
+        - keeps the common socket operational boundary separate from video-specific payload/pipeline/timestamp mapping concerns.
     - `SocketRxVideoBackend`
         - final concrete video backend.
         - constructors:
@@ -3903,6 +3912,7 @@
     - current packet-parse policy remains defaulted even though the backend carries an explicit `PacketParsePolicy` boundary.
     - current delivery path is complete-frame-only: partial reconstructed frames are intentionally not delivered to the sink.
     - RTP timestamp mapping is localized to the backend delivery boundary and currently uses a fixed 90 kHz RTP clock with zero anchor values.
+    - `SocketRxVideoOperationalConfig` introduces an explicit video operational carrier with a reusable common socket transport/policy sub-configuration, but the current concrete backend start path is still initiated from `RxVideoConfig`.
 
 ### libs/st2110core/include/st2110/socket_rx_audio_backend.hpp
 - Роль:
@@ -4047,7 +4057,7 @@
     - keeps socket family, bind endpoint, multicast membership, open-config semantics, and datagram receive contract explicit above concrete Linux/Winsock code.
     - локализует generic socket-open derivation from media runtime configs instead of spreading socket-family/multicast decisions into backend code.
 - Связи:
-    - использует `config_validation.hpp`, `error.hpp`, `rx_config.hpp`;
+    - использует `config_validation.hpp`, `error.hpp`, `rx_config.hpp`, `packet_parse.hpp`;
     - используется concrete socket backends and runtime implementations such as:
         - `linux_socket_rx_port.hpp`;
         - `socket_rx_video_backend.hpp`;
@@ -4099,6 +4109,16 @@
         - validates bind endpoint;
         - validates optional multicast membership;
         - rejects family mismatch between bind endpoint and multicast membership.
+    - `SocketRxOperationalCommonConfig`
+        - explicit common socket operational transport/policy boundary shared above media-specific operational configs.
+        - fields:
+            - `open_config`
+            - `packet_parse_policy`
+    - `validate_socket_rx_operational_common_config(const SocketRxOperationalCommonConfig&) -> Error`
+        - strictly validates the common socket operational input boundary;
+        - validates `SocketRxOpenConfig`;
+        - validates `PacketParsePolicy`;
+        - keeps packet-size policy explicit at config-construction / operational-input layer rather than hidden inside concrete media backends.
     - `socket_rx_uses_multicast(const SocketRxOpenConfig&) -> bool`
     - generic socket-open config builder:
         - `build_socket_rx_open_config(uint16_t udp_port, const std::string& local_ip, const std::string& dest_ip) -> std::expected<SocketRxOpenConfig, Error>`
@@ -4133,6 +4153,7 @@
     - multicast interface selection is explicitly modeled inside the runtime boundary rather than hidden in Linux-only backend code.
     - family coverage is explicit even where some concrete runtime branches remain temporarily unsupported.
     - this file now serves both video and audio socket-open projection paths; it is no longer only a video-oriented runtime helper layer.
+    - this file now also exposes the common socket operational transport/policy model used as a reusable boundary for higher-level media-specific operational configs.
 
 ### libs/st2110core/include/st2110/socket_stub_rx_port.hpp
 - Роль:
