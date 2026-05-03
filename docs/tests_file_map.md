@@ -1155,17 +1155,49 @@
 
 ### tests/audio_sdp_media_section_test.cpp
 - Роль:
-    - проверяет raw SDP audio media-section parsing boundary.
-    - покрывает:
-        - selection of matching `m=audio` section by payload type;
-        - preservation of media payload types;
-        - payload-bound `a=rtpmap` parsing into encoding name, sampling rate, and optional channel count;
-        - `a=ptime` parsing from milliseconds to integer microseconds;
-        - payload-bound `a=fmtp:<pt> channel-order=...` parsing;
-        - preservation of unknown fmtp parameters;
-        - preservation of unknown session/media attributes;
-        - standalone `a=channel-order:` remaining unknown rather than being treated as standards-facing channel-order signaling;
-        - rejection of missing selected `rtpmap`, duplicate selected `rtpmap`, duplicate selected `fmtp`, duplicate `ptime`, duplicate `channel-order`, malformed RTP clock/channel count, extra rtpmap slash, zero ptime, and non-integral-microsecond ptime.
+    - проверяет raw audio SDP media-section selection boundary для `select_raw_audio_sdp_media_section(...)`.
+    - фиксирует current raw parsing/selection behavior для:
+        - `m=audio` media-line selection по expected payload type;
+        - `a=rtpmap`;
+        - `a=ptime`;
+        - `a=fmtp`;
+        - preservation of unknown session/media attributes.
+- Покрывает:
+    - compile-time contract:
+        - `select_raw_audio_sdp_media_section(...)` returns `std::expected<RawAudioSdpMediaSection, Error>`.
+    - positive raw media-section selection:
+        - selected section preserves `media_line`, `payload_type`, and `media_payload_types`;
+        - `a=rtpmap` is parsed into `encoding_name`, `sampling_rate_hz`, and optional `channel_count`;
+        - `a=ptime:1` maps to `packet_time_us == 1000`;
+        - `a=ptime:0.125` maps to `packet_time_us == 125`;
+        - `a=fmtp` `channel-order=...` is parsed into `parsed_fmtp.channel_order` and mirrored to `channel_order`;
+        - unknown fmtp parameters are preserved in `parsed_fmtp.unknown_parameters`;
+        - unknown session-level attributes are preserved in `unknown_session_attributes`;
+        - unknown media-level attributes are preserved in `unknown_attributes`;
+        - raw `c=` line inside the selected media section is preserved in `unknown_attributes`.
+    - payload-type-driven media selection:
+        - correct audio media section is selected when SDP contains both video and audio sections;
+        - selected audio section may contain multiple payload types, and the expected one must be present in `media_payload_types`.
+    - raw rtpmap tolerance currently modeled at this boundary:
+        - `L24/48000` without explicit channel count is accepted at raw-media-section level and leaves `parsed_rtpmap.channel_count` absent.
+    - raw channel-order boundary behavior:
+        - `channel-order` inside `a=fmtp` is parsed;
+        - standalone `a=channel-order:...` is not treated as the modeled fmtp field and is preserved as an unknown media attribute.
+    - negative cases:
+        - no matching selected payload type in `m=audio` is rejected;
+        - missing required payload-bound `a=rtpmap` is rejected;
+        - duplicate payload-bound `a=rtpmap` is rejected;
+        - duplicate `a=ptime` is rejected;
+        - duplicate payload-bound `a=fmtp` is rejected;
+        - duplicate `channel-order` inside one fmtp payload is rejected;
+        - malformed `rtpmap` sampling rate is rejected;
+        - zero audio channel count in `rtpmap` is rejected;
+        - extra slash components in `rtpmap` are rejected;
+        - invalid `ptime` values such as `0` and over-precise `0.0001` are rejected.
+- Фиксирует:
+    - raw audio SDP media-section parsing remains strict and fail-fast on malformed selected-section attributes;
+    - unknown/non-modeled attributes are preserved rather than silently coerced into modeled fields;
+    - raw media-section selection stays separated from later signaling/runtime mapping layers.
 
 ### tests/audio_sdp_signaling_adapter_test.cpp
 - Роль:
