@@ -3150,54 +3150,42 @@
 
 ### libs/st2110core/include/st2110/audio_sdp_ingestion.hpp
 - Роль:
-    - final audio SDP ingestion boundary for standards-aware ST 2110-30 receive signaling.
-    - combines:
-        - selection/parsing of one raw audio SDP media section;
-        - required ST 2110 clock-signaling checks;
-        - final raw-SDP-to-`AudioStreamSignaling` mapping.
-    - keeps final ST 2110-oriented ingestion policy separate from:
-        - low-level SDP line/token parsing;
-        - raw SDP attribute preservation;
-        - runtime `RxAudioConfig` projection;
-        - channel-order effective mapping/bootstrap composition;
-        - packet/runtime/backend behavior.
+    - final audio SDP ingestion entry point for the current ST 2110-30 signaling path.
+    - соединяет:
+        - raw audio media-section selection;
+        - dedicated audio timing/reference-clock parsing;
+        - final standards-aware clock-signaling presence checks;
+        - raw-to-modeled `AudioStreamSignaling` mapping.
+    - больше не использует attribute-name-only detection for `ts-refclk` / `mediaclk`.
 - Связи:
-    - использует `audio_sdp_media_section.hpp` for:
-        - `RawAudioSdpMediaSection`;
-        - `RawAudioSdpAttribute`;
-        - `select_raw_audio_sdp_media_section(...)`.
-    - использует `audio_sdp_signaling_adapter.hpp` for:
-        - `audio_stream_signaling_from_raw_audio_sdp_media_section(...)`.
-    - использует `audio_signaling.hpp` for:
-        - `AudioStreamSignaling`.
-    - использует `error.hpp` for strict final-ingestion failures.
-    - downstream consumers should use this boundary when they need final ST 2110 audio signaling from whole-SDP text rather than operating on raw media-section structures directly.
-    - тестируется `tests/audio_sdp_ingestion_test.cpp`.
+    - использует `audio_sdp_media_section.hpp` для raw selected `m=audio` section boundary.
+    - использует `audio_sdp_timing_attributes.hpp` для dedicated parsing/validation of audio `ts-refclk` and `mediaclk`.
+    - использует `audio_sdp_signaling_adapter.hpp` для mapping raw audio SDP media-section into `AudioStreamSignaling`.
+    - использует `audio_signaling.hpp` как final modeled audio signaling boundary.
+    - покрывается:
+        - `tests/audio_sdp_ingestion_test.cpp`;
+        - `tests/audio_sdp_timing_attributes_test.cpp` indirectly through the timing boundary it consumes.
 - Сущности:
-    - `raw_audio_sdp_has_attribute(const std::vector<RawAudioSdpAttribute>&, std::string_view)`
-        - helper to detect raw preserved attributes by name.
-        - used for final required-clock-signaling checks across session-level and media-level raw attributes.
-    - `validate_raw_audio_sdp_required_st2110_clock_signaling(const RawAudioSdpMediaSection&)`
-        - final ST 2110 audio SDP clock-signaling validation boundary.
-        - current rules:
-            - `ts-refclk` must exist either in preserved session-level attributes or media-level attributes;
-            - `mediaclk` must exist specifically at media level.
-        - rejects SDP that is structurally parsed but not standards-clean for final ST 2110 ingestion.
+    - `validate_raw_audio_sdp_required_st2110_clock_signaling(const RawAudioSdpTimingAttributes&)`
+        - final required-timing validation for the audio SDP ingestion path;
+        - requires:
+            - parsed reference clock to be present;
+            - parsed `mediaclk` to be present at media scope;
+        - rejects SDP that has:
+            - no parsed `ts-refclk`;
+            - only session-level `mediaclk`;
+            - no parsed `mediaclk`.
     - `parse_audio_stream_signaling_from_sdp(std::string_view sdp, uint8_t expected_payload_type) -> std::expected<AudioStreamSignaling, Error>`
-        - full entry point for final audio SDP ingestion.
-        - behavior:
-            - selects exactly one relevant raw `m=audio` section for the expected payload type;
-            - validates required final ST 2110 clock signaling through `validate_raw_audio_sdp_required_st2110_clock_signaling(...)`;
-            - maps the raw selected media section into validated `AudioStreamSignaling` through `audio_stream_signaling_from_raw_audio_sdp_media_section(...)`.
-        - failure behavior:
-            - propagates raw SDP selection/parsing failures;
-            - rejects missing required `ts-refclk`;
-            - rejects missing media-level `mediaclk`;
-            - propagates unsupported/invalid raw-to-signaling mapping errors such as unsupported encoding or malformed `ptime`.
+        - final audio SDP ingestion entry point;
+        - flow:
+            - selects raw audio media section via `select_raw_audio_sdp_media_section(...)`;
+            - parses timing/reference-clock signaling via `parse_audio_sdp_timing_attributes(...)`;
+            - validates required ST 2110 clock signaling on parsed timing objects;
+            - maps the raw audio media section into `AudioStreamSignaling` via `audio_stream_signaling_from_raw_audio_sdp_media_section(...)`.
+        - malformed known timing forms therefore fail before final signaling mapping instead of passing by raw attribute-name presence.
 - Примечание:
-    - this file intentionally does not preserve raw unknown attributes in the final `AudioStreamSignaling` result; that preservation remains in `RawAudioSdpMediaSection`.
-    - session-level raw `ts-refclk` is currently accepted for final ingestion, but session-level-only `mediaclk` is intentionally not enough: final ingestion requires media-level `mediaclk`.
-    - this file is a final-ingestion wrapper above raw SDP parsing, not a replacement for `audio_sdp_media_section.hpp`; future stricter ST 2110 audio SDP rules should be added here or in the adjacent raw/signaling adapter boundary, not in runtime/backend code.
+    - this file is now the final audio SDP ingestion boundary over parsed timing objects, not a raw unknown-attribute name checker.
+    - standards-aware timing presence policy remains localized here, while detailed structural parsing of known timing forms stays in `audio_sdp_timing_attributes.hpp`.
 
 ### libs/st2110core/include/st2110/audio_channel_order.hpp
 - Роль:
@@ -4699,3 +4687,100 @@
     - it does not map timestamps by itself; concrete mapping behavior remains in:
         - `audio_timestamp_mapping.hpp`
         - `video_timestamp_mapping.hpp`.
+
+### libs/st2110core/include/st2110/audio_sdp_timing_attributes.hpp
+- Роль:
+    - dedicated raw audio SDP timing/reference-clock parsing boundary.
+    - структурно парсит known audio `ts-refclk` and `mediaclk` forms from preserved raw SDP attributes before final audio ingestion.
+    - явно различает:
+        - known valid forms;
+        - malformed known forms;
+        - unknown/open-ended non-empty forms.
+    - keeps session/media scope explicit for final ingestion policy.
+- Связи:
+    - использует `audio_sdp_media_section.hpp`:
+        - raw preserved session/media unknown attributes;
+        - low-level audio SDP helpers such as trimming and decimal parsing.
+    - используется `audio_sdp_ingestion.hpp` as the parsed timing input boundary for final standards-aware audio SDP ingestion.
+    - архитектурно mirrors the already-existing video timing/reference-clock boundary in `video_sdp_timing_attributes.hpp`, but is localized to the raw audio SDP path.
+    - покрывается `tests/audio_sdp_timing_attributes_test.cpp`.
+- Сущности:
+    - scope/model structs:
+        - `RawAudioSdpTimingAttributeScope`
+            - explicit raw timing scope:
+                - `Session`;
+                - `Media`.
+        - `RawAudioSdpPtpReferenceClock`
+            - parsed known PTP reference-clock fields:
+                - `version`;
+                - `gmid`;
+                - optional `domain`.
+        - `RawAudioSdpReferenceClock`
+            - raw parsed audio reference-clock value;
+            - `Kind`:
+                - `Ptp`;
+                - `LocalMac`;
+                - `Other`;
+            - preserves original `raw_value`;
+            - stores parsed known payload as `ptp` or `local_mac`.
+        - `RawAudioSdpMediaClock`
+            - raw parsed audio media-clock value;
+            - `Kind`:
+                - `Direct`;
+                - `Sender`;
+                - `Other`;
+            - preserves original `raw_value`;
+            - stores parsed known direct offset in `direct_offset`.
+        - `template <typename T> RawAudioSdpScopedTimingValue`
+            - wraps a parsed timing value together with explicit session/media scope.
+        - `RawAudioSdpTimingAttributes`
+            - aggregate parsed raw audio timing snapshot:
+                - optional scoped `reference_clock`;
+                - optional scoped `media_clock`.
+    - low-level helpers:
+        - `trim_audio_sdp_timing_value(...)`
+            - trims SDP ASCII whitespace / trailing CR for timing values.
+        - `parse_audio_sdp_decimal_uint8(...)`
+            - strict parser for PTP domain number.
+        - `is_audio_hex_digit_ascii(...)`
+        - `is_audio_eui_with_dash_separators<N>(...)`
+        - `validate_raw_audio_sdp_ptp_gmid(...)`
+            - accepts:
+                - `traceable`;
+                - 8-octet dash-separated EUI form.
+        - `validate_raw_audio_sdp_localmac(...)`
+            - validates 6-octet dash-separated local MAC form.
+    - timing-presence helpers:
+        - `raw_audio_sdp_has_reference_clock(const RawAudioSdpTimingAttributes&)`
+            - reports whether parsed `ts-refclk` exists at any scope.
+        - `raw_audio_sdp_has_media_level_mediaclk(const RawAudioSdpTimingAttributes&)`
+            - reports whether parsed `mediaclk` exists specifically at media scope.
+    - parsers for known/open-ended timing forms:
+        - `parse_audio_sdp_reference_clock(std::string_view) -> std::expected<RawAudioSdpReferenceClock, Error>`
+            - known accepted forms:
+                - `ptp=IEEE1588-2008:<gmid>[:<domain>]`;
+                - `localmac=<mac>`;
+            - unknown non-empty forms are preserved as `Kind::Other`;
+            - malformed known forms are rejected as `InvalidValue`.
+        - `parse_audio_sdp_media_clock(std::string_view) -> std::expected<RawAudioSdpMediaClock, Error>`
+            - known accepted forms:
+                - `direct=<u64>`;
+                - `sender`;
+            - unknown non-empty forms are preserved as `Kind::Other`;
+            - malformed known forms are rejected as `InvalidValue`.
+    - aggregate/scope resolution helpers:
+        - `parse_single_scoped_audio_timing_attribute(...)`
+            - parses one named timing attribute within one scope;
+            - rejects duplicates in the same scope;
+            - converts raw preserved attribute value into a typed scoped timing object.
+        - `parse_audio_sdp_timing_attributes(const RawAudioSdpMediaSection&) -> std::expected<RawAudioSdpTimingAttributes, Error>`
+            - aggregates timing/reference-clock information from preserved raw session/media attributes;
+            - parses:
+                - `ts-refclk` from session and media attribute lists;
+                - `mediaclk` from session and media attribute lists;
+            - media-scope value overrides session-scope value in the resolved aggregate;
+            - malformed known forms and same-scope duplicates fail with `InvalidValue`.
+- Примечание:
+    - this file is intentionally a raw SDP timing boundary, not a final `AudioStreamSignaling` model extension.
+    - unknown/open-ended timing forms remain explicitly represented via `Other` instead of being silently treated as malformed or silently accepted as known.
+    - final ST 2110 audio ingestion can now enforce required timing signaling on parsed objects while keeping strict parsing localized here.

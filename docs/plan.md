@@ -1748,7 +1748,7 @@
       - validate supported `proto` through explicit local policy;
       - validate PT against current ST 2110 audio policy explicitly, а не только against `<=127`.
     - malformed `m=audio` must fail early at raw SDP boundary, not later by accident.
-- [ ] 197E: Replace attribute-name-only audio clock-signaling checks with real parsing/validation of `ts-refclk` and media-level `mediaclk`
+- [x] 197E: Replace attribute-name-only audio clock-signaling checks with real parsing/validation of `ts-refclk` and media-level `mediaclk`
   - тип расхождения:
     - со стандартом + с правилами.
   - конкретное расхождение:
