@@ -1726,7 +1726,7 @@
       - или “preserve RTP-derived absolute relation from bootstrap reference”;
       - или другой named mode.
     - backend/bootstrap должен явно выбирать этот режим, а mapper не должен получать hidden `0/0` anchor без объясненной политики.
-- [ ] 197D: Tighten raw audio SDP `m=audio` validation to the same standards-aware transport boundary already used for video
+- [x] 197D: Tighten raw audio SDP `m=audio` validation to the same standards-aware transport boundary already used for video
   - тип расхождения:
     - со стандартом + с правилами.
   - конкретное расхождение:
