@@ -329,6 +329,18 @@ st2110::RxAudioConfig make_receive_audio_rx_config() {
     return cfg;
 }
 
+st2110::AudioRtpTimestampMapperConfig
+make_configured_reference_audio_timestamp_mapper_config(std::uint32_t rtp_clock_rate,
+                                                        st2110::TimestampNs anchor_timestamp_ns = 0,
+                                                        std::uint32_t anchor_rtp_timestamp = 0) {
+    return st2110::AudioRtpTimestampMapperConfig{
+        .rtp_clock_rate = rtp_clock_rate,
+        .initial_anchor_mode = st2110::RtpTimestampInitialAnchorMode::ConfiguredReference,
+        .anchor_rtp_timestamp = anchor_rtp_timestamp,
+        .anchor_timestamp_ns = anchor_timestamp_ns,
+    };
+}
+
 st2110::SocketRxAudioOperationalConfig
 make_valid_audio_operational_config(const st2110::RxAudioConfig& rx_cfg,
                                     const st2110::PacketParsePolicy& packet_parse_policy = {},
@@ -342,6 +354,7 @@ make_valid_audio_operational_config(const st2110::RxAudioConfig& rx_cfg,
     if (effective_timestamp_mapper_config.rtp_clock_rate == 0) {
         effective_timestamp_mapper_config = st2110::AudioRtpTimestampMapperConfig{
             .rtp_clock_rate = rx_cfg.sampling_rate_hz,
+            .initial_anchor_mode = st2110::RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero,
             .anchor_rtp_timestamp = 0,
             .anchor_timestamp_ns = 0,
         };
@@ -574,12 +587,61 @@ void test_socket_rx_audio_backend_rejects_invalid_created_port() {
     }
 }
 
-void test_socket_rx_audio_backend_delivers_audio_block_from_operational_start() {
+void test_socket_rx_audio_backend_delivers_audio_block_from_operational_start_with_first_observed_local_zero_timestamp() {
     auto state = std::make_shared<FakeSocketRxPortState>();
     st2110::SocketRxAudioBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
     CapturingAudioSink sink;
 
     const auto cfg = make_valid_audio_operational_config(make_receive_audio_rx_config());
+
+    auto started = backend.start_audio(cfg, sink);
+    assert(started.has_value());
+    assert(st2110::backend_media_active(*started, st2110::RxMediaKind::Audio));
+
+    enqueue_datagram(state, make_audio_rtp_datagram(1U, 48'000U, cfg.rx_config.payload_type, 1000));
+
+    assert(wait_for_receive_count_at_least(state, 1U, std::chrono::milliseconds(500)));
+    assert(sink.wait_for_frame_count(1U, std::chrono::milliseconds(500)));
+
+    const auto frame = sink.frame_at(0);
+    assert(frame.timestamp_ns == 0ULL);
+    assert(frame.sampling_rate_hz == kDefaultSamplingRateHz);
+    assert(frame.channel_count == kDefaultChannelCount);
+    assert(frame.samples_per_channel == kDefaultSamplesPerPacket);
+    assert(frame.sample_frame_stride == kDefaultChannelCount);
+    assert(frame.total_sample_count == static_cast<std::size_t>(kDefaultSamplesPerPacket) *
+                                           static_cast<std::size_t>(kDefaultChannelCount));
+    assert(frame.size_bytes == frame.total_sample_count * sizeof(std::int32_t));
+    assert(!frame.samples.empty());
+    assert(frame.samples[0] == 1000);
+    assert(frame.samples[1] == 1001);
+    assert(frame.samples[2] == 1002);
+
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 1U);
+    assert(stats.media_units_delivered == 1U);
+    assert(stats.frames_delivered == 0U);
+    assert(stats.packets_parsed_ok == 1U);
+    assert(stats.packets_rejected == 0U);
+
+    auto stopped = backend.stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+}
+
+void test_socket_rx_audio_backend_delivers_audio_block_with_configured_reference_timestamp_when_explicitly_requested() {
+    auto state = std::make_shared<FakeSocketRxPortState>();
+    st2110::SocketRxAudioBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
+    CapturingAudioSink sink;
+
+    const auto timestamp_mapper_config =
+        make_configured_reference_audio_timestamp_mapper_config(kDefaultSamplingRateHz);
+    const auto cfg =
+        make_valid_audio_operational_config(make_receive_audio_rx_config(),
+                                            {},
+                                            st2110::AudioFrameAssemblerConfig{},
+                                            st2110::AudioReorderBufferConfig{},
+                                            timestamp_mapper_config);
 
     auto started = backend.start_audio(cfg, sink);
     assert(started.has_value());
@@ -659,7 +721,8 @@ int main() {
     test_socket_rx_audio_backend_rejects_invalid_reorder_config();
     test_socket_rx_audio_backend_rejects_mismatched_timestamp_mapper_config_vs_rx_config();
     test_socket_rx_audio_backend_rejects_invalid_created_port();
-    test_socket_rx_audio_backend_delivers_audio_block_from_operational_start();
+    test_socket_rx_audio_backend_delivers_audio_block_from_operational_start_with_first_observed_local_zero_timestamp();
+    test_socket_rx_audio_backend_delivers_audio_block_with_configured_reference_timestamp_when_explicitly_requested();
     test_socket_rx_audio_backend_extended_packet_policy_is_used_by_receive_runtime();
     return 0;
 }

@@ -6,9 +6,28 @@
 using namespace st2110;
 
 namespace {
-void rtp_mapper_maps_anchor_to_anchor_timestamp() {
+
+void rtp_mapper_default_mode_maps_first_observed_to_local_zero() {
     VideoRtpTimestampMapperConfig cfg{};
     cfg.rtp_clock_rate = 90000;
+
+    VideoRtpTimestampMapper mapper{cfg};
+
+    auto first = mapper.map(12345);
+
+    assert(first.has_value());
+    assert(*first == 0);
+
+    auto second = mapper.map(12345 + 90000);
+
+    assert(second.has_value());
+    assert(*second == 1000000000ULL);
+}
+
+void rtp_mapper_maps_anchor_to_anchor_timestamp_in_configured_reference_mode() {
+    VideoRtpTimestampMapperConfig cfg{};
+    cfg.rtp_clock_rate = 90000;
+    cfg.initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference;
     cfg.anchor_rtp_timestamp = 12345;
     cfg.anchor_timestamp_ns = 777;
 
@@ -20,9 +39,10 @@ void rtp_mapper_maps_anchor_to_anchor_timestamp() {
     assert(*mapped == 777);
 }
 
-void rtp_mapper_maps_90000_ticks_to_one_second() {
+void rtp_mapper_maps_90000_ticks_to_one_second_in_configured_reference_mode() {
     VideoRtpTimestampMapperConfig cfg{};
     cfg.rtp_clock_rate = 90000;
+    cfg.initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference;
     cfg.anchor_rtp_timestamp = 1000;
     cfg.anchor_timestamp_ns = 5000000000ULL;
 
@@ -34,28 +54,27 @@ void rtp_mapper_maps_90000_ticks_to_one_second() {
     assert(*mapped == 6000000000ULL);
 }
 
-void rtp_mapper_maps_progressive_25fps_tick_step() {
+void rtp_mapper_maps_progressive_25fps_tick_step_from_first_observed_zero() {
     VideoRtpTimestampMapperConfig cfg{};
     cfg.rtp_clock_rate = 90000;
-    cfg.anchor_rtp_timestamp = 0;
-    cfg.anchor_timestamp_ns = 0;
 
     VideoRtpTimestampMapper mapper{cfg};
 
-    auto first = mapper.map(0);
+    auto first = mapper.map(50000);
     assert(first.has_value());
     assert(*first == 0);
 
     // 90000 / 25 = 3600 RTP ticks.
-    auto second = mapper.map(3600);
+    auto second = mapper.map(50000 + 3600);
 
     assert(second.has_value());
     assert(*second == 40000000ULL);
 }
 
-void rtp_mapper_handles_32bit_wraparound() {
+void rtp_mapper_handles_32bit_wraparound_in_configured_reference_mode() {
     VideoRtpTimestampMapperConfig cfg{};
     cfg.rtp_clock_rate = 90000;
+    cfg.initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference;
     cfg.anchor_rtp_timestamp = 0xFFFFFF00U;
     cfg.anchor_timestamp_ns = 10000;
 
@@ -72,9 +91,10 @@ void rtp_mapper_handles_32bit_wraparound() {
     assert(*wrapped == 10000 + 3333333ULL);
 }
 
-void rtp_mapper_can_continue_after_wraparound() {
+void rtp_mapper_can_continue_after_wraparound_in_configured_reference_mode() {
     VideoRtpTimestampMapperConfig cfg{};
     cfg.rtp_clock_rate = 90000;
+    cfg.initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference;
     cfg.anchor_rtp_timestamp = 0xFFFFFFFEU;
     cfg.anchor_timestamp_ns = 0;
 
@@ -96,6 +116,7 @@ void rtp_mapper_can_continue_after_wraparound() {
 void rtp_mapper_rejects_backward_timestamp() {
     VideoRtpTimestampMapperConfig cfg{};
     cfg.rtp_clock_rate = 90000;
+    cfg.initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference;
     cfg.anchor_rtp_timestamp = 1000;
     cfg.anchor_timestamp_ns = 0;
 
@@ -112,6 +133,7 @@ void rtp_mapper_rejects_backward_timestamp() {
 void rtp_mapper_rejects_zero_clock_rate() {
     VideoRtpTimestampMapperConfig cfg{};
     cfg.rtp_clock_rate = 0;
+    cfg.initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference;
     cfg.anchor_rtp_timestamp = 0;
     cfg.anchor_timestamp_ns = 0;
 
@@ -122,6 +144,16 @@ void rtp_mapper_rejects_zero_clock_rate() {
     auto mapped = mapper.map(0);
     assert(!mapped.has_value());
     assert(mapped.error() == Error::InvalidValue);
+}
+
+void rtp_mapper_rejects_nonzero_anchor_fields_for_first_observed_zero_mode() {
+    VideoRtpTimestampMapperConfig cfg{};
+    cfg.rtp_clock_rate = 90000;
+    cfg.initial_anchor_mode = RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero;
+    cfg.anchor_rtp_timestamp = 12345;
+    cfg.anchor_timestamp_ns = 777;
+
+    assert(validate_video_rtp_timestamp_mapper_config(cfg) == Error::InvalidValue);
 }
 
 void synthetic_mapper_maps_unit_index_by_frame_cadence() {
@@ -159,16 +191,19 @@ void synthetic_mapper_rejects_invalid_frame_rate() {
     assert(!mapped.has_value());
     assert(mapped.error() == Error::InvalidValue);
 }
+
 } // namespace
 
 int main() {
-    rtp_mapper_maps_anchor_to_anchor_timestamp();
-    rtp_mapper_maps_90000_ticks_to_one_second();
-    rtp_mapper_maps_progressive_25fps_tick_step();
-    rtp_mapper_handles_32bit_wraparound();
-    rtp_mapper_can_continue_after_wraparound();
+    rtp_mapper_default_mode_maps_first_observed_to_local_zero();
+    rtp_mapper_maps_anchor_to_anchor_timestamp_in_configured_reference_mode();
+    rtp_mapper_maps_90000_ticks_to_one_second_in_configured_reference_mode();
+    rtp_mapper_maps_progressive_25fps_tick_step_from_first_observed_zero();
+    rtp_mapper_handles_32bit_wraparound_in_configured_reference_mode();
+    rtp_mapper_can_continue_after_wraparound_in_configured_reference_mode();
     rtp_mapper_rejects_backward_timestamp();
     rtp_mapper_rejects_zero_clock_rate();
+    rtp_mapper_rejects_nonzero_anchor_fields_for_first_observed_zero_mode();
 
     synthetic_mapper_maps_unit_index_by_frame_cadence();
     synthetic_mapper_rejects_invalid_frame_rate();

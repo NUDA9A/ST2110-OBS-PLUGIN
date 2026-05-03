@@ -10,14 +10,33 @@ using namespace st2110;
 void validates_mapper_config() {
     {
         const AudioRtpTimestampMapperConfig cfg{
-            .rtp_clock_rate = 48'000, .anchor_rtp_timestamp = 1000, .anchor_timestamp_ns = 1234};
+            .rtp_clock_rate = 48'000,
+            .initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference,
+            .anchor_rtp_timestamp = 1000,
+            .anchor_timestamp_ns = 1234,
+        };
 
         assert(validate_audio_rtp_timestamp_mapper_config(cfg) == Error::Ok);
     }
 
     {
         const AudioRtpTimestampMapperConfig cfg{
-            .rtp_clock_rate = 0, .anchor_rtp_timestamp = 1000, .anchor_timestamp_ns = 1234};
+            .rtp_clock_rate = 0,
+            .initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference,
+            .anchor_rtp_timestamp = 1000,
+            .anchor_timestamp_ns = 1234,
+        };
+
+        assert(validate_audio_rtp_timestamp_mapper_config(cfg) == Error::InvalidValue);
+    }
+
+    {
+        const AudioRtpTimestampMapperConfig cfg{
+            .rtp_clock_rate = 48'000,
+            .initial_anchor_mode = RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero,
+            .anchor_rtp_timestamp = 1000,
+            .anchor_timestamp_ns = 1234,
+        };
 
         assert(validate_audio_rtp_timestamp_mapper_config(cfg) == Error::InvalidValue);
     }
@@ -76,9 +95,13 @@ void computes_forward_rtp_timestamp_delta_with_wraparound() {
     }
 }
 
-void maps_audio_rtp_timestamps_to_internal_ns() {
-    AudioRtpTimestampMapper mapper(
-        {.rtp_clock_rate = 48'000, .anchor_rtp_timestamp = 1000, .anchor_timestamp_ns = 10'000'000});
+void maps_audio_rtp_timestamps_to_internal_ns_in_configured_reference_mode() {
+    AudioRtpTimestampMapper mapper({
+        .rtp_clock_rate = 48'000,
+        .initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference,
+        .anchor_rtp_timestamp = 1000,
+        .anchor_timestamp_ns = 10'000'000,
+    });
 
     {
         const auto ts = mapper.map(1000);
@@ -99,9 +122,37 @@ void maps_audio_rtp_timestamps_to_internal_ns() {
     }
 }
 
-void maps_audio_rtp_timestamps_across_wraparound() {
-    AudioRtpTimestampMapper mapper(
-        {.rtp_clock_rate = 48'000, .anchor_rtp_timestamp = 0xfffffff0u, .anchor_timestamp_ns = 5'000});
+void maps_audio_rtp_timestamps_to_internal_ns_from_first_observed_zero() {
+    AudioRtpTimestampMapper mapper({
+        .rtp_clock_rate = 48'000,
+    });
+
+    {
+        const auto ts = mapper.map(1000);
+        assert(ts.has_value());
+        assert(*ts == 0);
+    }
+
+    {
+        const auto ts = mapper.map(1048);
+        assert(ts.has_value());
+        assert(*ts == 1'000'000);
+    }
+
+    {
+        const auto ts = mapper.map(1096);
+        assert(ts.has_value());
+        assert(*ts == 2'000'000);
+    }
+}
+
+void maps_audio_rtp_timestamps_across_wraparound_in_configured_reference_mode() {
+    AudioRtpTimestampMapper mapper({
+        .rtp_clock_rate = 48'000,
+        .initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference,
+        .anchor_rtp_timestamp = 0xfffffff0u,
+        .anchor_timestamp_ns = 5'000,
+    });
 
     {
         const auto ts = mapper.map(0xfffffff0u);
@@ -116,10 +167,32 @@ void maps_audio_rtp_timestamps_across_wraparound() {
     }
 }
 
+void maps_audio_rtp_timestamps_across_wraparound_from_first_observed_zero() {
+    AudioRtpTimestampMapper mapper({
+        .rtp_clock_rate = 48'000,
+    });
+
+    {
+        const auto ts = mapper.map(0xfffffff0u);
+        assert(ts.has_value());
+        assert(*ts == 0);
+    }
+
+    {
+        const auto ts = mapper.map(0x00000020u);
+        assert(ts.has_value());
+        assert(*ts == 1'000'000);
+    }
+}
+
 void rejects_backward_or_invalid_mapping() {
     {
-        AudioRtpTimestampMapper mapper(
-            {.rtp_clock_rate = 48'000, .anchor_rtp_timestamp = 1000, .anchor_timestamp_ns = 0});
+        AudioRtpTimestampMapper mapper({
+            .rtp_clock_rate = 48'000,
+            .initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference,
+            .anchor_rtp_timestamp = 1000,
+            .anchor_timestamp_ns = 0,
+        });
 
         const auto first = mapper.map(1000);
         assert(first.has_value());
@@ -133,7 +206,12 @@ void rejects_backward_or_invalid_mapping() {
     }
 
     {
-        AudioRtpTimestampMapper mapper({.rtp_clock_rate = 0, .anchor_rtp_timestamp = 1000, .anchor_timestamp_ns = 0});
+        AudioRtpTimestampMapper mapper({
+            .rtp_clock_rate = 0,
+            .initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference,
+            .anchor_rtp_timestamp = 1000,
+            .anchor_timestamp_ns = 0,
+        });
 
         const auto invalid = mapper.map(1000);
         assert(!invalid.has_value());
@@ -142,30 +220,67 @@ void rejects_backward_or_invalid_mapping() {
 }
 
 void rejects_mapping_timestamp_overflow() {
-    AudioRtpTimestampMapper mapper({.rtp_clock_rate = 48'000,
-                                    .anchor_rtp_timestamp = 0,
-                                    .anchor_timestamp_ns = std::numeric_limits<TimestampNs>::max() - 10});
+    AudioRtpTimestampMapper mapper({
+        .rtp_clock_rate = 48'000,
+        .initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference,
+        .anchor_rtp_timestamp = 0,
+        .anchor_timestamp_ns = std::numeric_limits<TimestampNs>::max() - 10,
+    });
 
     const auto overflow = mapper.map(1);
     assert(!overflow.has_value());
     assert(overflow.error() == Error::InvalidValue);
 }
 
-void reset_reanchors_mapper() {
-    AudioRtpTimestampMapper mapper(
-        {.rtp_clock_rate = 48'000, .anchor_rtp_timestamp = 1000, .anchor_timestamp_ns = 10'000'000});
+void reset_reanchors_mapper_in_configured_reference_mode() {
+    AudioRtpTimestampMapper mapper({
+        .rtp_clock_rate = 48'000,
+        .initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference,
+        .anchor_rtp_timestamp = 1000,
+        .anchor_timestamp_ns = 10'000'000,
+    });
 
     const auto first = mapper.map(1048);
     assert(first.has_value());
     assert(*first == 11'000'000);
 
-    const Error reset_error =
-        mapper.reset({.rtp_clock_rate = 96'000, .anchor_rtp_timestamp = 10, .anchor_timestamp_ns = 20'000'000});
+    const Error reset_error = mapper.reset({
+        .rtp_clock_rate = 96'000,
+        .initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference,
+        .anchor_rtp_timestamp = 10,
+        .anchor_timestamp_ns = 20'000'000,
+    });
     assert(reset_error == Error::Ok);
 
     const auto after_reset = mapper.map(106);
     assert(after_reset.has_value());
     assert(*after_reset == 21'000'000);
+}
+
+void reset_reanchors_mapper_in_first_observed_zero_mode() {
+    AudioRtpTimestampMapper mapper({
+        .rtp_clock_rate = 48'000,
+    });
+
+    const auto first = mapper.map(1048);
+    assert(first.has_value());
+    assert(*first == 0);
+
+    const Error reset_error = mapper.reset({
+        .rtp_clock_rate = 96'000,
+        .initial_anchor_mode = RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero,
+        .anchor_rtp_timestamp = 0,
+        .anchor_timestamp_ns = 0,
+    });
+    assert(reset_error == Error::Ok);
+
+    const auto after_reset_first = mapper.map(106);
+    assert(after_reset_first.has_value());
+    assert(*after_reset_first == 0);
+
+    const auto after_reset_second = mapper.map(202);
+    assert(after_reset_second.has_value());
+    assert(*after_reset_second == 1'000'000);
 }
 
 void computes_receiver_playout_timing_decision() {
@@ -198,6 +313,7 @@ void computes_audio_block_timing_without_coupling_to_assembler() {
     assert(timing->media_timestamp_ns == 2'000'000);
     assert(timing->playout_timestamp_ns == 2'500'000);
 }
+
 } // namespace
 
 int main() {
@@ -205,11 +321,14 @@ int main() {
     converts_audio_rtp_ticks_using_configured_clock_rate();
     rejects_tick_to_ns_overflow();
     computes_forward_rtp_timestamp_delta_with_wraparound();
-    maps_audio_rtp_timestamps_to_internal_ns();
-    maps_audio_rtp_timestamps_across_wraparound();
+    maps_audio_rtp_timestamps_to_internal_ns_in_configured_reference_mode();
+    maps_audio_rtp_timestamps_to_internal_ns_from_first_observed_zero();
+    maps_audio_rtp_timestamps_across_wraparound_in_configured_reference_mode();
+    maps_audio_rtp_timestamps_across_wraparound_from_first_observed_zero();
     rejects_backward_or_invalid_mapping();
     rejects_mapping_timestamp_overflow();
-    reset_reanchors_mapper();
+    reset_reanchors_mapper_in_configured_reference_mode();
+    reset_reanchors_mapper_in_first_observed_zero_mode();
     computes_receiver_playout_timing_decision();
     rejects_receiver_playout_timing_overflow();
     computes_audio_block_timing_without_coupling_to_assembler();

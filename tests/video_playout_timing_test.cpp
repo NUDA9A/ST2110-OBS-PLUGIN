@@ -37,9 +37,13 @@ static void rejects_reconstruction_timestamp_overflow() {
     assert(decision.error() == Error::InvalidValue);
 }
 
-static void keeps_rtp_timestamp_mapping_separate_from_playout_timing() {
+static void keeps_rtp_timestamp_mapping_separate_from_playout_timing_in_configured_reference_mode() {
     VideoRtpTimestampMapper mapper(VideoRtpTimestampMapperConfig{
-        .rtp_clock_rate = 90'000, .anchor_rtp_timestamp = 10'000, .anchor_timestamp_ns = 2'000'000'000ULL});
+        .rtp_clock_rate = 90'000,
+        .initial_anchor_mode = RtpTimestampInitialAnchorMode::ConfiguredReference,
+        .anchor_rtp_timestamp = 10'000,
+        .anchor_timestamp_ns = 2'000'000'000ULL,
+    });
 
     auto mapped_media_timestamp = mapper.map(100'000);
     assert(mapped_media_timestamp.has_value());
@@ -51,6 +55,27 @@ static void keeps_rtp_timestamp_mapping_separate_from_playout_timing() {
     assert(decision.has_value());
     assert(decision->media_timestamp_ns == 3'000'000'000ULL);
     assert(decision->reconstruction_timestamp_ns == 3'000'250'000ULL);
+}
+
+static void keeps_first_observed_local_zero_mapping_separate_from_playout_timing() {
+    VideoRtpTimestampMapper mapper(VideoRtpTimestampMapperConfig{
+        .rtp_clock_rate = 90'000,
+        .initial_anchor_mode = RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero,
+        .anchor_rtp_timestamp = 0,
+        .anchor_timestamp_ns = 0,
+    });
+
+    auto mapped_media_timestamp = mapper.map(100'000);
+    assert(mapped_media_timestamp.has_value());
+    assert(*mapped_media_timestamp == 0);
+
+    const VideoReceiverPlayoutTimingConfig cfg{.link_offset_delay_ns = 250'000};
+
+    auto decision = video_receiver_playout_timing_decision(*mapped_media_timestamp, cfg);
+
+    assert(decision.has_value());
+    assert(decision->media_timestamp_ns == 0);
+    assert(decision->reconstruction_timestamp_ns == 250'000ULL);
 }
 
 static void attaches_playout_timing_to_reconstructed_frame_metadata() {
@@ -70,7 +95,8 @@ int main() {
     validates_default_and_nonzero_link_offset_delay();
     computes_reconstruction_time_from_mapped_media_timestamp();
     rejects_reconstruction_timestamp_overflow();
-    keeps_rtp_timestamp_mapping_separate_from_playout_timing();
+    keeps_rtp_timestamp_mapping_separate_from_playout_timing_in_configured_reference_mode();
+    keeps_first_observed_local_zero_mapping_separate_from_playout_timing();
     attaches_playout_timing_to_reconstructed_frame_metadata();
 
     return 0;

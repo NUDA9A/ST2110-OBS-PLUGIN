@@ -314,6 +314,17 @@ st2110::RxVideoConfig make_receive_video_rx_config() {
     return cfg;
 }
 
+st2110::VideoRtpTimestampMapperConfig make_configured_reference_video_timestamp_mapper_config(
+    st2110::TimestampNs anchor_timestamp_ns = 0,
+    std::uint32_t anchor_rtp_timestamp = 0) {
+    return st2110::VideoRtpTimestampMapperConfig{
+        .rtp_clock_rate = 90'000,
+        .initial_anchor_mode = st2110::RtpTimestampInitialAnchorMode::ConfiguredReference,
+        .anchor_rtp_timestamp = anchor_rtp_timestamp,
+        .anchor_timestamp_ns = anchor_timestamp_ns,
+    };
+}
+
 st2110::SocketRxVideoOperationalConfig
 make_valid_video_operational_config(const st2110::RxVideoConfig& rx_cfg,
                                     const st2110::PacketParsePolicy& packet_parse_policy = {},
@@ -526,12 +537,56 @@ void test_socket_rx_video_backend_rejects_null_created_port() {
     }
 }
 
-void test_socket_rx_video_backend_delivers_frame_from_operational_start() {
+void test_socket_rx_video_backend_delivers_frame_from_operational_start_with_first_observed_local_zero_timestamp() {
     auto state = std::make_shared<FakeSocketRxPortState>();
     st2110::SocketRxVideoBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
     FakeVideoSink sink;
 
     auto cfg = make_valid_video_operational_config(make_receive_video_rx_config());
+
+    auto started = backend.start_video(cfg, sink);
+    assert(started.has_value());
+    assert(st2110::backend_media_active(*started, st2110::RxMediaKind::Video));
+
+    const std::array<std::uint8_t, 8> row_bytes = {0x10u, 0x20u, 0x30u, 0x40u, 0x50u, 0x60u, 0x70u, 0x80u};
+    enqueue_datagram(state, build_single_segment_video_datagram(cfg.rx_config.payload_type,
+                                                                1U,
+                                                                90'000U,
+                                                                row_bytes,
+                                                                true,
+                                                                0U,
+                                                                0U));
+
+    assert(wait_for_receive_count_at_least(state, 1U, std::chrono::milliseconds(500)));
+    assert(sink.wait_for_frame_count(1U, std::chrono::milliseconds(500)));
+
+    const auto frame = sink.frame_at(0);
+    assert(frame.width == 4U);
+    assert(frame.height == 1U);
+    assert(frame.timestamp_ns == 0ULL);
+    assert_bytes_equal(frame.bytes, row_bytes);
+
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 1U);
+    assert(stats.packets_parsed_ok == 1U);
+    assert(stats.frames_delivered == 1U);
+    assert(stats.media_units_delivered == 1U);
+    assert(stats.packets_rejected == 0U);
+
+    auto stopped = backend.stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+}
+
+void test_socket_rx_video_backend_delivers_frame_with_configured_reference_timestamp_when_explicitly_requested() {
+    auto state = std::make_shared<FakeSocketRxPortState>();
+    st2110::SocketRxVideoBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
+    FakeVideoSink sink;
+
+    const auto timestamp_mapper_config = make_configured_reference_video_timestamp_mapper_config();
+    auto cfg =
+        make_valid_video_operational_config(make_receive_video_rx_config(), {}, st2110::PartialFramePolicy::Drop,
+                                            timestamp_mapper_config);
 
     auto started = backend.start_video(cfg, sink);
     assert(started.has_value());
@@ -611,7 +666,8 @@ int main() {
     test_socket_rx_video_backend_rejects_mismatched_open_config_vs_rx_config();
     test_socket_rx_video_backend_rejects_mismatched_receive_pipeline_config_vs_rx_config();
     test_socket_rx_video_backend_rejects_null_created_port();
-    test_socket_rx_video_backend_delivers_frame_from_operational_start();
+    test_socket_rx_video_backend_delivers_frame_from_operational_start_with_first_observed_local_zero_timestamp();
+    test_socket_rx_video_backend_delivers_frame_with_configured_reference_timestamp_when_explicitly_requested();
     test_socket_rx_video_backend_extended_packet_policy_is_used_by_receive_runtime();
     return 0;
 }

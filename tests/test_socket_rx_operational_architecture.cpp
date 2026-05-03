@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 
@@ -24,8 +25,8 @@ namespace {
 class ProbeSingleMediaBackend final : public st2110::SocketRxSingleMediaBackendBase {
   public:
     ProbeSingleMediaBackend(st2110::RxMediaKind media_kind, st2110::RxBackendCapabilities capabilities)
-        : st2110::SocketRxSingleMediaBackendBase(media_kind, capabilities, std::unique_ptr<st2110::ISocketRxPortFactory>{}) {
-    }
+        : st2110::SocketRxSingleMediaBackendBase(media_kind, capabilities,
+                                                 std::unique_ptr<st2110::ISocketRxPortFactory>{}) {}
 
     [[nodiscard]] static std::size_t receive_buffer_size_for(const st2110::PacketParsePolicy& policy) {
         return make_receive_buffer(policy).size();
@@ -136,8 +137,12 @@ void test_video_bootstrap_to_operational_adapter_preserves_modeled_axes() {
     const auto pipeline_cfg = make_video_pipeline_config(rx_cfg, st2110::PartialFramePolicy::EmitWithFlag);
     const st2110::VideoRtpTimestampMapperConfig timestamp_mapper_cfg{
         .rtp_clock_rate = 90'000,
+        .initial_anchor_mode = st2110::RtpTimestampInitialAnchorMode::ConfiguredReference,
         .anchor_rtp_timestamp = 90'000,
         .anchor_timestamp_ns = 123'456'789,
+    };
+    const st2110::VideoReorderBufferConfig reorder_buffer_cfg{
+        .window_size_packets = 17,
     };
 
     st2110::VideoReceiverBootstrapConfig bootstrap{
@@ -145,6 +150,7 @@ void test_video_bootstrap_to_operational_adapter_preserves_modeled_axes() {
         .rx_config = rx_cfg,
         .receive_pipeline_config = pipeline_cfg,
         .timestamp_mapper_config = timestamp_mapper_cfg,
+        .reorder_buffer_config = reorder_buffer_cfg,
         .timing_config = st2110::VideoReceiverTimingConfig{},
     };
 
@@ -158,8 +164,11 @@ void test_video_bootstrap_to_operational_adapter_preserves_modeled_axes() {
            st2110::PartialFramePolicy::EmitWithFlag);
     assert(operational->receive_pipeline_config.depacketizer.scan_mode == rx_cfg.scan_mode);
     assert(operational->receive_pipeline_config.depacketizer.packing_mode == rx_cfg.packing_mode);
+    assert(operational->timestamp_mapper_config.rtp_clock_rate == timestamp_mapper_cfg.rtp_clock_rate);
+    assert(operational->timestamp_mapper_config.initial_anchor_mode == timestamp_mapper_cfg.initial_anchor_mode);
     assert(operational->timestamp_mapper_config.anchor_rtp_timestamp == timestamp_mapper_cfg.anchor_rtp_timestamp);
     assert(operational->timestamp_mapper_config.anchor_timestamp_ns == timestamp_mapper_cfg.anchor_timestamp_ns);
+    assert(operational->reorder_buffer_config.window_size_packets == reorder_buffer_cfg.window_size_packets);
 
     auto expected_open_config = st2110::socket_rx_open_config_from_video_config(rx_cfg);
     assert(expected_open_config.has_value());
@@ -174,6 +183,7 @@ void test_video_manual_to_operational_adapter_preserves_explicit_runtime_inputs(
 
     const st2110::VideoRtpTimestampMapperConfig timestamp_mapper_cfg{
         .rtp_clock_rate = 90'000,
+        .initial_anchor_mode = st2110::RtpTimestampInitialAnchorMode::ConfiguredReference,
         .anchor_rtp_timestamp = 77,
         .anchor_timestamp_ns = 88,
     };
@@ -187,6 +197,8 @@ void test_video_manual_to_operational_adapter_preserves_explicit_runtime_inputs(
     assert(operational->rx_config.packing_mode == rx_cfg.packing_mode);
     assert(operational->receive_pipeline_config.depacketizer.partial_frame_policy ==
            st2110::PartialFramePolicy::EmitWithFlag);
+    assert(operational->timestamp_mapper_config.rtp_clock_rate == timestamp_mapper_cfg.rtp_clock_rate);
+    assert(operational->timestamp_mapper_config.initial_anchor_mode == timestamp_mapper_cfg.initial_anchor_mode);
     assert(operational->timestamp_mapper_config.anchor_rtp_timestamp == 77U);
     assert(operational->timestamp_mapper_config.anchor_timestamp_ns == 88U);
 }
@@ -208,8 +220,9 @@ void test_audio_bootstrap_to_operational_adapter_preserves_modeled_axes() {
     };
     const st2110::AudioRtpTimestampMapperConfig timestamp_mapper_cfg{
         .rtp_clock_rate = rx_cfg.sampling_rate_hz,
-        .anchor_rtp_timestamp = 0,
-        .anchor_timestamp_ns = 0,
+        .initial_anchor_mode = st2110::RtpTimestampInitialAnchorMode::ConfiguredReference,
+        .anchor_rtp_timestamp = 48'000,
+        .anchor_timestamp_ns = 1'000'000'000ULL,
     };
     const auto channel_order = make_stereo_channel_order();
 
@@ -232,6 +245,9 @@ void test_audio_bootstrap_to_operational_adapter_preserves_modeled_axes() {
     assert(operational->frame_assembler_config.storage_format == frame_assembler_cfg.storage_format);
     assert(operational->reorder_buffer_config.window_size_packets == reorder_buffer_cfg.window_size_packets);
     assert(operational->timestamp_mapper_config.rtp_clock_rate == timestamp_mapper_cfg.rtp_clock_rate);
+    assert(operational->timestamp_mapper_config.initial_anchor_mode == timestamp_mapper_cfg.initial_anchor_mode);
+    assert(operational->timestamp_mapper_config.anchor_rtp_timestamp == timestamp_mapper_cfg.anchor_rtp_timestamp);
+    assert(operational->timestamp_mapper_config.anchor_timestamp_ns == timestamp_mapper_cfg.anchor_timestamp_ns);
     assert(operational->channel_order.raw_value == channel_order.raw_value);
     assert(operational->channel_order.declared_channel_count == channel_order.declared_channel_count);
 
@@ -254,8 +270,9 @@ void test_audio_manual_to_operational_adapter_preserves_explicit_runtime_inputs(
     };
     const st2110::AudioRtpTimestampMapperConfig timestamp_mapper_cfg{
         .rtp_clock_rate = rx_cfg.sampling_rate_hz,
-        .anchor_rtp_timestamp = 0,
-        .anchor_timestamp_ns = 0,
+        .initial_anchor_mode = st2110::RtpTimestampInitialAnchorMode::ConfiguredReference,
+        .anchor_rtp_timestamp = 24,
+        .anchor_timestamp_ns = 42,
     };
     const auto channel_order = make_stereo_channel_order();
 
@@ -267,6 +284,9 @@ void test_audio_manual_to_operational_adapter_preserves_explicit_runtime_inputs(
     assert(operational->frame_assembler_config.storage_format == frame_assembler_cfg.storage_format);
     assert(operational->reorder_buffer_config.window_size_packets == 9U);
     assert(operational->timestamp_mapper_config.rtp_clock_rate == rx_cfg.sampling_rate_hz);
+    assert(operational->timestamp_mapper_config.initial_anchor_mode == timestamp_mapper_cfg.initial_anchor_mode);
+    assert(operational->timestamp_mapper_config.anchor_rtp_timestamp == timestamp_mapper_cfg.anchor_rtp_timestamp);
+    assert(operational->timestamp_mapper_config.anchor_timestamp_ns == timestamp_mapper_cfg.anchor_timestamp_ns);
     assert(operational->channel_order.raw_value == channel_order.raw_value);
     assert(operational->channel_order.declared_channel_count == channel_order.declared_channel_count);
 }
