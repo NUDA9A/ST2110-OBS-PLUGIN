@@ -2,15 +2,15 @@
 #define ST2110_OBS_PLUGIN_AUDIO_RECEIVER_BOOTSTRAP_HPP
 
 #include "audio_channel_order.hpp"
-#include "audio_signaling.hpp"
-#include "audio_signaling_rx_config.hpp"
-#include "error.hpp"
-#include "rx_config.hpp"
 #include "audio_frame_assembler.hpp"
 #include "audio_packet.hpp"
 #include "audio_reorder_buffer.hpp"
+#include "audio_signaling.hpp"
+#include "audio_signaling_rx_config.hpp"
 #include "audio_timestamp_mapping.hpp"
+#include "error.hpp"
 #include "packet_parse.hpp"
+#include "rx_config.hpp"
 
 #include <expected>
 #include <string>
@@ -59,11 +59,8 @@ audio_receiver_bootstrap_config_from_audio_stream_signaling(const AudioStreamSig
         return std::unexpected(err);
     }
 
-    const AudioRtpTimestampMapperConfig timestamp_mapper_config{
-        .rtp_clock_rate = rx_config->sampling_rate_hz,
-        .anchor_rtp_timestamp = 0,
-        .anchor_timestamp_ns = 0,
-    };
+    const AudioRtpTimestampMapperConfig timestamp_mapper_config =
+        audio_rtp_timestamp_mapper_config_first_observed_local_zero(rx_config->sampling_rate_hz);
     if (const Error err = validate_audio_rtp_timestamp_mapper_config(timestamp_mapper_config); err != Error::Ok) {
         return std::unexpected(err);
     }

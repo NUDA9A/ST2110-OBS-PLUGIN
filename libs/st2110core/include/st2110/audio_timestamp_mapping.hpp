@@ -2,6 +2,7 @@
 #define ST2110_OBS_PLUGIN_AUDIO_TIMESTAMP_MAPPING_HPP
 
 #include "error.hpp"
+#include "rtp_timestamp_anchor_policy.hpp"
 #include "timestamp.hpp"
 
 #include <cstdint>
@@ -14,6 +15,7 @@ constexpr uint64_t audioRtpTimestampAmbiguousDelta = 0x80000000ull;
 
 struct AudioRtpTimestampMapperConfig {
     uint32_t rtp_clock_rate = 0;
+    RtpTimestampInitialAnchorMode initial_anchor_mode = RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero;
     uint32_t anchor_rtp_timestamp = 0;
     TimestampNs anchor_timestamp_ns = 0;
 };
@@ -23,7 +25,33 @@ struct AudioRtpTimestampMapperConfig {
         return Error::InvalidValue;
     }
 
-    return Error::Ok;
+    if (const Error err = validate_rtp_timestamp_initial_anchor_mode(cfg.initial_anchor_mode); err != Error::Ok) {
+        return err;
+    }
+
+    switch (cfg.initial_anchor_mode) {
+    case RtpTimestampInitialAnchorMode::ConfiguredReference:
+        return Error::Ok;
+
+    case RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero:
+        if (cfg.anchor_rtp_timestamp != 0 || cfg.anchor_timestamp_ns != 0) {
+            return Error::InvalidValue;
+        }
+        return Error::Ok;
+
+    default:
+        return Error::InvalidValue;
+    }
+}
+
+[[nodiscard]] inline AudioRtpTimestampMapperConfig
+audio_rtp_timestamp_mapper_config_first_observed_local_zero(uint32_t rtp_clock_rate) noexcept {
+    return AudioRtpTimestampMapperConfig{
+        .rtp_clock_rate = rtp_clock_rate,
+        .initial_anchor_mode = RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero,
+        .anchor_rtp_timestamp = 0,
+        .anchor_timestamp_ns = 0,
+    };
 }
 
 [[nodiscard]] inline std::expected<uint64_t, Error> forward_audio_rtp_timestamp_delta(uint32_t previous,
@@ -47,11 +75,7 @@ struct AudioRtpTimestampMapperConfig {
     const uint64_t whole_seconds = ticks / rtp_clock_rate;
     const uint64_t remainder_ticks = ticks % rtp_clock_rate;
 
-    if (whole_seconds >
-
-        std::numeric_limits<TimestampNs>::max()
-
-            / audioTimestampNanosecondsPerSecond) {
+    if (whole_seconds > std::numeric_limits<TimestampNs>::max() / audioTimestampNanosecondsPerSecond) {
         return std::unexpected(Error::InvalidValue);
     }
 
@@ -59,11 +83,7 @@ struct AudioRtpTimestampMapperConfig {
 
     const uint64_t remainder_ns = (remainder_ticks * audioTimestampNanosecondsPerSecond) / rtp_clock_rate;
 
-    if (whole_ns >
-
-        std::numeric_limits<TimestampNs>::max()
-
-            - remainder_ns) {
+    if (whole_ns > std::numeric_limits<TimestampNs>::max() - remainder_ns) {
         return std::unexpected(Error::InvalidValue);
     }
 
@@ -80,26 +100,33 @@ class AudioRtpTimestampMapper {
             return std::unexpected(cfg_error);
         }
 
+        if (cfg_.initial_anchor_mode == RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero &&
+            !has_last_timestamp_) {
+            has_last_timestamp_ = true;
+            last_rtp_timestamp_ = rtp_timestamp;
+            last_timestamp_ns_ = 0;
+            accumulated_ticks_since_anchor_ = 0;
+            return 0;
+        }
+
+        const uint32_t previous_rtp_timestamp = has_last_timestamp_ ? last_rtp_timestamp_ : cfg_.anchor_rtp_timestamp;
+
         uint64_t delta_ticks = 0;
-        if (!has_last_timestamp_) {
-            const auto delta = forward_audio_rtp_timestamp_delta(cfg_.anchor_rtp_timestamp, rtp_timestamp);
-            if (!delta.has_value()) {
-                return std::unexpected(delta.error());
-            }
+        const auto delta = forward_audio_rtp_timestamp_delta(previous_rtp_timestamp, rtp_timestamp);
+        if (!delta.has_value()) {
+            return std::unexpected(delta.error());
+        }
 
-            accumulated_ticks_since_anchor_ = *delta;
-        } else {
-            const auto delta = forward_audio_rtp_timestamp_delta(last_rtp_timestamp_, rtp_timestamp);
-            if (!delta.has_value()) {
-                return std::unexpected(delta.error());
-            }
+        delta_ticks = *delta;
 
-            delta_ticks = *delta;
+        if (has_last_timestamp_) {
             if (accumulated_ticks_since_anchor_ > std::numeric_limits<uint64_t>::max() - delta_ticks) {
                 return std::unexpected(Error::InvalidValue);
             }
 
             accumulated_ticks_since_anchor_ += delta_ticks;
+        } else {
+            accumulated_ticks_since_anchor_ = delta_ticks;
         }
 
         const auto offset_ns = audio_rtp_ticks_to_timestamp_ns(accumulated_ticks_since_anchor_, cfg_.rtp_clock_rate);
@@ -107,11 +134,15 @@ class AudioRtpTimestampMapper {
             return std::unexpected(offset_ns.error());
         }
 
-        if (cfg_.anchor_timestamp_ns > std::numeric_limits<TimestampNs>::max() - *offset_ns) {
+        const TimestampNs effective_anchor_timestamp_ns =
+            cfg_.initial_anchor_mode == RtpTimestampInitialAnchorMode::ConfiguredReference ? cfg_.anchor_timestamp_ns
+                                                                                           : 0;
+
+        if (effective_anchor_timestamp_ns > std::numeric_limits<TimestampNs>::max() - *offset_ns) {
             return std::unexpected(Error::InvalidValue);
         }
 
-        const TimestampNs mapped_timestamp = cfg_.anchor_timestamp_ns + *offset_ns;
+        const TimestampNs mapped_timestamp = effective_anchor_timestamp_ns + *offset_ns;
 
         has_last_timestamp_ = true;
         last_rtp_timestamp_ = rtp_timestamp;

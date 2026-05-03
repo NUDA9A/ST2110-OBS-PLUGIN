@@ -686,10 +686,24 @@
 
 ### tests/video_playout_timing_test.cpp
 - Роль:
-    - проверяет receiver-side playout/reconstruction timing boundary:
-        - offset/delay decision;
-        - overflow rejection;
-        - adapter from reconstructed frame metadata to timing metadata.
+    - focused unit test для receiver-side video playout/reconstruction timing boundary.
+    - проверяет, что receiver-side playout timing остается отдельным overlay above RTP timestamp mapping and works correctly for both explicit initial-anchor modes.
+- Покрывает:
+    - `validate_video_receiver_playout_timing_config(...)` for default and non-zero link offset delay.
+    - `video_receiver_playout_timing_decision(...)`:
+        - reconstruction timestamp derived from mapped media timestamp plus link-offset delay;
+        - overflow rejection.
+    - separation between RTP timestamp mapping and playout timing in `ConfiguredReference` mode:
+        - RTP mapper can produce a reference-based non-zero media timestamp;
+        - playout timing only adds reconstruction delay on top of that mapped media timestamp.
+    - separation between RTP timestamp mapping and playout timing in `FirstObservedBecomesLocalZero` mode:
+        - first observed RTP timestamp maps to `0 ns`;
+        - playout timing still independently applies receiver-side reconstruction delay.
+    - `video_reconstructed_frame_timing(...)`:
+        - attaches playout timing metadata to reconstructed frame metadata without changing frame payload semantics.
+- Фиксирует:
+    - receiver playout/reconstruction timing remains a separate boundary above media timestamp mapping;
+    - explicit initial-anchor policy changes media timestamp origin, but does not collapse playout timing into the mapper.
 
 ## Video RTP timestamp mapping
 
@@ -699,17 +713,57 @@
 
 ### tests/video_timestamp_mapping_test.cpp
 - Роль:
-    - проверяет standards-aware RTP timestamp -> internal nanoseconds mapping;
-    - проверяет synthetic/manual timestamp mapper path.
+    - focused unit test для `video_timestamp_mapping.hpp`.
+    - проверяет explicit initial-anchor policy, basic RTP-to-nanoseconds conversion behavior, wraparound handling, validation, и synthetic fps-based mapper path.
+- Покрывает:
+    - default/manual `VideoRtpTimestampMapperConfig{}` behavior:
+        - explicit default mode maps the first observed RTP timestamp to local `0 ns`;
+        - subsequent packets map by RTP delta.
+    - `ConfiguredReference` mode:
+        - anchor RTP timestamp maps to configured anchor nanoseconds;
+        - `90000` RTP ticks map to one second relative to the configured anchor;
+        - progressive 25 fps tick step remains correct when mapping from RTP-domain deltas;
+        - wraparound handling remains correct;
+        - backward timestamp rejected.
+    - validation:
+        - zero RTP clock rate rejected;
+        - `FirstObservedBecomesLocalZero` with non-zero anchor fields rejected.
+    - synthetic mapper path:
+        - frame-index-to-nanoseconds cadence via explicit fps config;
+        - invalid frame-rate config rejected.
+- Фиксирует:
+    - explicit initial-anchor policy is part of the public video timestamp-mapper config boundary;
+    - default/manual path now uses first-observed-local-zero semantics explicitly instead of silently behaving like configured reference with `0/0`.
 
 ### tests/video_timestamp_mapping_invariants_test.cpp
 - Роль:
-    - проверяет timestamp mapping invariants:
-        - monotonic internal timestamps;
-        - 32-bit RTP timestamp wraparound;
-        - long-running continuity;
-        - backward/ambiguous delta rejection;
-        - separation from synthetic/manual timing and playout timing.
+    - invariants/regression test для video RTP timestamp mapping boundary и его interaction with reconstructed-frame playout timing.
+    - фиксирует две явные политики initial anchoring:
+        - `ConfiguredReference`;
+        - `FirstObservedBecomesLocalZero`.
+- Покрывает:
+    - monotonic 90 kHz RTP-to-nanoseconds mapping in `ConfiguredReference` mode.
+    - default/manual-path behavior:
+        - first observed RTP timestamp maps to local `0 ns`;
+        - later packets map by RTP delta from that first observation.
+    - continuity across 32-bit RTP timestamp wraparound in both modes.
+    - rejection behavior:
+        - backward delta rejected;
+        - exact half-range ambiguous delta rejected;
+        - invalid RTP clock rate rejected;
+        - configured-reference anchor-plus-offset overflow rejected.
+    - validation of `FirstObservedBecomesLocalZero` policy:
+        - non-zero anchor fields are rejected for that mode.
+    - synthetic mapper invariants:
+        - explicit fps-based cadence remains separate from RTP-domain mapping;
+        - invalid fps config rejected.
+    - reconstructed-frame timing overlay:
+        - `ConfiguredReference` mapped media timestamp plus playout offset;
+        - `FirstObservedBecomesLocalZero` mapped media timestamp plus playout offset.
+- Фиксирует:
+    - video timestamp mapping now explicitly supports both configured-reference and first-observed-local-zero semantics;
+    - default/manual path no longer relies on an unexplained hidden `0/0` anchor artifact;
+    - playout timing remains layered above media timestamp mapping rather than fused with it.
 
 ## Video SDP raw media-section parsing / SDP ingestion
 
@@ -1232,55 +1286,85 @@
 
 ### tests/audio_timestamp_mapping_test.cpp
 - Роль:
-    - проверяет audio RTP timestamp mapping and receiver-side playout timing boundary introduced for task `095`.
+    - focused unit test для `audio_timestamp_mapping.hpp`.
+    - проверяет config validation, RTP-tick-to-nanoseconds conversion, mapper behavior in both initial-anchor modes, reset semantics, и audio playout-timing helpers.
 - Покрывает:
-    - `AudioRtpTimestampMapperConfig` validation:
-        - valid RTP clock rate;
-        - zero RTP clock rate rejected.
-    - RTP tick to nanosecond conversion:
-        - exact second conversion;
-        - fractional tick conversion;
-        - invalid clock rejection;
-        - overflow rejection where applicable.
-    - `AudioRtpTimestampMapper` behavior:
-        - mapping from explicit RTP/timestamp anchor;
-        - monotonic forward timestamp mapping;
-        - 32-bit RTP timestamp wraparound continuity;
-        - backward / ambiguous timestamp movement rejection;
-        - reset behavior.
-    - receiver-side playout timing:
-        - zero-delay behavior;
-        - positive playout delay addition;
+    - `validate_audio_rtp_timestamp_mapper_config(...)`:
+        - valid `ConfiguredReference` config accepted;
+        - zero RTP clock rate rejected;
+        - `FirstObservedBecomesLocalZero` with non-zero anchor fields rejected.
+    - `audio_rtp_ticks_to_timestamp_ns(...)`:
+        - exact conversion for `48 kHz` and `96 kHz`;
+        - zero clock rate rejection;
         - overflow rejection.
-    - `AudioBlockTiming` adapter behavior:
-        - preserves RTP timestamp metadata;
-        - carries mapped media timestamp;
-        - carries computed playout timestamp.
+    - `forward_audio_rtp_timestamp_delta(...)`:
+        - normal forward delta;
+        - wraparound forward delta;
+        - half-range ambiguous delta rejection;
+        - backward delta rejection.
+    - `AudioRtpTimestampMapper` in `ConfiguredReference` mode:
+        - anchor RTP timestamp maps to configured anchor nanoseconds;
+        - subsequent packets map by RTP delta.
+    - `AudioRtpTimestampMapper` in `FirstObservedBecomesLocalZero` mode:
+        - first observed RTP timestamp maps to `0 ns`;
+        - subsequent packets map by delta from the first observed packet.
+    - wraparound mapping in both modes.
+    - invalid mapping behavior:
+        - backward packet rejected;
+        - invalid clock-rate config rejected;
+        - anchor-plus-offset overflow rejected.
+    - `reset(...)` semantics in both modes:
+        - explicit configured reanchor;
+        - explicit first-observed-local-zero reanchor.
+    - audio playout timing helpers:
+        - `audio_receiver_playout_timing_decision(...)`;
+        - overflow rejection for playout timing;
+        - `audio_block_timing(...)` remains independent from assembler/runtime code.
 - Фиксирует:
-    - audio timestamp mapping remains separate from RTP parsing, audio packet validation, reorder/jitter buffering, audio frame/block assembly, channel-order mapping, socket backend, MTL backend, and OBS handoff behavior.
+    - audio timestamp mapper API now explicitly models initial anchoring policy;
+    - default/manual path no longer relies on an unexplained hidden `0/0` anchor artifact;
+    - playout timing remains layered above media timestamp mapping rather than fused with it.
 
 ### tests/audio_timestamp_mapping_invariants_test.cpp
 - Роль:
-    - проверяет audio timestamp mapping invariants and cadence behavior for task `096`.
+    - invariants/regression test для audio RTP timestamp mapping boundary и его взаимодействия с receiver-side playout timing.
+    - фиксирует две явные политики initial anchoring:
+        - `ConfiguredReference`;
+        - `FirstObservedBecomesLocalZero`.
 - Покрывает:
-    - exact and monotonic 48 kHz / 1 ms RTP timestamp cadence mapping;
-    - explicit non-default audio RTP clock-rate handling;
-    - 32-bit RTP timestamp wraparound continuity;
-    - long-running continuity beyond one 32-bit RTP timestamp epoch;
-    - rejection of backward / ambiguous timestamp deltas;
-    - failed timestamp mapping not advancing mapper state;
-    - reset/reanchor behavior;
-    - receiver-side playout timing preserving media cadence with a constant delay.
+    - monotonic 48 kHz / 1 ms cadence in `ConfiguredReference` mode:
+        - exact 1 ms step;
+        - strict monotonic growth over many packets.
+    - monotonic 48 kHz / 1 ms cadence in `FirstObservedBecomesLocalZero` mode:
+        - first observed RTP timestamp maps to local `0 ns`;
+        - subsequent packets preserve exact 1 ms cadence.
+    - explicit non-default RTP clock-rate support:
+        - `96 kHz` cadence uses the configured clock rate rather than hidden `48 kHz` assumptions.
+    - wraparound behavior in both modes:
+        - continuity across 32-bit RTP timestamp wraparound;
+        - no cadence break after wraparound.
+    - long-running stream behavior beyond one 32-bit RTP epoch in both modes:
+        - accumulated nanoseconds continue from RTP-domain deltas;
+        - mapping remains monotonic and larger than one full 32-bit epoch worth of ticks.
+    - rejection behavior:
+        - backward delta rejected;
+        - exact half-range ambiguous delta rejected;
+        - failed packet does not advance mapper state.
+    - reset semantics in both modes:
+        - `ConfiguredReference` reset reanchors to the new explicit configured anchor;
+        - `FirstObservedBecomesLocalZero` reset discards old cadence state and makes the next observed RTP timestamp the new local zero.
+    - playout timing overlay:
+        - `audio_block_timing(...)` preserves media cadence and applies constant playout delay independently from the RTP timestamp mapper mode.
 - Фиксирует:
-    - audio RTP timestamp mapping uses explicit RTP clock rate and RTP tick deltas rather than hardcoded packet cadence;
-    - RTP-domain mapping remains separate from receiver-side playout timing;
-    - timestamp invariants remain separate from RTP parsing, packet admission, reorder/jitter buffering, audio block assembly, channel-order mapping, socket backend, MTL backend, and OBS handoff behavior.
+    - audio timestamp mapping no longer has a single hidden `0/0` anchor convention;
+    - both anchoring policies are explicit and stable;
+    - long-running / wraparound continuity remains correct after the architecture change.
 
 
 ### tests/test_socket_rx_video_backend.cpp
 - Роль:
-    - regression / integration tests для `SocketRxVideoBackend` после перехода на socket-specific operational-only start boundary.
-    - проверяет runtime lifecycle, operational config validation, open-config projection, receive-path frame delivery и базовую runtime observability через `BackendStats`.
+    - regression / integration tests для `SocketRxVideoBackend` после перехода на socket-specific operational-only start boundary, explicit video reorder policy, и explicit initial RTP-to-`TimestampNs` anchoring policy.
+    - проверяет runtime lifecycle, operational config validation, open-config projection, receive-path frame delivery, timestamp-mode behavior, и базовую runtime observability через `BackendStats`.
 - Покрывает:
     - compile-time / API-shape regression:
         - `SocketRxVideoBackend` implements `ISocketRxVideoBackend`;
@@ -1300,15 +1384,19 @@
         - backend opens socket using the prebuilt operational `open_config` without rebuilding hidden transport defaults locally.
     - receive path:
         - valid operational start + valid packet path delivers one video frame to the sink;
-        - timestamp mapping from operational timestamp-mapper config is applied to delivered frames;
+        - delivered frame preserves expected geometry and reconstructed bytes;
         - backend stats reflect delivered frame / media-unit accounting.
+    - explicit initial-anchor policy behavior in backend runtime:
+        - default/manual operational helper path uses explicit `FirstObservedBecomesLocalZero` semantics;
+        - first delivered video frame from that path maps to `0 ns`;
+        - explicitly provided `ConfiguredReference` mapper config keeps reference-based timestamp mapping and can still map the first delivered frame to non-zero `TimestampNs`.
     - packet-size-policy threading through runtime:
         - receive runtime uses the packet-size policy carried in operational config when allocating/using its receive path state;
         - malformed large datagram is rejected in runtime without frame delivery.
 - Фиксирует:
     - concrete socket video backend is now operational-only at its public start boundary;
     - config cross-consistency is validated before socket-port creation/open;
-    - backend consumes explicit operational runtime pieces instead of rebuilding hidden defaults locally.
+    - backend consumes explicit operational runtime pieces, including explicit initial timestamp anchoring policy, instead of rebuilding hidden defaults locally.
 
 ### tests/test_socket_runtime_interface.cpp
 - Роль:
@@ -1354,8 +1442,8 @@
 
 ### tests/test_socket_rx_audio_backend.cpp
 - Роль:
-    - regression / integration tests для `SocketRxAudioBackend` после перехода на socket-specific operational-only start boundary.
-    - проверяет runtime lifecycle, operational audio config validation, open-config projection, receive-path block delivery и базовую runtime observability через `BackendStats`.
+    - regression / integration tests для `SocketRxAudioBackend` после перехода на socket-specific operational-only start boundary и explicit initial RTP-to-`TimestampNs` anchoring policy.
+    - проверяет runtime lifecycle, operational audio config validation, open-config projection, receive-path block delivery, timestamp-mode behavior, и базовую runtime observability через `BackendStats`.
 - Покрывает:
     - compile-time / API-shape regression:
         - `SocketRxAudioBackend` implements `ISocketRxAudioBackend`;
@@ -1367,7 +1455,7 @@
         - consistent config accepted by backend start;
         - mismatched `audio_packet_policy` vs `rx_config` rejected as `InvalidValue`;
         - invalid `reorder_buffer_config` rejected as `InvalidValue`;
-        - mismatched `timestamp_mapper_config` vs `rx_config` rejected as `InvalidValue`.
+        - mismatched `timestamp_mapper_config.rtp_clock_rate` vs `rx_config` rejected as `InvalidValue`.
     - backend lifecycle / runtime behavior:
         - stop before start and repeated stop are accepted and keep backend stopped;
         - repeated start on already-active backend returns `InvalidBackendState`;
@@ -1376,15 +1464,18 @@
         - backend opens socket using the prebuilt operational `open_config` without rebuilding hidden transport defaults locally.
     - receive path:
         - valid operational start + valid RTP audio packet path delivers one assembled audio block to the sink;
-        - delivered block preserves expected sampling rate, channel count, samples-per-channel, sample stride, decoded sample values, and mapped timestamp;
-        - backend stats reflect delivered media-unit accounting.
+        - delivered block preserves expected sampling rate, channel count, samples-per-channel, sample stride, decoded sample values, and media-unit accounting.
+    - explicit initial-anchor policy behavior in backend runtime:
+        - default/manual operational helper path uses explicit `FirstObservedBecomesLocalZero` semantics;
+        - first delivered audio block from that path maps to `0 ns`;
+        - explicitly provided `ConfiguredReference` mapper config keeps reference-based timestamp mapping and can still map the first delivered block to non-zero `TimestampNs`.
     - packet-size-policy threading through runtime:
         - receive runtime uses the packet-size policy carried in operational config when allocating/using its receive path state;
         - malformed large datagram is rejected in runtime without audio-frame delivery.
 - Фиксирует:
     - concrete socket audio backend is now operational-only at its public start boundary;
     - audio operational config is validated for explicit cross-consistency before socket-port creation/open;
-    - backend consumes explicit audio runtime components instead of rebuilding hidden defaults locally.
+    - backend consumes explicit audio runtime components, including explicit initial timestamp anchoring policy, instead of rebuilding hidden defaults locally.
 
 ### tests/test_video_packet_admission.cpp
 - Роль:
@@ -1415,36 +1506,44 @@
 
 ### tests/test_socket_rx_operational_architecture.cpp
 - Роль:
-    - architecture regression test для новой socket operational boundary.
+    - architecture regression test для socket operational boundary after the move to explicit operational start and explicit timestamp-anchoring policy.
     - фиксирует, что adapter / projection layer и generic single-media socket runtime layer остаются разделенными по ответственности.
 - Покрывает:
     - `SocketRxSingleMediaBackendBase` remains media-agnostic:
         - base class is still only an `IRxBackend`-level generic runtime base;
         - base class does not become `ISocketRxVideoBackend` or `ISocketRxAudioBackend`;
         - generic receive-buffer sizing remains driven only by common `PacketParsePolicy`.
-    - video bootstrap/manual -> operational adapters:
-        - `socket_rx_video_operational_config_from_video_receiver_bootstrap(...)` preserves already-modeled axes:
+    - video bootstrap -> operational adapter:
+        - `socket_rx_video_operational_config_from_video_receiver_bootstrap(...)` preserves:
             - `packet_parse_policy`;
             - `rx_config`;
             - `receive_pipeline_config`;
-            - `timestamp_mapper_config`;
+            - `timestamp_mapper_config`, including:
+                - `rtp_clock_rate`;
+                - `initial_anchor_mode`;
+                - `anchor_rtp_timestamp`;
+                - `anchor_timestamp_ns`;
+            - `reorder_buffer_config`;
             - transport projection through `open_config`.
+    - video manual -> operational adapter:
         - `socket_rx_video_operational_config_from_rx_video_config(...)` preserves explicit runtime inputs such as:
             - `PartialFramePolicy`;
             - `PacketParsePolicy`;
-            - timestamp-mapper config;
+            - configured timestamp-mapper policy/anchor fields;
             - modeled `scan_mode` / `packing_mode`.
-    - audio bootstrap/manual -> operational adapters:
-        - `socket_rx_audio_operational_config_from_audio_receiver_bootstrap(...)` preserves already-modeled axes:
+    - audio bootstrap -> operational adapter:
+        - `socket_rx_audio_operational_config_from_audio_receiver_bootstrap(...)` preserves:
             - `packet_parse_policy`;
             - `audio_packet_policy`;
             - `frame_assembler_config`;
             - `reorder_buffer_config`;
-            - `timestamp_mapper_config`;
+            - `timestamp_mapper_config`, including explicit initial-anchor mode and anchor fields;
             - `channel_order`;
             - transport projection through `open_config`.
+    - audio manual -> operational adapter:
         - `socket_rx_audio_operational_config_from_rx_audio_config(...)` preserves explicit caller-supplied runtime inputs instead of replacing them with backend-local defaults.
 - Фиксирует:
     - socket backend no longer owns adapter/default-building responsibility;
-    - bootstrap/manual-to-operational projection is now an explicit named boundary;
+    - bootstrap/manual-to-operational projection is an explicit named boundary;
+    - explicit RTP timestamp initial-anchor mode is preserved through adapters rather than silently rewritten;
     - generic socket single-media base remains transport/runtime-oriented rather than media-policy-building.

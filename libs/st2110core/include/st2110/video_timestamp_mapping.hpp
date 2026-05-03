@@ -2,6 +2,7 @@
 #define ST2110_OBS_PLUGIN_VIDEO_TIMESTAMP_MAPPING_HPP
 
 #include "error.hpp"
+#include "rtp_timestamp_anchor_policy.hpp"
 #include "timestamp.hpp"
 
 #include <cstdint>
@@ -13,6 +14,7 @@ inline constexpr uint64_t videoTimestampNanosecondsPerSecond = 1000000000ULL;
 
 struct VideoRtpTimestampMapperConfig {
     uint32_t rtp_clock_rate = 90000;
+    RtpTimestampInitialAnchorMode initial_anchor_mode = RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero;
     uint32_t anchor_rtp_timestamp = 0;
     TimestampNs anchor_timestamp_ns = 0;
 };
@@ -22,7 +24,33 @@ struct VideoRtpTimestampMapperConfig {
         return Error::InvalidValue;
     }
 
-    return Error::Ok;
+    if (const Error err = validate_rtp_timestamp_initial_anchor_mode(cfg.initial_anchor_mode); err != Error::Ok) {
+        return err;
+    }
+
+    switch (cfg.initial_anchor_mode) {
+    case RtpTimestampInitialAnchorMode::ConfiguredReference:
+        return Error::Ok;
+
+    case RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero:
+        if (cfg.anchor_rtp_timestamp != 0 || cfg.anchor_timestamp_ns != 0) {
+            return Error::InvalidValue;
+        }
+        return Error::Ok;
+
+    default:
+        return Error::InvalidValue;
+    }
+}
+
+[[nodiscard]] inline VideoRtpTimestampMapperConfig
+video_rtp_timestamp_mapper_config_first_observed_local_zero() noexcept {
+    return VideoRtpTimestampMapperConfig{
+        .rtp_clock_rate = 90000,
+        .initial_anchor_mode = RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero,
+        .anchor_rtp_timestamp = 0,
+        .anchor_timestamp_ns = 0,
+    };
 }
 
 [[nodiscard]] inline std::expected<uint64_t, Error> checked_video_timestamp_add_u64(uint64_t a, uint64_t b) {
@@ -72,8 +100,6 @@ rtp_ticks_to_timestamp_ns(uint64_t ticks, uint32_t rtp_clock_rate, TimestampNs a
         return std::unexpected(seconds_ns.error());
     }
 
-    // remainder_ticks < rtp_clock_rate <= uint32 max, so this multiplication
-    // fits in uint64_t.
     const uint64_t remainder_ns = (remainder_ticks * videoTimestampNanosecondsPerSecond) / rtp_clock_rate;
 
     auto relative_ns = checked_video_timestamp_add_u64(*seconds_ns, remainder_ns);
@@ -100,7 +126,18 @@ class VideoRtpTimestampMapper {
             return std::unexpected(config_error_);
         }
 
-        auto delta = forward_rtp_timestamp_delta(last_raw_rtp_timestamp_, rtp_timestamp);
+        if (cfg_.initial_anchor_mode == RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero &&
+            !has_runtime_origin_) {
+            has_runtime_origin_ = true;
+            last_raw_rtp_timestamp_ = rtp_timestamp;
+            ticks_since_anchor_ = 0;
+            return 0;
+        }
+
+        const uint32_t previous_rtp_timestamp =
+            has_runtime_origin_ ? last_raw_rtp_timestamp_ : cfg_.anchor_rtp_timestamp;
+
+        auto delta = forward_rtp_timestamp_delta(previous_rtp_timestamp, rtp_timestamp);
 
         if (!delta.has_value()) {
             return std::unexpected(delta.error());
@@ -112,15 +149,21 @@ class VideoRtpTimestampMapper {
 
         ticks_since_anchor_ += static_cast<uint64_t>(*delta);
         last_raw_rtp_timestamp_ = rtp_timestamp;
+        has_runtime_origin_ = true;
 
-        return rtp_ticks_to_timestamp_ns(ticks_since_anchor_, cfg_.rtp_clock_rate, cfg_.anchor_timestamp_ns);
+        const TimestampNs effective_anchor_timestamp_ns =
+            cfg_.initial_anchor_mode == RtpTimestampInitialAnchorMode::ConfiguredReference ? cfg_.anchor_timestamp_ns
+                                                                                           : 0;
+
+        return rtp_ticks_to_timestamp_ns(ticks_since_anchor_, cfg_.rtp_clock_rate, effective_anchor_timestamp_ns);
     }
 
     void reset(VideoRtpTimestampMapperConfig cfg) {
         cfg_ = cfg;
         config_error_ = validate_video_rtp_timestamp_mapper_config(cfg_);
 
-        last_raw_rtp_timestamp_ = cfg_.anchor_rtp_timestamp;
+        has_runtime_origin_ = false;
+        last_raw_rtp_timestamp_ = 0;
         ticks_since_anchor_ = 0;
     }
 
@@ -128,6 +171,7 @@ class VideoRtpTimestampMapper {
     VideoRtpTimestampMapperConfig cfg_{};
     Error config_error_ = Error::Ok;
 
+    bool has_runtime_origin_ = false;
     uint32_t last_raw_rtp_timestamp_ = 0;
     uint64_t ticks_since_anchor_ = 0;
 };

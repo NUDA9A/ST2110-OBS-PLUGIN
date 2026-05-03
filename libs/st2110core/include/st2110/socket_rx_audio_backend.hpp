@@ -88,8 +88,7 @@ struct SocketRxAudioOperationalConfig {
         return Error::InvalidValue;
     }
 
-    if (cfg.timestamp_mapper_config.rtp_clock_rate != cfg.rx_config.sampling_rate_hz ||
-        cfg.timestamp_mapper_config.anchor_rtp_timestamp != 0 || cfg.timestamp_mapper_config.anchor_timestamp_ns != 0) {
+    if (cfg.timestamp_mapper_config.rtp_clock_rate != cfg.rx_config.sampling_rate_hz) {
         return Error::InvalidValue;
     }
 

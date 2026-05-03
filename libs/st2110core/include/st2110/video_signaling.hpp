@@ -87,7 +87,7 @@ inline Error validate_reference_clock(const ReferenceClock &clock) {
         if (clock.ptp.has_value() || clock.local_mac.has_value() || !clock.raw_token.has_value() ||
             clock.raw_token->empty()) {
             return Error::InvalidValue;
-            }
+        }
         return Error::Ok;
     }
 
@@ -372,7 +372,7 @@ inline Error validate_video_media_description(const VideoMediaDescription &media
         if (Error err = validate_video_transfer_characteristic_system(*media.transfer_characteristic_system);
             err != Error::Ok) {
             return err;
-            }
+        }
     }
     if (Error err = validate_required_video_signal_standard(media.signal_standard); err != Error::Ok) {
         return err;
@@ -561,11 +561,7 @@ video_rtp_timestamp_mapper_config_from_video_stream_signaling(const VideoStreamS
         return std::unexpected(err);
     }
 
-    VideoRtpTimestampMapperConfig cfg{
-        .rtp_clock_rate = 90000,
-        .anchor_rtp_timestamp = 0,
-        .anchor_timestamp_ns = 0,
-    };
+    VideoRtpTimestampMapperConfig cfg = video_rtp_timestamp_mapper_config_first_observed_local_zero();
 
     if (Error err = validate_video_rtp_timestamp_mapper_config(cfg); err != Error::Ok) {
         return std::unexpected(err);
@@ -574,9 +570,11 @@ video_rtp_timestamp_mapper_config_from_video_stream_signaling(const VideoStreamS
     return cfg;
 }
 
-[[nodiscard]] inline std::expected<VideoReceiverBootstrapConfig, Error> video_receiver_bootstrap_config_from_video_stream_signaling(
-    const VideoStreamSignaling &signaling, uint16_t udp_port, uint8_t payload_type, std::string local_ip,
-    std::string dest_ip, PartialFramePolicy partial_frame_policy) {
+[[nodiscard]] inline std::expected<VideoReceiverBootstrapConfig, Error>
+video_receiver_bootstrap_config_from_video_stream_signaling(const VideoStreamSignaling &signaling, uint16_t udp_port,
+                                                            uint8_t payload_type, std::string local_ip,
+                                                            std::string dest_ip,
+                                                            PartialFramePolicy partial_frame_policy) {
     if (Error err = validate_video_stream_signaling(signaling); err != Error::Ok) {
         return std::unexpected(err);
     }
