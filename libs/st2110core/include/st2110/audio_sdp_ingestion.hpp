@@ -3,36 +3,21 @@
 
 #include "audio_sdp_media_section.hpp"
 #include "audio_sdp_signaling_adapter.hpp"
+#include "audio_sdp_timing_attributes.hpp"
 #include "audio_signaling.hpp"
 #include "error.hpp"
 
 #include <expected>
 #include <string_view>
-#include <vector>
 
 namespace st2110 {
-[[nodiscard]] inline bool raw_audio_sdp_has_attribute(const std::vector<RawAudioSdpAttribute> &attributes,
-                                                      std::string_view name) {
-    for (const auto &attribute : attributes) {
-        if (attribute.name == name) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-[[nodiscard]] inline Error validate_raw_audio_sdp_required_st2110_clock_signaling(const RawAudioSdpMediaSection &raw) {
-    const bool has_ts_refclk = raw_audio_sdp_has_attribute(raw.unknown_session_attributes, "ts-refclk") ||
-                               raw_audio_sdp_has_attribute(raw.unknown_attributes, "ts-refclk");
-
-    if (!has_ts_refclk) {
+[[nodiscard]] inline Error
+validate_raw_audio_sdp_required_st2110_clock_signaling(const RawAudioSdpTimingAttributes &raw_timing) {
+    if (!raw_audio_sdp_has_reference_clock(raw_timing)) {
         return Error::InvalidValue;
     }
 
-    const bool has_media_level_mediaclk = raw_audio_sdp_has_attribute(raw.unknown_attributes, "mediaclk");
-
-    if (!has_media_level_mediaclk) {
+    if (!raw_audio_sdp_has_media_level_mediaclk(raw_timing)) {
         return Error::InvalidValue;
     }
 
@@ -47,7 +32,13 @@ parse_audio_stream_signaling_from_sdp(std::string_view sdp, uint8_t expected_pay
         return std::unexpected(raw.error());
     }
 
-    if (Error err = validate_raw_audio_sdp_required_st2110_clock_signaling(*raw); err != Error::Ok) {
+    auto raw_timing = parse_audio_sdp_timing_attributes(*raw);
+
+    if (!raw_timing.has_value()) {
+        return std::unexpected(raw_timing.error());
+    }
+
+    if (Error err = validate_raw_audio_sdp_required_st2110_clock_signaling(*raw_timing); err != Error::Ok) {
         return std::unexpected(err);
     }
 

@@ -1216,19 +1216,43 @@
 
 ### tests/audio_sdp_ingestion_test.cpp
 - Роль:
-    - проверяет final audio SDP-to-`AudioStreamSignaling` ingestion composition.
-    - покрывает:
-        - valid Level A SDP ingestion through `parse_audio_stream_signaling_from_sdp(...)`;
-        - composition of raw media-section selection with raw-to-signaling adapter;
-        - payload type mismatch rejection;
-        - missing required selected `rtpmap` rejection;
-        - invalid `ptime` rejection;
-        - unsupported runtime-independent signaling values rejected through signaling validation / adapter boundaries;
-        - required clock-signaling presence checks:
-            - `ts-refclk` at session or selected media scope;
-            - media-level `mediaclk`;
-        - unknown SDP attributes preserved at raw layer but ignored by final signaling mapping unless explicitly modeled;
-        - separation from runtime `RxAudioConfig`, socket/backend transport fields, and audio buffer/channel layout.
+    - проверяет final audio SDP ingestion entry point `parse_audio_stream_signaling_from_sdp(...)`.
+    - фиксирует, что standards-aware final audio ingestion больше не опирается на attribute-name-only presence для clock signaling, а использует dedicated parsed timing boundary for `ts-refclk` and media-level `mediaclk`.
+- Покрывает:
+    - successful final ingestion of valid Level A raw audio SDP into `AudioStreamSignaling`:
+        - `L24/48000/2`;
+        - `ptime:1`;
+        - valid `ts-refclk:ptp=...`;
+        - media-level `mediaclk:direct=0`;
+        - optional `channel-order=SMPTE2110.(ST)`.
+    - final mapped signaling values:
+        - `AudioPcmEncoding::LinearPcm`;
+        - `sampling_rate_hz == 48000`;
+        - `packet_time_us == 1000`;
+        - expected channel count;
+        - optional SMPTE 2110 channel-order mapping.
+    - existing final-ingestion rejection paths independent from timing parsing:
+        - selected payload-type mismatch rejected;
+        - missing required payload-bound `a=rtpmap` rejected;
+        - invalid `ptime` rejected;
+        - unsupported audio encoding such as `AM824` rejected as `Unsupported`.
+    - required ST 2110 clock-signaling presence at final ingestion:
+        - missing `ts-refclk` rejected;
+        - missing media-level `mediaclk` rejected;
+        - session-level-only `mediaclk` remains insufficient and rejected.
+    - new strict timing parsing boundary behavior:
+        - malformed known `ts-refclk` form is rejected even when the attribute name is present;
+        - malformed media-level `mediaclk` known form is rejected even when the attribute name is present.
+    - open-ended/future timing signaling tolerance:
+        - unknown non-empty `ts-refclk` form is accepted through the parsed open-ended reference-clock path;
+        - unknown non-empty media-level `mediaclk` form is accepted through the parsed open-ended media-clock path.
+    - raw unknown-attribute preservation remains separate from final signaling mapping:
+        - unknown session/media attributes are preserved by raw media-section selection;
+        - they do not interfere with successful final mapping when required known signaling is valid.
+- Фиксирует:
+    - final audio SDP ingestion now depends on parsed/validated timing objects rather than raw attribute-name presence.
+    - malformed known ST 2110 clock-signaling forms fail at the audio SDP timing boundary instead of passing accidentally into final ingestion.
+    - standards-clean requirement for media-level `mediaclk` remains explicit and localized at the final audio SDP ingestion boundary.
 
 ## Audio packet model
 
@@ -1579,3 +1603,41 @@
     - bootstrap/manual-to-operational projection is an explicit named boundary;
     - explicit RTP timestamp initial-anchor mode is preserved through adapters rather than silently rewritten;
     - generic socket single-media base remains transport/runtime-oriented rather than media-policy-building.
+
+### tests/audio_sdp_timing_attributes_test.cpp
+- Роль:
+    - focused unit test for the dedicated raw audio SDP timing/reference-clock parsing boundary in `audio_sdp_timing_attributes.hpp`.
+    - проверяет structural parsing, scope handling, and strict rejection rules for audio `ts-refclk` and `mediaclk`.
+- Покрывает:
+    - raw `ts-refclk` parsing:
+        - known PTP form with explicit domain;
+        - known PTP form without domain;
+        - known `localmac=...` form;
+        - preservation of unknown non-empty forms as `RawAudioSdpReferenceClock::Kind::Other`.
+    - raw `ts-refclk` rejection of malformed known forms:
+        - missing PTP GMID;
+        - missing PTP version payload;
+        - invalid PTP domain value.
+    - raw `mediaclk` parsing:
+        - known `direct=<u64>` form;
+        - known `sender` form;
+        - preservation of unknown non-empty forms as `RawAudioSdpMediaClock::Kind::Other`.
+    - raw `mediaclk` rejection of malformed known forms:
+        - malformed `direct=` numeric payload.
+    - aggregate timing extraction from `RawAudioSdpMediaSection` preserved unknown attributes:
+        - session-level `ts-refclk` parsing;
+        - media-level `mediaclk` parsing;
+        - `raw_audio_sdp_has_reference_clock(...)`;
+        - `raw_audio_sdp_has_media_level_mediaclk(...)`.
+    - scope-aware resolution policy:
+        - media-level `mediaclk` overrides session-level `mediaclk`;
+        - session-level-only `mediaclk` is parsed but is not treated as media-level presence.
+    - strict duplicate handling:
+        - duplicate session-level `ts-refclk` rejected;
+        - duplicate media-level `mediaclk` rejected.
+    - empty aggregate behavior:
+        - absent timing attributes produce an empty parsed timing snapshot without synthetic defaults.
+- Фиксирует:
+    - audio timing/reference-clock parsing is now a dedicated strict boundary rather than an implicit name-only check.
+    - malformed known timing forms are distinguished from unknown future/open-ended forms explicitly.
+    - session/media scope remains explicit in the parsed audio timing model, so final ingestion can enforce media-level `mediaclk` correctly.
