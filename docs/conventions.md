@@ -4,7 +4,7 @@
 
 - Project copy of this file = authoritative runtime copy.
 - If this file conflicts with `plan_rules.md`, `plan_rules.md` wins.
-- Terms such as **MUST**, **MUST NOT**, **Actually read**, **Code check**, **Already implemented**, **Copy-ready**, **MTL task**, and **MTL reference files** inherit the meanings defined in `plan_rules.md`.
+- Terms such as **MUST**, **MUST NOT**, **Actually read**, **Code check**, **Already implemented**, **Copy-ready**, **MTL task**, **MTL reference repository**, **Pinned MTL reference branch**, and **MTL reference files** inherit the meanings defined in `plan_rules.md`.
 
 ## 1. Validation
 
@@ -68,10 +68,10 @@ Before proposing status updates, Assistant MUST infer the actual workflow from t
 
 Before proposing the next task, before accepting an implementation, and before saying that rules/work/context were studied, Assistant MUST:
 - actually read all required project control `.md` files;
-- actually read relevant code;
+- actually read relevant code from the primary repository;
 - actually read all uploaded ST 2110 / RP 2110 PDFs.
 
-If the current step is an MTL task, Assistant MUST also actually read all MTL reference files.
+If the current step is an MTL task, Assistant MUST also actually read all configured MTL reference files from the MTL reference repository on the pinned MTL reference branch.
 
 If the current step is NOT an MTL task, Assistant MUST NOT read MTL reference files and SHOULD NOT mention them.
 

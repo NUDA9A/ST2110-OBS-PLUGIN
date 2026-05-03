@@ -1518,6 +1518,152 @@
     - malformed `nettype` / `addrtype` rejected;
     - malformed slash-parameter forms rejected;
     - existing session/media `c=` preservation remains unchanged.
+- [ ] 197A: Rewire operational `SocketRxVideoBackend` onto explicit bootstrap/policy inputs instead of rebuilding hidden defaults
+  - тип расхождения:
+    - с правилами/архитектурой.
+  - конкретное расхождение:
+    - operational video RX path все еще стартует из plain `RxVideoConfig` и внутри backend заново собирает runtime policy с hidden defaults:
+      - `build_packet_parse_policy(...)` всегда возвращает пустую/default policy;
+      - `build_video_receive_pipeline_config(...)` жестко вшивает `PartialFramePolicy::Drop`;
+      - backend не потребляет richer already-modeled signaling/bootstrap boundary как реальный operational input.
+    - это расходится с project rules:
+      - defaults/fallbacks должны быть explicit at call site or config-construction layer;
+      - modeled axes/support boundaries не должны оставаться только в prose и не должны скрываться внутри runtime helpers.
+  - как исправлять по сути:
+    - сделать explicit operational input boundary для socket video RX:
+      - либо backend должен принимать уже собранный bootstrap/policy object;
+      - либо должен существовать явный adapter layer, который до `start_video(...)` собирает:
+        - packet parse policy;
+        - receive pipeline config;
+        - partial-frame policy;
+        - timestamp policy.
+    - hidden backend-local defaults нужно убрать или оставить только как explicit named temporary policy outside parser/runtime internals.
+- [ ] 197B: Replace the hardcoded video reorder window literal with an explicit named runtime/support boundary
+  - тип расхождения:
+    - с правилами/архитектурой.
+  - конкретное расхождение:
+    - current video socket backend создает reorder buffer через literal `FixedWindowReorderBuffer(32)`.
+    - сам `FixedWindowReorderBuffer` уже умеет принимать explicit `window_size`, но video runtime boundary не моделирует источник этого значения и тем самым кодирует временное решение magic number’ом.
+    - это расходится с project rules:
+      - temporary support limits must be expressed through explicit modeled/validation/support boundaries;
+      - important helper/policy boundaries must not remain implicit.
+  - как исправлять по сути:
+    - вынести reorder window в explicit named policy/config:
+      - runtime receive policy;
+      - bootstrap config;
+      - or localized default helper with a named constant + validation boundary.
+    - backend должен получать это значение явно, а не зашивать literal в construction path.
+- [ ] 197C: Make initial RTP-to-`TimestampNs` anchoring explicit in socket RX runtime
+  - тип расхождения:
+    - со стандартным timing смыслом + с правилами/архитектурой.
+  - конкретное расхождение:
+    - current video и audio socket backends создают RTP timestamp mappers с:
+      - `anchor_rtp_timestamp = 0`;
+      - `anchor_timestamp_ns = 0`.
+    - из-за этого первый реально наблюденный ненулевой RTP timestamp сразу мапится в ненулевой `TimestampNs`, хотя сама политика “что считается internal origin” в runtime никак явно не задана.
+    - это проблемно по двум причинам:
+      - ST 2110 timing model трактует RTP timestamps как time-of-sampling / epoch-related timing quantity, а не как произвольный hidden local rebasing artifact; RP 2110-25 также формулирует RTP-time measurements через epoch-related `RTPTimestamp_encoded`;
+      - project rules требуют explicit modeled timing/policy boundary вместо скрытого default anchoring.
+  - как исправлять по сути:
+    - явно ввести policy/boundary для initial anchoring:
+      - “first observed RTP timestamp becomes local zero”;
+      - или “preserve RTP-derived absolute relation from bootstrap reference”;
+      - или другой named mode.
+    - backend/bootstrap должен явно выбирать этот режим, а mapper не должен получать hidden `0/0` anchor без объясненной политики.
+- [ ] 197D: Tighten raw audio SDP `m=audio` validation to the same standards-aware transport boundary already used for video
+  - тип расхождения:
+    - со стандартом + с правилами.
+  - конкретное расхождение:
+    - current raw audio SDP parser `parse_audio_m_line_payload_types(...)` проверяет по сути только:
+      - что line starts with `m=audio`;
+      - что есть минимум 4 whitespace-separated tokens;
+      - что payload type численно в диапазоне `0..127`.
+    - parser не валидирует:
+      - сам `port` token;
+      - `proto` token;
+      - dynamic RTP payload-type range as an explicit ST 2110 boundary.
+    - для ST 2110 это слишком слабо:
+      - ST 2110-10 требует RTP streams with dynamic payload types in `96..127`, unless fixed designation exists;
+      - ST 2110-30 требует SDP-based signaling for PCM audio streams under AES67/ST 2110 constraints;
+      - project rules требуют strict parsing and explicit validation boundaries.
+  - как исправлять по сути:
+    - сделать для audio такой же explicit raw media-line validation boundary, как уже сделано для video:
+      - validate `port`;
+      - validate supported `proto` through explicit local policy;
+      - validate PT against current ST 2110 audio policy explicitly, а не только against `<=127`.
+    - malformed `m=audio` must fail early at raw SDP boundary, not later by accident.
+- [ ] 197E: Replace attribute-name-only audio clock-signaling checks with real parsing/validation of `ts-refclk` and media-level `mediaclk`
+  - тип расхождения:
+    - со стандартом + с правилами.
+  - конкретное расхождение:
+    - current final audio SDP ingestion checks required timing signaling only by attribute-name presence in preserved unknown-attribute lists:
+      - `ts-refclk` считается “present”, если где-то сохранился attribute with that name;
+      - `mediaclk` считается “present”, если media-level unknown attribute с таким именем найден.
+    - при этом malformed known forms могут пройти финальную проверку просто потому, что имя атрибута присутствует.
+    - это расходится:
+      - со ST 2110-10 clock signaling model, где `ts-refclk` и `mediaclk` — это не просто names, а structured signaling forms;
+      - со strict-parse project rules.
+  - как исправлять по сути:
+    - добавить dedicated audio timing/reference-clock parsing boundary:
+      - parse known `ts-refclk` forms structurally;
+      - parse/validate media-level `mediaclk` structurally;
+      - distinguish malformed known forms from unknown future/open forms explicitly.
+    - final audio ingestion should depend on parsed/validated timing objects, not on raw attribute-name presence.
+- [ ] 197F: Separate structural audio signaling validity from the current Level A receiver-support boundary
+  - тип расхождения:
+    - со стандартом + с правилами/архитектурой.
+  - конкретное расхождение:
+    - current `validate_audio_stream_signaling(...)` validates `AudioStreamSignaling` directly against `audio_level_a_receiver_baseline()`.
+    - meaning:
+      - modeled signaling validity is currently collapsed into “fits current Level A-oriented receiver baseline”;
+      - structurally valid ST 2110-30 streams outside current baseline are rejected too early at signaling/model boundary.
+    - это архитектурно узко и стандартно неудачно, потому что ST 2110-30 explicitly models multiple conformance levels, while current signaling validator hardcodes one local receiver-support range as if it were the structural signaling truth.
+  - как исправлять по сути:
+    - разделить два слоя:
+      - structural audio signaling validation:
+        - valid PCM signaling shape;
+        - valid bit depth;
+        - valid channel-order syntax/model;
+        - valid numeric/signaling structure;
+      - receiver/runtime support validation:
+        - current Level A-oriented baseline;
+        - current supported rates/ptime/channel counts.
+    - raw SDP → signaling adapter должен строить structurally valid signaling object отдельно от later “is supported by current receiver policy” checks.
+- [ ] 197G: Add explicit reorder flush/tolerance policy to the socket receive path
+  - тип расхождения:
+    - с правилами/архитектурой.
+  - конкретное расхождение:
+    - current socket video/audio receive paths still only drain strict `pop_next()` order and do not apply any explicit gap-flush/tolerance policy.
+    - при этом concrete reorder buffers уже expose explicit flush helpers, но socket runtime boundary их никак не моделирует и не использует.
+    - из-за этого first-gap behavior сейчас остается hidden stall policy, а не explicit receiver/runtime policy.
+  - как исправлять по сути:
+    - поднять gap handling на explicit runtime boundary:
+      - named receive tolerance policy;
+      - explicit flush mode/helper usage;
+      - configurable/localized first-gap behavior.
+    - socket backend должен явно решать:
+      - ждать missing packet;
+      - flush gap once;
+      - or use another named policy.
+    - concrete buffer helpers должны оставаться implementation detail, а runtime behavior — стать explicit и проверяемым на backend level.
+- [ ] 197H: Apply operational packet-size / `MAXUDP` policy in the socket receive parse path
+  - тип расхождения:
+    - со стандартом + с правилами/архитектурой.
+  - конкретное расхождение:
+    - current socket video/audio backends still build `PacketParsePolicy` and size receive buffers from it, but actual live media parsing bypasses the integrated packet-policy path:
+      - video receive path parses via direct staged packet parsing;
+      - audio receive path parses via direct audio RTP packet parsing.
+    - то есть existing packet-size / `MAXUDP` policy boundary сейчас operationally не применяется в реальном receive parse path.
+    - это расходится:
+      - со ST 2110-10 UDP datagram size semantics;
+      - с project rules, потому что already-modeled policy boundary остается construction artifact instead of real runtime behavior.
+  - как исправлять по сути:
+    - сделать так, чтобы live receive parse path использовал existing packet-policy boundary перед packet admission / deeper parsing;
+    - packet-size / `MAXUDP` handling should be enforced by the real receive path, not only by:
+      - receive buffer sizing;
+      - standalone helper availability;
+      - signaling/bootstrap construction.
+    - нельзя оставлять separate “policy exists” and “operational parser ignores it” behavior.
 ---
 
 ## Track F — MVP exit / readiness for testing

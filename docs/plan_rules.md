@@ -19,24 +19,34 @@
 - **Already implemented** = the required behavior is already present in current code or in newer local code explicitly provided in chat.
 - **Fully grounded** = based on all required reading and checks for the current step.
 - **Copy-ready** = content can be copied into the repository without reconstructing it from scattered fragments.
+- **Primary repository** = connected repository implementing this project: `NUDA9A/ST2110-OBS-PLUGIN`.
+- **MTL reference repository** = connected repository used only as authoritative MTL reference source for MTL tasks: `NUDA9A/Media-Transport-Library`.
+- **Pinned MTL reference branch** = `mtl-ref-v26.01`.
 - **MTL task** = a task whose scope touches:
   - `ST2110_WITH_MTL` or other MTL-specific build guards / build wiring;
   - MTL backend implementation, tests, lifecycle, configuration, stats, or mapping;
   - MTL API usage;
-  - behavior constrained by MTL-specific docs, wrappers, or sample applications.
-- **MTL reference files** = the Project copies of the MTL materials uploaded for this project. For this project they are:
-  - `design.md`;
+  - behavior constrained by MTL-specific docs, headers, wrappers, or sample applications.
+- **MTL reference files** = the mandatory files from the MTL reference repository on the pinned MTL reference branch. For this project they are:
   - `README.md`;
-  - `linux-mtl.h`;
-  - `linux-mtl.c`;
-  - `mtl-input.c`;
-  - `rx_st20p_app.c`;
-  - `rx_st30p_app.c`.
+  - `doc/design.md`;
+  - `doc/kernel_socket.md`;
+  - `doc/external_frame.md`;
+  - `include/mtl_api.h`;
+  - `include/st20_api.h`;
+  - `include/st30_api.h`;
+  - `include/st_pipeline_api.h`;
+  - `include/st30_pipeline_api.h`;
+  - `app/sample/sample_util.h`;
+  - `app/sample/rx_st20_pipeline_sample.c`;
+  - `app/sample/rx_st30_pipeline_sample.c`;
+  - `lib/src/st2110/pipeline/st20_pipeline_rx.c`;
+  - `lib/src/st2110/pipeline/st30_pipeline_rx.c`.
 
 ## 1. Sources and authority
 
 Assistant MUST use sources in this order:
-1. connected repository:
+1. Primary repository:
 - production `.hpp` / `.cpp`;
 - test files;
 - `plan.md`;
@@ -45,17 +55,20 @@ Assistant MUST use sources in this order:
 2. Project copies:
 - `plan_rules.md`;
 - `conventions.md`;
-3. if the current step is an MTL task, the Project copies of all MTL reference files;
+3. if the current step is an MTL task, the MTL reference repository on pinned branch `mtl-ref-v26.01`:
+- all configured MTL reference files;
 4. all ST 2110 / RP 2110 PDFs uploaded in the Project;
 5. newer local changes explicitly provided in chat.
 
 Authoritative source rules:
 - `plan_rules.md` and `conventions.md` MUST be taken from Project copies.
-- `plan.md`, `code_map.md`, `tests_file_map.md` MUST be taken from the repository unless newer local versions are provided in chat.
-- production/test code MUST be taken from the repository unless newer local code is provided in chat.
-- MTL reference files MUST be taken from the Project copies uploaded for this project.
+- `plan.md`, `code_map.md`, `tests_file_map.md` MUST be taken from the primary repository unless newer local versions are provided in chat.
+- production/test code of this project MUST be taken from the primary repository unless newer local code is provided in chat.
+- MTL reference files MUST be taken from the MTL reference repository on pinned branch `mtl-ref-v26.01`.
+- Assistant MUST NOT use `main` of the MTL reference repository as authoritative for MTL tasks.
+- Assistant MUST NOT substitute the configured MTL reference files with remembered snippets, release notes, project copies, or other branches/tags unless the rules are explicitly updated.
 
-Assistant MUST NOT ask the user to resend files already available in the repository or Project.
+Assistant MUST NOT ask the user to resend files already available in the repository, Project, or connected MTL reference repository.
 Assistant MAY ask only for:
 - newer local uncommitted changes;
 - missing / inaccessible / insufficient standards excerpts;
@@ -84,11 +97,13 @@ Before proposing the next task, Assistant MUST actually read:
 - `code_map.md`;
 - `tests_file_map.md` when tests / coverage / test selection matter;
 - Project copies of `plan_rules.md` and `conventions.md`;
-- relevant code;
+- relevant code from the primary repository;
 - all ST 2110 / RP 2110 PDFs uploaded in the Project;
 - newer local chat changes, if they exist.
 
-If the current step is an MTL task, Assistant MUST also actually read all MTL reference files.
+If the current step is an MTL task, Assistant MUST also actually read all configured MTL reference files from:
+- repository `NUDA9A/Media-Transport-Library`;
+- branch `mtl-ref-v26.01`.
 
 If the current step is NOT an MTL task, Assistant MUST NOT read MTL reference files.
 
@@ -124,11 +139,13 @@ Before accepting an implementation, Assistant MUST actually read:
 - `code_map.md`;
 - `tests_file_map.md` when relevant;
 - Project copies of `plan_rules.md` and `conventions.md`;
-- relevant code;
+- relevant code from the primary repository;
 - all ST 2110 / RP 2110 PDFs uploaded in the Project;
 - newer local chat changes, if they exist.
 
-If the current step is an MTL task, Assistant MUST also actually read all MTL reference files.
+If the current step is an MTL task, Assistant MUST also actually read all configured MTL reference files from:
+- repository `NUDA9A/Media-Transport-Library`;
+- branch `mtl-ref-v26.01`.
 
 If the current step is NOT an MTL task, Assistant MUST NOT read MTL reference files.
 
@@ -164,6 +181,8 @@ Assistant MUST:
 
 Assistant MUST NOT pretend that context was fully checked.
 
+If the MTL reference repository or pinned branch is unavailable for an MTL task, Assistant MUST treat that as missing required material.
+
 ## 6. Task formulation rules
 
 Every task proposal MUST be checked against:
@@ -173,7 +192,7 @@ Every task proposal MUST be checked against:
 - current standards context.
 
 If the current step is an MTL task, the task proposal MUST also be checked against:
-- current MTL reference files;
+- the configured MTL reference files from the pinned MTL reference branch;
 - current MTL wrapper / sample usage patterns relevant to the task.
 
 Assistant MUST treat every task as potentially relevant to ST 2110 compliance and architecture extensibility.
@@ -375,13 +394,14 @@ Otherwise it MUST be recorded in `Spec notes / deviations` and backlog.
 
 ## 14. References
 
-- SMPTE ST 2110-10:2022 (Имя в памяти: st2110-10-2022.pdf)
-- SMPTE ST 2110-20:2022 (Имя в памяти: st2110-20-2022 (1).pdf)
-- SMPTE ST 2110-21:2022 (Имя в памяти: st2110-21-2022.pdf)
-- SMPTE ST 2110-30:2025 (Имя в памяти: st2110-30-2025.pdf)
-- SMPTE RP 2110-25:2023 (Имя в памяти: rp2110-25-2023.pdf)
+- SMPTE ST 2110-10:2022 (Имя в памяти: `st2110-10-2022.pdf`)
+- SMPTE ST 2110-20:2022 (Имя в памяти: `st2110-20-2022 (1).pdf`)
+- SMPTE ST 2110-21:2022 (Имя в памяти: `st2110-21-2022.pdf`)
+- SMPTE ST 2110-30:2025 (Имя в памяти: `st2110-30-2025.pdf`)
+- SMPTE RP 2110-25:2023 (Имя в памяти: `rp2110-25-2023.pdf`)
 - RFC 3550
 - RFC 4175
 - Wireshark dissector ST2110-20
-- Intel MTL docs + `st_pipeline_api`
-- Project MTL reference files listed in section 0, for MTL tasks only
+- MTL reference repository: `NUDA9A/Media-Transport-Library`
+- pinned MTL reference branch: `mtl-ref-v26.01`
+- configured MTL reference files listed in section 0, for MTL tasks only
