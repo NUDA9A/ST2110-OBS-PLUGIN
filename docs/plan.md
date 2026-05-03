@@ -1694,7 +1694,7 @@
     - socket backend no longer owns adapter/default-building role;
     - base class remains media-agnostic;
     - bootstrap-to-operational adapters preserve already-modeled axes instead of rebuilding hidden defaults.
-- [ ] 197B: Replace the hardcoded video reorder window literal with an explicit named runtime/support boundary
+- [x] 197B: Replace the hardcoded video reorder window literal with an explicit named runtime/support boundary
   - тип расхождения:
     - с правилами/архитектурой.
   - конкретное расхождение:

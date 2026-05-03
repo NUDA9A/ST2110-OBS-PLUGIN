@@ -1569,7 +1569,7 @@
         - sender-type/timing fields;
         - aggregated receiver bootstrap result.
     - intentionally separates pure modeled data types from validation, projection, SDP-ingestion logic и concrete backend/runtime behavior.
-    - now also carries explicit timestamp-mapper bootstrap data alongside packet-parse, receive-pipeline и timing bootstrap data.
+    - now also carries explicit video reorder-buffer bootstrap data alongside packet-parse, receive-pipeline, timestamp-mapper и timing bootstrap data.
 - Связи:
     - использует:
         - `packet_parse.hpp` for `PacketParsePolicy`;
@@ -1578,7 +1578,8 @@
         - `video_receive_pipeline.hpp` for `VideoReceivePipelineConfig`;
         - `video_receiver_timing.hpp` for `VideoReceiverTimingConfig`;
         - `video_scan_mode.hpp` for `VideoScanMode`;
-        - `video_timestamp_mapping.hpp` for `VideoRtpTimestampMapperConfig`.
+        - `video_timestamp_mapping.hpp` for `VideoRtpTimestampMapperConfig`;
+        - `video_reorder_policy.hpp` for `VideoReorderBufferConfig`.
     - используется `video_signaling.hpp` как lower data-model layer for:
         - signaling validation;
         - runtime projection;
@@ -1725,15 +1726,16 @@
             - `rx_config`
             - `receive_pipeline_config`
             - `timestamp_mapper_config`
+            - `reorder_buffer_config`
             - `timing_config`
-        - acts as explicit richer bootstrap boundary for socket operational projection so timestamp-mapper runtime inputs do not need to be silently reconstructed later.
+        - acts as explicit richer bootstrap boundary for socket operational projection so timestamp-mapper and reorder-window runtime inputs do not need to be silently reconstructed later.
 - Примечание:
     - this file is a data-model header, not the main logic boundary for video signaling behavior.
     - validation/projection/bootstrap logic is layered above it in:
         - `video_signaling.hpp`
         - `video_receiver_timing_signaling.hpp`.
     - despite the presence of `VideoReceiverBootstrapConfig`, this file does not itself build/bootstrap anything; it only defines the aggregate result shape.
-    - current bootstrap model includes timing and timestamp-mapper runtime axes, but does not itself model playout-decision logic; that remains outside this header.
+    - current bootstrap model includes timing, timestamp-mapper, and reorder-window runtime axes, but does not itself model playout-decision logic; that remains outside this header.
 
 ### libs/st2110core/include/st2110/video_receiver_timing.hpp
 - Роль:
@@ -3936,7 +3938,8 @@
         - `packet_parse.hpp` and `packet_view.hpp` parsing path through `parse_packet_view_staged(...)`;
         - `video_receive_pipeline.hpp` for depacketize + reconstruct delivery path;
         - `video_timestamp_mapping.hpp` for `VideoRtpTimestampMapper` and `VideoRtpTimestampMapperConfig`;
-        - `signaling_structs.hpp` for `VideoReceiverBootstrapConfig`.
+        - `signaling_structs.hpp` for `VideoReceiverBootstrapConfig`;
+        - `video_reorder_policy.hpp` for `VideoReorderBufferConfig` and `validate_video_reorder_buffer_config(...)`.
 - Сущности:
     - `SocketRxVideoOperationalConfig`
         - explicit video-specific operational input model above the concrete socket backend.
@@ -3945,9 +3948,11 @@
             - media-specific runtime part in:
                 - `rx_config`
                 - `receive_pipeline_config`
-                - `timestamp_mapper_config`.
+                - `timestamp_mapper_config`
+                - `reorder_buffer_config`
     - `validate_socket_rx_video_operational_config(const SocketRxVideoOperationalConfig&) -> Error`
         - validates:
+            - explicit video reorder-buffer config;
             - common socket operational config;
             - `RxVideoConfig`;
             - timestamp mapper config;
@@ -3962,12 +3967,14 @@
             - `bootstrap.rx_config`;
             - `bootstrap.receive_pipeline_config`;
             - `bootstrap.timestamp_mapper_config`;
+            - `bootstrap.reorder_buffer_config`;
         - derives `common.open_config` through `socket_rx_open_config_from_video_config(...)`;
         - validates the final operational object before returning it.
     - `socket_rx_video_operational_config_from_rx_video_config(const RxVideoConfig&, const PacketParsePolicy&, PartialFramePolicy, const VideoRtpTimestampMapperConfig&) -> std::expected<SocketRxVideoOperationalConfig, Error>`
         - explicit manual-config adapter for poorer/non-bootstrap callers;
         - derives `common.open_config` through `socket_rx_open_config_from_video_config(...)`;
         - builds `VideoReceivePipelineConfig` from explicit caller inputs instead of hidden backend defaults;
+        - currently supplies explicit named default reorder policy through `VideoReorderBufferConfig{}` instead of a backend-local literal;
         - validates the final operational object before returning it.
     - `SocketRxVideoBackend`
         - final concrete video backend.
@@ -4010,12 +4017,12 @@
                 - reorder stats from the current reorder buffer;
                 - depacketizer stats from the current video receive pipeline.
     - runtime construction helpers:
-        - `make_reorder_buffer() -> std::unique_ptr<IReorderBuffer>`
-            - current implementation uses `FixedWindowReorderBuffer(32)`.
+        - `make_reorder_buffer(const VideoReorderBufferConfig&) -> std::unique_ptr<IReorderBuffer>`
+            - current implementation builds `FixedWindowReorderBuffer` from explicit `cfg.window_size_packets`.
         - `start_video_runtime(...) -> RxBackendLifecycleResult`
             - allocates receive buffer from `cfg.common.packet_parse_policy`;
             - constructs video-specific runtime objects from explicit operational config only:
-                - reorder buffer;
+                - reorder buffer from explicit reorder policy;
                 - `VideoReceivePipeline`;
                 - `VideoRtpTimestampMapper`;
                 - sink pointer;
@@ -4064,7 +4071,7 @@
     - packet-parse-policy enforcement is explicit in `process_received_datagram(...)` before staged packet parsing.
     - bootstrap/manual projection into `SocketRxVideoOperationalConfig` is modeled outside the concrete runtime start.
     - current delivery path remains complete-frame-only: partial reconstructed frames are intentionally not delivered to the sink.
-    - current reorder implementation is still backend-local through `FixedWindowReorderBuffer(32)`.
+    - reorder-window policy is no longer a backend-local magic literal; it is now an explicit named runtime/support boundary carried by config and validated before runtime start.
 
 ### libs/st2110core/include/st2110/socket_rx_audio_backend.hpp
 - Роль:
@@ -4785,3 +4792,35 @@
     - these structures are intentionally plain mutable counters, not synchronized/statistical engines; thread safety remains the responsibility of the caller/runtime layer exposing snapshots.
     - `PacketParseStats` is intentionally layered: generic parser totals/error categories are tracked once in `parser_stats`, while stage-specific failure counters add localization without duplicating the generic classification model.
     - `BackendStats` is a snapshot shape, not a mandatory storage strategy; concrete backends may aggregate/update it internally and expose snapshots through their own locking/runtime policy.
+
+### libs/st2110core/include/st2110/video_reorder_policy.hpp
+- Роль:
+    - explicit named runtime/support boundary for the current video packet reorder-window policy.
+    - убирает backend-local magic literal из video socket runtime construction path.
+    - локализует temporary/default video reorder support limit как named config + validation boundary instead of an implicit construction detail.
+- Связи:
+    - использует `error.hpp` for validation result reporting.
+    - используется `signaling_structs.hpp` внутри `VideoReceiverBootstrapConfig`.
+    - используется `socket_rx_video_backend.hpp` внутри:
+        - `SocketRxVideoOperationalConfig`;
+        - `validate_socket_rx_video_operational_config(...)`;
+        - reorder-buffer runtime construction.
+    - indirectly affects runtime behavior through `FixedWindowReorderBuffer`, but does not depend on the reorder-buffer implementation itself.
+- Сущности:
+    - `defaultVideoReorderWindowPackets`
+        - named default reorder-window packet count for the current video receive path.
+        - current value: `32`.
+    - `VideoReorderBufferConfig`
+        - explicit config object for video reorder-window policy.
+        - fields:
+            - `window_size_packets`
+                - defaults to `defaultVideoReorderWindowPackets`.
+    - `validate_video_reorder_buffer_config(const VideoReorderBufferConfig&) -> Error`
+        - validates that `window_size_packets` is greater than zero;
+        - returns:
+            - `Error::Ok` for valid config;
+            - `Error::InvalidValue` for zero/invalid config.
+- Примечание:
+    - this file models only the named policy boundary and its validation; it does not implement reordering itself.
+    - current default `32` remains present, but only as a named explicit support/default boundary rather than as a literal in backend runtime construction.
+    - future work may widen this boundary into richer video runtime/support policy without needing to reshape the concrete backend API again.
