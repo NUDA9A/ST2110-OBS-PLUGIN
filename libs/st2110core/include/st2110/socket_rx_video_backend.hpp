@@ -11,6 +11,7 @@
 #include "socket_rx_single_media_backend_base.hpp"
 #include "video_receive_pipeline.hpp"
 #include "video_timestamp_mapping.hpp"
+#include "signaling_structs.hpp"
 
 #include <memory>
 #include <optional>
@@ -24,7 +25,128 @@ struct SocketRxVideoOperationalConfig {
     VideoRtpTimestampMapperConfig timestamp_mapper_config{};
 };
 
-class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public IRxVideoBackend {
+[[nodiscard]] inline Error
+validate_socket_rx_video_operational_config(const SocketRxVideoOperationalConfig &cfg) {
+    if (const Error err = validate_socket_rx_operational_common_config(cfg.common); err != Error::Ok) {
+        return err;
+    }
+
+    if (const Error err = validate_rx_video_config(cfg.rx_config); err != Error::Ok) {
+        return err;
+    }
+
+    if (const Error err = validate_video_rtp_timestamp_mapper_config(cfg.timestamp_mapper_config);
+        err != Error::Ok) {
+        return err;
+        }
+
+    auto expected_open_config = socket_rx_open_config_from_video_config(cfg.rx_config);
+    if (!expected_open_config) {
+        return expected_open_config.error();
+    }
+
+    if (!socket_rx_open_config_equal(cfg.common.open_config, *expected_open_config)) {
+        return Error::InvalidValue;
+    }
+
+    const auto &depacketizer = cfg.receive_pipeline_config.depacketizer;
+    const auto &reconstructor = cfg.receive_pipeline_config.reconstructor;
+
+    if (depacketizer.width != cfg.rx_config.width || depacketizer.height != cfg.rx_config.height ||
+        depacketizer.format != cfg.rx_config.format || depacketizer.scan_mode != cfg.rx_config.scan_mode ||
+        depacketizer.packing_mode != cfg.rx_config.packing_mode) {
+        return Error::InvalidValue;
+        }
+
+    if (reconstructor.format != cfg.rx_config.format || reconstructor.scan_mode != cfg.rx_config.scan_mode) {
+        return Error::InvalidValue;
+    }
+
+    if (reconstructor.format != depacketizer.format || reconstructor.scan_mode != depacketizer.scan_mode) {
+        return Error::InvalidValue;
+    }
+
+    if (cfg.timestamp_mapper_config.rtp_clock_rate != 90000) {
+        return Error::InvalidValue;
+    }
+
+    return Error::Ok;
+}
+
+[[nodiscard]] inline std::expected<SocketRxVideoOperationalConfig, Error>
+socket_rx_video_operational_config_from_video_receiver_bootstrap(const VideoReceiverBootstrapConfig &bootstrap) {
+    if (const Error err = validate_video_receiver_timing_config(bootstrap.timing_config); err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
+    auto open_config = socket_rx_open_config_from_video_config(bootstrap.rx_config);
+    if (!open_config) {
+        return std::unexpected(open_config.error());
+    }
+
+    SocketRxVideoOperationalConfig operational{
+        .common =
+            SocketRxOperationalCommonConfig{
+                .open_config = *open_config,
+                .packet_parse_policy = bootstrap.packet_parse_policy,
+            },
+        .rx_config = bootstrap.rx_config,
+        .receive_pipeline_config = bootstrap.receive_pipeline_config,
+        .timestamp_mapper_config = bootstrap.timestamp_mapper_config,
+    };
+
+    if (const Error err = validate_socket_rx_video_operational_config(operational); err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
+    return operational;
+}
+
+[[nodiscard]] inline std::expected<SocketRxVideoOperationalConfig, Error>
+socket_rx_video_operational_config_from_rx_video_config(const RxVideoConfig &cfg,
+                                                        const PacketParsePolicy &packet_parse_policy,
+                                                        PartialFramePolicy partial_frame_policy,
+                                                        const VideoRtpTimestampMapperConfig &timestamp_mapper_config) {
+    auto open_config = socket_rx_open_config_from_video_config(cfg);
+    if (!open_config) {
+        return std::unexpected(open_config.error());
+    }
+
+    SocketRxVideoOperationalConfig operational{
+        .common =
+            SocketRxOperationalCommonConfig{
+                .open_config = *open_config,
+                .packet_parse_policy = packet_parse_policy,
+            },
+        .rx_config = cfg,
+        .receive_pipeline_config =
+            VideoReceivePipelineConfig{
+                .depacketizer =
+                    DepacketizerConfig{
+                        .width = cfg.width,
+                        .height = cfg.height,
+                        .format = cfg.format,
+                        .partial_frame_policy = partial_frame_policy,
+                        .scan_mode = cfg.scan_mode,
+                        .packing_mode = cfg.packing_mode,
+                    },
+                .reconstructor =
+                    VideoUnitReconstructorConfig{
+                        .format = cfg.format,
+                        .scan_mode = cfg.scan_mode,
+                    },
+            },
+        .timestamp_mapper_config = timestamp_mapper_config,
+    };
+
+    if (const Error err = validate_socket_rx_video_operational_config(operational); err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
+    return operational;
+}
+
+class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public ISocketRxVideoBackend {
   public:
     SocketRxVideoBackend()
         : SocketRxSingleMediaBackendBase(RxMediaKind::Video, RxBackendCapabilities{.video_rx = true, .audio_rx = false},
@@ -34,23 +156,22 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public
         : SocketRxSingleMediaBackendBase(RxMediaKind::Video, RxBackendCapabilities{.video_rx = true, .audio_rx = false},
                                          std::move(port_factory)) {}
 
-    RxBackendLifecycleResult start_video(const RxVideoConfig &cfg, IVideoFrameSink &sink) override {
+    RxBackendLifecycleResult start_video(const SocketRxVideoOperationalConfig &cfg,
+                                     IVideoFrameSink &sink) override {
         if (Error err = validate_common_start_preconditions(); err != Error::Ok) {
             return std::unexpected(err);
         }
 
-        auto open_cfg = build_open_config(cfg);
-        if (!open_cfg) {
-            return std::unexpected(open_cfg.error());
+        if (Error err = validate_socket_rx_video_operational_config(cfg); err != Error::Ok) {
+            return std::unexpected(err);
         }
 
         auto port = create_port();
-
         if (port == nullptr) {
             return std::unexpected(Error::InvalidValue);
         }
 
-        return start_video_runtime(cfg, sink, *open_cfg, std::move(port));
+        return start_video_runtime(cfg, sink, std::move(port));
     }
 
   protected:
@@ -75,6 +196,12 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public
             return;
         }
 
+        if (const Error err = validate_packet_parse_policy(udp_payload, packet_parse_policy_);
+            err != Error::Ok) {
+            record_rejected_packet(err, PacketParseStage::PacketPolicy);
+            return;
+            }
+
         auto packet = parse_packet_view_staged(udp_payload);
         if (!packet) {
             record_rejected_packet(packet.error().error, packet.error().stage);
@@ -85,7 +212,7 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public
             err != Error::Ok) {
             record_ignored_nonmedia_datagram();
             return;
-        }
+            }
 
         record_parsed_packet_ok();
         reorder_buffer_->push(*packet);
@@ -103,57 +230,36 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public
     }
 
   private:
-    [[nodiscard]] static PacketParsePolicy build_packet_parse_policy(const RxVideoConfig &cfg) noexcept {
-        return PacketParsePolicy{};
-    }
-
-    [[nodiscard]] static VideoReceivePipelineConfig build_video_receive_pipeline_config(const RxVideoConfig &cfg) {
-        return {DepacketizerConfig{
-                    .width = cfg.width,
-                    .height = cfg.height,
-                    .format = cfg.format,
-                    .partial_frame_policy = PartialFramePolicy::Drop,
-                    .scan_mode = cfg.scan_mode,
-                    .packing_mode = cfg.packing_mode,
-                },
-                VideoUnitReconstructorConfig{.format = cfg.format, .scan_mode = cfg.scan_mode}};
-    }
-
     [[nodiscard]] static std::unique_ptr<IReorderBuffer> make_reorder_buffer() {
         return std::make_unique<FixedWindowReorderBuffer>(32);
     }
 
-    RxBackendLifecycleResult start_video_runtime(const RxVideoConfig &cfg, IVideoFrameSink &sink,
-                                                 const SocketRxOpenConfig &open_cfg,
-                                                 std::unique_ptr<ISocketRxPort> port) {
-        PacketParsePolicy packet_parse_policy = build_packet_parse_policy(cfg);
+    RxBackendLifecycleResult start_video_runtime(const SocketRxVideoOperationalConfig &cfg,
+                                             IVideoFrameSink &sink,
+                                             std::unique_ptr<ISocketRxPort> port) {
         auto reorder_buffer = make_reorder_buffer();
-        auto receive_buffer = make_receive_buffer(packet_parse_policy);
+        auto receive_buffer = make_receive_buffer(cfg.common.packet_parse_policy);
 
         std::unique_ptr<VideoReceivePipeline> video_receive_pipeline;
         std::optional<VideoRtpTimestampMapper> video_timestamp_mapper;
 
         try {
-            video_receive_pipeline = std::make_unique<VideoReceivePipeline>(build_video_receive_pipeline_config(cfg));
-            video_timestamp_mapper.emplace(VideoRtpTimestampMapperConfig{
-                .rtp_clock_rate = 90000,
-                .anchor_rtp_timestamp = 0,
-                .anchor_timestamp_ns = 0,
-            });
+            video_receive_pipeline = std::make_unique<VideoReceivePipeline>(cfg.receive_pipeline_config);
+            video_timestamp_mapper.emplace(cfg.timestamp_mapper_config);
         } catch (const std::invalid_argument &) {
             return std::unexpected(Error::InvalidValue);
         } catch (const std::logic_error &) {
             return std::unexpected(Error::Unsupported);
         }
 
-        packet_parse_policy_ = packet_parse_policy;
+        packet_parse_policy_ = cfg.common.packet_parse_policy;
         reorder_buffer_ = std::move(reorder_buffer);
         video_receive_pipeline_ = std::move(video_receive_pipeline);
         video_timestamp_mapper_ = std::move(video_timestamp_mapper);
         video_sink_ = &sink;
-        configured_video_payload_type_ = cfg.payload_type;
+        configured_video_payload_type_ = cfg.rx_config.payload_type;
 
-        auto started = start_common_runtime(std::move(port), open_cfg, std::move(receive_buffer));
+        auto started = start_common_runtime(std::move(port), cfg.common.open_config, std::move(receive_buffer));
         if (!started) {
             clear_media_runtime_objects();
             return std::unexpected(started.error());
@@ -186,7 +292,10 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public
 
         const TimestampNs timestamp_ns = map_frame_timestamp_ns(frame.rtp_timestamp);
         video_sink_->on_video_frame(frame.frame.view(timestamp_ns));
-        record_delivered_video_frame();
+        {
+            std::lock_guard lock(stats_mutex_);
+            ++stats_.frames_delivered;
+        }
         record_delivered_media_unit();
     }
 
@@ -201,15 +310,6 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public
         }
 
         return *mapped;
-    }
-
-    [[nodiscard]] static std::expected<SocketRxOpenConfig, Error> build_open_config(const RxVideoConfig &cfg) {
-        auto res = socket_rx_open_config_from_video_config(cfg);
-        if (!res) {
-            return std::unexpected(res.error());
-        }
-
-        return res;
     }
 
     std::unique_ptr<IReorderBuffer> reorder_buffer_{};

@@ -212,11 +212,6 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
         record_packet_parse_result(stats_.packet_parse, Error::Ok, PacketParseStage::RtpHeader);
     }
 
-    void record_delivered_video_frame() noexcept {
-        std::lock_guard lock(stats_mutex_);
-        ++stats_.frames_delivered;
-    }
-
     void record_delivered_media_unit() noexcept {
         std::lock_guard lock(stats_mutex_);
         ++stats_.media_units_delivered;

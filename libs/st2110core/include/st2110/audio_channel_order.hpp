@@ -325,6 +325,92 @@ effective_audio_channel_order_from_audio_stream_signaling(const AudioStreamSigna
 
     return parsed;
 }
+
+[[nodiscard]] inline Error validate_parsed_audio_channel_order(const ParsedAudioChannelOrder &parsed) {
+    switch (parsed.convention) {
+    case AudioChannelOrderConvention::Unspecified:
+    case AudioChannelOrderConvention::Smpte2110:
+    case AudioChannelOrderConvention::Other:
+        break;
+    default:
+        return Error::InvalidValue;
+    }
+
+    uint32_t total_declared = 0;
+
+    for (const auto &group : parsed.groups) {
+        switch (group.kind) {
+        case AudioChannelGroupKind::Mono:
+        case AudioChannelGroupKind::Stereo:
+        case AudioChannelGroupKind::DualMono:
+        case AudioChannelGroupKind::MatrixStereo:
+        case AudioChannelGroupKind::FiveOne:
+        case AudioChannelGroupKind::SevenOne:
+        case AudioChannelGroupKind::TwentyTwoTwo:
+        case AudioChannelGroupKind::SdiGroup:
+        case AudioChannelGroupKind::Undefined:
+        case AudioChannelGroupKind::Other:
+            break;
+        default:
+            return Error::InvalidValue;
+        }
+
+        if (group.channel_count == 0) {
+            return Error::InvalidValue;
+        }
+
+        if (group.symbol.empty()) {
+            return Error::InvalidValue;
+        }
+
+        total_declared += static_cast<uint32_t>(group.channel_count);
+        if (total_declared > std::numeric_limits<uint16_t>::max()) {
+            return Error::InvalidValue;
+        }
+    }
+
+    if (parsed.groups.empty()) {
+        return parsed.declared_channel_count == 0 ? Error::Ok : Error::InvalidValue;
+    }
+
+    if (parsed.declared_channel_count == 0) {
+        return Error::InvalidValue;
+    }
+
+    if (total_declared != parsed.declared_channel_count) {
+        return Error::InvalidValue;
+    }
+
+    return Error::Ok;
+}
+
+[[nodiscard]] inline Error
+validate_parsed_audio_channel_order_against_channel_count(const ParsedAudioChannelOrder &parsed,
+                                                          uint16_t channel_count) {
+    if (const Error err = validate_parsed_audio_channel_order(parsed); err != Error::Ok) {
+        return err;
+    }
+
+    if (channel_count == 0) {
+        return Error::InvalidValue;
+    }
+
+    switch (parsed.convention) {
+    case AudioChannelOrderConvention::Unspecified:
+    case AudioChannelOrderConvention::Smpte2110:
+        return parsed.declared_channel_count == channel_count ? Error::Ok : Error::InvalidValue;
+
+    case AudioChannelOrderConvention::Other:
+        if (parsed.declared_channel_count != 0 && parsed.declared_channel_count != channel_count) {
+            return Error::InvalidValue;
+        }
+        return Error::Ok;
+
+    default:
+        return Error::InvalidValue;
+    }
+}
+
 } // namespace st2110
 
 #endif // ST2110_OBS_PLUGIN_AUDIO_CHANNEL_ORDER_HPP

@@ -15,6 +15,14 @@ struct AudioReorderBufferConfig {
     uint16_t window_size_packets = 64;
 };
 
+[[nodiscard]] inline Error validate_audio_reorder_buffer_config(const AudioReorderBufferConfig &cfg) {
+    if (cfg.window_size_packets == 0) {
+        return Error::InvalidValue;
+    }
+
+    return Error::Ok;
+}
+
 struct AudioReorderBufferStats {
     uint64_t packets_pushed = 0;
     uint64_t packets_popped = 0;
@@ -69,7 +77,7 @@ class AudioFixedWindowReorderBuffer {
 inline AudioFixedWindowReorderBuffer::AudioFixedWindowReorderBuffer(AudioReorderBufferConfig cfg) : cfg_(cfg) {}
 
 [[nodiscard]] inline bool AudioFixedWindowReorderBuffer::config_is_valid() const {
-    return cfg_.window_size_packets != 0;
+    return validate_audio_reorder_buffer_config(cfg_) == Error::Ok;
 }
 
 [[nodiscard]] inline uint16_t AudioFixedWindowReorderBuffer::next_seq(uint16_t seq) {

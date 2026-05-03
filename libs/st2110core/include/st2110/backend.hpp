@@ -10,6 +10,9 @@
 #include <expected>
 
 namespace st2110 {
+struct SocketRxVideoOperationalConfig;
+struct SocketRxAudioOperationalConfig;
+
 enum class RxMediaKind { Video, Audio };
 
 struct RxBackendCapabilities {
@@ -89,6 +92,22 @@ class IRxAudioBackend : public virtual IRxBackend {
     virtual RxBackendLifecycleResult start_audio(const RxAudioConfig &cfg, IAudioFrameSink &sink) = 0;
 
     ~IRxAudioBackend() override = default;
+};
+
+class ISocketRxVideoBackend : public virtual IRxBackend {
+public:
+    virtual RxBackendLifecycleResult start_video(const SocketRxVideoOperationalConfig &cfg,
+                                                 IVideoFrameSink &sink) = 0;
+
+    ~ISocketRxVideoBackend() override = default;
+};
+
+class ISocketRxAudioBackend : public virtual IRxBackend {
+public:
+    virtual RxBackendLifecycleResult start_audio(const SocketRxAudioOperationalConfig &cfg,
+                                                 IAudioFrameSink &sink) = 0;
+
+    ~ISocketRxAudioBackend() override = default;
 };
 } // namespace st2110
 

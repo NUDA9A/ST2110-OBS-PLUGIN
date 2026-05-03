@@ -311,6 +311,35 @@ struct SocketRxOperationalCommonConfig {
     PacketParsePolicy packet_parse_policy{};
 };
 
+[[nodiscard]] inline bool bind_endpoint_equal(const SocketEndpoint &lhs, const SocketEndpoint &rhs) noexcept {
+    return lhs.family == rhs.family && lhs.address == rhs.address && lhs.port == rhs.port;
+}
+
+[[nodiscard]] inline bool
+socket_multicast_membership_equal(const SocketMulticastMembership &lhs,
+                                  const SocketMulticastMembership &rhs) noexcept {
+    return lhs.family == rhs.family && lhs.group_address == rhs.group_address &&
+           lhs.interface_address == rhs.interface_address;
+}
+
+[[nodiscard]] inline bool socket_rx_open_config_equal(const SocketRxOpenConfig &lhs,
+                                                      const SocketRxOpenConfig &rhs) noexcept {
+    if (!bind_endpoint_equal(lhs.bind_endpoint, rhs.bind_endpoint)) {
+        return false;
+    }
+
+    if (lhs.multicast_membership.has_value() != rhs.multicast_membership.has_value()) {
+        return false;
+    }
+
+    if (lhs.multicast_membership.has_value() &&
+        !socket_multicast_membership_equal(*lhs.multicast_membership, *rhs.multicast_membership)) {
+        return false;
+        }
+
+    return lhs.reuse_address == rhs.reuse_address;
+}
+
 [[nodiscard]] inline Error
 validate_socket_rx_operational_common_config(const SocketRxOperationalCommonConfig &cfg) {
     if (const Error err = validate_socket_rx_open_config(cfg.open_config); err != Error::Ok) {

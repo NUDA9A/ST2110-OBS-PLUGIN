@@ -555,7 +555,26 @@ rx_video_config_from_video_stream_signaling(const VideoStreamSignaling &signalin
     return res;
 }
 
-inline std::expected<VideoReceiverBootstrapConfig, Error> video_receiver_bootstrap_config_from_video_stream_signaling(
+[[nodiscard]] inline std::expected<VideoRtpTimestampMapperConfig, Error>
+video_rtp_timestamp_mapper_config_from_video_stream_signaling(const VideoStreamSignaling &signaling) {
+    if (Error err = validate_video_stream_signaling(signaling); err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
+    VideoRtpTimestampMapperConfig cfg{
+        .rtp_clock_rate = 90000,
+        .anchor_rtp_timestamp = 0,
+        .anchor_timestamp_ns = 0,
+    };
+
+    if (Error err = validate_video_rtp_timestamp_mapper_config(cfg); err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
+    return cfg;
+}
+
+[[nodiscard]] inline std::expected<VideoReceiverBootstrapConfig, Error> video_receiver_bootstrap_config_from_video_stream_signaling(
     const VideoStreamSignaling &signaling, uint16_t udp_port, uint8_t payload_type, std::string local_ip,
     std::string dest_ip, PartialFramePolicy partial_frame_policy) {
     if (Error err = validate_video_stream_signaling(signaling); err != Error::Ok) {
@@ -581,8 +600,18 @@ inline std::expected<VideoReceiverBootstrapConfig, Error> video_receiver_bootstr
     }
     auto receive_pipeline = *expected_receive_pipeline;
 
+    auto expected_timestamp_mapper_config = video_rtp_timestamp_mapper_config_from_video_stream_signaling(signaling);
+    if (!expected_timestamp_mapper_config.has_value()) {
+        return std::unexpected(std::move(expected_timestamp_mapper_config.error()));
+    }
+
     return VideoReceiverBootstrapConfig{
-        .packet_parse_policy = policy, .rx_config = rx_config, .receive_pipeline_config = receive_pipeline};
+        .packet_parse_policy = policy,
+        .rx_config = rx_config,
+        .receive_pipeline_config = receive_pipeline,
+        .timestamp_mapper_config = *expected_timestamp_mapper_config,
+        .timing_config = VideoReceiverTimingConfig{},
+    };
 }
 } // namespace st2110
 

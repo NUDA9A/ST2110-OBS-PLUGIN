@@ -1578,7 +1578,7 @@
   - добавить strict validation helper для common config;
   - не использовать `union` для `RxVideoConfig` / `RxAudioConfig`;
   - если нужен единый media-erased carrier, использовать `std::variant`, а не raw union.
-- [ ] 197A2: Define explicit media-specific socket operational configs
+- [x] 197A2: Define explicit media-specific socket operational configs
   - ввести:
     - `SocketRxVideoOperationalConfig`
     - `SocketRxAudioOperationalConfig`
@@ -1603,7 +1603,7 @@
     - media-specific config validity;
     - cross-consistency между `rx_config` и derived runtime components;
     - отсутствие hidden recomputation inside backend.
-- [ ] 197A3: Introduce explicit socket-specific backend start interfaces instead of legacy manual media start
+- [x] 197A3: Introduce explicit socket-specific backend start interfaces instead of legacy manual media start
   - архитектурно отделить generic backend lifecycle от socket-specific operational start boundary;
   - не оставлять concrete socket backend с двумя `start_video(...)` / `start_audio(...)`;
   - recommended direction:
@@ -1616,7 +1616,7 @@
   - manual `RxVideoConfig` / `RxAudioConfig` start path не должен оставаться методом concrete backend;
   - generic `IRxBackend` lifecycle/state/stats boundary оставить separate от socket operational input boundary;
   - если потребуется refactor generic media backend interfaces, делать это явно и последовательно, а не оставлять hybrid API shape.
-- [ ] 197A4: Move all manual/bootstrap-to-operational assembly out of backend classes into explicit adapter layer
+- [x] 197A4: Move all manual/bootstrap-to-operational assembly out of backend classes into explicit adapter layer
   - backend classes не должны строить:
     - `SocketRxOpenConfig`
     - `PacketParsePolicy`
@@ -1632,7 +1632,7 @@
   - signaling/bootstrap path должен оставаться richer primary source там, где он уже смоделирован:
     - video bootstrap already carries packet parse policy + pipeline config + timing config;
     - audio bootstrap must be extended as needed to stop collapsing richer signaling/runtime axes before backend start. :contentReference[oaicite:2]{index=2}
-- [ ] 197A5: Rewire `SocketRxVideoBackend` to operational-only runtime start
+- [x] 197A5: Rewire `SocketRxVideoBackend` to operational-only runtime start
   - удалить backend-local builders/defaults полностью;
   - удалить manual `start_video(const RxVideoConfig&, ...)` from concrete socket backend API;
   - runtime start должен использовать только prebuilt `SocketRxVideoOperationalConfig`;
@@ -1644,7 +1644,7 @@
     - construct runtime objects from explicit operational config;
     - run receive loop and deliver frames;
   - hidden `PartialFramePolicy::Drop`, hidden empty `PacketParsePolicy`, hidden hardcoded timestamp-mapper anchor/config не допускаются.
-- [ ] 197A6: Rewire `SocketRxAudioBackend` to the same operational-only architecture
+- [x] 197A6: Rewire `SocketRxAudioBackend` to the same operational-only architecture
   - удалить backend-local builders/defaults:
     - `build_packet_parse_policy(...)`
     - `build_open_config(...)`
@@ -1657,7 +1657,7 @@
   - `process_received_datagram(...)` must enforce `packet_parse_policy` explicitly before payload-type/audio-packet parsing;
   - backend должен only consume explicit operational audio runtime components and not reconstruct hidden defaults locally;
   - current audio runtime support limits, if still present, must remain explicit in adapter/validation boundaries, not as unnamed backend constants.
-- [ ] 197A7: Keep `SocketRxSingleMediaBackendBase` generic and remove media-specific policy assembly pressure from it
+- [x] 197A7: Keep `SocketRxSingleMediaBackendBase` generic and remove media-specific policy assembly pressure from it
   - base class не должен знать про video/audio operational config internals;
   - base class should remain responsible only for:
     - socket port lifecycle;
@@ -1670,7 +1670,7 @@
     - packet-policy buffer sizing/admission helpers;
     - not media-specific assembly/projection;
   - base class must not become a hidden policy-construction layer.
-- [ ] 197A8: Extend bootstrap models where needed so richer already-modeled axes reach socket backends without collapse
+- [x] 197A8: Extend bootstrap models where needed so richer already-modeled axes reach socket backends without collapse
   - video path:
     - проверить, достаточно ли `VideoReceiverBootstrapConfig` для final socket operational projection;
     - если timing/playout/runtime-consumed fields still remain outside operational path, explicitize them through named boundary rather than ad hoc backend defaults;
@@ -1678,14 +1678,7 @@
     - расширить `AudioReceiverBootstrapConfig` до полного operational projection source where needed;
     - не терять `channel_order` and other already-modeled signaling/runtime axes before backend start;
   - manual config path must remain explicit and visibly poorer than bootstrap path only where this is truly intended, not because the backend silently rebuilds missing defaults.
-- [ ] 197A9: Update backend selection / startup wiring to use explicit adapters before concrete socket backend start
-  - app/bootstrap/factory-facing code должен получать:
-    - bootstrap/manual source input;
-    - строить explicit socket operational config во внешнем adapter layer;
-    - затем вызывать operational-only socket backend start;
-  - concrete socket backends must no longer be callable through hidden manual fallback path;
-  - if typed access to socket-specific backend interface is needed after generic factory creation, model that boundary explicitly instead of relying on ad hoc assumptions.
-- [ ] 197A10: Add focused regression/architecture tests for the new start boundary
+- [ ] 197A9: Add focused regression/architecture tests for the new start boundary
   - video tests:
     - operational config accepted when fully consistent;
     - mismatched `open_config` vs `rx_config` rejected;

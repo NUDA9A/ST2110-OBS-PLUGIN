@@ -44,6 +44,22 @@ struct AudioRtpPacketView {
     }
 }
 
+[[nodiscard]] inline Error validate_audio_rtp_packet_policy(const AudioRtpPacketPolicy &policy) {
+    if (policy.sampling_rate_hz == 0 || policy.channel_count == 0 || policy.samples_per_packet == 0) {
+        return Error::InvalidValue;
+    }
+
+    if (!config_validation::is_dynamic_rtp_payload_type(policy.payload_type)) {
+        return Error::InvalidValue;
+    }
+
+    if (!audio_pcm_wire_sample_bytes(policy.wire_format).has_value()) {
+        return Error::InvalidValue;
+    }
+
+    return Error::Ok;
+}
+
 [[nodiscard]] inline std::expected<AudioPcmWireFormat, Error>
 audio_pcm_wire_format_from_bit_depth(AudioPcmBitDepth bit_depth) {
     switch (bit_depth) {
