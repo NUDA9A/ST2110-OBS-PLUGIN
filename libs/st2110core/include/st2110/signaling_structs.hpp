@@ -13,6 +13,7 @@
 #include "video_receiver_timing.hpp"
 #include "video_scan_mode.hpp"
 #include "video_timestamp_mapping.hpp"
+#include "video_reorder_policy.hpp"
 
 namespace st2110 {
 enum class MediaClockMode { Direct, Sender };
@@ -153,6 +154,7 @@ struct VideoReceiverBootstrapConfig {
     RxVideoConfig rx_config{};
     VideoReceivePipelineConfig receive_pipeline_config{};
     VideoRtpTimestampMapperConfig timestamp_mapper_config{};
+    VideoReorderBufferConfig reorder_buffer_config{};
     VideoReceiverTimingConfig timing_config{};
 };
 } // namespace st2110

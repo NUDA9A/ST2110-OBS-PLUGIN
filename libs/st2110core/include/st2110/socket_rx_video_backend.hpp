@@ -12,6 +12,7 @@
 #include "video_receive_pipeline.hpp"
 #include "video_timestamp_mapping.hpp"
 #include "signaling_structs.hpp"
+#include "video_reorder_policy.hpp"
 
 #include <memory>
 #include <optional>
@@ -23,10 +24,15 @@ struct SocketRxVideoOperationalConfig {
     RxVideoConfig rx_config{};
     VideoReceivePipelineConfig receive_pipeline_config{};
     VideoRtpTimestampMapperConfig timestamp_mapper_config{};
+    VideoReorderBufferConfig reorder_buffer_config{};
 };
 
 [[nodiscard]] inline Error
 validate_socket_rx_video_operational_config(const SocketRxVideoOperationalConfig &cfg) {
+    if (const Error err = validate_video_reorder_buffer_config(cfg.reorder_buffer_config); err != Error::Ok) {
+        return err;
+    }
+
     if (const Error err = validate_socket_rx_operational_common_config(cfg.common); err != Error::Ok) {
         return err;
     }
@@ -93,6 +99,7 @@ socket_rx_video_operational_config_from_video_receiver_bootstrap(const VideoRece
         .rx_config = bootstrap.rx_config,
         .receive_pipeline_config = bootstrap.receive_pipeline_config,
         .timestamp_mapper_config = bootstrap.timestamp_mapper_config,
+        .reorder_buffer_config = bootstrap.reorder_buffer_config,
     };
 
     if (const Error err = validate_socket_rx_video_operational_config(operational); err != Error::Ok) {
@@ -137,6 +144,7 @@ socket_rx_video_operational_config_from_rx_video_config(const RxVideoConfig &cfg
                     },
             },
         .timestamp_mapper_config = timestamp_mapper_config,
+        .reorder_buffer_config = VideoReorderBufferConfig{},
     };
 
     if (const Error err = validate_socket_rx_video_operational_config(operational); err != Error::Ok) {
@@ -230,14 +238,14 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public
     }
 
   private:
-    [[nodiscard]] static std::unique_ptr<IReorderBuffer> make_reorder_buffer() {
-        return std::make_unique<FixedWindowReorderBuffer>(32);
+    [[nodiscard]] static std::unique_ptr<IReorderBuffer> make_reorder_buffer(const VideoReorderBufferConfig& cfg) {
+        return std::make_unique<FixedWindowReorderBuffer>(cfg.window_size_packets);
     }
 
     RxBackendLifecycleResult start_video_runtime(const SocketRxVideoOperationalConfig &cfg,
                                              IVideoFrameSink &sink,
                                              std::unique_ptr<ISocketRxPort> port) {
-        auto reorder_buffer = make_reorder_buffer();
+        auto reorder_buffer = make_reorder_buffer(cfg.reorder_buffer_config);
         auto receive_buffer = make_receive_buffer(cfg.common.packet_parse_policy);
 
         std::unique_ptr<VideoReceivePipeline> video_receive_pipeline;
