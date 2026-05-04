@@ -288,11 +288,12 @@
 
 ### tests/test_reorder_buffer_interface.cpp
 - Роль:
-    - проверяет `IReorderBuffer` abstraction, `StoredPacket` ownership/view restoration, и reorder stats snapshot boundary.
+    - проверяет `IReorderBuffer` abstraction, `StoredPacket` ownership/view restoration, explicit gap-flush hook, and reorder stats snapshot boundary.
 - Покрывает:
     - abstract/interface shape:
         - `push(...)`;
         - `pop_next()`;
+        - `flush_missing_once()`;
         - `stats() -> ReorderBufferStats`;
         - `reset()`.
     - `StoredPacket::view()`:
@@ -300,12 +301,15 @@
         - extended sequence restoration;
         - SRD header restoration;
         - payload segment view reconstruction.
-    - fake reorder buffer behavior:
+    - fake reorder-buffer behavior:
         - push/pop lifecycle;
+        - blocked-head / missing-once accounting;
+        - single-step gap flush unblocks the head once;
         - reset behavior;
-        - basic `ReorderBufferStats` accounting and zero-after-reset behavior.
+        - zero-after-reset stats behavior.
 - Фиксирует:
-    - reorder stats are available through the interface boundary and do not require concrete-type access from backend code.
+    - generic reorder interface now exposes both stats and an explicit one-step gap-flush boundary;
+    - backend/runtime code can stay on the abstraction boundary without depending on concrete reorder-buffer types.
 
 ### tests/test_fixed_reorder_buffer.cpp
 - Роль:
@@ -1372,21 +1376,26 @@
 
 ### tests/test_audio_reorder_buffer.cpp
 - Роль:
-    - проверяет MVP audio reorder/jitter boundary over validated `AudioRtpPacketView`.
+    - проверяет `AudioFixedWindowReorderBuffer` как concrete audio reorder implementation поверх `AudioRtpPacketView`.
 - Покрывает:
-    - `AudioFixedWindowReorderBuffer` in-order packet push/pop behavior;
-    - out-of-order packet arrival and ordered emission by RTP sequence number;
-    - RTP sequence-number wraparound behavior;
-    - duplicate packet rejection and stats accounting;
-    - late packet rejection after expected sequence has advanced;
-    - out-of-window packet rejection;
-    - explicit `flush_missing_once()` behavior for missing packets;
-    - `reset()` clearing pending state and stats;
-    - `StoredAudioRtpPacket::view()` restoring a valid non-owning `AudioRtpPacketView` over owned payload bytes.
+    - in-order push/pop behavior;
+    - out-of-order acceptance within reorder window and ordered pop;
+    - duplicate rejection without overwriting originally stored payload;
+    - single-gap advance through `flush_missing_once()`;
+    - late-packet rejection after progress;
+    - out-of-window rejection for configured reorder window;
+    - `reset()` clearing pending packets and sequence state;
+    - 16-bit RTP sequence wraparound handling;
+    - stats accounting:
+        - `packets_pushed`;
+        - `packets_popped`;
+        - `duplicates`;
+        - `late_packets`;
+        - `out_of_window`;
+        - `missing_packets_flushed`.
 - Фиксирует:
-    - audio reorder remains separate from RTP parsing and payload validation;
-    - RTP marker and timestamp are preserved but not interpreted;
-    - reorder/jitter MVP does not create `AudioBuffer`, does not apply channel-order mapping, does not perform timestamp mapping, and does not implement backend behavior.
+    - audio reorder behavior remains aligned with the modeled fixed-window receive policy for audio RTP packets;
+    - stored audio payload/view integrity survives reordering decisions and later pop.
 
 ## Audio frame/block assembly MVP
 
@@ -1502,40 +1511,41 @@
 
 ### tests/test_socket_rx_video_backend.cpp
 - Роль:
-    - regression / integration tests для `SocketRxVideoBackend` после перехода на socket-specific operational-only start boundary, explicit video reorder policy, и explicit initial RTP-to-`TimestampNs` anchoring policy.
-    - проверяет runtime lifecycle, operational config validation, open-config projection, receive-path frame delivery, timestamp-mode behavior, и базовую runtime observability через `BackendStats`.
+    - end-to-end unit/integration-style coverage для `SocketRxVideoBackend` over fake socket port/factory and fake video sink.
 - Покрывает:
-    - compile-time / API-shape regression:
-        - `SocketRxVideoBackend` implements `ISocketRxVideoBackend`;
-        - concrete socket backend больше не наследуется от `IRxVideoBackend`;
-        - у concrete socket backend нет manual `start_video(const RxVideoConfig&, ...)`;
-        - operational start имеет сигнатуру `start_video(const SocketRxVideoOperationalConfig&, IVideoFrameSink&)`.
-    - operational config boundary:
-        - fully consistent `SocketRxVideoOperationalConfig` accepted by `validate_socket_rx_video_operational_config(...)`;
-        - consistent config accepted by backend start;
-        - mismatched `common.open_config` vs `rx_config` rejected as `InvalidValue`;
-        - mismatched `receive_pipeline_config` vs `rx_config` rejected as `InvalidValue`.
-    - backend lifecycle / runtime behavior:
-        - stop before start and repeated stop are accepted and keep backend stopped;
-        - repeated start on already-active backend returns `InvalidBackendState`;
-        - null created port is rejected.
-    - projection/runtime integration:
-        - backend opens socket using the prebuilt operational `open_config` without rebuilding hidden transport defaults locally.
-    - receive path:
-        - valid operational start + valid packet path delivers one video frame to the sink;
-        - delivered frame preserves expected geometry and reconstructed bytes;
-        - backend stats reflect delivered frame / media-unit accounting.
-    - explicit initial-anchor policy behavior in backend runtime:
-        - default/manual operational helper path uses explicit `FirstObservedBecomesLocalZero` semantics;
-        - first delivered video frame from that path maps to `0 ns`;
-        - explicitly provided `ConfiguredReference` mapper config keeps reference-based timestamp mapping and can still map the first delivered frame to non-zero `TimestampNs`.
-    - packet-size-policy threading through runtime:
-        - receive runtime uses the packet-size policy carried in operational config when allocating/using its receive path state;
-        - malformed large datagram is rejected in runtime without frame delivery.
+    - compile-time/backend contract:
+        - backend is `final`;
+        - concrete backend implements `ISocketRxVideoBackend` and `IRxBackend`;
+        - concrete backend does not expose manual `IRxVideoBackend` start directly;
+        - operational `start_video(const SocketRxVideoOperationalConfig&, ...)` stays the concrete start boundary;
+        - `SocketRxVideoBackendFactory` type shape.
+    - operational-config validation:
+        - fully consistent operational config is accepted;
+        - mismatched projected open config vs `RxVideoConfig` is rejected;
+        - mismatched receive-pipeline config vs `RxVideoConfig` is rejected;
+        - invalid reorder tolerance policy is rejected.
+    - lifecycle/runtime behavior:
+        - stop-before-start is accepted;
+        - repeated stop remains accepted;
+        - successful operational start opens the socket port with projected open config;
+        - repeated start while active returns `InvalidBackendState`;
+        - null created port is rejected without opening.
+    - receive/delivery path:
+        - one valid ST 2110-20 datagram produces one delivered `VideoFrameView`;
+        - payload bytes are copied correctly into frame storage;
+        - first-observed RTP timestamp can map to local zero;
+        - configured-reference timestamp mode can produce a non-zero delivered timestamp.
+    - reorder-tolerance behavior on the socket receive path:
+        - `WaitForMissing` blocks delivery across a gap and records missing-gap state without flushing;
+        - `FlushGapOnce` allows one single-gap advance so the next unit can continue through the receive path.
+    - backend stats surface:
+        - datagrams received;
+        - parsed/rejected packets;
+        - delivered frames/media units;
+        - reorder pushed/popped/missing counters.
 - Фиксирует:
-    - concrete socket video backend is now operational-only at its public start boundary;
-    - config cross-consistency is validated before socket-port creation/open;
-    - backend consumes explicit operational runtime pieces, including explicit initial timestamp anchoring policy, instead of rebuilding hidden defaults locally.
+    - concrete socket video backend consumes only the operational-config boundary;
+    - receive-loop behavior, timestamp mapping, and reorder tolerance remain observable through backend stats rather than sink-side side channels.
 
 ### tests/test_socket_runtime_interface.cpp
 - Роль:
@@ -1581,40 +1591,42 @@
 
 ### tests/test_socket_rx_audio_backend.cpp
 - Роль:
-    - regression / integration tests для `SocketRxAudioBackend` после перехода на socket-specific operational-only start boundary и explicit initial RTP-to-`TimestampNs` anchoring policy.
-    - проверяет runtime lifecycle, operational audio config validation, open-config projection, receive-path block delivery, timestamp-mode behavior, и базовую runtime observability через `BackendStats`.
+    - end-to-end unit/integration-style coverage для `SocketRxAudioBackend` over fake socket port/factory and capturing audio sink.
 - Покрывает:
-    - compile-time / API-shape regression:
-        - `SocketRxAudioBackend` implements `ISocketRxAudioBackend`;
-        - concrete socket backend больше не наследуется от `IRxAudioBackend`;
-        - у concrete socket backend нет manual `start_audio(const RxAudioConfig&, ...)`;
-        - operational start имеет сигнатуру `start_audio(const SocketRxAudioOperationalConfig&, IAudioFrameSink&)`.
-    - operational config boundary:
-        - fully consistent `SocketRxAudioOperationalConfig` accepted by `validate_socket_rx_audio_operational_config(...)`;
-        - consistent config accepted by backend start;
-        - mismatched `audio_packet_policy` vs `rx_config` rejected as `InvalidValue`;
-        - invalid `reorder_buffer_config` rejected as `InvalidValue`;
-        - mismatched `timestamp_mapper_config.rtp_clock_rate` vs `rx_config` rejected as `InvalidValue`.
-    - backend lifecycle / runtime behavior:
-        - stop before start and repeated stop are accepted and keep backend stopped;
-        - repeated start on already-active backend returns `InvalidBackendState`;
-        - null created port is rejected.
-    - projection/runtime integration:
-        - backend opens socket using the prebuilt operational `open_config` without rebuilding hidden transport defaults locally.
-    - receive path:
-        - valid operational start + valid RTP audio packet path delivers one assembled audio block to the sink;
-        - delivered block preserves expected sampling rate, channel count, samples-per-channel, sample stride, decoded sample values, and media-unit accounting.
-    - explicit initial-anchor policy behavior in backend runtime:
-        - default/manual operational helper path uses explicit `FirstObservedBecomesLocalZero` semantics;
-        - first delivered audio block from that path maps to `0 ns`;
-        - explicitly provided `ConfiguredReference` mapper config keeps reference-based timestamp mapping and can still map the first delivered block to non-zero `TimestampNs`.
-    - packet-size-policy threading through runtime:
-        - receive runtime uses the packet-size policy carried in operational config when allocating/using its receive path state;
-        - malformed large datagram is rejected in runtime without audio-frame delivery.
+    - compile-time/backend contract:
+        - backend is `final`;
+        - concrete backend implements `ISocketRxAudioBackend` and `IRxBackend`;
+        - concrete backend does not expose manual `IRxAudioBackend` start directly;
+        - operational `start_audio(const SocketRxAudioOperationalConfig&, ...)` stays the concrete start boundary;
+        - `SocketRxAudioBackendFactory` type shape.
+    - operational-config validation:
+        - fully consistent operational config is accepted;
+        - mismatched audio packet policy vs `RxAudioConfig` is rejected;
+        - invalid reorder-buffer config is rejected;
+        - invalid reorder tolerance policy is rejected;
+        - mismatched timestamp-mapper config vs `RxAudioConfig` is rejected.
+    - lifecycle/runtime behavior:
+        - stop-before-start is accepted;
+        - repeated stop remains accepted;
+        - successful operational start opens the socket port with projected open config;
+        - repeated start while active returns `InvalidBackendState`;
+        - null created port is rejected without opening.
+    - receive/delivery path:
+        - one valid audio RTP datagram produces one delivered audio block;
+        - L24 payload is unpacked into delivered samples correctly;
+        - first-observed RTP timestamp can map to local zero;
+        - configured-reference timestamp mode can produce a non-zero delivered timestamp.
+    - reorder-tolerance behavior on the socket receive path:
+        - `WaitForMissing` stalls delivery on the first gap and records missing-gap state;
+        - `FlushGapOnce` allows a single-gap advance for subsequent delivery.
+    - backend stats surface:
+        - datagrams received;
+        - parsed/rejected packets;
+        - delivered media units;
+        - reorder pushed/popped/missing counters.
 - Фиксирует:
-    - concrete socket audio backend is now operational-only at its public start boundary;
-    - audio operational config is validated for explicit cross-consistency before socket-port creation/open;
-    - backend consumes explicit audio runtime components, including explicit initial timestamp anchoring policy, instead of rebuilding hidden defaults locally.
+    - concrete socket audio backend consumes only the operational-config boundary;
+    - audio receive behavior keeps packet policy, timestamp mapping, and reorder tolerance explicit and observable at backend level rather than through sink-side side effects.
 
 ### tests/test_video_packet_admission.cpp
 - Роль:
@@ -1645,47 +1657,34 @@
 
 ### tests/test_socket_rx_operational_architecture.cpp
 - Роль:
-    - architecture regression test для socket operational boundary after the move to explicit operational start and explicit timestamp-anchoring policy.
-    - фиксирует, что adapter / projection layer и generic single-media socket runtime layer остаются разделенными по ответственности.
+    - architecture regression test для socket operational boundary over `SocketRxSingleMediaBackendBase`, signaling/bootstrap-to-operational adapters, and manual-to-operational adapters for both video and audio.
 - Покрывает:
-    - `SocketRxSingleMediaBackendBase` remains media-agnostic:
-        - base class is still only an `IRxBackend`-level generic runtime base;
-        - base class does not become `ISocketRxVideoBackend` or `ISocketRxAudioBackend`;
-        - generic receive-buffer sizing remains driven only by common `PacketParsePolicy`.
-    - video bootstrap -> operational adapter:
-        - `socket_rx_video_operational_config_from_video_receiver_bootstrap(...)` preserves:
-            - `packet_parse_policy`;
-            - `rx_config`;
-            - `receive_pipeline_config`;
-            - `timestamp_mapper_config`, including:
-                - `rtp_clock_rate`;
-                - `initial_anchor_mode`;
-                - `anchor_rtp_timestamp`;
-                - `anchor_timestamp_ns`;
-            - `reorder_buffer_config`;
-            - transport projection through `open_config`.
-    - video manual -> operational adapter:
-        - `socket_rx_video_operational_config_from_rx_video_config(...)` preserves explicit runtime inputs such as:
-            - `PartialFramePolicy`;
-            - `PacketParsePolicy`;
-            - configured timestamp-mapper policy/anchor fields;
-            - modeled `scan_mode` / `packing_mode`.
-    - audio bootstrap -> operational adapter:
-        - `socket_rx_audio_operational_config_from_audio_receiver_bootstrap(...)` preserves:
-            - `packet_parse_policy`;
-            - `audio_packet_policy`;
-            - `frame_assembler_config`;
-            - `reorder_buffer_config`;
-            - `timestamp_mapper_config`, including explicit initial-anchor mode and anchor fields;
-            - `channel_order`;
-            - transport projection through `open_config`.
-    - audio manual -> operational adapter:
-        - `socket_rx_audio_operational_config_from_rx_audio_config(...)` preserves explicit caller-supplied runtime inputs instead of replacing them with backend-local defaults.
+    - `SocketRxSingleMediaBackendBase` remains a media-agnostic common socket runtime base over `IRxBackend` and does not become a concrete video/audio operational interface.
+    - receive-buffer sizing derived from `PacketParsePolicy`:
+        - Standard UDP datagram size limit path;
+        - Extended UDP datagram size limit path.
+    - video bootstrap -> operational adapter preserves modeled axes and derived runtime inputs:
+        - packet-parse policy;
+        - `RxVideoConfig`;
+        - `VideoScanMode`;
+        - `VideoPackingMode`;
+        - partial-frame policy;
+        - timestamp-mapper config;
+        - reorder window and reorder gap policy;
+        - projected socket open config.
+    - video manual -> operational adapter preserves explicit runtime inputs, including non-default reorder gap policy.
+    - audio bootstrap -> operational adapter preserves modeled axes and derived runtime inputs:
+        - packet-parse policy;
+        - audio packet policy;
+        - frame-assembler storage format;
+        - reorder window and reorder gap policy;
+        - timestamp-mapper config;
+        - parsed channel order;
+        - projected socket open config.
+    - audio manual -> operational adapter preserves explicit runtime inputs, including non-default reorder gap policy.
 - Фиксирует:
-    - socket backend no longer owns adapter/default-building responsibility;
-    - bootstrap/manual-to-operational projection is an explicit named boundary;
-    - explicit RTP timestamp initial-anchor mode is preserved through adapters rather than silently rewritten;
-    - generic socket single-media base remains transport/runtime-oriented rather than media-policy-building.
+    - socket runtime architecture keeps one common media-agnostic operational base layer;
+    - manual config path and signaling/bootstrap path converge into one operational-config boundary without dropping modeled axes such as reorder tolerance policy.
 
 ### tests/audio_sdp_timing_attributes_test.cpp
 - Роль:
@@ -1724,3 +1723,29 @@
     - audio timing/reference-clock parsing is now a dedicated strict boundary rather than an implicit name-only check.
     - malformed known timing forms are distinguished from unknown future/open-ended forms explicitly.
     - session/media scope remains explicit in the parsed audio timing model, so final ingestion can enforce media-level `mediaclk` correctly.
+
+### tests/test_receive_reorder_tolerance_policy.cpp
+- Роль:
+    - focused coverage для общей модели reorder-tolerance policy, reused by both video and audio reorder-buffer configs.
+- Покрывает:
+    - modeled enum axis:
+        - `ReceiveReorderGapPolicy::WaitForMissing`;
+        - `ReceiveReorderGapPolicy::FlushGapOnce`.
+    - `validate_receive_reorder_gap_policy(...)` for known and unknown enum values;
+    - explicit default behavior of `ReceiveReorderTolerancePolicy`:
+        - default-constructed policy stays `WaitForMissing`;
+        - default policy validates successfully.
+    - helper behavior:
+        - `receive_reorder_policy_allows_gap_flush_once(...)` distinguishes named policies correctly.
+    - `validate_receive_reorder_tolerance_policy(...)` rejection of invalid/unknown gap policy.
+    - `VideoReorderBufferConfig` validation:
+        - both named policies are accepted;
+        - zero window is rejected;
+        - invalid policy is rejected.
+    - `AudioReorderBufferConfig` validation:
+        - both named policies are accepted;
+        - zero window is rejected;
+        - invalid policy is rejected.
+- Фиксирует:
+    - reorder gap-tolerance policy is modeled once and reused consistently by video and audio reorder-buffer config boundaries;
+    - default behavior stays explicit and does not rely on hidden fallback logic.

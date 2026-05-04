@@ -328,13 +328,13 @@
 
 ### libs/st2110core/include/st2110/fixed_reorder_buffer.hpp
 - Роль:
-    - MVP-реализация reorder buffer’а с фиксированным окном по `extended_seq`.
-    - хранит owning `StoredPacket` objects и отдает их строго в порядке ожидаемого 32-bit extended sequence.
-    - локализует базовую политику для:
+    - concrete fixed-window implementation of the generic packet reorder boundary over 32-bit `extended_seq`.
+    - хранит owning `StoredPacket` objects и отдает их в порядке текущего ожидаемого sequence number.
+    - локализует базовое поведение для:
         - in-order / out-of-order acceptance within a fixed window;
         - duplicate rejection;
         - late vs out-of-window accounting;
-        - one-step missing-sequence flush.
+        - generic one-step gap flush through the `IReorderBuffer` interface.
 - Связи:
     - реализует `IReorderBuffer` из `reorder_buffer.hpp`;
     - использует `StoredPacket` / `PacketView` из `reorder_buffer.hpp`;
@@ -350,7 +350,7 @@
             - при `window_size == 0` бросает `std::invalid_argument`.
         - `push(const PacketView&)`
             - всегда увеличивает `stats_.packets_pushed`;
-            - при первом accepted flow initializes `next_expected_seq_` from the first packet sequence;
+            - при первом accepted packet initializes `next_expected_seq_` from `packet.extended_seq`;
             - вычисляет forward modular distance как `packet.extended_seq - next_expected_seq_`;
             - если `dist >= window_size_`:
                 - `dist > 0x7FFFFFFF` трактуется как late packet и увеличивает `late_packets`;
@@ -365,7 +365,7 @@
                 - increments `next_expected_seq_`;
                 - increments `packets_popped`;
                 - clears `missing_head_accounted_`;
-                - returns the stored packet.
+                - returns the stored packet;
             - если expected packet отсутствует:
                 - returns `std::nullopt`;
                 - when pending packets exist, increments `missing_seq` only once for the current missing head until progress/flush happens.
@@ -377,7 +377,7 @@
         - `stats() const -> ReorderBufferStats`
             - returns stats snapshot by value.
         - `flush_missing_once() -> bool`
-            - public fixed-window-specific helper not present in `IReorderBuffer`;
+            - generic interface-level one-step gap flush hook;
             - advances `next_expected_seq_` by one only when:
                 - buffer is initialized;
                 - pending packets exist;
@@ -388,7 +388,7 @@
 - Примечание:
     - reorder logic uses 32-bit unsigned arithmetic on `extended_seq`, so wraparound behavior is intentional and covered by tests.
     - `packets_pushed` and `packets_stored` are intentionally different counters: rejected duplicates / late / out-of-window packets still count as pushed attempts.
-    - `flush_missing_once()` remains a concrete-type helper; it is not part of the generic `IReorderBuffer` abstraction.
+    - concrete buffer exposes only the capability to flush one missing head; decision to use that capability is left to higher receive-tolerance policy.
 
 ### libs/st2110core/include/st2110/frame_assembler.hpp
 - Роль:
@@ -554,6 +554,7 @@
     - абстракция reorder layer и owning stored-packet representation.
     - explicit ownership bridge between parsed non-owning `PacketView` packets and reorder-buffer-local packet storage.
     - keeps packet ownership / payload lifetime handling separate from concrete reorder policy implementations such as `FixedWindowReorderBuffer`.
+    - now also exposes a generic one-step missing-head flush capability so higher receive-tolerance policy can advance over a gap without concrete buffer type knowledge.
 - Связи:
     - использует `packet_view.hpp` for:
         - `PacketView`;
@@ -595,6 +596,9 @@
             - admits/stores one parsed packet according to concrete reorder policy.
         - `pop_next() -> std::optional<StoredPacket>`
             - returns the next available in-order stored packet when ready.
+        - `flush_missing_once() -> bool`
+            - generic one-step head-gap advance hook;
+            - returns `true` only when the concrete reorder implementation actually advanced over one missing sequence position.
         - `reset()`
             - clears concrete reorder state.
         - `stats() const -> ReorderBufferStats`
@@ -604,6 +608,7 @@
     - `StoredPacket` preserves only the normalized packet model needed by the receive pipeline; it does not keep the original raw UDP datagram bytes.
     - `view()` returns non-owning spans tied to `StoredPacket::payload_data`, so the reconstructed `PacketView` remains valid only while the owning `StoredPacket` object remains alive.
     - reorder stats intentionally flow through the abstract interface, so higher backend/runtime layers do not need concrete reorder-buffer type knowledge for observability.
+    - `flush_missing_once()` exposes capability only; policy for when gap flush is allowed remains outside this file.
 
 ### libs/st2110core/include/st2110/rtp.hpp
 - Роль:
@@ -3459,6 +3464,7 @@
 - Роль:
     - explicit fixed-window audio reorder/jitter boundary for the current ST 2110-30 receive path.
     - reorders already-validated `AudioRtpPacketView` packets by 16-bit RTP sequence number before audio block assembly.
+    - makes reorder-window sizing and receive reorder-tolerance policy explicit at config/validation boundary.
     - separates packet ordering / gap progression from:
         - generic RTP datagram parsing;
         - audio packet payload-type / payload-size validation;
@@ -3471,15 +3477,19 @@
     - использует `AudioRtpPacketView` and `AudioPcmWireFormat` from `audio_packet.hpp`;
     - использует `RtpHeaderView` and `seq_less(...)` from `rtp.hpp`;
     - использует `Error` from `error.hpp` for localized admission failures;
+    - использует `ReceiveReorderTolerancePolicy` and `validate_receive_reorder_tolerance_policy(...)` from `receive_reorder_tolerance_policy.hpp`;
     - current direct runtime consumer is `socket_rx_audio_backend.hpp`;
     - тестируется `tests/test_audio_reorder_buffer.cpp`.
 - Сущности:
     - `AudioReorderBufferConfig`
         - `window_size_packets`
             - explicit reorder-window size in packets.
+        - `reorder_tolerance_policy`
+            - explicit receive reorder-tolerance policy value carried by config and validated at construction/use boundary.
     - `validate_audio_reorder_buffer_config(const AudioReorderBufferConfig&) -> Error`
         - rejects zero reorder window;
-        - accepts positive packet-window sizes.
+        - delegates validation of `reorder_tolerance_policy` to `validate_receive_reorder_tolerance_policy(...)`;
+        - accepts only configs whose packet window and reorder-tolerance policy are both valid.
     - `AudioReorderBufferStats`
         - `packets_pushed`
         - `packets_popped`
@@ -3501,7 +3511,7 @@
         - current concrete fixed-window reorder implementation over 16-bit RTP sequence numbers.
         - `AudioFixedWindowReorderBuffer(AudioReorderBufferConfig cfg = {})`
         - `push(const AudioRtpPacketView&) -> Error`
-            - rejects invalid config when `window_size_packets == 0`;
+            - rejects invalid config when `validate_audio_reorder_buffer_config(cfg_) != Error::Ok`;
             - initializes expected sequence from the first accepted packet;
             - rejects duplicates already present in the pending map;
             - rejects packets older than current expected sequence as late;
@@ -3512,7 +3522,7 @@
             - emits only the packet whose sequence number equals the current expected sequence;
             - advances expected sequence after a successful pop;
             - increments `packets_popped`.
-        - `flush_missing_once()`
+        - `flush_missing_once() -> bool`
             - advances expected sequence by one only when:
                 - sequence tracking is initialized;
                 - there are pending packets;
@@ -3526,7 +3536,7 @@
             - returns a const reference to the current reorder stats object.
     - internal helpers:
         - `config_is_valid() const`
-            - validates localized reorder-buffer config.
+            - validates localized reorder-buffer config through `validate_audio_reorder_buffer_config(...)`.
         - `next_seq(uint16_t)`
             - advances RTP sequence with wraparound semantics.
         - `forward_seq_distance(uint16_t from, uint16_t to)`
@@ -3539,6 +3549,7 @@
     - it does not map RTP timestamps to `TimestampNs`; that remains in `audio_timestamp_mapping.hpp`.
     - it does not create `AudioBuffer`, decode PCM wire samples, or perform channel reordering; those remain above this layer.
     - unlike the video path, this file currently exposes a concrete reorder-buffer type rather than a generic reorder-buffer interface.
+    - `ReceiveReorderTolerancePolicy` is now an explicit modeled config axis for this boundary, but the current buffer logic still remains fixed-window and explicit-flush driven; the policy is validated and stored in config, not yet used for distinct `push(...)`, `pop_next()`, or `flush_missing_once()` behavior inside this file.
     - sequence progression is explicitly wraparound-friendly through `seq_less(...)`, modular distance, and `next_seq(...)`, so future extensions should build on this boundary instead of embedding ad hoc sequence tracking in backend or assembler code.
 
 ### libs/st2110core/include/st2110/audio_frame_assembler.hpp
@@ -3765,6 +3776,7 @@
         - RTP/ST 2110 packet parsing;
         - explicit video payload-type admission;
         - packet reorder;
+        - optional one-step head-gap flush controlled by explicit receive reorder tolerance policy;
         - depacketize/reconstruct pipeline;
         - RTP timestamp to internal `TimestampNs` mapping;
         - final sink delivery.
@@ -3790,7 +3802,8 @@
         - `video_receive_pipeline.hpp` for depacketize + reconstruct delivery path;
         - `video_timestamp_mapping.hpp` for `VideoRtpTimestampMapper` and `VideoRtpTimestampMapperConfig`;
         - `signaling_structs.hpp` for `VideoReceiverBootstrapConfig`;
-        - `video_reorder_policy.hpp` for `VideoReorderBufferConfig` and `validate_video_reorder_buffer_config(...)`.
+        - `video_reorder_policy.hpp` for `VideoReorderBufferConfig` and `validate_video_reorder_buffer_config(...)`;
+        - `receive_reorder_tolerance_policy.hpp` for backend-local gap-flush gating during reorder drain.
 - Сущности:
     - `SocketRxVideoOperationalConfig`
         - explicit video-specific operational input model above the concrete socket backend.
@@ -3800,7 +3813,7 @@
                 - `rx_config`
                 - `receive_pipeline_config`
                 - `timestamp_mapper_config`
-                - `reorder_buffer_config`
+                - `reorder_buffer_config`.
     - `validate_socket_rx_video_operational_config(const SocketRxVideoOperationalConfig&) -> Error`
         - validates:
             - explicit video reorder-buffer config;
@@ -3821,11 +3834,11 @@
             - `bootstrap.reorder_buffer_config`;
         - derives `common.open_config` through `socket_rx_open_config_from_video_config(...)`;
         - validates the final operational object before returning it.
-    - `socket_rx_video_operational_config_from_rx_video_config(const RxVideoConfig&, const PacketParsePolicy&, PartialFramePolicy, const VideoRtpTimestampMapperConfig&) -> std::expected<SocketRxVideoOperationalConfig, Error>`
+    - `socket_rx_video_operational_config_from_rx_video_config(const RxVideoConfig&, const PacketParsePolicy&, PartialFramePolicy, const VideoRtpTimestampMapperConfig&, const VideoReorderBufferConfig&) -> std::expected<SocketRxVideoOperationalConfig, Error>`
         - explicit manual-config adapter for poorer/non-bootstrap callers;
         - derives `common.open_config` through `socket_rx_open_config_from_video_config(...)`;
         - builds `VideoReceivePipelineConfig` from explicit caller inputs instead of hidden backend defaults;
-        - currently supplies explicit named default reorder policy through `VideoReorderBufferConfig{}` instead of a backend-local literal;
+        - accepts explicit `VideoReorderBufferConfig`, defaulting at the call boundary to `VideoReorderBufferConfig{}`;
         - validates the final operational object before returning it.
     - `SocketRxVideoBackend`
         - final concrete video backend.
@@ -3850,6 +3863,7 @@
                 - video receive pipeline;
                 - timestamp mapper;
                 - packet parse policy;
+                - reorder tolerance policy;
                 - sink pointer;
                 - configured payload type.
         - `process_received_datagram(ByteSpan) noexcept`
@@ -3869,7 +3883,8 @@
                 - depacketizer stats from the current video receive pipeline.
     - runtime construction helpers:
         - `make_reorder_buffer(const VideoReorderBufferConfig&) -> std::unique_ptr<IReorderBuffer>`
-            - current implementation builds `FixedWindowReorderBuffer` from explicit `cfg.window_size_packets`.
+            - current implementation builds `FixedWindowReorderBuffer` from explicit `cfg.window_size_packets`;
+            - current higher-level gap tolerance policy is not consumed here and is applied later at backend drain time.
         - `start_video_runtime(...) -> RxBackendLifecycleResult`
             - allocates receive buffer from `cfg.common.packet_parse_policy`;
             - constructs video-specific runtime objects from explicit operational config only:
@@ -3879,6 +3894,7 @@
                 - sink pointer;
                 - packet parse policy;
                 - configured payload type;
+            - caches `cfg.reorder_buffer_config.reorder_tolerance_policy` for later drain behavior;
             - construction failures are mapped as:
                 - `std::invalid_argument` -> `InvalidValue`
                 - `std::logic_error` -> `Unsupported`
@@ -3887,7 +3903,11 @@
     - receive-pipeline helpers:
         - `drain_reorder_buffer_to_sink() noexcept`
             - repeatedly pops ready packets from reorder;
-            - feeds them into `VideoReceivePipeline::push(...)`;
+            - when the current head packet is missing:
+                - returns immediately if one gap flush was already used in the current drain pass;
+                - returns immediately if `receive_reorder_policy_allows_gap_flush_once(...)` is false;
+                - otherwise calls `flush_missing_once()` exactly once for the current drain pass and retries;
+            - feeds ready packets into `VideoReceivePipeline::push(...)`;
             - forwards each reconstructed frame result to `deliver_reconstructed_frame(...)`.
         - `deliver_reconstructed_frame(ReconstructedVideoFrame&&) noexcept`
             - delivers only when:
@@ -3905,6 +3925,7 @@
         - `video_receive_pipeline_`
         - optional `video_timestamp_mapper_`
         - `packet_parse_policy_`
+        - `reorder_tolerance_policy_`
         - `video_sink_`
         - optional `configured_video_payload_type_`
     - `SocketRxVideoBackendFactory`
@@ -3918,11 +3939,13 @@
         - `create_backend()`
             - creates one default `SocketRxVideoBackend`.
 - Примечание:
-    - concrete backend start path is now operational-only; hidden manual fallback from `RxVideoConfig` no longer lives inside the backend.
+    - concrete backend start path is operational-only; hidden manual fallback from `RxVideoConfig` no longer lives inside the backend.
     - packet-parse-policy enforcement is explicit in `process_received_datagram(...)` before staged packet parsing.
     - bootstrap/manual projection into `SocketRxVideoOperationalConfig` is modeled outside the concrete runtime start.
     - current delivery path remains complete-frame-only: partial reconstructed frames are intentionally not delivered to the sink.
-    - reorder-window policy is no longer a backend-local magic literal; it is now an explicit named runtime/support boundary carried by config and validated before runtime start.
+    - reorder-window policy and reorder-gap tolerance policy are now separate explicit boundaries:
+        - window size is consumed by reorder-buffer construction;
+        - gap tolerance is consumed by backend drain behavior.
 
 ### libs/st2110core/include/st2110/socket_rx_audio_backend.hpp
 - Роль:
@@ -3934,6 +3957,7 @@
         - configured RTP payload-type admission prefilter;
         - audio RTP packet parsing;
         - audio reorder;
+        - optional one-step head-gap flush controlled by explicit receive reorder tolerance policy;
         - audio frame/block assembly;
         - RTP timestamp to internal `TimestampNs` mapping through explicit anchoring policy;
         - final sink delivery.
@@ -3965,7 +3989,8 @@
             - `AudioRtpTimestampMapper`;
             - explicit initial-anchor policy semantics;
         - `audio_channel_order.hpp` for validated channel-order boundary;
-        - `packet_parse.hpp` for common receive packet-size policy enforcement.
+        - `packet_parse.hpp` for common receive packet-size policy enforcement;
+        - `receive_reorder_tolerance_policy.hpp` for backend-local gap-flush gating during reorder drain.
 - Сущности:
     - `SocketRxAudioOperationalConfig`
         - explicit audio-specific operational input model above the concrete socket backend.
@@ -4024,6 +4049,7 @@
             - clears common socket runtime state through `clear_common_runtime_objects()`;
             - clears all audio-specific runtime objects and cached operational state:
                 - packet policy;
+                - reorder tolerance policy;
                 - reorder buffer;
                 - frame assembler;
                 - timestamp mapper;
@@ -4041,6 +4067,9 @@
                 - parses one packet via `parse_audio_rtp_packet_view(...)`;
                 - rejected packet parse/reorder failures are recorded as media-packet rejection;
                 - accepted packets are pushed into reorder and drained toward sink delivery.
+        - `augment_stats_snapshot_locked(BackendStats&) const noexcept`
+            - augments the common backend stats snapshot with reorder counters projected from the current audio reorder buffer;
+            - maps audio reorder `missing_packets_flushed` into generic `snapshot.reorder.missing_seq_flushed`.
     - runtime construction / delivery helpers:
         - `start_audio_runtime(...) -> RxBackendLifecycleResult`
             - allocates receive buffer from `cfg.common.packet_parse_policy`;
@@ -4051,13 +4080,18 @@
             - caches:
                 - packet-parse policy;
                 - packet policy;
+                - reorder tolerance policy from `cfg.reorder_buffer_config.reorder_tolerance_policy`;
                 - sink pointer;
                 - configured payload/runtime values;
             - starts the common socket runtime via `start_common_runtime(...)`;
             - on common-runtime start failure, clears media runtime objects before returning the error.
         - `drain_reorder_buffer_to_sink() noexcept`
             - repeatedly pops ready packets from reorder;
-            - feeds them into `AudioFrameAssembler::push(...)`;
+            - when the current head packet is missing:
+                - returns immediately if one gap flush was already used in the current drain pass;
+                - returns immediately if `receive_reorder_policy_allows_gap_flush_once(...)` is false;
+                - otherwise calls `flush_missing_once()` exactly once for the current drain pass and retries;
+            - feeds ready packets into `AudioFrameAssembler::push(...)`;
             - rejects invalid assembly results locally;
             - forwards complete assembled blocks to `deliver_assembled_audio_block(...)`.
         - `deliver_assembled_audio_block(AssembledAudioBlock&&) noexcept`
@@ -4070,6 +4104,7 @@
             - returns `0` when mapper is absent or mapping fails.
     - cached runtime state:
         - `packet_parse_policy_`
+        - `reorder_tolerance_policy_`
         - optional `audio_packet_policy_`
         - `reorder_buffer_`
         - `audio_frame_assembler_`
@@ -4088,7 +4123,8 @@
             - creates one default `SocketRxAudioBackend`.
 - Примечание:
     - concrete backend start path is operational-only.
-    - timestamp anchoring policy is now explicit in `AudioRtpTimestampMapperConfig` and is preserved through bootstrap/manual operational projection rather than being encoded via unexplained `0/0` anchor literals inside the backend.
+    - timestamp anchoring policy is explicit in `AudioRtpTimestampMapperConfig` and is preserved through bootstrap/manual operational projection rather than being encoded via unexplained `0/0` anchor literals inside the backend.
+    - reorder-gap tolerance is consumed at backend drain time, not hidden inside the common socket base.
     - delivery path remains complete-block-only for the current MVP runtime.
 
 ### libs/st2110core/include/st2110/socket_runtime.hpp
@@ -4633,35 +4669,44 @@
 
 ### libs/st2110core/include/st2110/video_reorder_policy.hpp
 - Роль:
-    - explicit named runtime/support boundary for the current video packet reorder-window policy.
-    - убирает backend-local magic literal из video socket runtime construction path.
-    - локализует temporary/default video reorder support limit как named config + validation boundary instead of an implicit construction detail.
+    - explicit named runtime/support boundary for the current video reorder policy.
+    - убирает backend-local magic literals из video socket runtime construction path.
+    - локализует temporary/default video reorder support limits как named config + validation boundary instead of implicit construction details.
+    - now models both:
+        - reorder window size;
+        - receive-side gap-tolerance policy.
 - Связи:
-    - использует `error.hpp` for validation result reporting.
-    - используется `signaling_structs.hpp` внутри `VideoReceiverBootstrapConfig`.
+    - использует `error.hpp` for validation result reporting;
+    - использует `receive_reorder_tolerance_policy.hpp` for the modeled gap-tolerance policy surface;
+    - используется `signaling_structs.hpp` внутри `VideoReceiverBootstrapConfig`;
     - используется `socket_rx_video_backend.hpp` внутри:
         - `SocketRxVideoOperationalConfig`;
         - `validate_socket_rx_video_operational_config(...)`;
-        - reorder-buffer runtime construction.
+        - reorder-buffer runtime construction;
+        - backend-local reorder drain behavior.
     - indirectly affects runtime behavior through `FixedWindowReorderBuffer`, but does not depend on the reorder-buffer implementation itself.
 - Сущности:
     - `defaultVideoReorderWindowPackets`
-        - named default reorder-window packet count for the current video receive path.
+        - named default reorder-window packet count for the current video receive path;
         - current value: `32`.
     - `VideoReorderBufferConfig`
-        - explicit config object for video reorder-window policy.
+        - explicit config object for video reorder policy.
         - fields:
             - `window_size_packets`
-                - defaults to `defaultVideoReorderWindowPackets`.
+                - defaults to `defaultVideoReorderWindowPackets`;
+            - `reorder_tolerance_policy`
+                - defaults to `ReceiveReorderTolerancePolicy{}`.
     - `validate_video_reorder_buffer_config(const VideoReorderBufferConfig&) -> Error`
-        - validates that `window_size_packets` is greater than zero;
+        - validates:
+            - `window_size_packets > 0`;
+            - `reorder_tolerance_policy` through `validate_receive_reorder_tolerance_policy(...)`;
         - returns:
             - `Error::Ok` for valid config;
-            - `Error::InvalidValue` for zero/invalid config.
+            - `Error::InvalidValue` for zero window size or invalid policy enum values.
 - Примечание:
     - this file models only the named policy boundary and its validation; it does not implement reordering itself.
     - current default `32` remains present, but only as a named explicit support/default boundary rather than as a literal in backend runtime construction.
-    - future work may widen this boundary into richer video runtime/support policy without needing to reshape the concrete backend API again.
+    - current gap-tolerance policy is kept orthogonal to reorder-window sizing so future receive behavior can evolve without reshaping the config surface again.
 
 ### libs/st2110core/include/st2110/rtp_timestamp_anchor_policy.hpp
 - Роль:
@@ -4787,3 +4832,41 @@
     - this file is intentionally a raw SDP timing boundary, not a final `AudioStreamSignaling` model extension.
     - unknown/open-ended timing forms remain explicitly represented via `Other` instead of being silently treated as malformed or silently accepted as known.
     - final ST 2110 audio ingestion can now enforce required timing signaling on parsed objects while keeping strict parsing localized here.
+
+### libs/st2110core/include/st2110/receive_reorder_tolerance_policy.hpp
+- Роль:
+    - explicit modeled receive-side tolerance boundary for reorder-gap handling.
+    - отделяет policy decision about waiting vs one-step gap flush от concrete reorder-buffer storage/state implementation.
+    - задает generic policy surface, которую media backends могут использовать при drain из reorder buffer’а.
+- Связи:
+    - использует `error.hpp` для validation result reporting;
+    - используется `video_reorder_policy.hpp` как часть `VideoReorderBufferConfig`;
+    - используется concrete socket receive backends:
+        - `socket_rx_video_backend.hpp`;
+        - `socket_rx_audio_backend.hpp`;
+          где policy управляет тем, разрешено ли вызывать `flush_missing_once()` при head gap.
+- Сущности:
+    - `ReceiveReorderGapPolicy`
+        - modeled reorder-gap handling axis:
+            - `WaitForMissing`
+            - `FlushGapOnce`.
+    - `ReceiveReorderTolerancePolicy`
+        - current receive-side tolerance policy object:
+            - `gap_policy`
+                - defaults to `ReceiveReorderGapPolicy::WaitForMissing`.
+    - `validate_receive_reorder_gap_policy(ReceiveReorderGapPolicy) -> Error`
+        - validates known enum values;
+        - returns:
+            - `Error::Ok` for supported modeled values;
+            - `Error::InvalidValue` for unknown enum values.
+    - `validate_receive_reorder_tolerance_policy(const ReceiveReorderTolerancePolicy&) -> Error`
+        - validates the policy object through `validate_receive_reorder_gap_policy(...)`.
+    - `receive_reorder_policy_allows_gap_flush_once(const ReceiveReorderTolerancePolicy&) -> bool`
+        - returns `true` only for `ReceiveReorderGapPolicy::FlushGapOnce`;
+        - returns `false` for `WaitForMissing`.
+- Примечание:
+    - this file models only policy and validation; it does not own packets, track reorder state, or perform flushing itself.
+    - current tolerance surface is intentionally minimal:
+        - either wait for the missing head packet;
+        - or permit one explicit gap flush step.
+    - unknown policy enum values are treated as `InvalidValue`, not silently coerced.
