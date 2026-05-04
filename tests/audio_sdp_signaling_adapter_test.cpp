@@ -3,6 +3,7 @@
 #include <st2110/audio_signaling.hpp>
 #include <st2110/error.hpp>
 
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <expected>
@@ -16,6 +17,8 @@ int main() {
     static_assert(std::is_same_v<decltype(audio_stream_signaling_from_raw_audio_sdp_media_section(
                                      std::declval<const RawAudioSdpMediaSection &>())),
                                  std::expected<AudioStreamSignaling, Error>>);
+
+    const std::array<AudioConformanceRange, 1> supported_level_a{audio_level_a_receiver_baseline()};
 
     {
         const std::string sdp = "v=0\r\n"
@@ -41,6 +44,7 @@ int main() {
         assert(signaling->media.pcm_bit_depth == AudioPcmBitDepth::Bits24);
 
         assert(validate_audio_stream_signaling(*signaling) == Error::Ok);
+        assert(validate_audio_stream_signaling_against_conformance_ranges(*signaling, supported_level_a) == Error::Ok);
     }
 
     {
@@ -64,6 +68,8 @@ int main() {
             assert(signaling->media.channel_count == channel_count);
             assert(!signaling->channel_order.has_value());
             assert(validate_audio_stream_signaling(*signaling) == Error::Ok);
+            assert(validate_audio_stream_signaling_against_conformance_ranges(*signaling, supported_level_a) ==
+                   Error::Ok);
         }
         {
             const std::string sdp = "v=0\r\n"
@@ -83,6 +89,8 @@ int main() {
             assert(signaling->media.packet_time_us == 1000);
             assert(signaling->media.channel_count == 2);
             assert(validate_audio_stream_signaling(*signaling) == Error::Ok);
+            assert(validate_audio_stream_signaling_against_conformance_ranges(*signaling, supported_level_a) ==
+                   Error::Ok);
         }
     }
 
@@ -139,8 +147,15 @@ int main() {
         assert(raw.has_value());
 
         auto signaling = audio_stream_signaling_from_raw_audio_sdp_media_section(*raw);
-        assert(!signaling.has_value());
-        assert(signaling.error() == Error::InvalidValue);
+        assert(signaling.has_value());
+        assert(signaling->media.pcm_encoding == AudioPcmEncoding::LinearPcm);
+        assert(signaling->media.pcm_bit_depth == AudioPcmBitDepth::Bits24);
+        assert(signaling->media.sampling_rate_hz == 96000);
+        assert(signaling->media.packet_time_us == 1000);
+        assert(signaling->media.channel_count == 2);
+        assert(validate_audio_stream_signaling(*signaling) == Error::Ok);
+        assert(validate_audio_stream_signaling_against_conformance_ranges(*signaling, supported_level_a) ==
+               Error::Unsupported);
     }
 
     {
@@ -155,8 +170,15 @@ int main() {
         assert(*raw->packet_time_us == 125);
 
         auto signaling = audio_stream_signaling_from_raw_audio_sdp_media_section(*raw);
-        assert(!signaling.has_value());
-        assert(signaling.error() == Error::InvalidValue);
+        assert(signaling.has_value());
+        assert(signaling->media.pcm_encoding == AudioPcmEncoding::LinearPcm);
+        assert(signaling->media.pcm_bit_depth == AudioPcmBitDepth::Bits24);
+        assert(signaling->media.sampling_rate_hz == 48000);
+        assert(signaling->media.packet_time_us == 125);
+        assert(signaling->media.channel_count == 2);
+        assert(validate_audio_stream_signaling(*signaling) == Error::Ok);
+        assert(validate_audio_stream_signaling_against_conformance_ranges(*signaling, supported_level_a) ==
+               Error::Unsupported);
     }
 
     {
@@ -176,6 +198,7 @@ int main() {
         assert(signaling->channel_order->convention == AudioChannelOrderConvention::Other);
         assert(signaling->channel_order->raw_value == "ACME.(X)");
         assert(validate_audio_stream_signaling(*signaling) == Error::Ok);
+        assert(validate_audio_stream_signaling_against_conformance_ranges(*signaling, supported_level_a) == Error::Ok);
     }
 
     {
@@ -195,6 +218,7 @@ int main() {
         assert(signaling.has_value());
         assert(!signaling->channel_order.has_value());
         assert(validate_audio_stream_signaling(*signaling) == Error::Ok);
+        assert(validate_audio_stream_signaling_against_conformance_ranges(*signaling, supported_level_a) == Error::Ok);
     }
 
     return 0;

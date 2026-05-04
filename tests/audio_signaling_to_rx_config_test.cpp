@@ -84,23 +84,26 @@ int main() {
 
     AudioStreamSignaling wrong_sampling_rate = make_level_a_stream(2);
     wrong_sampling_rate.media.sampling_rate_hz = 96000;
+    assert(validate_audio_stream_signaling(wrong_sampling_rate) == Error::Ok);
     auto projected_wrong_sampling_rate =
         rx_audio_config_from_audio_stream_signaling(wrong_sampling_rate, 30000, 111, "0.0.0.0", "239.1.1.2");
     assert(!projected_wrong_sampling_rate.has_value());
-    assert(projected_wrong_sampling_rate.error() == Error::InvalidValue);
+    assert(projected_wrong_sampling_rate.error() == Error::Unsupported);
 
     AudioStreamSignaling wrong_packet_time = make_level_a_stream(2);
     wrong_packet_time.media.packet_time_us = 125;
+    assert(validate_audio_stream_signaling(wrong_packet_time) == Error::Ok);
     auto projected_wrong_packet_time =
         rx_audio_config_from_audio_stream_signaling(wrong_packet_time, 30000, 111, "0.0.0.0", "239.1.1.2");
     assert(!projected_wrong_packet_time.has_value());
-    assert(projected_wrong_packet_time.error() == Error::InvalidValue);
+    assert(projected_wrong_packet_time.error() == Error::Unsupported);
 
     AudioStreamSignaling too_many_channels = make_level_a_stream(9);
+    assert(validate_audio_stream_signaling(too_many_channels) == Error::Ok);
     auto projected_too_many_channels =
         rx_audio_config_from_audio_stream_signaling(too_many_channels, 30000, 111, "0.0.0.0", "239.1.1.2");
     assert(!projected_too_many_channels.has_value());
-    assert(projected_too_many_channels.error() == Error::InvalidValue);
+    assert(projected_too_many_channels.error() == Error::Unsupported);
 
     AudioStreamSignaling valid_signaling = make_level_a_stream(2);
 
@@ -120,6 +123,7 @@ int main() {
     auto bad_format = rx_audio_config_from_audio_stream_signaling(valid_signaling, 30000, 111, "0.0.0.0", "239.1.1.2",
                                                                   static_cast<AudioSampleFormat>(255));
     assert(!bad_format.has_value());
+    assert(bad_format.error() == Error::Unsupported);
 
     return 0;
 }

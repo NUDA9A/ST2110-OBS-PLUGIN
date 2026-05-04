@@ -1,8 +1,10 @@
 #include "st2110/audio_signaling.hpp"
 #include "st2110/error.hpp"
 
+#include <array>
 #include <cassert>
 #include <optional>
+#include <span>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -52,6 +54,11 @@ int main() {
     static_assert(
         std::is_same_v<decltype(validate_audio_stream_signaling(std::declval<const AudioStreamSignaling &>())), Error>);
 
+    static_assert(std::is_same_v<decltype(validate_audio_stream_signaling_against_conformance_ranges(
+                                     std::declval<const AudioStreamSignaling &>(),
+                                     std::declval<std::span<const AudioConformanceRange>>())),
+                                 Error>);
+
     constexpr auto level_a = audio_level_a_receiver_baseline();
 
     static_assert(level_a.level == AudioConformanceLevel::LevelA);
@@ -77,6 +84,8 @@ int main() {
     constexpr AudioConformanceRange invalid_unknown_level{static_cast<AudioConformanceLevel>(255), 48000, 1000, 1, 8};
     static_assert(validate_audio_conformance_range(invalid_unknown_level) == Error::InvalidValue);
 
+    const std::array<AudioConformanceRange, 1> supported_level_a{level_a};
+
     AudioStreamSignaling level_a_stereo = make_level_a_stream(2);
 
     assert(level_a_stereo.media.pcm_encoding == AudioPcmEncoding::LinearPcm);
@@ -87,6 +96,10 @@ int main() {
     assert(audio_media_description_matches_conformance_range(level_a_stereo.media, level_a));
     assert(validate_audio_media_description_against_conformance_range(level_a_stereo.media, level_a) == Error::Ok);
     assert(validate_audio_stream_signaling(level_a_stereo) == Error::Ok);
+    assert(validate_audio_stream_signaling_against_conformance_ranges(level_a_stereo, supported_level_a) == Error::Ok);
+    assert(validate_audio_stream_signaling_against_conformance_ranges(level_a_stereo,
+                                                                      std::span<const AudioConformanceRange>{}) ==
+           Error::Unsupported);
 
     // Absence of channel-order is explicitly representable.
     // ST 2110-30 says absent channel-order means channels are treated as Undefined.
@@ -94,29 +107,50 @@ int main() {
 
     AudioStreamSignaling level_a_min_channels = make_level_a_stream(1);
     assert(validate_audio_stream_signaling(level_a_min_channels) == Error::Ok);
+    assert(validate_audio_stream_signaling_against_conformance_ranges(level_a_min_channels, supported_level_a) ==
+           Error::Ok);
 
     AudioStreamSignaling level_a_max_channels = make_level_a_stream(8);
     assert(validate_audio_stream_signaling(level_a_max_channels) == Error::Ok);
+    assert(validate_audio_stream_signaling_against_conformance_ranges(level_a_max_channels, supported_level_a) ==
+           Error::Ok);
 
     AudioStreamSignaling zero_channels = make_level_a_stream(0);
     assert(validate_audio_stream_signaling(zero_channels) == Error::InvalidValue);
+    assert(validate_audio_stream_signaling_against_conformance_ranges(zero_channels, supported_level_a) ==
+           Error::InvalidValue);
 
     AudioStreamSignaling too_many_level_a_channels = make_level_a_stream(9);
-    assert(validate_audio_stream_signaling(too_many_level_a_channels) == Error::InvalidValue);
+    assert(validate_audio_stream_signaling(too_many_level_a_channels) == Error::Ok);
+    assert(!audio_media_description_matches_conformance_range(too_many_level_a_channels.media, level_a));
+    assert(validate_audio_media_description_against_conformance_range(too_many_level_a_channels.media, level_a) ==
+           Error::Unsupported);
+    assert(validate_audio_stream_signaling_against_conformance_ranges(too_many_level_a_channels, supported_level_a) ==
+           Error::Unsupported);
 
     AudioStreamSignaling wrong_sampling_rate = make_level_a_stream(2);
     wrong_sampling_rate.media.sampling_rate_hz = 96000;
     assert(!audio_media_description_matches_conformance_range(wrong_sampling_rate.media, level_a));
-    assert(validate_audio_stream_signaling(wrong_sampling_rate) == Error::InvalidValue);
+    assert(validate_audio_media_description_against_conformance_range(wrong_sampling_rate.media, level_a) ==
+           Error::Unsupported);
+    assert(validate_audio_stream_signaling(wrong_sampling_rate) == Error::Ok);
+    assert(validate_audio_stream_signaling_against_conformance_ranges(wrong_sampling_rate, supported_level_a) ==
+           Error::Unsupported);
 
     AudioStreamSignaling wrong_packet_time = make_level_a_stream(2);
     wrong_packet_time.media.packet_time_us = 125;
     assert(!audio_media_description_matches_conformance_range(wrong_packet_time.media, level_a));
-    assert(validate_audio_stream_signaling(wrong_packet_time) == Error::InvalidValue);
+    assert(validate_audio_media_description_against_conformance_range(wrong_packet_time.media, level_a) ==
+           Error::Unsupported);
+    assert(validate_audio_stream_signaling(wrong_packet_time) == Error::Ok);
+    assert(validate_audio_stream_signaling_against_conformance_ranges(wrong_packet_time, supported_level_a) ==
+           Error::Unsupported);
 
     AudioStreamSignaling invalid_pcm_encoding = make_level_a_stream(2);
     invalid_pcm_encoding.media.pcm_encoding = static_cast<AudioPcmEncoding>(255);
     assert(validate_audio_stream_signaling(invalid_pcm_encoding) == Error::InvalidValue);
+    assert(validate_audio_stream_signaling_against_conformance_ranges(invalid_pcm_encoding, supported_level_a) ==
+           Error::InvalidValue);
 
     AudioStreamSignaling ordered_eight_channel = make_level_a_stream(8);
     ordered_eight_channel.channel_order =
@@ -127,6 +161,8 @@ int main() {
     assert(ordered_eight_channel.channel_order->raw_value == "SMPTE2110.(51,ST)");
     assert(validate_audio_channel_order_signaling(*ordered_eight_channel.channel_order) == Error::Ok);
     assert(validate_audio_stream_signaling(ordered_eight_channel) == Error::Ok);
+    assert(validate_audio_stream_signaling_against_conformance_ranges(ordered_eight_channel, supported_level_a) ==
+           Error::Ok);
 
     AudioStreamSignaling bad_empty_smpte2110_channel_order = make_level_a_stream(2);
     bad_empty_smpte2110_channel_order.channel_order =
@@ -142,6 +178,8 @@ int main() {
     explicitly_unspecified_channel_order.channel_order =
         AudioChannelOrderSignaling{AudioChannelOrderConvention::Unspecified, ""};
     assert(validate_audio_stream_signaling(explicitly_unspecified_channel_order) == Error::Ok);
+    assert(validate_audio_stream_signaling_against_conformance_ranges(explicitly_unspecified_channel_order,
+                                                                      supported_level_a) == Error::Ok);
 
     AudioStreamSignaling bad_unspecified_channel_order_with_raw_value = make_level_a_stream(2);
     bad_unspecified_channel_order_with_raw_value.channel_order =
@@ -156,6 +194,8 @@ int main() {
     assert(future_unknown_channel_order.channel_order->convention == AudioChannelOrderConvention::Other);
     assert(future_unknown_channel_order.channel_order->raw_value == "FUTURECONVENTION.(X)");
     assert(validate_audio_stream_signaling(future_unknown_channel_order) == Error::Ok);
+    assert(validate_audio_stream_signaling_against_conformance_ranges(future_unknown_channel_order,
+                                                                      supported_level_a) == Error::Ok);
 
     AudioStreamSignaling bad_empty_future_unknown_channel_order = make_level_a_stream(2);
     bad_empty_future_unknown_channel_order.channel_order =
