@@ -2077,7 +2077,7 @@
       - flush gap once;
       - or use another named policy.
     - concrete buffer helpers должны оставаться implementation detail, а runtime behavior — стать explicit и проверяемым на backend level.
-- [ ] 197H: Apply operational packet-size / `MAXUDP` policy in the socket receive parse path
+- [x] 197H: Apply operational packet-size / `MAXUDP` policy in the socket receive parse path
   - тип расхождения:
     - со стандартом + с правилами/архитектурой.
   - конкретное расхождение:
