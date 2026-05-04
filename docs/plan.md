@@ -1765,7 +1765,7 @@
       - parse/validate media-level `mediaclk` structurally;
       - distinguish malformed known forms from unknown future/open forms explicitly.
     - final audio ingestion should depend on parsed/validated timing objects, not on raw attribute-name presence.
-- [ ] 197F: Separate structural audio signaling validity from the current Level A receiver-support boundary
+- [x] 197F: Separate structural audio signaling validity from the current Level A receiver-support boundary
   - тип расхождения:
     - со стандартом + с правилами/архитектурой.
   - конкретное расхождение:

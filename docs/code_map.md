@@ -2763,118 +2763,133 @@
 
 ### libs/st2110core/include/st2110/audio_signaling.hpp
 - Роль:
-    - центральная standards-aware signaling/model boundary для текущего ST 2110-30 audio path.
-    - задает:
-        - modeled audio media description;
-        - modeled conformance-range policy;
-        - modeled channel-order signaling;
-        - stream-level validation rules.
-    - отделяет standards-facing audio signaling semantics от:
-        - raw SDP parsing;
-        - runtime `RxAudioConfig`;
-        - RTP/audio packet parsing;
-        - wire-sample decoding;
-        - audio buffer storage/layout;
-        - backend/socket runtime behavior.
+    - standards-aware ST 2110-30 audio signaling/model boundary.
+    - описывает structural audio stream metadata отдельно от runtime `RxAudioConfig`, SDP raw parsing, packet/depacketizer code, audio buffer layout, backend lifecycle, and concrete channel layout mapping.
+    - задает explicit split between:
+        - generic structural signaling validation;
+        - receiver/conformance support validation through explicit supported conformance ranges.
+    - содержит current Level A-oriented receiver baseline helper, but does not hardcode that baseline into generic signaling validation.
 - Связи:
-    - использует `error.hpp` для strict parse/validation results.
-    - используется `audio_channel_order.hpp` как lower-level parsed/effective channel-order boundary поверх этого signaling model.
-    - используется `audio_sdp_signaling_adapter.hpp` для raw SDP -> `AudioStreamSignaling` mapping.
-    - используется `audio_signaling_rx_config.hpp` для signaling -> `RxAudioConfig` projection.
-    - используется `audio_receiver_bootstrap.hpp` для aggregated bootstrap composition.
-    - runtime audio config in `rx_config.hpp` explicitly reuses:
-        - `AudioPcmBitDepth`;
-        - `AudioMediaDescription`;
-        - `AudioConformanceRange`;
-        - validation helpers from this file.
+    - использует `error.hpp` для validation result reporting.
+    - используется:
+        - `audio_signaling_rx_config.hpp` для signaling-to-runtime `RxAudioConfig` projection;
+        - `audio_sdp_signaling_adapter.hpp` / `audio_sdp_ingestion.hpp` для raw SDP ingestion into `AudioStreamSignaling`;
+        - `audio_channel_order.hpp` для detailed channel-order parsing / effective Undefined-group mapping;
+        - audio receiver bootstrap helpers;
+        - tests:
+            - `tests/audio_signaling_model_test.cpp`;
+            - `tests/audio_signaling_to_rx_config_test.cpp`;
+            - `tests/audio_sdp_signaling_adapter_test.cpp`;
+            - `tests/audio_channel_order_boundary_test.cpp`.
 - Сущности:
     - `AudioConformanceLevel`
-        - modeled ST 2110-30 conformance-level axis:
-            - `LevelA`
-            - `LevelAX`
-            - `LevelB`
-            - `LevelBX`
-            - `LevelC`
+        - modeled ST 2110-30 receiver/sender conformance level axis:
+            - `LevelA`;
+            - `LevelAX`;
+            - `LevelB`;
+            - `LevelBX`;
+            - `LevelC`;
             - `LevelCX`.
     - `AudioConformanceRange`
-        - explicit modeled conformance/support range:
-            - `level`
-            - `sampling_rate_hz`
-            - `packet_time_us`
-            - `min_channels`
+        - explicit conformance/support row:
+            - `level`;
+            - `sampling_rate_hz`;
+            - `packet_time_us`;
+            - `min_channels`;
             - `max_channels`.
     - `AudioPcmEncoding`
-        - current modeled PCM encoding axis:
+        - modeled PCM encoding axis:
             - `LinearPcm`.
     - `AudioPcmBitDepth`
-        - explicit PCM bit-depth axis:
-            - `Bits16`
+        - modeled PCM bit-depth axis:
+            - `Bits16`;
             - `Bits24`.
-    - `validate_audio_pcm_bit_depth(AudioPcmBitDepth) -> Error`
-        - validates known modeled bit-depth enum values.
     - `AudioMediaDescription`
-        - modeled audio media/signaling description:
-            - `pcm_encoding`
-            - `pcm_bit_depth`
-            - `sampling_rate_hz`
-            - `packet_time_us`
+        - structural audio media-description model:
+            - `pcm_encoding`;
+            - `pcm_bit_depth`;
+            - `sampling_rate_hz`;
+            - `packet_time_us`;
             - `channel_count`.
     - `AudioChannelOrderConvention`
-        - modeled channel-order signaling convention:
-            - `Unspecified`
-            - `Smpte2110`
+        - modeled channel-order convention axis:
+            - `Unspecified`;
+            - `Smpte2110`;
             - `Other`.
     - `AudioChannelOrderSignaling`
-        - raw/modeled channel-order signaling object:
-            - `convention`
+        - raw channel-order signaling representation:
+            - `convention`;
             - `raw_value`.
     - `AudioStreamSignaling`
-        - final modeled audio stream signaling:
-            - `media`
+        - top-level audio stream signaling model:
+            - `media`;
             - optional `channel_order`.
     - `AudioChannelOrderDeclaredCountValidation`
-        - helper result object for strict SMPTE 2110 channel-order declared-count parsing:
-            - `error`
-            - `declared_channel_count`
+        - local helper result for channel-order declared-count validation:
+            - `error`;
+            - `declared_channel_count`;
             - `has_declared_channel_count`.
-    - `audio_level_a_receiver_baseline() -> AudioConformanceRange`
-        - explicit current default standards-aware receiver baseline:
-            - `48 kHz`
-            - `1 ms`
-            - `1..8 channels`
-            - `LevelA`.
-    - conformance/media validation helpers:
+    - helper functions:
+        - `validate_audio_pcm_bit_depth(AudioPcmBitDepth) -> Error`
+            - accepts `Bits16` and `Bits24`;
+            - rejects unknown enum values as `InvalidValue`.
+        - `audio_level_a_receiver_baseline() -> AudioConformanceRange`
+            - returns current explicit Level A-oriented receiver baseline:
+                - `48 kHz`;
+                - `1000 us`;
+                - `1..8 channels`.
         - `validate_audio_conformance_range(const AudioConformanceRange&) -> Error`
-            - validates structural correctness of a modeled conformance range.
+            - validates support/conformance range shape;
+            - rejects zero rate, zero packet time, invalid channel ranges, and unknown level enum values.
         - `audio_media_description_matches_conformance_range(const AudioMediaDescription&, const AudioConformanceRange&) -> bool`
-            - pure matching helper for sampling-rate / packet-time / channel-range comparison.
+            - tests rate, packet time, and channel-count inclusion against one supported range.
+        - `validate_audio_media_description_structure(const AudioMediaDescription&) -> Error`
+            - structural-only media validation;
+            - accepts structurally valid non-Level-A values;
+            - rejects invalid PCM encoding enum, invalid PCM bit depth, zero sampling rate, zero packet time, and zero channel count.
         - `validate_audio_media_description_against_conformance_range(const AudioMediaDescription&, const AudioConformanceRange&) -> Error`
-            - validates:
-                - encoding;
-                - bit depth;
-                - conformance-range structure;
-                - media/range compatibility.
-    - channel-order parsing/validation helpers:
-        - `audio_signaling_channel_order_is_digit(...)`
-        - `audio_signaling_channel_order_token_contains_ws(...)`
-        - `audio_signaling_smpte2110_channel_order_symbol_count(...)`
-            - validates one SMPTE 2110 channel-order symbol and derives its declared channel count.
-        - `validate_smpte2110_audio_channel_order_raw_value_and_count(...)`
-            - strictly validates `SMPTE2110.(...)` raw syntax and total declared channel count.
+            - validates media structure and range structure first;
+            - returns `Unsupported` when structurally valid media does not match the supplied conformance range.
+        - `audio_signaling_smpte2110_channel_order_symbol_count(std::string_view) -> AudioChannelOrderDeclaredCountValidation`
+            - local count parser for known SMPTE2110 grouping symbols:
+                - `M`;
+                - `ST`;
+                - `DM`;
+                - `LtRt`;
+                - `51`;
+                - `71`;
+                - `222`;
+                - `SGRP`;
+                - `U01`..`U64`.
+            - rejects malformed symbols as `InvalidValue`;
+            - returns `Unsupported` for unknown non-empty symbols.
+        - `validate_smpte2110_audio_channel_order_raw_value_and_count(std::string_view) -> AudioChannelOrderDeclaredCountValidation`
+            - validates strict `SMPTE2110.(...)` raw value shape;
+            - derives declared channel count;
+            - rejects missing prefix, malformed parentheses, empty lists, empty symbols, malformed `Uxx`, whitespace inside symbols, zero/overflow declared count.
         - `validate_audio_channel_order_signaling(const AudioChannelOrderSignaling&) -> Error`
-            - validates convention/raw-value consistency:
-                - `Unspecified` requires empty `raw_value`;
-                - `Smpte2110` requires strict `SMPTE2110.(...)` form;
-                - `Other` requires non-empty raw token.
-    - stream-level validation:
+            - validates raw channel-order signaling by convention:
+                - `Unspecified` requires empty raw value;
+                - `Smpte2110` requires valid strict `SMPTE2110.(...)` value;
+                - `Other` requires non-empty raw value;
+                - unknown convention enum rejected as `InvalidValue`.
         - `validate_audio_stream_signaling(const AudioStreamSignaling&) -> Error`
-            - validates audio media against the current Level A receiver baseline;
+            - structural stream-level validation;
+            - validates media description structure;
             - validates optional channel-order signaling;
-            - for `Smpte2110` channel order, rejects declared channel counts that exceed signaled media `channel_count`.
+            - for SMPTE2110 channel-order, rejects declared channel count greater than actual `media.channel_count`;
+            - does not reject structurally valid but currently unsupported sampling rates, packet times, or channel-count ranges.
+        - `validate_audio_stream_signaling_against_conformance_ranges(const AudioStreamSignaling&, std::span<const AudioConformanceRange>) -> Error`
+            - explicit receiver/support validation boundary;
+            - validates structural stream signaling first;
+            - rejects empty supported-range set as `Unsupported`;
+            - validates every supplied conformance range;
+            - returns `Ok` when any supported range matches;
+            - returns `Unsupported` for structurally valid but unsupported rate / packet time / channel-count combinations.
 - Примечание:
-    - current default standards-aware acceptance is explicitly Level A-oriented, but the architecture is already shaped around extensible `AudioConformanceRange` rather than hardcoding Level A into every consumer.
-    - this file models channel-order signaling and strict validation, but it does not parse channel groups into effective layout objects; that richer parsed/effective boundary lives in `audio_channel_order.hpp`.
-    - this file does not project signaling into runtime transport fields such as UDP port, payload type, or IPs; that remains in `audio_signaling_rx_config.hpp` and `audio_receiver_bootstrap.hpp`.
+    - Generic `validate_audio_stream_signaling(...)` is intentionally structural-only. Current receiver support is applied only through `validate_audio_stream_signaling_against_conformance_ranges(...)` and runtime projection helpers.
+    - The current MVP receiver baseline remains Level A-oriented, but it is modeled as explicit support policy instead of being hardcoded into the signaling model.
+    - Detailed normalized channel-order grouping and effective Undefined remainder behavior live in `audio_channel_order.hpp`; this file keeps the raw signaling model and lightweight structural validation boundary.
 
 ### libs/st2110core/include/st2110/audio_signaling_rx_config.hpp
 - Роль:
@@ -3189,105 +3204,93 @@
 
 ### libs/st2110core/include/st2110/audio_channel_order.hpp
 - Роль:
-    - explicit modeled boundary для ST 2110-30 `channel-order` parsing, validation и effective channel grouping.
-    - отделяет signaled channel-group semantics от internal audio buffer layout, runtime channel reordering, packet assembly и backend transport.
-    - задает локальную точку будущего расширения для channel mapping / layout adaptation без повторного парсинга raw SDP strings.
+    - explicit audio channel-order parsing / effective-layout boundary for ST 2110-30 audio signaling.
+    - отделяет raw SDP/signaling representation from normalized channel-group interpretation used by future audio buffer/layout/backend code.
+    - локализует SMPTE2110 channel-order grammar, declared-channel-count derivation, Undefined remainder behavior, and validation against actual stream channel count.
 - Связи:
-    - использует `audio_signaling.hpp` for:
-        - `AudioChannelOrderConvention`;
-        - `AudioChannelOrderSignaling`;
+    - использует `audio_signaling.hpp` для:
         - `AudioStreamSignaling`;
+        - `AudioChannelOrderSignaling`;
+        - `AudioChannelOrderConvention`;
         - `validate_audio_channel_order_signaling(...)`;
-        - `validate_audio_media_description_against_conformance_range(...)`;
-        - `audio_level_a_receiver_baseline()`.
-    - использует `error.hpp` для explicit parse/validation result reporting.
-    - потребляется `audio_receiver_bootstrap.hpp` при формировании `AudioReceiverBootstrapConfig::channel_order`.
-    - потребляется `socket_rx_audio_backend.hpp` for:
-        - `SocketRxAudioOperationalConfig::channel_order`;
-        - `validate_socket_rx_audio_operational_config(...)`;
-        - explicit manual/audio-operational projection path, где backend получает уже parsed/effective channel-order model, а не raw signaling string.
-    - indirectly fed from raw SDP through `audio_sdp_signaling_adapter.hpp`, который maps raw `channel-order` text into `AudioChannelOrderSignaling`.
-    - future audio layout/reordering/runtime delivery code should consume `ParsedAudioChannelOrder` from this boundary rather than reparsing signaling strings.
+        - `validate_audio_stream_signaling(...)`.
+    - использует `error.hpp` для strict validation/result reporting.
+    - используется тестом `tests/audio_channel_order_boundary_test.cpp`.
+    - должен использоваться будущими audio depacketizer / frame layout / backend delivery layers как normalized channel-order boundary вместо повторного разбора raw `channel-order` строк.
 - Сущности:
     - `AudioChannelGroupKind`
-        - explicit modeled channel-group kinds:
-            - `Mono`
-            - `Stereo`
-            - `DualMono`
-            - `MatrixStereo`
-            - `FiveOne`
-            - `SevenOne`
-            - `TwentyTwoTwo`
-            - `SdiGroup`
-            - `Undefined`
+        - normalized group-kind enum:
+            - `Mono`;
+            - `Stereo`;
+            - `DualMono`;
+            - `MatrixStereo`;
+            - `FiveOne`;
+            - `SevenOne`;
+            - `TwentyTwoTwo`;
+            - `SdiGroup`;
+            - `Undefined`;
             - `Other`.
     - `AudioChannelOrderGroup`
-        - one parsed/effective channel group:
-            - `kind`
-            - `symbol`
+        - one parsed channel group:
+            - `kind`;
+            - `symbol`;
             - `channel_count`.
     - `ParsedAudioChannelOrder`
-        - parsed/effective channel-order model:
-            - `convention`
-            - `raw_value`
-            - ordered `groups`
+        - normalized parsed/effective channel-order representation:
+            - `convention`;
+            - `raw_value`;
+            - `groups`;
             - `declared_channel_count`.
-    - low-level helpers:
-        - `is_audio_channel_order_digit(...)`
-            - local ASCII digit check used by `Uxx` parsing.
-        - `audio_channel_order_token_contains_ws(...)`
-            - rejects whitespace inside channel-order group tokens.
-        - `parse_audio_channel_order_u_two_digit_count(...)`
-            - strictly parses `U01`..`U64`;
-            - rejects malformed, zero, and out-of-range undefined-group counts.
-        - `make_audio_channel_order_undefined_group(...)`
-            - creates canonical effective `Undefined` group symbols from a channel count.
-        - `audio_channel_order_group_from_smpte2110_symbol(...)`
-            - maps known `SMPTE2110` grouping symbols such as `M`, `ST`, `DM`, `LtRt`, `51`, `71`, `222`, `SGRP`, and `Uxx` into `AudioChannelOrderGroup`;
-            - returns `Unsupported` for syntactically valid but currently unmodeled symbols.
-        - `parse_smpte2110_audio_channel_order_raw_value(...)`
-            - strictly parses `SMPTE2110.(...)` raw value into ordered groups;
-            - accumulates `declared_channel_count`;
-            - rejects malformed separators, empty groups, and count overflow.
-    - public entry points:
+    - helper functions:
+        - `parse_audio_channel_order_u_two_digit_count(std::string_view) -> std::expected<uint16_t, Error>`
+            - parses `U01`..`U64`;
+            - rejects malformed, zero, and out-of-range Undefined group counts.
+        - `make_audio_channel_order_undefined_group(uint16_t) -> std::expected<AudioChannelOrderGroup, Error>`
+            - creates canonical `Uxx` Undefined group for `1..64` channels.
+        - `audio_channel_order_group_from_smpte2110_symbol(std::string_view) -> std::expected<AudioChannelOrderGroup, Error>`
+            - maps known SMPTE2110 grouping symbols:
+                - `M`;
+                - `ST`;
+                - `DM`;
+                - `LtRt`;
+                - `51`;
+                - `71`;
+                - `222`;
+                - `SGRP`;
+                - `U01`..`U64`.
+            - rejects malformed symbols as `InvalidValue`;
+            - returns `Unsupported` for syntactically non-empty but unknown SMPTE2110 group symbols.
+        - `parse_smpte2110_audio_channel_order_raw_value(std::string_view) -> std::expected<ParsedAudioChannelOrder, Error>`
+            - parses strict `SMPTE2110.(...)` raw values;
+            - rejects missing prefix, missing parentheses, empty group list, empty group symbols, malformed `Uxx`, whitespace inside symbols, and declared-count overflow.
         - `parse_audio_channel_order_signaling(const AudioChannelOrderSignaling&) -> std::expected<ParsedAudioChannelOrder, Error>`
-            - validates the signaling object first;
-            - returns explicit parsed models for:
-                - `Unspecified` with empty `groups` / zero `declared_channel_count`;
-                - `Other` with preserved `raw_value` and empty `groups` / zero `declared_channel_count`;
-            - returns detailed group structure for `Smpte2110`.
+            - validates `AudioChannelOrderSignaling` first;
+            - preserves `Unspecified` and `Other` conventions without forcing them into SMPTE2110 groups;
+            - parses SMPTE2110 convention into normalized groups.
         - `validate_audio_channel_order_against_channel_count(const AudioChannelOrderSignaling&, uint16_t) -> Error`
-            - rejects zero actual channel count;
-            - validates/parses channel-order signaling;
-            - for `Smpte2110`, rejects declarations whose total declared channels exceed actual stream channel count.
+            - rejects zero stream channel count;
+            - rejects malformed channel-order signaling;
+            - rejects SMPTE2110 declared channel count greater than actual stream channel count.
         - `effective_audio_channel_order_from_audio_stream_signaling(const AudioStreamSignaling&) -> std::expected<ParsedAudioChannelOrder, Error>`
-            - validates the stream against the current Level A receiver baseline before deriving an effective channel-order result;
-            - absent or `Unspecified` channel-order becomes one effective `Undefined` group covering all channels;
-            - exact `Smpte2110` declarations are preserved;
-            - under-declared `Smpte2110` channel-order gets an appended effective `Undefined` remainder group;
-            - non-`Smpte2110` `Other` convention is preserved as raw signaling without inventing a concrete layout/group mapping.
+            - validates the whole audio stream signaling first;
+            - if channel-order is absent or explicitly `Unspecified`, creates one effective Undefined group covering all channels;
+            - if SMPTE2110 channel-order declares fewer channels than the stream carries, appends a canonical Undefined remainder group;
+            - preserves `Other` convention as parsed raw metadata without mapping it to known layout groups.
         - `validate_parsed_audio_channel_order(const ParsedAudioChannelOrder&) -> Error`
-            - validates parsed/effective model shape after signaling parsing or adapter-side synthesis;
-            - checks:
-                - known `convention` values;
-                - known `AudioChannelGroupKind` values;
-                - non-zero `channel_count` for every present group;
-                - non-empty `symbol` for every present group;
-                - no `declared_channel_count` overflow;
-                - equality between summed group channel counts and `declared_channel_count` when groups are present;
-            - allows empty `groups` only when `declared_channel_count == 0`.
+            - validates normalized parsed/effective representation invariants:
+                - known convention enum;
+                - known group-kind enum;
+                - non-zero group channel counts;
+                - non-empty group symbols;
+                - declared count equals sum of group counts when groups exist.
         - `validate_parsed_audio_channel_order_against_channel_count(const ParsedAudioChannelOrder&, uint16_t) -> Error`
-            - validates parsed model first;
-            - rejects zero runtime channel count;
-            - for `Unspecified` and `Smpte2110`, requires exact equality between parsed `declared_channel_count` and runtime channel count;
-            - for `Other`, allows either:
-                - `declared_channel_count == 0`;
-                - or exact equality with runtime channel count.
+            - validates normalized representation against actual stream channel count;
+            - requires exact count match for `Unspecified` and `Smpte2110`;
+            - allows `Other` without declared count, but rejects mismatching non-zero declared count.
 - Примечание:
-    - this file intentionally does not implement audio sample buffer layout, channel reordering, audio packet assembly, or OBS/backend delivery behavior;
-    - `Other` channel-order conventions are preserved as signaling but are not interpreted into a concrete channel layout here;
-    - current socket-audio operational path consumes this parsed/effective boundary explicitly, so backend start does not need to reparse `channel-order` strings or invent unnamed defaults at runtime;
-    - future channel mapping/layout adaptation should consume `ParsedAudioChannelOrder` or `AudioReceiverBootstrapConfig::channel_order` rather than reparsing `channel-order` text.
+    - ST 2110-30 says absent `channel-order` means channels are treated as Undefined; this file models that as an effective `Uxx` group rather than as an implicit prose-only rule.
+    - Partial SMPTE2110 channel-order is accepted only when declared channels do not exceed actual channel count; missing tail channels are modeled explicitly as Undefined.
+    - This boundary intentionally does not define internal audio sample-buffer layout or OBS channel mapping yet; it provides the normalized signaling/layout input for those future layers.
 
 ### libs/st2110core/include/st2110/audio_frame.hpp
 - Роль:
