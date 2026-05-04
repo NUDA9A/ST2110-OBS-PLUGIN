@@ -1078,38 +1078,100 @@
 ### tests/audio_signaling_to_rx_config_test.cpp
 - Роль:
     - проверяет projection from `AudioStreamSignaling` to `RxAudioConfig`.
-    - покрывает:
-        - valid Level A stereo projection;
-        - min/max Level A channel counts;
-        - channel-order presence not leaking into runtime buffer layout yet;
-        - projection of signaled `pcm_bit_depth` into `RxAudioConfig::pcm_bit_depth`;
-        - invalid signaling rejection;
-        - bad UDP port;
-        - bad RTP payload type;
-        - empty destination IP;
-        - unsupported runtime audio sample format rejection.
-    - фиксирует, что:
-        - `samples_per_packet` выводится из `sampling_rate_hz` + `packet_time_us`, а не задается как hardcoded runtime constant;
-        - runtime audio bit depth is now carried explicitly from signaling instead of being inferred later inside the backend.
+    - фиксирует, что runtime projection keeps the current receiver-support boundary separate from structural signaling validity.
+- Покрывает:
+    - public projection helper shape:
+        - `rx_audio_config_from_audio_stream_signaling(...) -> std::expected<RxAudioConfig, Error>`.
+    - successful projection of current Level A-oriented signaling:
+        - `sampling_rate_hz`;
+        - `packet_time_us`;
+        - derived `samples_per_packet`;
+        - `channel_count`;
+        - `udp_port`;
+        - `payload_type`;
+        - `local_ip`;
+        - `dest_ip`;
+        - `format`;
+        - `pcm_bit_depth`.
+    - Level A min/max channel-count projection:
+        - `1` channel accepted;
+        - `8` channels accepted;
+        - empty local IP preserved as valid.
+    - projection with valid channel-order signaling:
+        - SMPTE 2110 channel-order signaling accepted without altering runtime channel-count projection.
+    - bit-depth projection:
+        - `L24` path preserved as `Bits24`;
+        - `L16` path preserved as `Bits16`.
+    - explicit separation between structural signaling validity and runtime support:
+        - structurally valid `96000 Hz` signaling rejected by runtime projection as `Unsupported`;
+        - structurally valid `125 us` packet-time signaling rejected by runtime projection as `Unsupported`;
+        - structurally valid `9-channel` signaling rejected by runtime projection as `Unsupported`.
+    - runtime transport/config validation after signaling projection:
+        - UDP port `0` rejected as `InvalidValue`;
+        - non-dynamic RTP payload type rejected as `InvalidValue`;
+        - empty destination IP rejected as `InvalidValue`.
+    - runtime sample-format support boundary:
+        - unsupported runtime sample format rejected as `Unsupported`.
+- Фиксирует:
+    - `AudioStreamSignaling` may remain structurally valid outside the current Level A-oriented receiver baseline.
+    - rejection of unsupported sample rate / packet time / channel count now happens at `RxAudioConfig` runtime projection/support validation, not at the structural signaling boundary.
+    - `samples_per_packet` remains derived from signaling rate and packet time instead of being hardcoded.
 
 ### tests/audio_signaling_model_test.cpp
 - Роль:
-    - проверяет initial ST 2110-30 audio signaling model shape;
-    - фиксирует Level A-oriented receiver baseline:
-        - 48 kHz;
-        - 1 ms packet time;
-        - 1..8 channels;
-    - проверяет separation между signaled audio/media properties и future runtime audio buffer layout;
-    - проверяет initial structural validation boundary:
-        - conformance range validation;
-        - media-description-to-baseline validation;
-        - valid / invalid Level A channel counts;
-        - valid / invalid sampling rate and packet time;
-        - optional absent channel-order behavior;
-        - `SMPTE2110.(...)` channel-order structural validation;
-        - declared channel-order count rejection when greater than stream channel count;
-        - explicit invalid `Unspecified` channel-order raw value rejection;
-        - forward-compatible `Other` channel-order preservation.
+    - проверяет modeled `AudioStreamSignaling` validation.
+    - фиксирует разделение между:
+        - structural audio signaling validation;
+        - explicit receiver/conformance support validation against supported conformance ranges.
+- Покрывает:
+    - базовые modeled audio enums / helper signatures:
+        - `AudioConformanceLevel`;
+        - `AudioPcmEncoding`;
+        - `AudioChannelOrderConvention`;
+        - `validate_audio_conformance_range(...)`;
+        - `audio_media_description_matches_conformance_range(...)`;
+        - `validate_audio_media_description_against_conformance_range(...)`;
+        - `validate_audio_stream_signaling(...)`;
+        - `validate_audio_stream_signaling_against_conformance_ranges(...)`.
+    - `audio_level_a_receiver_baseline()`:
+        - `48 kHz`;
+        - `1000 us`;
+        - `1..8 channels`.
+    - structural validation of audio conformance ranges:
+        - zero sampling rate rejected;
+        - zero packet time rejected;
+        - zero min channel count rejected;
+        - reversed channel range rejected;
+        - invalid conformance level enum rejected.
+    - structural signaling acceptance:
+        - valid Level A stereo accepted;
+        - valid min/max Level A channel counts accepted;
+        - zero channel count rejected;
+        - invalid PCM encoding rejected.
+    - explicit separation of structural signaling from current receiver-support boundary:
+        - `96000 Hz` signaling remains structurally valid;
+        - `125 us` packet-time signaling remains structurally valid;
+        - `9-channel` signaling remains structurally valid;
+        - the same cases fail only through conformance-range validation as `Unsupported`.
+    - `validate_audio_media_description_against_conformance_range(...)` behavior:
+        - matching Level A media accepted;
+        - structurally valid but non-matching media rejected as `Unsupported`.
+    - `validate_audio_stream_signaling_against_conformance_ranges(...)` behavior:
+        - matching Level A signaling accepted;
+        - empty supported-range set rejected as `Unsupported`;
+        - structurally invalid signaling still rejected as `InvalidValue`.
+    - audio channel-order signaling validation:
+        - valid SMPTE 2110 channel-order accepted;
+        - declared SMPTE 2110 channel count must not exceed actual channel count;
+        - empty or malformed SMPTE 2110 value rejected;
+        - `Unspecified` with empty raw value accepted;
+        - `Unspecified` with non-empty raw value rejected;
+        - `Other` with non-empty raw value accepted;
+        - `Other` with empty raw value rejected;
+        - invalid channel-order convention enum rejected.
+- Фиксирует:
+    - generic `validate_audio_stream_signaling(...)` is structural-only and no longer hardcodes the current Level A receiver-support boundary.
+    - current support limits remain explicit through `validate_audio_stream_signaling_against_conformance_ranges(...)` instead of being collapsed into the signaling/model boundary.
 
 ### tests/audio_channel_order_boundary_test.cpp
 - Роль:
@@ -1201,18 +1263,39 @@
 
 ### tests/audio_sdp_signaling_adapter_test.cpp
 - Роль:
-    - проверяет adapter from raw parsed audio SDP media section to `AudioStreamSignaling`.
-    - покрывает:
-        - valid Level A raw SDP mapping;
-        - valid Level A min/max channel counts;
-        - mapping of `L24` / `L16` RTP encoding names to `AudioPcmEncoding::LinearPcm`;
-        - explicit mapping of `L24` / `L16` RTP encoding names to `AudioPcmBitDepth::{Bits24, Bits16}`;
-        - rejection of unsupported encoding names through `Unsupported`;
-        - rejection of missing `ptime`;
-        - rejection of missing explicit channel count in selected `rtpmap`;
-        - rejection of invalid baseline values through `validate_audio_stream_signaling(...)`;
-        - mapping of payload-bound `fmtp channel-order=...` into `AudioChannelOrderSignaling`;
-        - preservation of adapter boundary separation from `RxAudioConfig`, socket/backend transport fields, and audio buffer layout.
+    - проверяет final raw SDP audio media-section ingestion into `AudioStreamSignaling`.
+    - фиксирует, что raw SDP -> signaling adapter now builds structurally valid audio signaling independently from the current Level A receiver-support boundary.
+- Покрывает:
+    - public adapter shape:
+        - `audio_stream_signaling_from_raw_audio_sdp_media_section(...) -> std::expected<AudioStreamSignaling, Error>`.
+    - successful SDP ingestion for valid PCM audio SDP:
+        - `a=rtpmap` parsing for `L24` and `L16`;
+        - `a=ptime` parsing into microseconds;
+        - channel-count extraction from `rtpmap`;
+        - mapping to `AudioPcmEncoding::LinearPcm`;
+        - mapping to `AudioPcmBitDepth::Bits24` / `Bits16`.
+    - successful channel-order ingestion:
+        - `a=fmtp ... channel-order=SMPTE2110.(...)` mapped to `AudioChannelOrderConvention::Smpte2110`;
+        - vendor/other `channel-order` mapped to `AudioChannelOrderConvention::Other`.
+    - structural signaling validation after SDP ingestion:
+        - standard Level A SDP accepted structurally;
+        - explicit validation against supported Level A conformance ranges accepted for matching cases.
+    - corrected raw SDP -> signaling behavior for structurally valid but currently unsupported audio streams:
+        - `L24/96000/2` with `ptime:1` now ingests successfully as structurally valid signaling;
+        - `L24/48000/2` with `ptime:0.125` now ingests successfully as structurally valid signaling;
+        - both cases are rejected only by explicit conformance-range validation as `Unsupported`.
+    - unsupported non-PCM encoding handling:
+        - `OPUS` rejected as `Unsupported`.
+    - strict malformed-SDP rejection:
+        - missing `ptime` rejected as `InvalidValue`;
+        - missing channel count in `rtpmap` rejected as `InvalidValue`.
+    - raw SDP attribute-boundary behavior:
+        - absent `channel-order` remains explicitly representable;
+        - standalone unknown `a=channel-order:...` attribute is preserved in `unknown_attributes` and does not populate the parsed `channel_order` field.
+- Фиксирует:
+    - SDP ingestion no longer collapses structural audio signaling validity into the current Level A-oriented receiver-support boundary.
+    - explicit support rejection remains available only through `validate_audio_stream_signaling_against_conformance_ranges(...)`, not through the generic SDP-to-signaling adapter.
+    - malformed SDP is still rejected strictly and independently from support-policy decisions.
 
 ### tests/audio_sdp_ingestion_test.cpp
 - Роль:

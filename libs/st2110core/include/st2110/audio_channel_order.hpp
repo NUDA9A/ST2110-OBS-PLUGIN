@@ -270,9 +270,7 @@ validate_audio_channel_order_against_channel_count(const AudioChannelOrderSignal
 
 [[nodiscard]] inline std::expected<ParsedAudioChannelOrder, Error>
 effective_audio_channel_order_from_audio_stream_signaling(const AudioStreamSignaling &signaling) {
-    if (Error err = validate_audio_media_description_against_conformance_range(signaling.media,
-                                                                               audio_level_a_receiver_baseline());
-        err != Error::Ok) {
+    if (const Error err = validate_audio_stream_signaling(signaling); err != Error::Ok) {
         return std::unexpected(err);
     }
 

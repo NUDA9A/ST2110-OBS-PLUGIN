@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -27,7 +28,7 @@ enum class AudioPcmBitDepth {
     Bits24,
 };
 
-[[nodiscard]] inline constexpr Error validate_audio_pcm_bit_depth(AudioPcmBitDepth bit_depth) {
+[[nodiscard]] inline Error validate_audio_pcm_bit_depth(AudioPcmBitDepth bit_depth) {
     switch (bit_depth) {
     case AudioPcmBitDepth::Bits16:
     case AudioPcmBitDepth::Bits24:
@@ -67,7 +68,7 @@ struct AudioChannelOrderDeclaredCountValidation {
     return {AudioConformanceLevel::LevelA, 48000, 1000, 1, 8};
 }
 
-[[nodiscard]] inline constexpr Error validate_audio_conformance_range(const AudioConformanceRange &range) {
+[[nodiscard]] constexpr Error validate_audio_conformance_range(const AudioConformanceRange &range) {
     if (range.sampling_rate_hz == 0) {
         return Error::InvalidValue;
     }
@@ -96,9 +97,8 @@ struct AudioChannelOrderDeclaredCountValidation {
     return Error::Ok;
 }
 
-[[nodiscard]] inline constexpr bool
-audio_media_description_matches_conformance_range(const AudioMediaDescription &media,
-                                                  const AudioConformanceRange &range) {
+[[nodiscard]] inline bool audio_media_description_matches_conformance_range(const AudioMediaDescription &media,
+                                                                            const AudioConformanceRange &range) {
     if (media.sampling_rate_hz != range.sampling_rate_hz) {
         return false;
     }
@@ -112,9 +112,7 @@ audio_media_description_matches_conformance_range(const AudioMediaDescription &m
     return true;
 }
 
-[[nodiscard]] inline constexpr Error
-validate_audio_media_description_against_conformance_range(const AudioMediaDescription &media,
-                                                           const AudioConformanceRange &range) {
+[[nodiscard]] inline Error validate_audio_media_description_structure(const AudioMediaDescription &media) {
     switch (media.pcm_encoding) {
     case AudioPcmEncoding::LinearPcm:
         break;
@@ -126,11 +124,32 @@ validate_audio_media_description_against_conformance_range(const AudioMediaDescr
         return err;
     }
 
+    if (media.sampling_rate_hz == 0) {
+        return Error::InvalidValue;
+    }
+    if (media.packet_time_us == 0) {
+        return Error::InvalidValue;
+    }
+    if (media.channel_count == 0) {
+        return Error::InvalidValue;
+    }
+
+    return Error::Ok;
+}
+
+[[nodiscard]] inline Error
+validate_audio_media_description_against_conformance_range(const AudioMediaDescription &media,
+                                                           const AudioConformanceRange &range) {
+    if (Error err = validate_audio_media_description_structure(media); err != Error::Ok) {
+        return err;
+    }
+
     if (Error err = validate_audio_conformance_range(range); err != Error::Ok) {
         return err;
     }
+
     if (!audio_media_description_matches_conformance_range(media, range)) {
-        return Error::InvalidValue;
+        return Error::Unsupported;
     }
 
     return Error::Ok;
@@ -342,9 +361,7 @@ validate_smpte2110_audio_channel_order_raw_value_and_count(std::string_view raw_
 }
 
 [[nodiscard]] inline Error validate_audio_stream_signaling(const AudioStreamSignaling &signaling) {
-    if (Error err = validate_audio_media_description_against_conformance_range(signaling.media,
-                                                                               audio_level_a_receiver_baseline());
-        err != Error::Ok) {
+    if (Error err = validate_audio_media_description_structure(signaling.media); err != Error::Ok) {
         return err;
     }
 
@@ -369,6 +386,31 @@ validate_smpte2110_audio_channel_order_raw_value_and_count(std::string_view raw_
 
     return Error::Ok;
 }
+
+[[nodiscard]] inline Error
+validate_audio_stream_signaling_against_conformance_ranges(const AudioStreamSignaling &signaling,
+                                                           std::span<const AudioConformanceRange> supported_ranges) {
+    if (Error err = validate_audio_stream_signaling(signaling); err != Error::Ok) {
+        return err;
+    }
+
+    if (supported_ranges.empty()) {
+        return Error::Unsupported;
+    }
+
+    for (const AudioConformanceRange &range : supported_ranges) {
+        if (Error err = validate_audio_conformance_range(range); err != Error::Ok) {
+            return err;
+        }
+
+        if (audio_media_description_matches_conformance_range(signaling.media, range)) {
+            return Error::Ok;
+        }
+    }
+
+    return Error::Unsupported;
+}
+
 } // namespace st2110
 
 #endif // ST2110_OBS_PLUGIN_AUDIO_SIGNALING_HPP
