@@ -1,0 +1,652 @@
+### libs/st2110core/include/st2110/signaling_structs.hpp
+- Роль:
+    - aggregate modeled-types header для standards-aware video signaling / bootstrap domain.
+    - хранит shared enums/structs для:
+        - video media description;
+        - timing/reference-clock signaling fields;
+        - sender-type/timing fields;
+        - aggregated receiver bootstrap result.
+    - intentionally separates pure modeled data types from validation, projection, SDP-ingestion logic и concrete backend/runtime behavior.
+    - now also carries explicit video reorder-buffer bootstrap data alongside packet-parse, receive-pipeline, timestamp-mapper и timing bootstrap data.
+- Связи:
+    - использует:
+        - `packet_parse.hpp` for `PacketParsePolicy`;
+        - `rx_config.hpp` for `RxVideoConfig`;
+        - `video_packing_mode.hpp` for `VideoPackingMode`;
+        - `video_receive_pipeline.hpp` for `VideoReceivePipelineConfig`;
+        - `video_receiver_timing.hpp` for `VideoReceiverTimingConfig`;
+        - `video_scan_mode.hpp` for `VideoScanMode`;
+        - `video_timestamp_mapping.hpp` for `VideoRtpTimestampMapperConfig`;
+        - `video_reorder_policy.hpp` for `VideoReorderBufferConfig`.
+    - используется `video_signaling.hpp` как lower data-model layer for:
+        - signaling validation;
+        - runtime projection;
+        - packet-parse-policy projection;
+        - receive-pipeline projection;
+        - timestamp-mapper projection;
+        - bootstrap composition.
+    - используется `video_receiver_timing_signaling.hpp` для timing-aware bootstrap composition over `VideoStreamSignaling`.
+    - используется socket operational adapter layer, в частности `socket_rx_video_backend.hpp`, при projection:
+        - `VideoReceiverBootstrapConfig` -> `SocketRxVideoOperationalConfig`.
+    - не содержит SDP parsing, validation helpers, runtime support checks, operational config projection, or backend logic by itself.
+- Сущности:
+    - timing/reference-clock enums:
+        - `MediaClockMode`
+            - `Direct`
+            - `Sender`
+        - `TimestampMode`
+            - `Samp`
+            - `New`
+            - `Pres`
+        - `ReferenceClockKind`
+            - `LocalMac`
+            - `Ptp`
+            - `Other`
+    - reference-clock payload structs:
+        - `PtpReferenceClock`
+            - `clock_identity`
+            - `domain_number`
+            - `traceable`
+        - `LocalMacReferenceClock`
+            - `mac`
+        - `ReferenceClock`
+            - `kind`
+            - optional `ptp`
+            - optional `local_mac`
+            - optional `raw_token`
+    - sender signaling:
+        - `VideoSenderType`
+            - `Narrow`
+            - `NarrowLinear`
+            - `Wide`
+    - modeled media-description token-backed types:
+        - `VideoSampling`
+            - nested `Known`:
+                - `YCbCr422`
+                - `YCbCr444`
+                - `YCbCr420`
+                - `RGB`
+                - `XYZ`
+                - `Key`
+                - `CLYCbCr444`
+                - `CLYCbCr422`
+                - `CLYCbCr420`
+                - `ICtCp444`
+                - `ICtCp422`
+                - `ICtCp420`
+                - `Other`
+            - fields:
+                - `known`
+                - optional `raw_token`
+        - `VideoBitDepth`
+            - `bits`
+            - `floating_point`
+        - `VideoColorimetry`
+            - nested `Known`:
+                - `Bt601`
+                - `Bt709`
+                - `Bt2020`
+                - `Bt2100`
+                - `St2065_1`
+                - `St2065_3`
+                - `Unspecified`
+                - `Xyz`
+                - `Alpha`
+                - `Other`
+            - fields:
+                - `known`
+                - optional `raw_token`
+        - `VideoTransferCharacteristicSystem`
+            - nested `Known`:
+                - `SDR`
+                - `PQ`
+                - `HLG`
+                - `Linear`
+                - `Bt2100LinPq`
+                - `Bt2100LinHlg`
+                - `St2065_1`
+                - `St428_1`
+                - `Density`
+                - `St2115LogS3`
+                - `Unspecified`
+                - `Other`
+            - fields:
+                - `known`
+                - optional `raw_token`
+        - `VideoSignalStandard`
+            - nested `Known`:
+                - `St2110_20_2017`
+                - `St2110_20_2022`
+                - `Other`
+            - fields:
+                - `known`
+                - optional `raw_token`
+        - `VideoRange`
+            - nested `Known`:
+                - `Narrow`
+                - `FullProtect`
+                - `Full`
+                - `Other`
+            - fields:
+                - `known`
+                - optional `raw_token`
+        - `VideoPixelAspectRatio`
+            - `width`
+            - `height`
+    - aggregate media/stream structs:
+        - `VideoMediaDescription`
+            - `sampling`
+            - `width`
+            - `height`
+            - `fps_num`
+            - `fps_den`
+            - `depth`
+            - `colorimetry`
+            - optional `transfer_characteristic_system`
+            - optional `signal_standard`
+            - optional `range`
+            - `pixel_aspect_ratio`
+        - `VideoStreamSignaling`
+            - `media`
+            - `scan_mode`
+            - `packing_mode`
+            - optional `max_udp_datagram_bytes`
+            - `media_clock_mode`
+            - `timestamp_mode`
+            - `reference_clock`
+            - `ts_delay_sender_ticks`
+            - `sender_type`
+            - optional `troff_us`
+            - optional `cmax`
+    - bootstrap aggregate:
+        - `VideoReceiverBootstrapConfig`
+            - `packet_parse_policy`
+            - `rx_config`
+            - `receive_pipeline_config`
+            - `timestamp_mapper_config`
+            - `reorder_buffer_config`
+            - `timing_config`
+        - acts as explicit richer bootstrap boundary for socket operational projection so timestamp-mapper and reorder-window runtime inputs do not need to be silently reconstructed later.
+- Примечание:
+    - this file is a data-model header, not the main logic boundary for video signaling behavior.
+    - validation/projection/bootstrap logic is layered above it in:
+        - `video_signaling.hpp`
+        - `video_receiver_timing_signaling.hpp`.
+    - despite the presence of `VideoReceiverBootstrapConfig`, this file does not itself build/bootstrap anything; it only defines the aggregate result shape.
+    - current bootstrap model includes timing, timestamp-mapper, and reorder-window runtime axes, but does not itself model playout-decision logic; that remains outside this header.
+
+### libs/st2110core/include/st2110/video_scan_mode.hpp
+- Роль:
+    - минимальный public header для explicit modeling of video scan-mode axis.
+    - отделяет способ temporal/spatial organization video essence от `PixelFormat` и от конкретной runtime support policy.
+    - задает общий enum, через который progressive / interlaced / PsF distinctions проходят через signaling, runtime config, depacketizer, receive semantics и reconstructor boundaries.
+- Связи:
+    - используется `rx_config.hpp`, где `RxVideoConfig` несет `scan_mode` как runtime axis.
+    - используется `config_validation.hpp`, где unknown `VideoScanMode` values explicitly rejected by validation helper.
+    - используется `depacketizer.hpp`, где `DepacketizerConfig` carries `scan_mode`, defaulting to `Progressive`, and `Depacketizer::scan_mode()` exposes configured value.
+    - используется `video_receive_semantics.hpp` как key mode axis for:
+        - assembly-unit kind;
+        - completion policy;
+        - packet grouping key;
+        - mode-local packet semantic admission;
+        - cross-packet ordering cursor behavior.
+    - используется `video_segment_placement.hpp`, `video_packet_padding.hpp`, `video_unit_reconstructor.hpp` для mode-aware runtime branching.
+    - используется `signaling_structs.hpp`, `video_signaling.hpp`, `video_sdp_signaling_adapter.hpp` для standards-aware signaling representation and runtime projection.
+    - покрывается тестом `tests/test_video_scan_mode.cpp`, а также косвенно множеством mode-aware video tests.
+- Сущности:
+    - `enum class VideoScanMode`
+        - `Progressive`
+            - progressive transport / assembly mode.
+        - `Interlaced`
+            - interlaced transport / assembly mode.
+        - `PsF`
+            - progressive segmented frame transport / assembly mode.
+- Примечание:
+    - файл intentionally contains only the modeled enum and no helper logic.
+    - validation, support policy, and behavior differences are intentionally localized in other headers instead of being hidden inside the enum definition itself.
+    - this keeps architecture extensible:
+        - the axis exists even where current MVP runtime still supports only the progressive path end-to-end;
+        - non-progressive modes remain representable in config/signaling/state without forcing parser or runtime rewrites later.
+
+### libs/st2110core/include/st2110/video_packing_mode.hpp
+- Роль:
+    - explicit modeled packing-mode axis for the video receive/signaling/runtime path.
+    - отделяет:
+        - structural representation of signaled/runtime video packing mode;
+          от:
+        - current localized runtime support policy.
+    - keeps unsupported packing modes represented in the architecture instead of hiding them by absence of enum/model coverage.
+- Связи:
+    - использует `error.hpp` for explicit runtime-support result reporting.
+    - используется:
+        - `rx_config.hpp` as an explicit runtime config axis;
+        - `signaling_structs.hpp` / `video_signaling.hpp` as a signaled stream property;
+        - `depacketizer.hpp`, `video_packet_padding.hpp`, and related runtime helpers as a packing-aware dispatch/input axis.
+    - behavior is covered by `tests/test_video_packing_mode_runtime_projection.cpp` and indirectly by `tests/test_rx_config.cpp`.
+- Сущности:
+    - `VideoPackingMode`
+        - modeled packing-mode axis:
+            - `Gpm`
+            - `Bpm`
+    - `validate_runtime_video_packing_mode_support(VideoPackingMode) -> Error`
+        - localized current runtime-support boundary.
+        - behavior:
+            - `VideoPackingMode::Gpm` -> `Ok`
+            - `VideoPackingMode::Bpm` -> `Unsupported`
+            - unknown enum value -> `InvalidValue`
+- Примечание:
+    - this file does not say that `Bpm` is invalid structurally; it says only that current runtime support for it is not implemented.
+    - that distinction is important and intentional:
+        - signaling/model layers may still carry `Bpm`;
+        - current depacketizer/runtime/bootstrap projection layers reject it through this explicit support boundary.
+    - future BPM implementation should extend the existing runtime branches rather than reshape the modeled packing-mode axis.
+
+### libs/st2110core/include/st2110/video_signaling.hpp
+- Роль:
+    - standards-aware modeled video signaling validation and signaling-to-runtime/bootstrap projection layer.
+    - validates structural and selected cross-field ST 2110 signaling rules while keeping runtime support checks localized in explicit projection/support boundaries.
+    - now also makes the initial RTP timestamp anchoring policy explicit in signaling-derived timestamp-mapper projection.
+- Связи:
+    - использует:
+        - `signaling_structs.hpp` for the modeled signaling/bootstrapping types;
+        - `config_validation.hpp` for generic frame-rate and scan-mode validation;
+        - `packet_parse.hpp` for `PacketParsePolicy` and `MAXUDP` validation/projection;
+        - `rx_config.hpp` for `RxVideoConfig`;
+        - `pixel_format.hpp` for runtime pixel-format projection;
+        - `depacketizer.hpp` for `DepacketizerConfig`;
+        - `video_unit_reconstructor.hpp` for `VideoUnitReconstructorConfig`;
+        - `video_receive_pipeline.hpp` for `VideoReceivePipelineConfig`;
+        - `video_scan_mode.hpp` for modeled scan-mode boundary.
+    - uses timestamp-mapper and bootstrap types indirectly through `signaling_structs.hpp`.
+    - используется higher layers such as:
+        - SDP-to-signaling ingestion;
+        - receiver bootstrap composition;
+        - operational adapters for socket runtime.
+- Сущности:
+    - validation helpers for signaling subdomains:
+        - `validate_video_sender_signaling(...)`
+            - validates known sender types;
+            - accepts optional `TROFF` / `CMAX` presence for `Narrow`, `NarrowLinear`, and `Wide`;
+            - rejects present zero values;
+            - keeps stricter sender/conformance policy out of generic signaling validation.
+        - `validate_reference_clock(...)`
+        - `validate_media_clock_mode(...)`
+        - `validate_timestamp_mode(...)`
+        - `validate_video_timing_signaling(...)`
+        - token-backed modeled-type validators:
+            - `validate_video_sampling(...)`
+            - `validate_video_colorimetry(...)`
+            - `validate_video_transfer_characteristic_system(...)`
+            - `validate_video_signal_standard(...)`
+            - `validate_required_video_signal_standard(...)`
+            - `validate_video_range(...)`
+            - `validate_video_pixel_aspect_ratio(...)`
+            - `validate_video_media_description_dimensions(...)`
+            - `validate_video_bit_depth(...)`
+        - cross-field helpers:
+            - `is_420_video_sampling(...)`
+            - `validate_video_media_description_cross_field_constraints(...)`
+                - keeps `4:2:0` progressive-only constraint at the signaling/model layer;
+                - keeps KEY/alpha/TCS consistency at the signaling/model layer;
+                - enforces modeled `SSN` cross-field behavior;
+                - enforces modeled `RANGE` cross-field behavior.
+    - runtime projection helpers:
+        - `pixel_format_from_video_stream_signaling(...) -> std::expected<PixelFormat, Error>`
+            - current runtime projection maps only supported combinations, presently `YCbCr422 + 8-bit -> UYVY`;
+            - structurally known but runtime-unsupported media returns `Unsupported`.
+        - `validate_video_media_description(...)`
+        - `validate_video_stream_signaling(...)`
+            - validates full signaling object including:
+                - media-description structure;
+                - scan mode;
+                - timing fields;
+                - sender signaling;
+                - reference clock;
+                - `MAXUDP` policy boundary.
+        - `packet_parse_policy_from_video_stream_signaling(...) -> PacketParsePolicy`
+            - projects `MAXUDP` into packet-size policy.
+        - `validate_video_stream_signaling_against_rx_video_config(...)`
+            - validates consistency between modeled signaling and manual/runtime `RxVideoConfig`.
+        - `depacketizer_config_from_video_stream_signaling(...)`
+        - `video_unit_reconstructor_config_from_video_stream_signaling(...)`
+        - `video_receive_pipeline_config_from_video_stream_signaling(...)`
+        - `rx_video_config_from_video_stream_signaling(...)`
+    - timestamp-mapper projection:
+        - `video_rtp_timestamp_mapper_config_from_video_stream_signaling(const VideoStreamSignaling&) -> std::expected<VideoRtpTimestampMapperConfig, Error>`
+            - validates signaling first;
+            - currently projects the explicit named policy
+              `video_rtp_timestamp_mapper_config_first_observed_local_zero()`;
+            - validates the final timestamp-mapper config before returning it.
+    - bootstrap composition:
+        - `video_receiver_bootstrap_config_from_video_stream_signaling(...) -> std::expected<VideoReceiverBootstrapConfig, Error>`
+            - validates signaling and current runtime packing-mode support first;
+            - projects:
+                - packet-parse policy;
+                - `RxVideoConfig`;
+                - receive pipeline config;
+                - timestamp-mapper config with explicit initial-anchor policy;
+            - returns final `VideoReceiverBootstrapConfig`.
+- Примечание:
+    - this file remains a signaling/projection layer, not a concrete backend/runtime implementation.
+    - current signaling-derived timestamp-mapper projection explicitly chooses:
+        - first observed RTP timestamp becomes local zero.
+    - if a future standards-aware bootstrap/reference-derived absolute relation is modeled, it should appear as another explicit projection choice through the existing `VideoRtpTimestampMapperConfig` boundary rather than as a hidden backend default.
+
+### libs/st2110core/include/st2110/video_receiver_timing.hpp
+- Роль:
+    - receiver-side timing policy / capability boundary for ST 2110 video receiver bootstrap and signaling validation.
+    - моделирует:
+        - какие sender timing classes receiver готов принять;
+        - какие timing-related signaling fields receiver требует;
+        - какие sender timing parameters receiver обязан/готов учитывать.
+    - deliberately keeps this policy separate from:
+        - raw SDP parsing;
+        - `VideoStreamSignaling` structure itself;
+        - runtime packet buffering / playout / VRX behavior.
+- Связи:
+    - использует `error.hpp` для explicit validation result.
+    - включается `signaling_structs.hpp`, где `VideoReceiverBootstrapConfig` хранит `timing_config`.
+    - используется `video_receiver_timing_signaling.hpp`:
+        - для sender-type compatibility check;
+        - для validation against `VideoStreamSignaling`;
+        - для timing-aware bootstrap composition.
+    - покрывается тестами:
+        - `tests/test_video_receiver_timing.cpp`;
+        - косвенно архитектурными / bootstrap tests через `video_receiver_timing_signaling.hpp`, включая:
+            - `tests/video_receiver_timing_architecture_test.cpp`;
+            - `tests/test_video_receiver_timing_signaling.cpp`;
+            - `tests/test_video_receiver_timing_bootstrap.cpp`.
+- Сущности:
+    - `VideoReceiverTimingCapability`
+        - receiver-declared support policy for incoming video sender timing classes:
+            - `supports_type_n`;
+            - `supports_type_nl`;
+            - `supports_type_w`.
+    - `VideoReceiverTimingRequirements`
+        - receiver-declared signaling/timing requirements and consumption policy:
+            - `require_reference_clock`;
+            - `require_media_clock`;
+            - `require_timestamp_mode`;
+            - `consume_ts_delay`;
+            - `consume_sender_troff`;
+            - `consume_sender_cmax`.
+    - `VideoReceiverTimingConfig`
+        - aggregate receiver timing policy object:
+            - `capability`;
+            - `requirements`.
+    - `has_any_supported_video_sender_type(const VideoReceiverTimingCapability&) -> bool`
+        - helper that returns `true`, if at least one of:
+            - `supports_type_n`;
+            - `supports_type_nl`;
+            - `supports_type_w`
+              is enabled.
+    - `validate_video_receiver_timing_capability(const VideoReceiverTimingCapability&) -> Error`
+        - validates capability shape;
+        - returns:
+            - `Error::Ok`, if at least one supported sender type exists;
+            - `Error::InvalidValue`, if receiver declares no supported sender types at all.
+    - `validate_video_receiver_timing_config(const VideoReceiverTimingConfig&) -> Error`
+        - config-level validation entry point;
+        - currently delegates to capability validation only;
+        - requirement flags themselves are modeled explicitly and carried through the architecture, but are not cross-validated inside this file beyond capability validation.
+- Примечание:
+    - this file models receiver timing support as a localized policy/config boundary, not as full ST 2110-21 receiver buffering/conformance runtime.
+    - current capability axis is intentionally expressed in terms of accepted sender timing types (`N`, `NL`, `W`) because it is consumed against `VideoStreamSignaling::sender_type` in the timing-aware signaling/bootstrap boundary.
+    - fuller ST 2110-21 receiver behavior such as VRX buffering / underflow-overflow behavior / release policy is not implemented here and should stay above this config boundary rather than being pushed into parsers or generic runtime config.
+
+### libs/st2110core/include/st2110/video_receiver_timing_signaling.hpp
+- Роль:
+    - timing-aware adapter between generic video signaling/bootstrap projection and explicit receiver timing policy.
+    - локализует receiver-side consistency checks between:
+        - `VideoReceiverTimingConfig`;
+        - `VideoStreamSignaling`;
+        - final timing-aware `VideoReceiverBootstrapConfig`.
+    - keeps ST 2110-21 receiver capability/requirements policy separate from:
+        - raw SDP parsing;
+        - generic `VideoStreamSignaling` validation;
+        - packet parsing / depacketizer internals;
+        - runtime buffering / playout implementation.
+- Связи:
+    - использует:
+        - `video_receiver_timing.hpp` for receiver timing capability/requirements model;
+        - `video_signaling.hpp` for generic signaling validation helpers and base bootstrap projection;
+        - `signaling_structs.hpp` for `VideoStreamSignaling` and `VideoReceiverBootstrapConfig`;
+        - `rx_config.hpp`, `packet_parse.hpp`, `depacketizer.hpp`, `video_receive_pipeline.hpp`, `video_unit_reconstructor.hpp` through composed bootstrap types.
+    - расширяет generic bootstrap path из `video_signaling.hpp` дополнительной timing-aware overload-функцией с тем же именем:
+        - generic overload builds runtime/bootstrap config from signaling;
+        - this file first validates receiver timing policy against signaling, then reuses the generic projection, then injects `timing_config` into the resulting `VideoReceiverBootstrapConfig`.
+    - directly reflected in `signaling_structs.hpp`, where `VideoReceiverBootstrapConfig` contains:
+        - `packet_parse_policy`;
+        - `rx_config`;
+        - `receive_pipeline_config`;
+        - `timing_config`.
+    - покрывается тестами:
+        - `tests/test_video_receiver_timing_signaling.cpp`;
+        - `tests/test_video_receiver_timing_bootstrap.cpp`;
+        - `tests/video_receiver_timing_architecture_test.cpp`.
+- Сущности:
+    - `video_receiver_supports_sender_type(const VideoReceiverTimingCapability&, VideoSenderType) -> bool`
+        - helper that maps sender timing class to receiver timing capability flags:
+            - `VideoSenderType::Narrow` -> `supports_type_n`;
+            - `VideoSenderType::NarrowLinear` -> `supports_type_nl`;
+            - `VideoSenderType::Wide` -> `supports_type_w`.
+        - returns `false` for unknown sender-type enum values.
+    - `validate_video_receiver_timing_against_video_stream_signaling(const VideoReceiverTimingConfig&, const VideoStreamSignaling&) -> Error`
+        - main receiver-vs-signaling timing compatibility check.
+        - validation flow:
+            - validates `VideoReceiverTimingConfig` first through `validate_video_receiver_timing_config(...)`;
+            - validates sender timing parameters through `validate_video_sender_signaling(...)`;
+            - conditionally validates signaled clock/timestamp fields depending on receiver requirements:
+                - `validate_reference_clock(...)` when `require_reference_clock`;
+                - `validate_media_clock_mode(...)` when `require_media_clock`;
+                - `validate_timestamp_mode(...)` when `require_timestamp_mode`.
+        - support-policy checks:
+            - rejects unsupported sender type with `Error::Unsupported`;
+            - rejects non-zero `ts_delay_sender_ticks` when `consume_ts_delay == false`;
+            - rejects present sender `troff_us` when `consume_sender_troff == false`;
+            - rejects present sender `cmax` when `consume_sender_cmax == false`.
+        - returns:
+            - `Error::Ok` when timing policy and signaling are compatible;
+            - `Error::InvalidValue` for invalid config / invalid required signaling fields / invalid sender timing values;
+            - `Error::Unsupported` for receiver-declared non-support of otherwise valid signaled timing behavior.
+    - `video_receiver_bootstrap_config_from_video_stream_signaling(const VideoStreamSignaling&, const VideoReceiverTimingConfig&, uint16_t udp_port, uint8_t payload_type, std::string local_ip, std::string dest_ip, PartialFramePolicy) -> std::expected<VideoReceiverBootstrapConfig, Error>`
+        - timing-aware bootstrap composition overload.
+        - behavior:
+            - first runs `validate_video_receiver_timing_against_video_stream_signaling(...)`;
+            - then calls the generic bootstrap overload from `video_signaling.hpp`;
+            - if generic projection succeeds, copies the resulting bootstrap config and writes `base.timing_config = timing_cfg`.
+        - preserves generic runtime projection for:
+            - packet parse policy;
+            - `RxVideoConfig`;
+            - `VideoReceivePipelineConfig`;
+              and adds only explicit timing policy.
+        - returns the same result type as the generic overload:
+            - `std::expected<VideoReceiverBootstrapConfig, Error>`.
+- Примечание:
+    - this file is intentionally a receiver-policy / bootstrap-consistency layer, not a full ST 2110-21 receiver runtime implementation.
+    - ST 2110-20 requires receivers to conform to one of the receiver types defined in ST 2110-21, while ST 2110-21 itself defines sender timing models and explicitly leaves practical receiver design, including network jitter/latency accommodation, outside its scope; this header matches that architecture by modeling timing capability/requirements and bootstrap compatibility separately from actual buffering/release behavior. :contentReference[oaicite:0]{index=0} :contentReference[oaicite:1]{index=1}
+    - the timing-aware bootstrap overload is intentionally additive:
+        - generic signaling projection remains reusable without receiver timing policy;
+        - tighter receiver timing acceptance is localized here instead of being pushed into generic signaling validation or packet pipeline layers. :contentReference[oaicite:2]{index=2} :contentReference[oaicite:3]{index=3}
+    - the current `timing_config` carried in `VideoReceiverBootstrapConfig` is architectural state for future receiver timing behavior and conformance-related runtime work; it does not by itself implement VRX / playout / underflow-overflow behavior, which remains a separate future layer. :contentReference[oaicite:4]{index=4} :contentReference[oaicite:5]{index=5}
+
+### libs/st2110core/include/st2110/video_timestamp_mapping.hpp
+- Роль:
+    - standards-aware video RTP timestamp mapping boundary plus synthetic fps-based timestamp helper boundary for tests/scaffolding.
+    - explicitly separates:
+        - RTP-domain timestamp mapping;
+        - initial anchoring policy;
+        - synthetic non-RTP cadence mapping.
+    - now models the initial RTP-to-`TimestampNs` anchoring mode explicitly instead of relying on a hidden `0/0` anchor convention.
+- Связи:
+    - использует:
+        - `rtp_timestamp_anchor_policy.hpp` for the shared enum `RtpTimestampInitialAnchorMode` and its validation;
+        - `timestamp.hpp` for `TimestampNs`;
+        - `error.hpp` for `Error`.
+    - используется:
+        - `video_signaling.hpp` to build signaling-derived timestamp-mapper config;
+        - `socket_rx_video_backend.hpp` as the concrete runtime timestamp-mapping component for delivered frames;
+        - video playout/reconstruction timing helpers above the mapped media timestamp boundary.
+- Сущности:
+    - constant:
+        - `videoTimestampNanosecondsPerSecond`
+    - `VideoRtpTimestampMapperConfig`
+        - explicit video RTP timestamp mapper config.
+        - fields:
+            - `rtp_clock_rate`
+            - `initial_anchor_mode`
+            - `anchor_rtp_timestamp`
+            - `anchor_timestamp_ns`
+        - defaults:
+            - `rtp_clock_rate = 90000`
+            - `initial_anchor_mode = RtpTimestampInitialAnchorMode::FirstObservedBecomesLocalZero`.
+    - `validate_video_rtp_timestamp_mapper_config(const VideoRtpTimestampMapperConfig&) -> Error`
+        - validates:
+            - non-zero `rtp_clock_rate`;
+            - valid `initial_anchor_mode`;
+            - for `ConfiguredReference`:
+                - configured anchor fields are allowed;
+            - for `FirstObservedBecomesLocalZero`:
+                - `anchor_rtp_timestamp == 0`
+                - `anchor_timestamp_ns == 0`.
+    - `video_rtp_timestamp_mapper_config_first_observed_local_zero() -> VideoRtpTimestampMapperConfig`
+        - named helper for the current local-zero-on-first-observation policy.
+    - arithmetic / delta helpers:
+        - `checked_video_timestamp_add_u64(...)`
+        - `checked_video_timestamp_mul_u64(...)`
+        - `forward_rtp_timestamp_delta(...)`
+            - computes forward RTP delta with 32-bit modulo arithmetic;
+            - accepts normal wraparound;
+            - rejects ambiguous/backward deltas at or above half range.
+        - `rtp_ticks_to_timestamp_ns(...)`
+            - converts RTP ticks to nanoseconds relative to an explicit anchor timestamp.
+    - `VideoRtpTimestampMapper`
+        - stateful video RTP timestamp mapper.
+        - `map(uint32_t rtp_timestamp) -> std::expected<TimestampNs, Error>`
+            - returns config error if mapper config is invalid;
+            - in `FirstObservedBecomesLocalZero` mode:
+                - first observed RTP timestamp maps to `0`;
+                - runtime origin becomes explicit from that first packet;
+            - in `ConfiguredReference` mode:
+                - mapping starts relative to `anchor_rtp_timestamp` / `anchor_timestamp_ns`;
+            - accumulates forward RTP deltas across normal progression and wraparound;
+            - rejects backward/ambiguous movement and overflow.
+        - `reset(VideoRtpTimestampMapperConfig)`
+            - replaces mapper config and revalidates it;
+            - clears prior runtime-origin / cadence state.
+        - internal state:
+            - `cfg_`
+            - `config_error_`
+            - `has_runtime_origin_`
+            - `last_raw_rtp_timestamp_`
+            - `ticks_since_anchor_`
+    - synthetic cadence helpers:
+        - `SyntheticVideoTimestampMapperConfig`
+            - `fps_num`
+            - `fps_den`
+            - `anchor_timestamp_ns`
+        - `validate_synthetic_video_timestamp_mapper_config(...)`
+        - `synthetic_unit_index_to_timestamp_ns(...)`
+            - maps unit index to nanoseconds from explicit fps cadence;
+            - uses `__int128` path where available, with checked fallback otherwise.
+        - `SyntheticVideoTimestampMapper`
+            - `map_unit_index(uint64_t) -> std::expected<TimestampNs, Error>`.
+- Примечание:
+    - default video mapper behavior is no longer “implicitly configured-reference with anchor `0/0`”.
+    - the current default is explicitly:
+        - first observed RTP timestamp becomes local zero.
+    - synthetic mapper remains intentionally separate from standards-facing RTP mapping and should not be treated as the receive-path timestamp authority.
+
+### libs/st2110core/include/st2110/video_playout_timing.hpp
+- Роль:
+    - explicit receiver-side playout / reconstruction timing boundary for the video receive path.
+    - separates:
+        - RTP-domain timestamp mapping;
+        - receiver-side reconstruction/playout delay application;
+        - final timing metadata attached to reconstructed video frames.
+    - keeps receiver delay calculation out of RTP parsing, depacketizer, reconstructor, and sink-facing frame storage.
+- Связи:
+    - использует:
+        - `error.hpp` for validation/result reporting;
+        - `timestamp.hpp` for `TimestampNs`;
+        - `video_unit_reconstructor.hpp` for `ReconstructedVideoFrame`.
+    - intended upstream consumer is a video RTP timestamp mapping boundary such as `video_timestamp_mapping.hpp`.
+    - intended downstream consumers are backend delivery, dump/inspection tools, and future receiver-side release/scheduling layers.
+    - behavior is covered by `tests/video_playout_timing_test.cpp`.
+- Сущности:
+    - `VideoReceiverPlayoutTimingConfig`
+        - receiver-side playout/reconstruction timing config:
+            - `link_offset_delay_ns`
+    - `VideoReceiverPlayoutTimingDecision`
+        - explicit timing decision result:
+            - `media_timestamp_ns`
+            - `reconstruction_timestamp_ns`
+    - `VideoReconstructedFrameTiming`
+        - timing metadata attached to a reconstructed frame:
+            - `rtp_timestamp`
+            - `media_timestamp_ns`
+            - `reconstruction_timestamp_ns`
+    - `validate_video_receiver_playout_timing_config(const VideoReceiverPlayoutTimingConfig&) -> Error`
+        - structural validation entry point for receiver playout timing config;
+        - current implementation accepts all modeled values and returns `Ok`.
+    - `video_receiver_playout_timing_decision(TimestampNs media_timestamp_ns, const VideoReceiverPlayoutTimingConfig&) -> std::expected<VideoReceiverPlayoutTimingDecision, Error>`
+        - validates config first;
+        - computes:
+            - `reconstruction_timestamp_ns = media_timestamp_ns + link_offset_delay_ns`;
+        - preserves original `media_timestamp_ns` in the result;
+        - rejects overflow as `InvalidValue`.
+    - `video_reconstructed_frame_timing(const ReconstructedVideoFrame&, TimestampNs media_timestamp_ns, const VideoReceiverPlayoutTimingConfig&) -> std::expected<VideoReconstructedFrameTiming, Error>`
+        - validates config through the existing timing-decision path;
+        - derives receiver playout/reconstruction timing from the supplied mapped media timestamp;
+        - copies `frame.rtp_timestamp` into the resulting timing metadata;
+        - returns:
+            - `rtp_timestamp`
+            - `media_timestamp_ns`
+            - `reconstruction_timestamp_ns`
+        - propagates timing-decision/config errors unchanged.
+- Примечание:
+    - this file does not map RTP timestamps to `TimestampNs`; that remains a separate boundary.
+    - this file does not implement scheduling, sleeping, queueing, release timing, or deadline enforcement; it only computes timing metadata and receiver-side delay application.
+    - `link_offset_delay_ns` is modeled explicitly as receiver-side timing policy, which aligns with the ST 2110-10 Link Offset Delay concept, but the current file keeps only the local calculation boundary, not fuller buffer/conformance behavior.
+    - current timing attachment is performed above reconstructed-frame creation, not inside depacketizer or frame storage.
+
+### libs/st2110core/include/st2110/video_reorder_policy.hpp
+- Роль:
+    - explicit named runtime/support boundary for the current video reorder policy.
+    - убирает backend-local magic literals из video socket runtime construction path.
+    - локализует temporary/default video reorder support limits как named config + validation boundary instead of implicit construction details.
+    - now models both:
+        - reorder window size;
+        - receive-side gap-tolerance policy.
+- Связи:
+    - использует `error.hpp` for validation result reporting;
+    - использует `receive_reorder_tolerance_policy.hpp` for the modeled gap-tolerance policy surface;
+    - используется `signaling_structs.hpp` внутри `VideoReceiverBootstrapConfig`;
+    - используется `socket_rx_video_backend.hpp` внутри:
+        - `SocketRxVideoOperationalConfig`;
+        - `validate_socket_rx_video_operational_config(...)`;
+        - reorder-buffer runtime construction;
+        - backend-local reorder drain behavior.
+    - indirectly affects runtime behavior through `FixedWindowReorderBuffer`, but does not depend on the reorder-buffer implementation itself.
+- Сущности:
+    - `defaultVideoReorderWindowPackets`
+        - named default reorder-window packet count for the current video receive path;
+        - current value: `32`.
+    - `VideoReorderBufferConfig`
+        - explicit config object for video reorder policy.
+        - fields:
+            - `window_size_packets`
+                - defaults to `defaultVideoReorderWindowPackets`;
+            - `reorder_tolerance_policy`
+                - defaults to `ReceiveReorderTolerancePolicy{}`.
+    - `validate_video_reorder_buffer_config(const VideoReorderBufferConfig&) -> Error`
+        - validates:
+            - `window_size_packets > 0`;
+            - `reorder_tolerance_policy` through `validate_receive_reorder_tolerance_policy(...)`;
+        - returns:
+            - `Error::Ok` for valid config;
+            - `Error::InvalidValue` for zero window size or invalid policy enum values.
+- Примечание:
+    - this file models only the named policy boundary and its validation; it does not implement reordering itself.
+    - current default `32` remains present, but only as a named explicit support/default boundary rather than as a literal in backend runtime construction.
+    - current gap-tolerance policy is kept orthogonal to reorder-window sizing so future receive behavior can evolve without reshaping the config surface again.

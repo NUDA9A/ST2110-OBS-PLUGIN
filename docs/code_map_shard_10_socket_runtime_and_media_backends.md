@@ -1,0 +1,763 @@
+### libs/st2110core/include/st2110/socket_runtime.hpp
+- Роль:
+    - OS-neutral socket runtime boundary for receive-port lifecycle, address-family modeling, address/multicast validation, and runtime config projection.
+    - keeps socket family, bind endpoint, multicast membership, open-config semantics, open-config equality, and datagram receive contract explicit above concrete Linux/Winsock code.
+    - локализует generic socket-open derivation from media runtime configs instead of spreading socket-family/multicast decisions into backend code.
+    - задает reusable common operational socket transport/policy boundary above media-specific socket backend operational configs.
+- Связи:
+    - использует `config_validation.hpp`, `error.hpp`, `rx_config.hpp`, `packet_parse.hpp`;
+    - используется concrete socket backends and runtime implementations such as:
+        - `linux_socket_rx_port.hpp`;
+        - `socket_rx_video_backend.hpp`;
+        - `socket_rx_audio_backend.hpp`.
+    - equality helpers from this file are consumed by media-specific socket operational validators to verify that explicit operational open-config matches the config projected from `RxVideoConfig` / `RxAudioConfig`.
+    - покрывается `tests/test_socket_runtime_interface.cpp`.
+- Сущности:
+    - `SocketAddressFamily`
+        - modeled socket family axis:
+            - `IPv4`
+            - `IPv6`
+    - family helpers:
+        - `validate_socket_address_family(SocketAddressFamily) -> Error`
+        - `socket_address_family_name(SocketAddressFamily) -> std::string_view`
+    - IPv4 parsing/validation helpers:
+        - `parse_ipv4_block(std::string_view) -> std::expected<uint8_t, Error>`
+        - `is_valid_ipv4_address(std::string_view) -> bool`
+        - `is_ipv4_multicast_address(std::string_view) -> bool`
+    - generic ASCII / IPv6 helpers:
+        - `is_ascii_hex_digit(char) -> bool`
+        - `ascii_to_lower(char) -> char`
+        - `is_valid_ipv6_hextet(std::string_view) -> bool`
+        - `parse_ipv6_side(std::string_view, bool allow_ipv4_tail, int& group_count) -> bool`
+        - `is_valid_ipv6_address(std::string_view) -> bool`
+        - `is_ipv6_multicast_address(std::string_view) -> bool`
+        - `is_valid_address(std::string_view, SocketAddressFamily) -> bool`
+    - `SocketEndpoint`
+        - `family`
+        - `address`
+        - `port`
+    - `validate_socket_endpoint(const SocketEndpoint&) -> Error`
+        - validates family;
+        - validates textual address for the declared family;
+        - validates UDP port.
+    - `SocketMulticastMembership`
+        - `family`
+        - `group_address`
+        - `interface_address`
+            - explicit multicast join interface/local-address selection boundary.
+    - `validate_socket_multicast_membership(const SocketMulticastMembership&) -> Error`
+        - validates family;
+        - validates group/interface textual address syntax in the same family;
+        - requires multicast group semantics for the selected family;
+        - rejects unicast/non-multicast group addresses.
+    - `SocketRxOpenConfig`
+        - `bind_endpoint`
+        - optional `multicast_membership`
+        - `reuse_address`
+    - `validate_socket_rx_open_config(const SocketRxOpenConfig&) -> Error`
+        - validates bind endpoint;
+        - validates optional multicast membership;
+        - rejects family mismatch between bind endpoint and multicast membership.
+    - common operational config:
+        - `SocketRxOperationalCommonConfig`
+            - explicit common socket operational transport/policy boundary shared above media-specific operational configs.
+            - fields:
+                - `open_config`
+                - `packet_parse_policy`
+        - `validate_socket_rx_operational_common_config(const SocketRxOperationalCommonConfig&) -> Error`
+            - strictly validates the common socket operational input boundary;
+            - validates `SocketRxOpenConfig`;
+            - validates `PacketParsePolicy`;
+            - keeps packet-size policy explicit at config-construction / operational-input layer rather than hidden inside concrete media backends.
+    - equality / comparison helpers:
+        - `bind_endpoint_equal(const SocketEndpoint&, const SocketEndpoint&) -> bool`
+            - compares family, address, and port.
+        - `socket_multicast_membership_equal(const SocketMulticastMembership&, const SocketMulticastMembership&) -> bool`
+            - compares family, group address, and interface address.
+        - `socket_rx_open_config_equal(const SocketRxOpenConfig&, const SocketRxOpenConfig&) -> bool`
+            - compares bind endpoint, optional multicast membership presence/value, and `reuse_address`;
+            - used to keep explicit operational open-config synchronized with the config derived from media runtime config rather than allowing silent divergence.
+    - open-config usage helpers:
+        - `socket_rx_uses_multicast(const SocketRxOpenConfig&) -> bool`
+    - generic socket-open config builder:
+        - `build_socket_rx_open_config(uint16_t udp_port, const std::string& local_ip, const std::string& dest_ip) -> std::expected<SocketRxOpenConfig, Error>`
+            - derives family from `local_ip` when present, otherwise from `dest_ip`;
+            - rejects invalid/mixed-family address combinations;
+            - for unicast:
+                - binds to explicit local address when present;
+                - otherwise binds to family wildcard (`0.0.0.0` / `::`);
+            - for multicast:
+                - binds to family wildcard;
+                - creates `multicast_membership` with destination group address;
+                - carries explicit `local_ip` into `interface_address` when present;
+            - validates the final open config before returning it.
+    - projection helpers:
+        - `socket_rx_open_config_from_video_config(const RxVideoConfig&) -> std::expected<SocketRxOpenConfig, Error>`
+            - validates `RxVideoConfig` first;
+            - then delegates to `build_socket_rx_open_config(...)`.
+        - `socket_rx_open_config_from_audio_config(const RxAudioConfig&) -> std::expected<SocketRxOpenConfig, Error>`
+            - validates `RxAudioConfig` first;
+            - then delegates to `build_socket_rx_open_config(...)`.
+    - receive/runtime interface:
+        - `SocketReceiveResult`
+            - `size_bytes`
+        - `ISocketRxPort`
+            - `is_open() const noexcept`
+            - `open(const SocketRxOpenConfig&)`
+            - `close()`
+            - `receive(std::span<std::uint8_t>) -> std::expected<SocketReceiveResult, Error>`
+        - `ISocketRxPortFactory`
+            - `create_port() -> std::unique_ptr<ISocketRxPort>`
+- Примечание:
+    - multicast interface selection is explicitly modeled inside the runtime boundary rather than hidden in Linux-only backend code.
+    - family coverage is explicit even where some concrete runtime branches remain temporarily unsupported.
+    - this file now serves both video and audio socket-open projection paths; it is no longer only a video-oriented runtime helper layer.
+    - this file now also exposes the common socket operational transport/policy model and open-config equality helpers used as reusable boundaries for higher-level media-specific operational configs.
+
+### libs/st2110core/include/st2110/socket_stub_rx_port.hpp
+- Роль:
+    - concrete stub implementation of the OS-neutral socket receive-port runtime boundary.
+    - provides a non-networking fallback `ISocketRxPort` / `ISocketRxPortFactory` implementation for builds where a real platform socket runtime is not selected.
+    - keeps backend public API and socket runtime contracts stable even when concrete transport runtime is unavailable.
+- Связи:
+    - реализует `ISocketRxPort` и `ISocketRxPortFactory` из `socket_runtime.hpp`;
+    - используется через common socket backend runtime base, not directly as a video-only dependency;
+    - current default platform selection is localized in `src/socket_rx_single_media_backend_base.cpp`:
+        - Linux builds use `make_linux_socket_rx_port_factory()`;
+        - other builds fall back to `make_socket_stub_rx_port_factory()`.
+- Сущности:
+    - `SocketStubRxPort`
+        - final stub `ISocketRxPort` implementation.
+        - `SocketStubRxPort()`
+            - creates a closed stub port.
+        - `is_open() const noexcept -> bool`
+            - reports current stub open-state.
+        - `open(const SocketRxOpenConfig&) -> Error`
+            - validates open config through `validate_socket_rx_open_config(...)`;
+            - rejects repeated open with `InvalidBackendState`;
+            - stores validated open config and switches to open state on success.
+        - `close() -> Error`
+            - idempotent close path;
+            - clears stored open config when the port was open;
+            - always resets open-state to closed;
+            - does not perform OS-level cleanup.
+        - `receive(std::span<std::uint8_t>) -> std::expected<SocketReceiveResult, Error>`
+            - rejects receive on a closed stub port with `InvalidBackendState`;
+            - rejects empty receive buffer with `InvalidValue`;
+            - for an opened stub port, always returns `Unsupported` instead of simulating packets.
+    - `SocketStubRxPortFactory`
+        - final stub factory implementing `ISocketRxPortFactory`.
+        - `create_port() -> std::unique_ptr<ISocketRxPort>`
+            - returns a new closed `SocketStubRxPort`.
+    - `make_socket_stub_rx_port_factory() -> std::unique_ptr<ISocketRxPortFactory>`
+        - convenience helper for constructing the stub runtime dependency.
+- Примечание:
+    - this file is no longer the default runtime path on supported Linux builds; it is the explicit fallback runtime dependency for unsupported/non-Linux platform selection.
+    - the stub keeps lifecycle/config validation behavior explicit, but intentionally does not fake datagram transport.
+    - future real platform runtimes should continue to implement the same `ISocketRxPort` / `ISocketRxPortFactory` boundary rather than changing backend-facing contracts.
+
+### libs/st2110core/include/st2110/linux_socket_rx_port.hpp
+- Роль:
+    - concrete Linux implementation of the existing family-aware socket receive-port runtime boundary.
+    - реализует `ISocketRxPort` поверх Linux UDP socket API without changing the public backend/runtime contracts.
+    - локализует Linux-specific socket lifecycle, bind, multicast join/leave, and receive error mapping below `socket_runtime.hpp`.
+- Связи:
+    - использует `socket_runtime.hpp` for:
+        - `ISocketRxPort`;
+        - `ISocketRxPortFactory`;
+        - `SocketRxOpenConfig`;
+        - `SocketAddressFamily`;
+        - `SocketReceiveResult`;
+        - `validate_socket_rx_open_config(...)`.
+    - использует `error.hpp` indirectly through the socket runtime boundary and returned `Error` values.
+    - concrete Linux socket backend/runtime code should consume this port via `ISocketRxPort` / `ISocketRxPortFactory`, not by calling raw POSIX socket APIs directly in higher layers.
+    - покрывается `tests/test_linux_socket_rx_port.cpp`.
+- Сущности:
+    - `LinuxSocketRxPort`
+        - final concrete `ISocketRxPort` implementation for Linux.
+        - non-copyable, non-movable.
+        - destructor:
+            - if port is still open, calls `close()`.
+        - `is_open() const noexcept`
+            - returns `true` only when native socket fd is valid and `open_cfg_` is present.
+        - `open(const SocketRxOpenConfig&) -> Error`
+            - rejects repeated open with `InvalidBackendState`;
+            - validates request through:
+                - `validate_socket_rx_open_config(...)`;
+                - `validate_current_platform_support(...)`;
+            - creates UDP socket according to bind family;
+            - applies pre-bind socket options;
+            - binds socket to the configured endpoint;
+            - joins multicast membership when requested;
+            - stores open state only after all prior steps succeed.
+        - `close() -> Error`
+            - repeated close on an already-closed port returns `Ok`;
+            - on open port:
+                - leaves multicast membership first when configured;
+                - closes native socket;
+                - clears open state only after both steps succeed.
+            - therefore, leave/close failure keeps state uncleared and surfaces the failure explicitly.
+        - `receive(std::span<std::uint8_t>) -> std::expected<SocketReceiveResult, Error>`
+            - rejects receive on a closed port as `InvalidBackendState`;
+            - rejects empty buffer as `InvalidValue`;
+            - uses `::recv(...)` on the native socket;
+            - maps Linux receive errors:
+                - `EINTR` -> `ReceiveInterrupted`;
+                - `EBADF` / `ENOTSOCK` -> `ReceiveAborted`;
+                - everything else -> `ReceiveFailed`;
+            - returns received byte count through `SocketReceiveResult`.
+    - `LinuxSocketRxPort` internal helpers:
+        - `join_multicast_membership(...)`
+            - no-op when multicast is not configured;
+            - IPv4:
+                - parses multicast group address with `inet_pton`;
+                - uses `INADDR_ANY` when interface address is empty;
+                - joins through `IP_ADD_MEMBERSHIP`;
+            - IPv6 multicast currently returns `Unsupported`;
+            - invalid family returns `InvalidValue`.
+        - `leave_multicast_membership(...)`
+            - symmetric leave helper via `IP_DROP_MEMBERSHIP`;
+            - uses `INADDR_ANY` when interface address is empty;
+            - IPv6 multicast currently returns `Unsupported`;
+            - malformed leave parameters map to `MulticastLeaveFailed`.
+        - `validate_open_request(...)`
+            - combines generic open-config validation with current Linux platform-support limits.
+        - `validate_current_platform_support(...)`
+            - currently allows:
+                - no multicast;
+                - IPv4 multicast;
+            - rejects IPv6 multicast as `Unsupported`.
+        - `create_native_socket(...)`
+            - selects `AF_INET` / `AF_INET6` from `SocketAddressFamily`;
+            - creates `SOCK_DGRAM` socket;
+            - maps socket-creation failure to `SystemFailure`.
+        - `configure_native_socket_before_bind(...)`
+            - applies `SO_REUSEADDR` from `cfg.reuse_address`;
+            - maps failure to `SystemFailure`.
+        - `bind_native_socket(...)`
+            - binds IPv4 or IPv6 socket according to `bind_endpoint`;
+            - invalid textual address maps to `InvalidValue`;
+            - bind syscall failure maps to `BindFailed`.
+        - `close_native_socket(...)`
+            - calls `shutdown(..., SHUT_RDWR)` best-effort before `::close(...)`;
+            - close failure maps to `SystemFailure`.
+        - `clear_open_state()`
+            - resets fd and stored open config.
+        - `native_socket_is_valid(...)`
+            - fd validity helper.
+    - factory layer:
+        - `LinuxSocketRxPortFactory`
+            - final concrete `ISocketRxPortFactory`;
+            - `create_port()` returns a new closed `LinuxSocketRxPort`.
+        - `make_linux_socket_rx_port_factory()`
+            - convenience helper returning `std::unique_ptr<ISocketRxPortFactory>`.
+- Примечание:
+    - current platform support is intentionally explicit:
+        - IPv4 unicast supported;
+        - IPv6 unicast supported;
+        - IPv4 multicast supported;
+        - IPv6 multicast not implemented yet and localized here as `Unsupported`.
+    - this file intentionally stays below packet parsing/admission/depacketizer/backend pipeline logic: it receives raw UDP datagrams only and does not interpret RTP/ST 2110 payload semantics.
+    - cleanup/error behavior is explicit rather than silent:
+        - repeated `open()` is rejected;
+        - repeated `close()` on an already-closed port is accepted;
+        - receive-loop errno mapping remains localized here instead of leaking Linux errno handling upward.
+
+### libs/st2110core/include/st2110/socket_rx_single_media_backend_base.hpp
+- Роль:
+    - общая runtime/lifecycle база для concrete socket receive backends, которые обслуживают ровно один media kind.
+    - отделяет:
+        - socket port lifecycle;
+        - receive thread;
+        - receive-buffer ownership/sizing;
+        - common backend stats accounting;
+        - generic RTCP-like / payload-type prefilter helpers;
+          от:
+        - media-specific operational config validation/projection;
+        - media-specific packet parsing;
+        - reorder/depacketizer/assembler behavior;
+        - sink delivery details.
+    - служит reusable socket-runtime layer под `SocketRxVideoBackend` и `SocketRxAudioBackend`, чтобы не дублировать common backend-state / stop / receive-loop logic.
+    - intentionally remains media-agnostic and does not become a hidden policy-construction layer.
+- Связи:
+    - использует:
+        - `backend.hpp` for `IRxBackend`, `RxBackendState`, `RxBackendCapabilities`, `RxMediaKind`;
+        - `bytes.hpp` for `ByteSpan`;
+        - `packet_parse.hpp` for `PacketParsePolicy`, `effective_max_udp_datagram_bytes(...)`, `udpHeaderBytes`, `PacketParseStage`;
+        - `socket_runtime.hpp` for `ISocketRxPort`, `ISocketRxPortFactory`, `SocketRxOpenConfig`;
+        - `stats.hpp` for `BackendStats` and `record_packet_parse_result(...)`.
+    - concrete derived backends:
+        - `socket_rx_video_backend.hpp`;
+        - `socket_rx_audio_backend.hpp`.
+    - default platform port-factory selection is implemented out-of-line in `src/socket_rx_single_media_backend_base.cpp`.
+- Сущности:
+    - `SocketRxSingleMediaBackendBase`
+        - abstract common base over `IRxBackend`.
+        - `backend_name() const`
+            - always returns `"socket"`.
+        - `capabilities() const`
+            - returns the capabilities passed into the constructor.
+        - `state() const`
+            - returns current backend lifecycle state snapshot.
+        - `stats() const`
+            - returns a thread-safe backend stats snapshot;
+            - builds a base snapshot from common runtime counters;
+            - then allows derived classes to augment it through `augment_stats_snapshot_locked(...)`.
+        - `stop() -> RxBackendLifecycleResult`
+            - if no active media and no port object exist, returns the current stopped state;
+            - if port exists and is open, closes it first;
+            - propagates close failure without clearing runtime objects/state;
+            - on success clears all media/common runtime objects and returns the updated state.
+    - constructor/runtime boundaries:
+        - protected constructor:
+            - `SocketRxSingleMediaBackendBase(RxMediaKind media_kind, RxBackendCapabilities capabilities, std::unique_ptr<ISocketRxPortFactory> port_factory)`
+            - fixes the media kind served by this backend instance and stores the injected/default port factory.
+        - `make_default_port_factory()`
+            - static factory-selection boundary implemented out-of-line in `.cpp`;
+            - keeps platform selection localized away from concrete backend headers/app code.
+        - `validate_common_start_preconditions()`
+            - returns `Ok` only when:
+                - this media is not already active;
+                - port factory is available;
+            - returns `InvalidBackendState` when the media is already active;
+            - returns `InvalidValue` when runtime cannot create a port because the factory is absent.
+        - `create_port()`
+            - delegates to the current `ISocketRxPortFactory`.
+    - media-state helpers:
+        - `media_active() const`
+            - reads the active flag corresponding to the configured `RxMediaKind`.
+        - `set_media_active(bool)`
+            - writes the active flag corresponding to the configured `RxMediaKind`.
+    - common runtime start/loop:
+        - `start_common_runtime(std::unique_ptr<ISocketRxPort>, const SocketRxOpenConfig&, std::vector<std::uint8_t> receive_buffer) -> RxBackendLifecycleResult`
+            - opens the socket port;
+            - stores the port and receive buffer;
+            - resets common stats before the receive thread starts;
+            - creates the receive `std::jthread`;
+            - on thread-creation failure:
+                - closes the already-open port best-effort;
+                - clears common/media runtime objects;
+                - returns `SystemFailure`;
+            - marks the bound media as active only after thread creation succeeds.
+        - `run_receive_loop(std::stop_token) noexcept`
+            - common receive loop for derived socket backends.
+            - behavior:
+                - exits immediately if no port or receive buffer is present;
+                - calls `port_->receive(...)` repeatedly until stop is requested;
+                - handles `ReceiveInterrupted` as retry/continue;
+                - stops the loop on all other receive errors;
+                - records common datagram/byte stats for successfully received datagrams;
+                - delegates media-specific processing to `process_received_datagram(...)`.
+    - common runtime cleanup/stats mutation:
+        - `clear_common_runtime_objects() noexcept`
+            - stops/drops the receive thread object;
+            - releases the port;
+            - clears the receive buffer;
+            - marks the configured media inactive;
+            - resets common stats.
+        - `reset_stats()`
+        - `record_received_datagram(std::size_t size_bytes)`
+        - `record_ignored_control_datagram()`
+        - `record_ignored_nonmedia_datagram()`
+        - `record_rejected_packet(Error err, PacketParseStage stage)`
+            - records both:
+                - rejected media-packet/drop accounting;
+                - packet-parse-stage failure accounting.
+        - `record_accepted_media_packet()`
+        - `record_rejected_media_packet()`
+        - `record_parsed_packet_ok()`
+            - records a successful packet-parse result in `packet_parse` stats.
+        - `record_delivered_media_unit()`
+        - `build_base_stats_snapshot_locked() const`
+            - returns the base common stats snapshot.
+    - generic helpers for derived backends:
+        - `make_receive_buffer(const PacketParsePolicy&)`
+            - sizes the UDP payload receive buffer from effective max UDP datagram size minus UDP header bytes.
+        - `is_rtcp_like_datagram(ByteSpan) -> bool`
+            - classifies RTP-version-2 datagrams with payload type `192..223` as RTCP-like/control traffic.
+        - `datagram_matches_configured_payload_type(ByteSpan, std::uint8_t configured_payload_type) -> bool`
+            - cheap RTP-version/payload-type prefilter on raw datagrams before full media parsing.
+    - derived-class extension points:
+        - pure virtual:
+            - `process_received_datagram(ByteSpan) noexcept`
+            - `clear_media_runtime_objects() noexcept`
+        - optional override:
+            - `augment_stats_snapshot_locked(BackendStats&) const noexcept`
+- Примечание:
+    - this file is the shared runtime layer for socket single-media backends; media-specific parsing/assembly must stay in derived classes.
+    - base class does not know video/audio operational config internals and does not assemble packet/timestamp/reorder policies from media configs.
+    - receive-loop error policy is intentionally localized here: `ReceiveInterrupted` retries, all other receive errors terminate the loop.
+    - common helpers `is_rtcp_like_datagram(...)` and `datagram_matches_configured_payload_type(...)` keep lightweight control/nonmedia rejection generic and reusable without pulling media-specific parsing into the base.
+    - generic backend stats here track datagrams, packet-parse outcomes, and delivered media units; media-specific counters such as delivered video frames must be maintained by derived backends through augmentation or direct stats mutation.
+
+### libs/st2110core/include/st2110/socket_rx_video_backend.hpp
+- Роль:
+    - concrete socket-based single-media video receive backend for the current ST 2110-20 receive path.
+    - теперь работает только через explicit operational input boundary и не собирает hidden runtime defaults из `RxVideoConfig` внутри concrete backend start path.
+    - composes the common socket single-media runtime base with the current video receive pipeline:
+        - socket open/receive runtime;
+        - explicit packet-parse-policy enforcement;
+        - RTP/ST 2110 packet parsing;
+        - explicit video payload-type admission;
+        - packet reorder;
+        - optional one-step head-gap flush controlled by explicit receive reorder tolerance policy;
+        - depacketize/reconstruct pipeline;
+        - RTP timestamp to internal `TimestampNs` mapping;
+        - final sink delivery.
+- Связи:
+    - наследуется от `SocketRxSingleMediaBackendBase` for:
+        - common socket runtime lifecycle;
+        - receive thread and receive loop;
+        - base backend stats accounting;
+        - RTCP-like and generic payload-type prefilter helpers;
+        - receive-buffer allocation from explicit packet-parse policy;
+        - default socket-port factory selection boundary.
+    - реализует `ISocketRxVideoBackend` from `backend.hpp`, а не generic `IRxVideoBackend`.
+    - использует:
+        - `socket_runtime.hpp` for:
+            - `SocketRxOperationalCommonConfig`;
+            - `SocketRxOpenConfig`;
+            - `validate_socket_rx_operational_common_config(...)`;
+            - `socket_rx_open_config_from_video_config(...)`;
+            - `socket_rx_open_config_equal(...)`;
+        - `fixed_reorder_buffer.hpp` for `FixedWindowReorderBuffer` / `IReorderBuffer`;
+        - `packet_admission.hpp` for explicit configured-payload-type admission;
+        - `packet_parse.hpp` and `packet_view.hpp` parsing path through `parse_packet_view_staged(...)`;
+        - `video_receive_pipeline.hpp` for depacketize + reconstruct delivery path;
+        - `video_timestamp_mapping.hpp` for `VideoRtpTimestampMapper` and `VideoRtpTimestampMapperConfig`;
+        - `signaling_structs.hpp` for `VideoReceiverBootstrapConfig`;
+        - `video_reorder_policy.hpp` for `VideoReorderBufferConfig` and `validate_video_reorder_buffer_config(...)`;
+        - `receive_reorder_tolerance_policy.hpp` for backend-local gap-flush gating during reorder drain.
+- Сущности:
+    - `SocketRxVideoOperationalConfig`
+        - explicit video-specific operational input model above the concrete socket backend.
+        - carries:
+            - common socket transport/policy part in `common`;
+            - media-specific runtime part in:
+                - `rx_config`
+                - `receive_pipeline_config`
+                - `timestamp_mapper_config`
+                - `reorder_buffer_config`.
+    - `validate_socket_rx_video_operational_config(const SocketRxVideoOperationalConfig&) -> Error`
+        - validates:
+            - explicit video reorder-buffer config;
+            - common socket operational config;
+            - `RxVideoConfig`;
+            - timestamp mapper config;
+            - socket open projection consistency against `socket_rx_open_config_from_video_config(...)`;
+            - depacketizer width/height/format/scan-mode/packing-mode consistency against `rx_config`;
+            - reconstructor format/scan-mode consistency against both `rx_config` and depacketizer config;
+            - current runtime requirement `timestamp_mapper_config.rtp_clock_rate == 90000`.
+    - `socket_rx_video_operational_config_from_video_receiver_bootstrap(const VideoReceiverBootstrapConfig&) -> std::expected<SocketRxVideoOperationalConfig, Error>`
+        - projects signaling/bootstrap-derived video runtime state into final socket operational config;
+        - reuses:
+            - `bootstrap.packet_parse_policy`;
+            - `bootstrap.rx_config`;
+            - `bootstrap.receive_pipeline_config`;
+            - `bootstrap.timestamp_mapper_config`;
+            - `bootstrap.reorder_buffer_config`;
+        - derives `common.open_config` through `socket_rx_open_config_from_video_config(...)`;
+        - validates the final operational object before returning it.
+    - `socket_rx_video_operational_config_from_rx_video_config(const RxVideoConfig&, const PacketParsePolicy&, PartialFramePolicy, const VideoRtpTimestampMapperConfig&, const VideoReorderBufferConfig&) -> std::expected<SocketRxVideoOperationalConfig, Error>`
+        - explicit manual-config adapter for poorer/non-bootstrap callers;
+        - derives `common.open_config` through `socket_rx_open_config_from_video_config(...)`;
+        - builds `VideoReceivePipelineConfig` from explicit caller inputs instead of hidden backend defaults;
+        - accepts explicit `VideoReorderBufferConfig`, defaulting at the call boundary to `VideoReorderBufferConfig{}`;
+        - validates the final operational object before returning it.
+    - `SocketRxVideoBackend`
+        - final concrete video backend.
+        - constructors:
+            - default constructor
+                - uses `make_default_port_factory()` through the common socket backend base;
+                - advertises `RxMediaKind::Video` and video-only capabilities.
+            - injected-factory constructor
+                - accepts `std::unique_ptr<ISocketRxPortFactory>`;
+                - keeps socket port dependency injectable for tests and future runtime/platform variants.
+        - `start_video(const SocketRxVideoOperationalConfig&, IVideoFrameSink&) -> RxBackendLifecycleResult`
+            - validates common backend start preconditions through the base class;
+            - validates the full operational config;
+            - creates one socket receive port from the current factory;
+            - rejects null port creation as `InvalidValue`;
+            - delegates concrete startup to `start_video_runtime(...)`.
+    - overridden runtime hooks:
+        - `clear_media_runtime_objects() noexcept`
+            - clears common socket runtime state through `clear_common_runtime_objects()`;
+            - clears all video-specific runtime objects and cached operational state:
+                - reorder buffer;
+                - video receive pipeline;
+                - timestamp mapper;
+                - packet parse policy;
+                - reorder tolerance policy;
+                - sink pointer;
+                - configured payload type.
+        - `process_received_datagram(ByteSpan) noexcept`
+            - video datagram receive-path entry from the common receive loop.
+            - behavior:
+                - returns immediately if required video runtime objects are not initialized;
+                - ignores RTCP-like datagrams through the common base helper;
+                - explicitly enforces `packet_parse_policy_` through `validate_packet_parse_policy(...)` before packet parsing;
+                - parses one packet via `parse_packet_view_staged(...)`;
+                - records staged parse failures through `record_rejected_packet(...)`;
+                - applies explicit configured video payload-type admission through `validate_video_packet_payload_type_admission(...)`;
+                - mismatching payload type is treated as nonmedia datagram and does not enter reorder/pipeline state;
+                - accepted packets are recorded through `record_parsed_packet_ok()`, pushed into reorder, and drained toward sink delivery.
+        - `augment_stats_snapshot_locked(BackendStats&) const noexcept`
+            - augments the common backend stats snapshot with:
+                - reorder stats from the current reorder buffer;
+                - depacketizer stats from the current video receive pipeline.
+    - runtime construction helpers:
+        - `make_reorder_buffer(const VideoReorderBufferConfig&) -> std::unique_ptr<IReorderBuffer>`
+            - current implementation builds `FixedWindowReorderBuffer` from explicit `cfg.window_size_packets`;
+            - current higher-level gap tolerance policy is not consumed here and is applied later at backend drain time.
+        - `start_video_runtime(...) -> RxBackendLifecycleResult`
+            - allocates receive buffer from `cfg.common.packet_parse_policy`;
+            - constructs video-specific runtime objects from explicit operational config only:
+                - reorder buffer from explicit reorder policy;
+                - `VideoReceivePipeline`;
+                - `VideoRtpTimestampMapper`;
+                - sink pointer;
+                - packet parse policy;
+                - configured payload type;
+            - caches `cfg.reorder_buffer_config.reorder_tolerance_policy` for later drain behavior;
+            - construction failures are mapped as:
+                - `std::invalid_argument` -> `InvalidValue`
+                - `std::logic_error` -> `Unsupported`
+            - then starts the common socket runtime via `start_common_runtime(...)`;
+            - on common-runtime start failure, clears media runtime objects before returning the error.
+    - receive-pipeline helpers:
+        - `drain_reorder_buffer_to_sink() noexcept`
+            - repeatedly pops ready packets from reorder;
+            - when the current head packet is missing:
+                - returns immediately if one gap flush was already used in the current drain pass;
+                - returns immediately if `receive_reorder_policy_allows_gap_flush_once(...)` is false;
+                - otherwise calls `flush_missing_once()` exactly once for the current drain pass and retries;
+            - feeds ready packets into `VideoReceivePipeline::push(...)`;
+            - forwards each reconstructed frame result to `deliver_reconstructed_frame(...)`.
+        - `deliver_reconstructed_frame(ReconstructedVideoFrame&&) noexcept`
+            - delivers only when:
+                - sink exists;
+                - frame is not partial.
+            - maps RTP timestamp to `TimestampNs`;
+            - calls `IVideoFrameSink::on_video_frame(...)`;
+            - increments `frames_delivered` directly in backend stats;
+            - records delivered media-unit stats through the common base helper.
+        - `map_frame_timestamp_ns(uint32_t) noexcept -> TimestampNs`
+            - uses `VideoRtpTimestampMapper` when present;
+            - returns `0` when mapper is absent or timestamp mapping fails.
+    - cached runtime state:
+        - `reorder_buffer_`
+        - `video_receive_pipeline_`
+        - optional `video_timestamp_mapper_`
+        - `packet_parse_policy_`
+        - `reorder_tolerance_policy_`
+        - `video_sink_`
+        - optional `configured_video_payload_type_`
+    - `SocketRxVideoBackendFactory`
+        - final `IRxBackendFactory` for the socket video backend.
+        - `descriptor()`
+            - returns:
+                - `kind = RxBackendKind::Socket`
+                - `name = "socket"`
+                - video-only capabilities
+                - `available = true`
+        - `create_backend()`
+            - creates one default `SocketRxVideoBackend`.
+- Примечание:
+    - concrete backend start path is operational-only; hidden manual fallback from `RxVideoConfig` no longer lives inside the backend.
+    - packet-parse-policy enforcement is explicit in `process_received_datagram(...)` before staged packet parsing.
+    - bootstrap/manual projection into `SocketRxVideoOperationalConfig` is modeled outside the concrete runtime start.
+    - current delivery path remains complete-frame-only: partial reconstructed frames are intentionally not delivered to the sink.
+    - reorder-window policy and reorder-gap tolerance policy are now separate explicit boundaries:
+        - window size is consumed by reorder-buffer construction;
+        - gap tolerance is consumed by backend drain behavior.
+
+### libs/st2110core/include/st2110/socket_rx_audio_backend.hpp
+- Роль:
+    - concrete socket-based single-media audio receive backend for the current ST 2110-30 receive path.
+    - works only through explicit operational input boundary and does not build hidden audio runtime defaults inside the concrete backend start path.
+    - composes the common socket single-media runtime base with the current audio receive pipeline:
+        - socket open/receive runtime;
+        - explicit packet-parse-policy enforcement;
+        - configured RTP payload-type admission prefilter;
+        - audio RTP packet parsing;
+        - audio reorder;
+        - optional one-step head-gap flush controlled by explicit receive reorder tolerance policy;
+        - audio frame/block assembly;
+        - RTP timestamp to internal `TimestampNs` mapping through explicit anchoring policy;
+        - final sink delivery.
+- Связи:
+    - наследуется от `SocketRxSingleMediaBackendBase` for:
+        - common socket runtime lifecycle;
+        - receive thread and receive loop;
+        - base backend stats accounting;
+        - RTCP-like datagram filtering;
+        - receive-buffer allocation from explicit packet-parse policy;
+        - default socket-port factory selection boundary.
+    - реализует `ISocketRxAudioBackend` from `backend.hpp`, а не generic `IRxAudioBackend`.
+    - использует:
+        - `socket_runtime.hpp` for:
+            - `SocketRxOperationalCommonConfig`;
+            - `SocketRxOpenConfig`;
+            - `validate_socket_rx_operational_common_config(...)`;
+            - `socket_rx_open_config_from_audio_config(...)`;
+            - `socket_rx_open_config_equal(...)`;
+        - `audio_receiver_bootstrap.hpp` for `AudioReceiverBootstrapConfig`;
+        - `audio_packet.hpp` for:
+            - `AudioRtpPacketPolicy`;
+            - `audio_rtp_packet_policy_from_rx_audio_config(...)`;
+            - `parse_audio_rtp_packet_view(...)`;
+        - `audio_frame_assembler.hpp` for block assembly;
+        - `audio_reorder_buffer.hpp` for reorder-buffer config and runtime object;
+        - `audio_timestamp_mapping.hpp` for:
+            - `AudioRtpTimestampMapperConfig`;
+            - `AudioRtpTimestampMapper`;
+            - explicit initial-anchor policy semantics;
+        - `audio_channel_order.hpp` for validated channel-order boundary;
+        - `packet_parse.hpp` for common receive packet-size policy enforcement;
+        - `receive_reorder_tolerance_policy.hpp` for backend-local gap-flush gating during reorder drain.
+- Сущности:
+    - `SocketRxAudioOperationalConfig`
+        - explicit audio-specific operational input model above the concrete socket backend.
+        - carries:
+            - common socket transport/policy part in `common`;
+            - media-specific runtime part in:
+                - `rx_config`
+                - `audio_packet_policy`
+                - `frame_assembler_config`
+                - `reorder_buffer_config`
+                - `timestamp_mapper_config`
+                - `channel_order`.
+    - `validate_socket_rx_audio_operational_config(const SocketRxAudioOperationalConfig&) -> Error`
+        - validates:
+            - common socket operational config;
+            - `RxAudioConfig`;
+            - `AudioRtpPacketPolicy`;
+            - `AudioFrameAssemblerConfig`;
+            - `AudioReorderBufferConfig`;
+            - `AudioRtpTimestampMapperConfig`;
+            - parsed channel order against configured channel count;
+            - socket open projection consistency against `socket_rx_open_config_from_audio_config(...)`;
+            - packet-policy consistency projected from `RxAudioConfig`;
+            - current assembler storage requirement:
+                - `AudioSampleStorageFormat::InterleavedS32`;
+            - timestamp-mapper clock-rate consistency:
+                - `cfg.timestamp_mapper_config.rtp_clock_rate == cfg.rx_config.sampling_rate_hz`.
+    - `socket_rx_audio_operational_config_from_audio_receiver_bootstrap(const AudioReceiverBootstrapConfig&) -> std::expected<SocketRxAudioOperationalConfig, Error>`
+        - projects signaling/bootstrap-derived audio runtime state into final socket operational config;
+        - preserves explicit bootstrap-chosen timestamp anchoring policy and anchor fields;
+        - derives `common.open_config` through `socket_rx_open_config_from_audio_config(...)`;
+        - validates the final operational object before returning it.
+    - `socket_rx_audio_operational_config_from_rx_audio_config(const RxAudioConfig&, const PacketParsePolicy&, const AudioFrameAssemblerConfig&, const AudioReorderBufferConfig&, const AudioRtpTimestampMapperConfig&, const ParsedAudioChannelOrder&) -> std::expected<SocketRxAudioOperationalConfig, Error>`
+        - explicit manual-config adapter for non-bootstrap callers;
+        - derives `common.open_config` through `socket_rx_open_config_from_audio_config(...)`;
+        - derives packet policy from `RxAudioConfig`;
+        - consumes caller-provided reorder / assembler / timestamp / channel-order inputs explicitly;
+        - validates the final operational object before returning it.
+    - `SocketRxAudioBackend`
+        - final concrete audio backend.
+        - constructors:
+            - default constructor
+                - uses `make_default_port_factory()` through the common socket backend base;
+                - advertises `RxMediaKind::Audio` and audio-only capabilities.
+            - injected-factory constructor
+                - accepts `std::unique_ptr<ISocketRxPortFactory>`;
+                - keeps socket port dependency injectable for tests and future runtime/platform variants.
+        - `start_audio(const SocketRxAudioOperationalConfig&, IAudioFrameSink&) -> RxBackendLifecycleResult`
+            - validates common backend start preconditions through the base class;
+            - validates the full operational config;
+            - creates one socket receive port from the current factory;
+            - rejects null port creation as `InvalidValue`;
+            - delegates concrete startup to `start_audio_runtime(...)`.
+    - overridden runtime hooks:
+        - `clear_media_runtime_objects() noexcept`
+            - clears common socket runtime state through `clear_common_runtime_objects()`;
+            - clears all audio-specific runtime objects and cached operational state:
+                - packet policy;
+                - reorder tolerance policy;
+                - reorder buffer;
+                - frame assembler;
+                - timestamp mapper;
+                - configured payload type;
+                - configured sampling rate / packet time / samples-per-packet / channel count;
+                - packet parse policy;
+                - sink pointer.
+        - `process_received_datagram(ByteSpan) noexcept`
+            - audio datagram receive-path entry from the common receive loop.
+            - behavior:
+                - returns immediately if required audio runtime objects are not initialized;
+                - ignores RTCP-like datagrams through the common base helper;
+                - explicitly enforces `packet_parse_policy_` through `validate_packet_parse_policy(...)`;
+                - applies configured payload-type prefilter through `datagram_matches_configured_payload_type(...)`;
+                - parses one packet via `parse_audio_rtp_packet_view(...)`;
+                - rejected packet parse/reorder failures are recorded as media-packet rejection;
+                - accepted packets are pushed into reorder and drained toward sink delivery.
+        - `augment_stats_snapshot_locked(BackendStats&) const noexcept`
+            - augments the common backend stats snapshot with reorder counters projected from the current audio reorder buffer;
+            - maps audio reorder `missing_packets_flushed` into generic `snapshot.reorder.missing_seq_flushed`.
+    - runtime construction / delivery helpers:
+        - `start_audio_runtime(...) -> RxBackendLifecycleResult`
+            - allocates receive buffer from `cfg.common.packet_parse_policy`;
+            - constructs:
+                - `AudioFixedWindowReorderBuffer`
+                - `AudioFrameAssembler`
+                - `AudioRtpTimestampMapper`
+            - caches:
+                - packet-parse policy;
+                - packet policy;
+                - reorder tolerance policy from `cfg.reorder_buffer_config.reorder_tolerance_policy`;
+                - sink pointer;
+                - configured payload/runtime values;
+            - starts the common socket runtime via `start_common_runtime(...)`;
+            - on common-runtime start failure, clears media runtime objects before returning the error.
+        - `drain_reorder_buffer_to_sink() noexcept`
+            - repeatedly pops ready packets from reorder;
+            - when the current head packet is missing:
+                - returns immediately if one gap flush was already used in the current drain pass;
+                - returns immediately if `receive_reorder_policy_allows_gap_flush_once(...)` is false;
+                - otherwise calls `flush_missing_once()` exactly once for the current drain pass and retries;
+            - feeds ready packets into `AudioFrameAssembler::push(...)`;
+            - rejects invalid assembly results locally;
+            - forwards complete assembled blocks to `deliver_assembled_audio_block(...)`.
+        - `deliver_assembled_audio_block(AssembledAudioBlock&&) noexcept`
+            - delivers only complete blocks;
+            - maps RTP timestamp to `TimestampNs`;
+            - calls `IAudioFrameSink::on_audio_frame(...)`;
+            - records delivered media-unit stats through the common base helper.
+        - `map_block_timestamp_ns(uint32_t) noexcept -> TimestampNs`
+            - uses `AudioRtpTimestampMapper` when present;
+            - returns `0` when mapper is absent or mapping fails.
+    - cached runtime state:
+        - `packet_parse_policy_`
+        - `reorder_tolerance_policy_`
+        - optional `audio_packet_policy_`
+        - `reorder_buffer_`
+        - `audio_frame_assembler_`
+        - optional `audio_timestamp_mapper_`
+        - `audio_sink_`
+        - optional configured payload/runtime value cache for current stream.
+    - `SocketRxAudioBackendFactory`
+        - final `IRxBackendFactory` for the socket audio backend.
+        - `descriptor()`
+            - returns:
+                - `kind = RxBackendKind::Socket`
+                - `name = "socket"`
+                - audio-only capabilities
+                - `available = true`
+        - `create_backend()`
+            - creates one default `SocketRxAudioBackend`.
+- Примечание:
+    - concrete backend start path is operational-only.
+    - timestamp anchoring policy is explicit in `AudioRtpTimestampMapperConfig` and is preserved through bootstrap/manual operational projection rather than being encoded via unexplained `0/0` anchor literals inside the backend.
+    - reorder-gap tolerance is consumed at backend drain time, not hidden inside the common socket base.
+    - delivery path remains complete-block-only for the current MVP runtime.
+
+### libs/st2110core/src/socket_rx_single_media_backend_base.cpp
+- Роль:
+    - platform-local default socket receive-port factory selection for the common single-media socket runtime boundary.
+- Связи:
+    - реализует `SocketRxSingleMediaBackendBase::make_default_port_factory()`;
+    - использует:
+        - `make_linux_socket_rx_port_factory()` на поддерживаемых Linux build’ах;
+        - `make_socket_stub_rx_port_factory()` на неподдерживаемых build’ах.
+- Примечание:
+    - platform selection локализован здесь и не размазан по app/bootstrap code или concrete backend constructors.

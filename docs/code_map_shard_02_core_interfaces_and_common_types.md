@@ -1,0 +1,516 @@
+### libs/st2110core/include/st2110/backend.hpp
+- Роль:
+    - базовые backend/sink интерфейсы для receive path.
+    - текущая точка расширения для video и audio backend’ов, включая generic media-facing интерфейсы и socket-specific operational interfaces.
+    - задает media-facing delivery contracts без смешивания с packet parsing, SDP ingestion, channel-order mapping, timing/playout policy или конкретным socket/MTL runtime behavior.
+    - задает explicit lifecycle/state boundary для backend runtime.
+    - задает explicit backend stats snapshot boundary.
+    - задает explicit separation between:
+        - generic manual-start contracts on `RxVideoConfig` / `RxAudioConfig`;
+        - socket-specific operational-start contracts on prebuilt `SocketRxVideoOperationalConfig` / `SocketRxAudioOperationalConfig`.
+- Связи:
+    - использует `VideoFrameView` из `video_frame.hpp` для video sink delivery boundary;
+    - использует `AudioFrameView` из `audio_frame.hpp` для audio sink delivery boundary;
+    - использует `RxVideoConfig` и `RxAudioConfig` из `rx_config.hpp` для generic backend start interfaces;
+    - использует `Error` через `RxBackendLifecycleResult`;
+    - использует `BackendStats` из `stats.hpp`;
+    - используется `backend_factory.hpp` как media-capability/source interface для backend selection/creation boundary;
+    - используется concrete backend headers such as:
+        - `socket_rx_video_backend.hpp`;
+        - `socket_rx_audio_backend.hpp`;
+          которые supply `SocketRxVideoOperationalConfig` / `SocketRxAudioOperationalConfig` и implement socket-specific operational interfaces.
+- Сущности:
+    - forward declarations:
+        - `struct SocketRxVideoOperationalConfig;`
+        - `struct SocketRxAudioOperationalConfig;`
+        - keep socket operational config types visible at interface boundary without importing concrete socket backend headers here.
+    - `RxMediaKind`
+        - modeled media capability axis:
+            - `Video`
+            - `Audio`.
+    - `RxBackendCapabilities`
+        - declares which receive media kinds a backend supports:
+            - `video_rx`
+            - `audio_rx`.
+    - `RxBackendState`
+        - explicit per-media lifecycle state:
+            - `video_active`
+            - `audio_active`.
+    - `RxBackendLifecycleResult = std::expected<RxBackendState, Error>`
+        - common backend lifecycle result type for start/stop operations.
+    - helper functions:
+        - `backend_is_stopped(const RxBackendState&) -> bool`
+            - reports whether both media paths are inactive.
+        - `backend_media_active(const RxBackendState&, RxMediaKind) -> bool`
+            - helper for per-media activity query;
+            - returns `false` for unknown enum values.
+        - `supports_media(const RxBackendCapabilities&, RxMediaKind) -> bool`
+            - helper for querying media support;
+            - returns `false` for unknown enum values.
+    - sink interfaces:
+        - `IVideoFrameSink`
+            - `on_video_frame(const VideoFrameView&)`
+                - receives a delivered video frame/view.
+        - `IAudioFrameSink`
+            - `on_audio_frame(const AudioFrameView&)`
+                - receives a delivered audio frame/block view.
+    - `IRxBackend`
+        - common lifecycle/base backend interface:
+            - `backend_name()`
+            - `stop() -> RxBackendLifecycleResult`
+            - `state() -> RxBackendState`
+            - `capabilities() -> RxBackendCapabilities`
+            - `stats() -> BackendStats`.
+    - `IRxVideoBackend`
+        - generic video receive capability interface;
+        - uses virtual inheritance from `IRxBackend` so combined video+audio backends have a single common backend base;
+        - `start_video(const RxVideoConfig&, IVideoFrameSink&) -> RxBackendLifecycleResult`.
+    - `IRxAudioBackend`
+        - generic audio receive capability interface;
+        - uses virtual inheritance from `IRxBackend` so combined video+audio backends have a single common backend base;
+        - `start_audio(const RxAudioConfig&, IAudioFrameSink&) -> RxBackendLifecycleResult`.
+    - `ISocketRxVideoBackend`
+        - socket-specific video receive interface over prebuilt operational config;
+        - uses virtual inheritance from `IRxBackend`;
+        - `start_video(const SocketRxVideoOperationalConfig&, IVideoFrameSink&) -> RxBackendLifecycleResult`.
+    - `ISocketRxAudioBackend`
+        - socket-specific audio receive interface over prebuilt operational config;
+        - uses virtual inheritance from `IRxBackend`;
+        - `start_audio(const SocketRxAudioOperationalConfig&, IAudioFrameSink&) -> RxBackendLifecycleResult`.
+- Примечание:
+    - file intentionally keeps generic backend contracts and socket-specific operational contracts side by side, but does not define the operational config structures themselves.
+    - generic `IRxVideoBackend` / `IRxAudioBackend` still model manual-start style contracts, while concrete socket backends are expected to expose and consume the socket-specific operational interfaces.
+    - lifecycle/state/stats policy remains explicit instead of relying on silent no-op behavior or sink-side observability hacks.
+
+### libs/st2110core/include/st2110/backend_factory.hpp
+- Роль:
+    - explicit backend-kind modeling and backend selection/creation boundary.
+    - отделяет выбор backend implementation (`socket` / `mtl`) от media runtime config, packet pipeline, SDP/signaling parsing и concrete backend implementation details.
+    - задает extendable registration/selection layer поверх `IRxBackend`.
+- Связи:
+    - использует `backend.hpp` для:
+        - `IRxBackend`;
+        - `RxMediaKind`;
+        - `RxBackendCapabilities`;
+        - `supports_media(...)`.
+    - использует `error.hpp` для validation/result reporting.
+    - должен потребляться app/bootstrap слоями при выборе backend’а.
+    - concrete socket/MTL implementations should provide `IRxBackendFactory` instances instead of hardcoded backend construction branches in app/plugin code.
+    - тестируется `tests/test_backend_factory.cpp`.
+- Сущности:
+    - `RxBackendKind`
+        - modeled backend axis:
+            - `Socket`
+            - `Mtl`.
+    - `validate_rx_backend_kind(RxBackendKind) -> Error`
+        - validates known backend-kind enum values.
+    - `rx_backend_kind_name(RxBackendKind) -> std::string_view`
+        - stable lowercase string mapping for known backend kinds:
+            - `Socket` -> `"socket"`
+            - `Mtl` -> `"mtl"`.
+    - `parse_rx_backend_kind(std::string_view) -> std::expected<RxBackendKind, Error>`
+        - strict parser for backend-kind selection tokens;
+        - currently accepts only exact lowercase `"socket"` / `"mtl"`.
+    - `validate_rx_media_kind(RxMediaKind) -> Error`
+        - validates known media-kind enum values used by backend selection.
+    - `RxBackendDescriptor`
+        - backend-factory-advertised descriptor:
+            - `kind`
+            - `name`
+            - `capabilities`
+            - `available`.
+    - `RxBackendSelection`
+        - requested backend selection:
+            - `backend_kind`
+            - `media_kind`.
+    - `IRxBackendFactory`
+        - abstract backend-factory contract:
+            - `descriptor()`
+            - `create_backend()`.
+    - `validate_rx_backend_descriptor(const RxBackendDescriptor&) -> Error`
+        - validates descriptor shape;
+        - rejects:
+            - invalid backend kind;
+            - empty backend name;
+            - descriptors with no media capability.
+        - `available=false` remains structurally valid and is handled by selection, not descriptor validation.
+    - `validate_rx_backend_selection(const RxBackendSelection&) -> Error`
+        - validates requested backend kind and requested media kind.
+    - `select_rx_backend_factory(std::span<IRxBackendFactory* const>, const RxBackendSelection&) -> std::expected<IRxBackendFactory*, Error>`
+        - validates selection request first;
+        - validates every registered factory entry and every returned descriptor before selection;
+        - rejects null factory entries and invalid descriptors;
+        - selects a factory by:
+            - requested backend kind;
+            - `available==true`;
+            - required media capability via `supports_media(...)`;
+        - returns `Unsupported` when no matching available backend exists.
+    - `create_rx_backend(std::span<IRxBackendFactory* const>, const RxBackendSelection&) -> std::expected<std::unique_ptr<IRxBackend>, Error>`
+        - selects one factory through `select_rx_backend_factory(...)`;
+        - creates one backend instance from the selected factory only;
+        - rejects null backend results as `InvalidValue`.
+- Примечание:
+    - backend kind is a first-class architecture axis separate from media kind.
+    - descriptors advertise capabilities instead of assuming that backend kind implies a fixed media set.
+    - localized `available=false` keeps temporary runtime/build availability explicit without reshaping the API.
+    - future backend additions should mainly require:
+        - adding a new `RxBackendKind` value;
+        - extending kind validation/name/parser coverage;
+        - providing a new concrete `IRxBackendFactory`;
+        - adding tests.
+
+### libs/st2110core/include/st2110/bytes.hpp
+- Роль:
+    - общая базовая alias-конвенция для неизменяемых байтовых диапазонов.
+- Связи:
+    - используется в RTP/ST2110 parsing, assembler/depacketizer и других low-level helper’ах.
+- Сущности:
+    - `ByteSpan = std::span<const uint8_t>`.
+
+### libs/st2110core/include/st2110/config_validation.hpp
+- Роль:
+    - общие helper’ы для явной валидации конфигов и derived values.
+    - отражает правило “strict parse, explicit fallback”.
+    - содержит generic derived-value helper для audio `samples_per_packet`, чтобы runtime config не закреплял packet cadence через magic constants.
+- Связи:
+    - используется `RxVideoConfig`, `RxAudioConfig`, signaling/runtime projection helpers и будущими config model.
+- Сущности:
+    - `audio_samples_per_packet_from_rate_and_packet_time(uint32_t sampling_rate_hz, uint32_t packet_time_us) -> std::expected<uint32_t, Error>`
+        - вычисляет `samples_per_packet` как `(sampling_rate_hz * packet_time_us) / 1'000'000`;
+        - rejects zero rate / packet time;
+        - rejects non-integral sample counts;
+        - rejects overflow / zero derived result;
+        - используется audio signaling-to-runtime projection и `RxAudioConfig` validation вместо hardcoded `48`.
+    - `is_non_empty(std::string_view)`
+    - `is_dynamic_rtp_payload_type(uint8_t)`
+    - `validate_frame_rate(uint32_t num, uint32_t den)`
+    - `validate_udp_port(uint16_t)`
+    - `validate_video_dimensions(uint32_t width, uint32_t height)`
+    - `validate_video_format_constraints(PixelFormat, width, height)` — формат-специфичная валидация размеров.
+    - `validate_video_scan_mode(VideoScanMode)`
+
+### libs/st2110core/include/st2110/endian.hpp
+- Роль:
+    - простые big-endian helpers для чтения multibyte полей из wire data.
+- Связи:
+    - используются RTP/ST2110 payload parser’ами.
+- Сущности:
+    - `read_be16(std::span<const uint8_t>)`
+    - `read_be32(std::span<const uint8_t>)`
+
+### libs/st2110core/include/st2110/error.hpp
+- Роль:
+    - общий enum ошибок проекта.
+    - теперь включает не только parse/validation errors, но и explicit operational/backend runtime error categories.
+    - задает OS-neutral semantic error vocabulary для backend lifecycle/runtime boundary без привязки к `errno`, Winsock codes или backend-specific detail types.
+- Связи:
+    - используется в parse/validation/reconstructor/signaling layers;
+    - теперь также является общей error boundary для будущих backend lifecycle/runtime tasks (`035` / `036` / socket / MTL backend work).
+- Сущности:
+    - `enum class Error`
+        - parse/validation-oriented:
+            - `Ok`
+            - `BufferTooSmall`
+            - `InvalidValue`
+            - `Unsupported`
+            - `ShortPacket`
+            - `BadRTPVersion`
+        - backend/runtime-oriented:
+            - `InvalidBackendState`
+            - `SystemFailure`
+            - `BindFailed`
+            - `MulticastJoinFailed`
+            - `MulticastLeaveFailed`
+            - `ReceiveFailed`
+            - `ReceiveInterrupted`
+            - `ReceiveAborted`
+    - `to_string(Error)`
+        - string mapping for all known error values;
+        - unknown enum values no longer fall through to `"OK"` and now return an explicit unknown-error string.
+    - `is_backend_runtime_error(Error) noexcept`
+        - helper classification boundary;
+        - returns `true` only for backend/runtime operational failures;
+        - returns `false` for `Ok`, parse/validation errors, and unknown enum values.
+- Примечание:
+    - этот файл теперь задает общую semantic boundary для future backend lifecycle/result modeling;
+    - точные OS-specific details should remain outside `Error` and may be carried/logged separately later;
+    - task `036` should build lifecycle result/state behavior on top of this vocabulary rather than overloading parse errors or using ad hoc no-op failures.
+
+### libs/st2110core/include/st2110/packet_admission.hpp
+- Роль:
+    - explicit stream-specific packet-admission boundary above generic RTP/ST 2110 packet parsing.
+    - отделяет:
+        - generic RTP/header/payload structural parsing;
+          от:
+        - stream-specific payload-type admission against the configured expected RTP payload type.
+    - keeps wrong-payload-type rejection localized before reorder/depacketizer/runtime media processing.
+- Связи:
+    - использует `error.hpp` for explicit admission result reporting.
+    - использует `packet_view.hpp` for `PacketView` and access to parsed RTP payload type.
+    - intended downstream consumer is the runtime/backend receive path, which should call this boundary after generic packet parsing and before reorder/depacketizer use.
+    - behavior is covered by `tests/test_video_packet_admission.cpp`, including backend-level proof that wrong-PT packets do not enter depacketizer/reorder processing.
+- Сущности:
+    - `validate_rtp_payload_type_admission(std::uint8_t parsed_payload_type, std::uint8_t expected_payload_type) -> Error`
+        - generic RTP payload-type admission helper.
+        - behavior:
+            - returns `Ok` when parsed payload type matches the expected payload type exactly;
+            - returns `InvalidValue` on mismatch.
+    - `validate_video_packet_payload_type_admission(const PacketView&, std::uint8_t expected_payload_type) -> Error`
+        - video-oriented convenience wrapper over the generic RTP payload-type admission helper.
+        - behavior:
+            - reads `packet.rtp.payload_type`;
+            - delegates to `validate_rtp_payload_type_admission(...)`;
+            - returns `Ok` only for an exact payload-type match;
+            - returns `InvalidValue` for a wrong payload type.
+- Примечание:
+    - this file intentionally does not parse RTP or ST 2110 packet structure; structurally valid packets with a wrong RTP payload type must still parse successfully in the generic packet parser and be rejected only here.
+    - current public surface is video-oriented plus one generic RTP helper; future media-specific admission helpers should extend this boundary rather than pushing payload-type checks into generic RTP parsing or deeper depacketizer logic.
+
+### libs/st2110core/include/st2110/pixel_format.hpp
+- Роль:
+    - enum текущих поддерживаемых pixel/storage format’ов video pipeline.
+- Связи:
+    - используется в frame storage, config, depacketizer, segment constraints/placement, reconstructor.
+- Сущности:
+    - `enum class PixelFormat`
+        - `UYVY`
+
+### libs/st2110core/include/st2110/rx_config.hpp
+- Роль:
+    - manual/runtime RX config model для текущих MVP-path’ов.
+    - содержит video runtime config и audio runtime config.
+    - audio runtime config now explicitly models both sample format and PCM bit depth, instead of leaving RTP wire format as a backend-local assumption.
+- Связи:
+    - используется backend/video pipeline слоями;
+    - используется audio signaling projection layer из `audio_signaling_rx_config.hpp`;
+    - использует `config_validation.hpp`, `video_scan_mode.hpp`, `video_packing_mode.hpp`, `audio_signaling.hpp`;
+    - в будущем должен сосуществовать со standards-aware signaling model, а не заменять его.
+- Сущности:
+    - `RxVideoConfig`
+        - `width`, `height`
+        - `fps_num`, `fps_den`
+        - `udp_port`
+        - `payload_type`
+        - `local_ip`, `dest_ip`
+        - `format`
+        - `scan_mode`
+        - `packing_mode`
+        - `is_valid()`
+    - `validate_rx_video_config(const RxVideoConfig&)`
+    - `AudioSampleFormat`
+        - `LinearPcm`
+    - `RxAudioConfig`
+        - `sampling_rate_hz`
+        - `packet_time_us`
+        - `samples_per_packet`
+        - `channel_count`
+        - `udp_port`
+        - `payload_type`
+        - `local_ip`
+        - `dest_ip`
+        - `format`
+        - `pcm_bit_depth`
+        - `is_valid()`
+    - `AudioRuntimeSupportPolicy`
+        - `sample_formats`
+        - `conformance_ranges`
+    - `audio_runtime_support::default_sample_formats`
+    - `audio_runtime_support::default_conformance_ranges`
+    - `audio_sample_format_supported(...)`
+    - `audio_media_description_from_rx_audio_config(...)`
+        - maps runtime audio config back to modeled `AudioMediaDescription`, including `pcm_bit_depth`.
+    - `rx_audio_config_matches_any_conformance_range(...)`
+    - `validate_rx_audio_config_against_runtime_support(...)`
+        - validates sample-format support;
+        - validates `pcm_bit_depth`;
+        - validates conformance-range support;
+        - validates derived `samples_per_packet`;
+        - validates UDP port, dynamic RTP payload type, and destination IP.
+    - `default_audio_rx_runtime_support_policy()`
+    - `validate_rx_audio_config(const RxAudioConfig&)`
+- Примечание:
+    - current default audio runtime support remains Level A-oriented, but PCM bit depth is no longer implicit;
+    - runtime config still does not encode audio buffer layout or channel reordering;
+    - `samples_per_packet` remains derived/validated through `config_validation::audio_samples_per_packet_from_rate_and_packet_time(...)`.
+
+### libs/st2110core/include/st2110/timestamp.hpp
+- Роль:
+    - базовый внутренний тип времени для media timestamps.
+- Связи:
+    - используется `VideoFrameView`;
+    - future timestamp mapping boundary должна переводить RTP-domain в этот тип.
+- Сущности:
+    - `using TimestampNs = std::uint64_t`
+
+### libs/st2110core/include/st2110/stats.hpp
+- Роль:
+    - общая stats/counter boundary для текущего receive path.
+    - задает компактный vocabulary для observability на нескольких уровнях:
+        - generic parser results;
+        - staged packet parsing;
+        - reorder behavior;
+        - depacketizer behavior;
+        - backend runtime snapshot.
+    - keeps stats representation and helper accounting separate from parser/depacketizer/backend business logic.
+- Связи:
+    - использует `error.hpp` for classifying parse/accounting results by `Error`.
+    - используется:
+        - `packet_parse.hpp` for integrated packet-parse accounting;
+        - `packet_view.hpp` for staged parse-failure stage typing;
+        - `reorder_buffer.hpp` / `fixed_reorder_buffer.hpp` for reorder stats snapshots;
+        - `depacketizer.hpp` / `video_receive_pipeline.hpp` for depacketizer stats;
+        - `backend.hpp` and socket backend runtime layers for `BackendStats`.
+    - покрывается как минимум:
+        - `tests/test_stats.cpp`;
+        - `tests/test_packet_parse_stats.cpp`;
+        - plus broader backend/packet-parse integration tests that consume these structures indirectly.
+- Сущности:
+    - `ReorderBufferStats`
+        - reorder-layer counters:
+            - `packets_pushed`
+            - `packets_stored`
+            - `packets_popped`
+            - `duplicates`
+            - `out_of_window`
+            - `late_packets`
+            - `missing_seq`
+            - `missing_seq_flushed`
+    - `PacketParseStage`
+        - staged packet-parse boundary classification:
+            - `RtpHeader`
+            - `St2110PayloadHeaderParse`
+            - `St2110PayloadHeaderValidate`
+            - `SrdPayloadSplit`
+            - `PacketPolicy`
+    - `ParserStats`
+        - generic parser result counters:
+            - totals:
+                - `packets_total`
+                - `packets_ok`
+                - `packets_failed`
+            - error buckets:
+                - `short_packet`
+                - `bad_rtp_version`
+                - `invalid_value`
+                - `unsupported`
+                - `buffer_too_small`
+                - `other_error`
+    - `PacketParseStats`
+        - packet-parse stats layered over generic parser stats:
+            - `parser_stats`
+            - stage-local counters:
+                - `rtp_header_fail`
+                - `st2110_header_parse_fail`
+                - `bad_srd`
+                - `srd_payload_split_fail`
+                - `packet_policy_fail`
+    - `record_parse_result(ParserStats&, Error)`
+        - common generic parser accounting helper.
+        - behavior:
+            - always increments `packets_total`;
+            - for `Error::Ok`, increments `packets_ok`;
+            - otherwise increments `packets_failed`;
+            - routes known parse/validation-style errors into dedicated buckets;
+            - routes unknown/unclassified errors into `other_error`.
+    - `DepacketizerStats`
+        - depacketizer/unit-level counters:
+            - `packets_in`
+            - `packets_used`
+            - `units_ok`
+            - `units_partial`
+            - `units_dropped`
+    - `BackendStats`
+        - backend-local runtime snapshot counters:
+            - datagram/byte intake:
+                - `datagrams_received`
+                - `bytes_received`
+            - ignored traffic:
+                - `control_datagrams_ignored`
+                - `nonmedia_datagrams_ignored`
+            - media packet outcomes:
+                - `packets_parsed_ok`
+                - `packets_rejected`
+            - delivery/drop outcomes:
+                - `frames_delivered`
+                - `datagrams_dropped`
+                - `media_units_delivered`
+            - nested subsystem snapshots:
+                - `packet_parse`
+                - `reorder`
+                - `depacketizer`
+    - `record_packet_parse_result(PacketParseStats&, Error, PacketParseStage)`
+        - staged packet-parse accounting helper.
+        - behavior:
+            - first delegates to `record_parse_result(...)`;
+            - for `Error::Ok`, does not increment any stage-failure counter;
+            - for non-`Ok` results, increments the failure bucket corresponding to the given `PacketParseStage`.
+- Примечание:
+    - these structures are intentionally plain mutable counters, not synchronized/statistical engines; thread safety remains the responsibility of the caller/runtime layer exposing snapshots.
+    - `PacketParseStats` is intentionally layered: generic parser totals/error categories are tracked once in `parser_stats`, while stage-specific failure counters add localization without duplicating the generic classification model.
+    - `BackendStats` is a snapshot shape, not a mandatory storage strategy; concrete backends may aggregate/update it internally and expose snapshots through their own locking/runtime policy.
+
+### libs/st2110core/include/st2110/receive_reorder_tolerance_policy.hpp
+- Роль:
+    - explicit modeled receive-side tolerance boundary for reorder-gap handling.
+    - отделяет policy decision about waiting vs one-step gap flush от concrete reorder-buffer storage/state implementation.
+    - задает generic policy surface, которую media backends могут использовать при drain из reorder buffer’а.
+- Связи:
+    - использует `error.hpp` для validation result reporting;
+    - используется `video_reorder_policy.hpp` как часть `VideoReorderBufferConfig`;
+    - используется concrete socket receive backends:
+        - `socket_rx_video_backend.hpp`;
+        - `socket_rx_audio_backend.hpp`;
+          где policy управляет тем, разрешено ли вызывать `flush_missing_once()` при head gap.
+- Сущности:
+    - `ReceiveReorderGapPolicy`
+        - modeled reorder-gap handling axis:
+            - `WaitForMissing`
+            - `FlushGapOnce`.
+    - `ReceiveReorderTolerancePolicy`
+        - current receive-side tolerance policy object:
+            - `gap_policy`
+                - defaults to `ReceiveReorderGapPolicy::WaitForMissing`.
+    - `validate_receive_reorder_gap_policy(ReceiveReorderGapPolicy) -> Error`
+        - validates known enum values;
+        - returns:
+            - `Error::Ok` for supported modeled values;
+            - `Error::InvalidValue` for unknown enum values.
+    - `validate_receive_reorder_tolerance_policy(const ReceiveReorderTolerancePolicy&) -> Error`
+        - validates the policy object through `validate_receive_reorder_gap_policy(...)`.
+    - `receive_reorder_policy_allows_gap_flush_once(const ReceiveReorderTolerancePolicy&) -> bool`
+        - returns `true` only for `ReceiveReorderGapPolicy::FlushGapOnce`;
+        - returns `false` for `WaitForMissing`.
+- Примечание:
+    - this file models only policy and validation; it does not own packets, track reorder state, or perform flushing itself.
+    - current tolerance surface is intentionally minimal:
+        - either wait for the missing head packet;
+        - or permit one explicit gap flush step.
+    - unknown policy enum values are treated as `InvalidValue`, not silently coerced.
+
+### libs/st2110core/include/st2110/rtp_timestamp_anchor_policy.hpp
+- Роль:
+    - shared explicit policy boundary for initial RTP-to-`TimestampNs` anchoring.
+    - factors the initial-anchor mode out of audio/video timestamp mappers so the policy is modeled once and reused consistently.
+- Связи:
+    - использует `error.hpp` for validation result reporting.
+    - используется:
+        - `audio_timestamp_mapping.hpp`;
+        - `video_timestamp_mapping.hpp`;
+        - signaling/bootstrap/runtime projection paths that need to carry or validate the initial anchor policy explicitly.
+- Сущности:
+    - `RtpTimestampInitialAnchorMode`
+        - explicit initial anchoring mode enum:
+            - `ConfiguredReference`
+                - use caller-provided reference relation:
+                    - `anchor_rtp_timestamp`
+                    - `anchor_timestamp_ns`
+            - `FirstObservedBecomesLocalZero`
+                - first observed RTP timestamp becomes local `0 ns` origin.
+    - `validate_rtp_timestamp_initial_anchor_mode(RtpTimestampInitialAnchorMode) -> Error`
+        - validates known enum values;
+        - rejects unknown values as `InvalidValue`.
+- Примечание:
+    - this file is intentionally small and policy-only.
+    - it does not map timestamps by itself; concrete mapping behavior remains in:
+        - `audio_timestamp_mapping.hpp`
+        - `video_timestamp_mapping.hpp`.

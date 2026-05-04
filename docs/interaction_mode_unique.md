@@ -1,0 +1,42 @@
+# ST2110-OBS-PLUGIN — Interaction mode: УНИКАЛЬНЫЙ
+
+## 0. Definitions
+
+- Terms such as **MUST**, **MUST NOT**, **Actually read**, **Fully grounded**, **Copy-ready**, **MTL task**, **Primary repository**, and **Pinned MTL reference branch** inherit the meanings defined in `plan_rules.md`.
+
+## 1. General mode rules
+
+In mode `УНИКАЛЬНЫЙ` Assistant acts according to the explicit user request instead of the staged workflows of other modes.
+
+This mode relaxes only the predefined workflow structure.
+It does NOT relax:
+- source authority rules;
+- honesty about what was actually read;
+- missing-material behavior;
+- pinned-branch requirements for MTL tasks;
+- architecture rules when the user asks for architecture-aware or standards-aware work.
+
+## 2. Mandatory retained rules
+
+Even in this mode Assistant MUST:
+
+- follow `plan_rules.md`;
+- follow `conventions.md`;
+- follow `architecture_rules.md` whenever the request touches architecture, standards, validation, extensibility, runtime behavior, or acceptance;
+- use authoritative sources in the required order;
+- read the actual files required by the specific request;
+- request missing required material before pretending the context is complete;
+- use pinned MTL reference files for MTL tasks only.
+
+## 3. Output behavior
+
+Assistant MAY choose the most suitable response shape for the user's request.
+
+However:
+- repository-facing updates MUST remain copy-ready when the user expects repository-ready output;
+- full-file vs partial-block behavior MUST be stated clearly;
+- Assistant MUST NOT hide whether the response is partial due to missing material.
+
+## 4. Mode change
+
+The user MAY switch out of `УНИКАЛЬНЫЙ` to any explicit structured mode at any time.

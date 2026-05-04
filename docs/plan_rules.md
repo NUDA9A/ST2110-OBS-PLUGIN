@@ -5,19 +5,23 @@
 - **MUST** = обязательное требование без исключений, кроме явно записанных в этом файле.
 - **MUST NOT** = прямой запрет.
 - **MAY** = допустимое действие, но не обязательное.
-- **Current step** = текущее формулирование задачи, текущая приемка или текущий ответ, в котором ассистент утверждает, что изучил rules/work/context.
-- **Actually read** = открыть и прочитать актуальное содержимое файла для current step.  
+- **Current mode** = активный режим работы ассистента в текущем диалоге.
+- **Mode change** = явное указание пользователя переключить режим работы.
+- **Mode step** = текущий этап внутри активного режима.
+- **Actually read** = открыть и прочитать актуальное содержимое файла для current mode / mode step.  
   This MUST NOT be replaced by:
   - memory;
   - earlier snippets;
   - earlier turns;
-  - file maps;
-  - backlog wording;
+  - generated combined maps;
+  - shard descriptions without reading the actual file when the mode requires the actual file;
   - assumptions that files are unchanged.
-- **Relevant code** = production/test files, whose actual contents are needed to verify behavior, API, architecture, coverage, or whether a task is already implemented.
-- **Code check** = checking actual current code contents, not only plans, maps, or discussion.
+- **Fully read** = прочитать файл целиком либо ту его часть, которая explicitly required by the current mode and is sufficient to proceed without guessing.  
+  If the required part cannot be identified safely, the whole file MUST be read.
+- **Relevant code** = production/test files, whose actual contents are needed to verify behavior, API, architecture, coverage, or whether a requested change is already implemented.
+- **Code check** = checking actual current code contents, not only plans, maps, shard descriptions, or discussion.
 - **Already implemented** = the required behavior is already present in current code or in newer local code explicitly provided in chat.
-- **Fully grounded** = based on all required reading and checks for the current step.
+- **Fully grounded** = based on all required reading and checks for the current mode / mode step.
 - **Copy-ready** = content can be copied into the repository without reconstructing it from scattered fragments.
 - **Primary repository** = connected repository implementing this project: `NUDA9A/ST2110-OBS-PLUGIN`.
 - **MTL reference repository** = connected repository used only as authoritative MTL reference source for MTL tasks: `NUDA9A/Media-Transport-Library`.
@@ -42,363 +46,211 @@
   - `app/sample/rx_st30_pipeline_sample.c`;
   - `lib/src/st2110/pipeline/st20_pipeline_rx.c`;
   - `lib/src/st2110/pipeline/st30_pipeline_rx.c`.
+- **Sharded production map** = `code_map_index.md` plus all `code_map_shard_*.md` files.
+- **Sharded tests map** = `tests_file_map_index.md` plus all `tests_file_map_shard_*.md` files.
+- **Combined production map** = generated `code_map.md`.
+- **Combined tests map** = generated `tests_file_map.md`.
+- **Production-file selection path** = mandatory lookup chain:
+  1. `code_map_index.md`;
+  2. the relevant `code_map_shard_*.md`;
+  3. the actual production files.
+- **Test-file selection path** = mandatory lookup chain:
+  1. `tests_file_map_index.md`;
+  2. the relevant `tests_file_map_shard_*.md`;
+  3. the actual test files.
+- **Architecture rules file** = `architecture_rules.md`.
+- **Mode rules file** = one of:
+  - `interaction_mode_task.md`;
+  - `interaction_mode_review.md`;
+  - `interaction_mode_update_code_map.md`;
+  - `interaction_mode_update_tests_file_map.md`;
+  - `interaction_mode_unique.md`.
 
-## 1. Sources and authority
+## 1. Rule sets and precedence
+
+Assistant MUST follow these rule layers together:
+
+1. Project instructions;
+2. this file `plan_rules.md`;
+3. the current mode rules file;
+4. `architecture_rules.md` where the current mode requires it;
+5. `conventions.md`.
+
+Conflict handling:
+- if Project instructions conflict with any repository rule file, Project instructions win;
+- if this file defines a common default and the current mode file defines a stricter or more specific rule for the current mode, the current mode file wins for that mode;
+- if `conventions.md` conflicts with this file or the current mode file, this file / the current mode file wins;
+- architecture requirements from `architecture_rules.md` remain mandatory whenever the current mode requires architecture checking or architecture-aware design.
+
+Assistant MUST NOT silently mix rules from different modes.
+Assistant MUST NOT apply a mode-specific shortcut outside the active mode.
+
+## 2. Sources and authority
 
 Assistant MUST use sources in this order:
+
 1. Primary repository:
-- production `.hpp` / `.cpp`;
-- test files;
-- `plan.md`;
-- `code_map.md`;
-- `tests_file_map.md`;
+  - production `.hpp` / `.cpp`;
+  - test files;
+  - `plan.md`;
+  - sharded maps:
+    - `code_map_index.md`;
+    - `code_map_shard_*.md`;
+    - `tests_file_map_index.md`;
+    - `tests_file_map_shard_*.md`;
+  - generated combined maps:
+    - `code_map.md`;
+    - `tests_file_map.md`;
 2. Project copies:
-- `plan_rules.md`;
-- `conventions.md`;
-3. if the current step is an MTL task, the MTL reference repository on pinned branch `mtl-ref-v26.01`:
-- all configured MTL reference files;
-4. all ST 2110 / RP 2110 PDFs uploaded in the Project;
+  - `plan_rules.md`;
+  - `architecture_rules.md`;
+  - `conventions.md`;
+  - the current mode rules file;
+3. if the current mode step is an MTL task, the MTL reference repository on pinned branch `mtl-ref-v26.01`:
+  - all configured MTL reference files;
+4. uploaded ST 2110 / RP 2110 PDFs selected as relevant by the current mode;
 5. newer local changes explicitly provided in chat.
 
 Authoritative source rules:
-- `plan_rules.md` and `conventions.md` MUST be taken from Project copies.
-- `plan.md`, `code_map.md`, `tests_file_map.md` MUST be taken from the primary repository unless newer local versions are provided in chat.
-- production/test code of this project MUST be taken from the primary repository unless newer local code is provided in chat.
-- MTL reference files MUST be taken from the MTL reference repository on pinned branch `mtl-ref-v26.01`.
-- Assistant MUST NOT use `main` of the MTL reference repository as authoritative for MTL tasks.
+- `plan_rules.md`, `architecture_rules.md`, `conventions.md`, and all mode files MUST be taken from Project copies;
+- production/test code of this project MUST be taken from the primary repository unless newer local code is provided in chat;
+- sharded maps MUST be taken from the primary repository unless newer local versions are provided in chat;
+- generated `code_map.md` / `tests_file_map.md` are convenience artifacts only and MUST NOT replace the sharded-map workflow when the current mode requires shard-based lookup;
+- MTL reference files MUST be taken from the MTL reference repository on branch `mtl-ref-v26.01`;
+- Assistant MUST NOT use `main` of the MTL reference repository as authoritative for MTL tasks;
 - Assistant MUST NOT substitute the configured MTL reference files with remembered snippets, release notes, project copies, or other branches/tags unless the rules are explicitly updated.
 
-Assistant MUST NOT ask the user to resend files already available in the repository, Project, or connected MTL reference repository.
+Assistant MUST NOT ask the user to resend files already available in:
+- the primary repository;
+- Project copies;
+- the connected MTL reference repository for an MTL task.
+
 Assistant MAY ask only for:
 - newer local uncommitted changes;
 - missing / inaccessible / insufficient standards excerpts;
 - clearly relevant unavailable files.
 
-If the current step is NOT an MTL task, Assistant MUST NOT read MTL reference files and SHOULD NOT mention them.
+## 3. Mode system
 
-## 2. One-task workflow
+Valid modes are:
 
-- Assistant MUST work on one task at a time.
-- Assistant MUST NOT move to the next task before the current one is accepted.
-- By default, implementation is written by the user.
-- Assistant MUST NOT provide full implementation unless the user explicitly asks for it.
+- `ЗАДАЧА`
+- `ПРОВЕРКА`
+- `ОБНОВЛЕНИЕ code_map.md`
+- `ОБНОВЛЕНИЕ tests_file_map.md`
+- `УНИКАЛЬНЫЙ`
 
-Default output for a task:
-- architecture requirements;
-- exact scope of changes;
-- expected behavior;
-- tests;
-- copy-ready API skeletons when production API / headers / helper boundaries change or a new production file is added.
+Mode activation rules:
+- a new workflow MUST start only after the user explicitly names the mode;
+- after activation, the mode remains the Current mode until the user explicitly changes it;
+- a follow-up user message inside the same workflow MUST be treated as continuation of the Current mode unless the user explicitly changes the mode;
+- before acting in a mode, Assistant MUST read the corresponding mode file and follow it.
 
-## 3. Mandatory reading before task proposal
+If no Current mode exists and the user message does not explicitly set one, Assistant MUST:
+- ask the user to specify the mode;
+- limit the response to that clarification only.
 
-Before proposing the next task, Assistant MUST actually read:
-- `plan.md`;
-- `code_map.md`;
-- `tests_file_map.md` when tests / coverage / test selection matter;
-- Project copies of `plan_rules.md` and `conventions.md`;
-- relevant code from the primary repository;
-- all ST 2110 / RP 2110 PDFs uploaded in the Project;
-- newer local chat changes, if they exist.
+Assistant MUST NOT silently reinterpret:
+- `ЗАДАЧА` as `ПРОВЕРКА`;
+- `ПРОВЕРКА` as `УНИКАЛЬНЫЙ`;
+- map-update modes as implementation modes.
 
-If the current step is an MTL task, Assistant MUST also actually read all configured MTL reference files from:
+## 4. Sharded map workflow
+
+When the current mode requires choosing production files, Assistant MUST use the Production-file selection path:
+
+1. read `code_map_index.md`;
+2. identify the relevant shard(s);
+3. read the relevant shard entries;
+4. read the actual production files.
+
+When the current mode requires choosing test files, Assistant MUST use the Test-file selection path:
+
+1. read `tests_file_map_index.md`;
+2. identify the relevant shard(s);
+3. read the relevant shard entries;
+4. read the actual test files.
+
+Maps help file selection and expected subsystem placement, but MUST NOT replace reading actual files when the mode requires actual-file reading.
+
+If a map conflicts with actual code/tests:
+- actual code/tests win;
+- map-update output MUST reflect actual code/tests.
+
+## 5. MTL rules
+
+If the current mode step is an MTL task, Assistant MUST actually read all configured MTL reference files from:
 - repository `NUDA9A/Media-Transport-Library`;
 - branch `mtl-ref-v26.01`.
 
-If the current step is NOT an MTL task, Assistant MUST NOT read MTL reference files.
+If the current mode step is NOT an MTL task, Assistant MUST NOT read MTL reference files and SHOULD NOT mention them.
 
-Before proposing the next task, Assistant MUST also perform a code check to determine whether the task is already implemented.
+If the MTL reference repository or pinned branch is unavailable for an MTL task, Assistant MUST treat that as missing required material.
 
-This check MUST be grounded in code itself.
-It MUST NOT rely only on:
-- `plan.md`;
-- `code_map.md`;
-- `tests_file_map.md`;
-- backlog text;
-- earlier discussion;
-- assistant memory.
+## 6. Missing material rule
 
-If the task is already implemented:
-- Assistant MUST NOT propose redundant implementation.
-- Assistant MUST explicitly say that no additional production/test code is needed.
-- Assistant MAY point only to remaining non-implementation steps:
-  - acceptance;
-  - project `.md` updates;
-  - the next truly unfinished task.
-
-If the task is only partially implemented:
-- Assistant MUST separate existing behavior from missing scope.
-- Assistant MUST propose only the remaining work.
-
-If required reading or code check was not completed for the current step, Assistant MUST NOT present the task proposal as fully grounded.
-
-## 4. Mandatory reading before acceptance
-
-Before accepting an implementation, Assistant MUST actually read:
-- `plan.md`;
-- `code_map.md`;
-- `tests_file_map.md` when relevant;
-- Project copies of `plan_rules.md` and `conventions.md`;
-- relevant code from the primary repository;
-- all ST 2110 / RP 2110 PDFs uploaded in the Project;
-- newer local chat changes, if they exist.
-
-If the current step is an MTL task, Assistant MUST also actually read all configured MTL reference files from:
-- repository `NUDA9A/Media-Transport-Library`;
-- branch `mtl-ref-v26.01`.
-
-If the current step is NOT an MTL task, Assistant MUST NOT read MTL reference files.
-
-Acceptance MUST verify:
-- compliance with the task;
-- compliance with `plan.md`;
-- compliance with `plan_rules.md`;
-- compliance with `conventions.md`;
-- compliance with relevant standards requirements;
-- absence of new undocumented deviations;
-- architecture extensibility;
-- adequate test coverage;
-- localization of temporary limits and presence of follow-up when needed.
-
-Acceptance MUST NOT be presented as standards-aware unless all uploaded ST 2110 / RP 2110 PDFs were actually read for the current step.
-
-If required reading was not completed for the current step, Assistant MUST NOT:
-- say that rules/work/context/standards were studied;
-- present acceptance as fully grounded.
-
-## 5. Incomplete context rule
-
-If any required `.md`, relevant code, required standards PDF, or required MTL reference file for an MTL task:
+If any file required by the current mode / mode step:
 - was not actually read;
 - is unavailable;
 - is incomplete;
-- is replaced only by prose, memory, map, or old snippet,
+- is accessible only through stale prose, memory, map text, or an old snippet;
+- or cannot be fully read in the part required to proceed,
 
 Assistant MUST:
 - explicitly name what is missing;
 - request only that missing material;
+- stop before continuing the workflow step that depends on it;
 - limit the response to a partial answer.
 
 Assistant MUST NOT pretend that context was fully checked.
 
-If the MTL reference repository or pinned branch is unavailable for an MTL task, Assistant MUST treat that as missing required material.
-
-## 6. Task formulation rules
-
-Every task proposal MUST be checked against:
-- current rules;
-- current architecture;
-- current code state;
-- current standards context.
-
-If the current step is an MTL task, the task proposal MUST also be checked against:
-- the configured MTL reference files from the pinned MTL reference branch;
-- current MTL wrapper / sample usage patterns relevant to the task.
-
-Assistant MUST treat every task as potentially relevant to ST 2110 compliance and architecture extensibility.
+## 7. No-pretence rule
 
 Assistant MUST NOT:
-- assume a task is too small to require standards reading;
-- lock in an avoidable standards deviation;
-- turn an MVP limit into architecture;
-- replace a known modeled axis / support boundary / validation boundary / derived value with a hardcoded assumption.
+- say that rules/work/context were studied unless the required rule files for the current mode were actually read;
+- say that code was checked unless the required actual files were actually read;
+- present an answer as standards-grounded unless the standards files required by the current mode were actually read;
+- present an answer as MTL-grounded unless all required MTL reference files were actually read for that MTL step.
 
-If a new deviation is found during task proposal:
-- Assistant SHOULD fix it in the current task if scope remains reasonable.
-- Otherwise Assistant MUST:
-  - explicitly name it;
-  - add it to `Spec notes / deviations`;
-  - create or reference a follow-up task.
+If the current mode requires only selected relevant standards PDFs, Assistant MUST NOT claim to have checked standards outside that selected set.
 
-Assistant MUST NOT add a new deviation if:
-- the limitation is already known;
-- it is already covered by an existing task in `plan.md`;
-- the current task does not worsen it or change its nature.
+## 8. Already-implemented rule
 
-In that case Assistant MUST reference the existing backlog item and MUST NOT duplicate the deviation.
+Whenever the current mode requires a code check, the check MUST be grounded in actual current files.
 
-## 7. API/output rules
+This check MUST NOT rely only on:
+- shard descriptions;
+- generated maps;
+- backlog wording;
+- earlier discussion;
+- assistant memory.
 
-If a task changes production API / headers / helper boundaries or adds a production file, Assistant MUST provide copy-ready API skeletons.
+If the requested behavior is already implemented:
+- Assistant MUST NOT propose redundant implementation;
+- Assistant MUST explicitly say that no additional production/test code is needed for that scope;
+- Assistant MAY point only to remaining non-implementation steps allowed by the current mode.
 
-Output rules:
-- new production file → full file;
-- existing production `.hpp` → only new / changed declaration blocks;
-- full replacement of an existing production header → only if explicitly requested by the user;
-- unchanged declarations MUST NOT be resent;
-- existing inline implementations MUST NOT be resent.
+If the scope is only partially implemented:
+- Assistant MUST separate existing behavior from missing scope;
+- Assistant MUST propose only the remaining work.
 
-All declarations intended for user implementation SHOULD end with `;`.
+## 9. Combined maps
 
-Assistant MUST NOT leave required helper boundaries only in prose if they are part of the intended architecture or API.
+Generated `code_map.md` and `tests_file_map.md` MAY exist as repository convenience artifacts.
 
-For every new or semantically changed method / helper, Assistant MUST describe:
-- inputs;
-- validation boundary;
-- success path;
-- state changes / side effects;
-- returned errors / failure behavior;
-- invariants after the call;
-- temporary support limits, if any.
+However:
+- they MUST NOT replace shard-based navigation in modes that explicitly require shard lookup;
+- they MUST NOT be treated as more authoritative than:
+  - the sharded maps;
+  - the actual code/tests.
 
-Assistant MUST NOT provide implementation bodies by default.
+## 10. References
 
-## 8. Test rules
-
-Assistant MUST prefer extending an existing test file over creating a new one.
-Assistant MUST use `tests_file_map.md` to choose the target test file.
-
-A new test target / new `.cpp` test is allowed only if:
-- no suitable existing file exists;
-- a separate subsystem / boundary is introduced;
-- using an existing file would make coverage less maintainable.
-
-When tests are required, Assistant MUST provide:
-- the exact `add_st2110_test(...)` line if a new target is actually needed;
-- the full `.cpp` for every new test;
-- the full `.cpp` for every existing test file that must be replaced.
-
-Test ideas alone are insufficient.
-
-If the user does not report changes to tests previously provided in full, those tests and corresponding `add_st2110_test(...)` lines are assumed copied unchanged.
-
-At acceptance, the user MUST NOT be required to resend tests if they are already available in the repository or were previously provided in full and unchanged.
-
-## 9. Project `.md` update rules
-
-A task is NOT fully accepted until:
-1. implementation and tests are checked;
-2. required project `.md` updates are checked.
-
-After implementation, Assistant MUST determine whether updates are needed for:
-- `plan.md`;
-- `code_map.md`;
-- `tests_file_map.md`;
-- `plan_rules.md`;
-- `conventions.md`.
-
-Update triggers:
-- `plan.md` → task status, backlog, or `Spec notes / deviations` changed;
-- `code_map.md` → production files / roles / APIs / relationships changed;
-- `tests_file_map.md` → test files / targets changed;
-- `plan_rules.md` → working rules changed;
-- `conventions.md` → stable conventions changed.
-
-Assistant MUST provide replaceable blocks, not scattered line fragments:
-- `plan.md` → full task block / subsection;
-- `code_map.md` → full file block;
-- `tests_file_map.md` → full test-file block / subsection;
-- `plan_rules.md` and `conventions.md` → full updated file by default when their behavior changes.
-
-Line-level edits are allowed only if the user explicitly asks for a diff.
-
-After the user updates project `.md` files, Assistant MUST verify:
-- only completed tasks were marked completed;
-- nothing unfinished was closed;
-- `plan.md` status is reflected in the correct place;
-- maps match actual code/tests;
-- new limits / deviations were not lost.
-
-Only then MAY the task be treated as fully accepted.
-
-## 10. Plan/status rules
-
-Default `plan.md` workflow:
-- completed tasks are marked `[x]` where declared;
-- tasks are NOT moved to `## Done` by default;
-- the same task is NOT duplicated both in place and in `## Done`.
-
-A historical `## Done` section does NOT change this default by itself.
-
-## 11. Map rules
-
-`code_map.md` MUST describe actual production code structure:
-- architectural role;
-- major dependencies / connections;
-- key enums / structs / classes / functions / methods.
-
-`tests_file_map.md` MUST describe actual test targets / test files.
-
-If a map conflicts with actual code/tests, actual code/tests win and the map MUST be updated.
-
-Maps help select files but MUST NOT replace reading actual relevant files.
-
-## 12. Architecture rules
-
-Code MUST remain extensible.
-
-Typical future support SHOULD require:
-- adding enum/value coverage;
-- adding switch / adapter / mapper branches;
-- adding tests;
-- not rewriting the pipeline.
-
-Assistant MUST NOT lock the architecture to:
-- one pixel format only;
-- video-only forever;
-- one backend only;
-- console-only pipeline forever;
-- progressive-only semantics forever.
-
-The following MUST be explicit modeled axes / boundaries / derived values where relevant:
-- media kind;
-- backend kind;
-- pixel/storage format;
-- `VideoScanMode`;
-- packing mode;
-- RTP payload type admission;
-- completion semantics;
-- clock / timestamp / timing / playout policy;
-- packet size / MAXUDP policy;
-- SDP/raw signaling mapping boundaries;
-- video media-description properties;
-- audio sampling rate / packet time / samples-per-packet derivation;
-- audio conformance level / current support boundary;
-- audio channel count / order / mapping;
-- receiver capability / support policy.
-
-This list is not exhaustive.
-Any known variable standard / signaling / runtime / backend parameter MUST be treated as a modeled axis or derived value unless clearly proven otherwise.
-
-MVP limitations are allowed only as explicit:
-- modeled axes;
-- support / validation boundaries;
-- named policies / helpers / constants;
-- localized `Unsupported` / `InvalidValue` branches;
-- follow-up-backed temporary limits.
-
-MVP limitations MUST NOT be encoded as:
-- magic constants;
-- unnamed literals;
-- ad hoc branches without named boundaries;
-- fixed values that should be derived from signaled/runtime inputs;
-- omission of already-known architectural axes.
-
-Example: audio `samples_per_packet` MUST be derived from `sampling_rate_hz` and `packet_time_us`, not hardcoded as `48`.
-
-If an axis / boundary / dispatch already exists architecturally, fuller support MAY be implemented later.
-Later tasks SHOULD fill existing branches, not redesign architecture.
-
-Avoidable standards deviations MUST NOT be accumulated intentionally.
-If a standards deviation can be fixed now without unreasonable scope growth, it SHOULD be fixed now.
-Otherwise it MUST be recorded in `Spec notes / deviations` and backlog.
-
-## 13. Phase goals
-
-- **MVP** = minimal viable ST 2110 video/audio receive on Linux, two backends, basic OBS integration, manual E2E readiness.
-- **Medium** = broader format coverage, robustness, edge-cases, UX/observability, testing readiness.
-- **Plugin** = stable and usable OBS plugin behavior.
-- **Tests** = systematic regression and coverage.
-- **Hardening** = performance, recovery, correctness polish.
-- **Windows** = optional port of own socket backend without MTL.
-
-## 14. References
-
-- SMPTE ST 2110-10:2022 (Имя в памяти: `st2110-10-2022.pdf`)
-- SMPTE ST 2110-20:2022 (Имя в памяти: `st2110-20-2022 (1).pdf`)
-- SMPTE ST 2110-21:2022 (Имя в памяти: `st2110-21-2022.pdf`)
-- SMPTE ST 2110-30:2025 (Имя в памяти: `st2110-30-2025.pdf`)
-- SMPTE RP 2110-25:2023 (Имя в памяти: `rp2110-25-2023.pdf`)
+- SMPTE ST 2110-10:2022
+- SMPTE ST 2110-20:2022
+- SMPTE ST 2110-21:2022
+- SMPTE ST 2110-30:2025
+- SMPTE RP 2110-25:2023
 - RFC 3550
 - RFC 4175
 - Wireshark dissector ST2110-20

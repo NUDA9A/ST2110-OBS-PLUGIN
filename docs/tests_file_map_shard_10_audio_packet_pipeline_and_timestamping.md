@@ -1,0 +1,180 @@
+### tests/test_audio_frame.cpp
+- Роль:
+    - проверяет initial `AudioBuffer` / `AudioFrameView` contract.
+    - покрывает:
+        - construction from explicit audio dimensions;
+        - construction from `RxAudioConfig`;
+        - current MVP storage layout `InterleavedS32`;
+        - interleaved sample indexing by `(sample_index, channel)`;
+        - mutable and const sample access;
+        - total sample count;
+        - sample-frame stride;
+        - byte size;
+        - timestamp propagation into `AudioFrameView`;
+        - out-of-range sample/channel access rejection.
+    - фиксирует separation between:
+        - audio storage layout;
+        - runtime `RxAudioConfig` validation;
+        - channel-order / channel-mapping semantics;
+        - future audio RTP packet assembly and backend behavior.
+
+### tests/test_audio_packet.cpp
+- Роль:
+    - проверяет audio RTP packet policy/view boundary.
+    - покрывает:
+        - explicit wire-sample byte sizes for `AudioPcmWireFormat::{L16, L24}`;
+        - derivation of `AudioPcmWireFormat` from `RxAudioConfig::pcm_bit_depth`;
+        - preservation of runtime axes in `AudioRtpPacketPolicy`;
+        - payload-size calculation for both `L24` and `L16`;
+        - rejection of inconsistent `samples_per_packet`;
+        - packet-view construction with matching RTP payload type and payload size;
+        - rejection of payload-type mismatch;
+        - rejection of payload-size mismatch.
+    - фиксирует:
+        - packet policy no longer takes a backend-supplied temporary wire-format override;
+        - runtime bit depth now drives RTP wire-format policy explicitly.
+
+### tests/test_audio_rtp_parser.cpp
+- Роль:
+    - проверяет full audio RTP parser path on top of `AudioRtpPacketPolicy`.
+    - покрывает:
+        - valid `L24` audio RTP packet parsing;
+        - valid `L16` audio RTP packet parsing;
+        - preservation of parsed `wire_format` in `AudioRtpPacketView`;
+        - RTP payload extraction with CSRC + header extension present;
+        - payload-type mismatch rejection;
+        - payload-size mismatch rejection;
+        - short RTP packet rejection;
+        - bad RTP version rejection before audio-payload policy acceptance.
+
+### tests/test_audio_reorder_buffer.cpp
+- Роль:
+    - проверяет `AudioFixedWindowReorderBuffer` как concrete audio reorder implementation поверх `AudioRtpPacketView`.
+- Покрывает:
+    - in-order push/pop behavior;
+    - out-of-order acceptance within reorder window and ordered pop;
+    - duplicate rejection without overwriting originally stored payload;
+    - single-gap advance through `flush_missing_once()`;
+    - late-packet rejection after progress;
+    - out-of-window rejection for configured reorder window;
+    - `reset()` clearing pending packets and sequence state;
+    - 16-bit RTP sequence wraparound handling;
+    - stats accounting:
+        - `packets_pushed`;
+        - `packets_popped`;
+        - `duplicates`;
+        - `late_packets`;
+        - `out_of_window`;
+        - `missing_packets_flushed`.
+- Фиксирует:
+    - audio reorder behavior remains aligned with the modeled fixed-window receive policy for audio RTP packets;
+    - stored audio payload/view integrity survives reordering decisions and later pop.
+
+### tests/test_audio_frame_assembler.cpp
+- Роль:
+    - проверяет audio packet-to-block assembly into current MVP storage layout `InterleavedS32`.
+    - покрывает:
+        - `L24` wire-sample decode into signed 32-bit interleaved storage;
+        - `L16` wire-sample decode into signed 32-bit interleaved storage;
+        - non-stereo / non-48-sample block handling without hardcoded assumptions;
+        - payload-size mismatch rejection;
+        - invalid packet-shape rejection;
+        - stats accounting and `reset()` reusability.
+    - фиксирует:
+        - current storage layout remains separate from RTP wire-format width;
+        - explicit `AudioPcmWireFormat` survives far enough to drive actual sample decoding.
+
+### tests/test_audio_stats.cpp
+- Роль:
+    - проверяет shared audio receive stats boundary introduced for task `094`.
+- Покрывает:
+    - default `AudioReceiveStats` counters are initialized to zero;
+    - packet helper functions increment the correct counters:
+        - `record_audio_packet_ok(...)`;
+        - `record_audio_packet_lost(...)`;
+        - `record_audio_packet_rejected(...)`.
+    - `record_audio_block_result(...)` increments the correct block counters for:
+        - `AudioBlockCompletionStatus::Complete`;
+        - `AudioBlockCompletionStatus::Partial`;
+        - `AudioBlockCompletionStatus::Dropped`.
+    - invalid block-completion enum values are rejected and do not mutate stats;
+    - `reset_audio_receive_stats(...)` clears all counters.
+- Фиксирует:
+    - audio stats accounting remains a standalone boundary;
+    - stats helpers do not embed RTP parsing, reorder/jitter, audio assembly, timestamp mapping, playout policy, channel-order mapping, socket backend, or MTL backend behavior.
+
+### tests/audio_timestamp_mapping_test.cpp
+- Роль:
+    - focused unit test для `audio_timestamp_mapping.hpp`.
+    - проверяет config validation, RTP-tick-to-nanoseconds conversion, mapper behavior in both initial-anchor modes, reset semantics, и audio playout-timing helpers.
+- Покрывает:
+    - `validate_audio_rtp_timestamp_mapper_config(...)`:
+        - valid `ConfiguredReference` config accepted;
+        - zero RTP clock rate rejected;
+        - `FirstObservedBecomesLocalZero` with non-zero anchor fields rejected.
+    - `audio_rtp_ticks_to_timestamp_ns(...)`:
+        - exact conversion for `48 kHz` and `96 kHz`;
+        - zero clock rate rejection;
+        - overflow rejection.
+    - `forward_audio_rtp_timestamp_delta(...)`:
+        - normal forward delta;
+        - wraparound forward delta;
+        - half-range ambiguous delta rejection;
+        - backward delta rejection.
+    - `AudioRtpTimestampMapper` in `ConfiguredReference` mode:
+        - anchor RTP timestamp maps to configured anchor nanoseconds;
+        - subsequent packets map by RTP delta.
+    - `AudioRtpTimestampMapper` in `FirstObservedBecomesLocalZero` mode:
+        - first observed RTP timestamp maps to `0 ns`;
+        - subsequent packets map by delta from the first observed packet.
+    - wraparound mapping in both modes.
+    - invalid mapping behavior:
+        - backward packet rejected;
+        - invalid clock-rate config rejected;
+        - anchor-plus-offset overflow rejected.
+    - `reset(...)` semantics in both modes:
+        - explicit configured reanchor;
+        - explicit first-observed-local-zero reanchor.
+    - audio playout timing helpers:
+        - `audio_receiver_playout_timing_decision(...)`;
+        - overflow rejection for playout timing;
+        - `audio_block_timing(...)` remains independent from assembler/runtime code.
+- Фиксирует:
+    - audio timestamp mapper API now explicitly models initial anchoring policy;
+    - default/manual path no longer relies on an unexplained hidden `0/0` anchor artifact;
+    - playout timing remains layered above media timestamp mapping rather than fused with it.
+
+### tests/audio_timestamp_mapping_invariants_test.cpp
+- Роль:
+    - invariants/regression test для audio RTP timestamp mapping boundary и его взаимодействия с receiver-side playout timing.
+    - фиксирует две явные политики initial anchoring:
+        - `ConfiguredReference`;
+        - `FirstObservedBecomesLocalZero`.
+- Покрывает:
+    - monotonic 48 kHz / 1 ms cadence in `ConfiguredReference` mode:
+        - exact 1 ms step;
+        - strict monotonic growth over many packets.
+    - monotonic 48 kHz / 1 ms cadence in `FirstObservedBecomesLocalZero` mode:
+        - first observed RTP timestamp maps to local `0 ns`;
+        - subsequent packets preserve exact 1 ms cadence.
+    - explicit non-default RTP clock-rate support:
+        - `96 kHz` cadence uses the configured clock rate rather than hidden `48 kHz` assumptions.
+    - wraparound behavior in both modes:
+        - continuity across 32-bit RTP timestamp wraparound;
+        - no cadence break after wraparound.
+    - long-running stream behavior beyond one 32-bit RTP epoch in both modes:
+        - accumulated nanoseconds continue from RTP-domain deltas;
+        - mapping remains monotonic and larger than one full 32-bit epoch worth of ticks.
+    - rejection behavior:
+        - backward delta rejected;
+        - exact half-range ambiguous delta rejected;
+        - failed packet does not advance mapper state.
+    - reset semantics in both modes:
+        - `ConfiguredReference` reset reanchors to the new explicit configured anchor;
+        - `FirstObservedBecomesLocalZero` reset discards old cadence state and makes the next observed RTP timestamp the new local zero.
+    - playout timing overlay:
+        - `audio_block_timing(...)` preserves media cadence and applies constant playout delay independently from the RTP timestamp mapper mode.
+- Фиксирует:
+    - audio timestamp mapping no longer has a single hidden `0/0` anchor convention;
+    - both anchoring policies are explicit and stable;
+    - long-running / wraparound continuity remains correct after the architecture change.

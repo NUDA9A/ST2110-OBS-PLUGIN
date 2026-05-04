@@ -4,17 +4,238 @@
 > - держать карту тестового покрытия отдельно от production code map;
 > - фиксировать, какой subsystem / boundary покрывает каждый тест;
 > - не дублировать полную реализацию тестов;
-> - обновлять после принятия задач, если добавлены, удалены или существенно изменены тестовые файлы.
+> - обновлять после принятия задач, если добавлены, удалены или существенно изменены тестовые файлы;
+> - хранить стабильный индекс шардированной test map.
 >
 > Важно:
 > - production headers / runtime code описываются в `code_map.md`;
 > - test targets / `.cpp` тесты описываются здесь;
 > - `plan.md` хранит backlog/status/deviations;
 > - `code_map.md` тесты не содержит.
+>
+> Правила ведения:
+> - один test file описываем ровно в одном шарде;
+> - шарды группируем по subsystem / architectural boundary, а не по алфавиту;
+> - при изменении состава шардов или порядка сборки обновляем и этот индекс, и `scripts/rebuild_tests_file_map.sh`;
+> - детальные записи хранятся в `tests_file_map_shard_*.md`.
 
-## Build integration
+## Карта шардов
 
-## Build integration
+### `tests_file_map_shard_01_build_and_foundations.md`
+- Область:
+    - build integration;
+    - smoke/common foundations;
+    - общие low-level helpers;
+    - ODR/link regressions.
+- Содержит:
+    - `tests/CMakeLists.txt`
+    - `tests/test_smoke.cpp`
+    - `tests/test_endian.cpp`
+    - `tests/test_error.cpp`
+    - `tests/test_bytespan.cpp`
+    - `tests/test_stats.cpp`
+    - `tests/test_config_validation.cpp`
+    - `tests/test_header_odr_link_main.cpp`
+    - `tests/test_header_odr_link_a.cpp`
+    - `tests/test_header_odr_link_b.cpp`
+    - `tests/test_timestamp_ns.cpp`
+
+### `tests_file_map_shard_02_runtime_config_and_backend_interfaces.md`
+- Область:
+    - manual/runtime config surface;
+    - backend interfaces;
+    - backend factory;
+    - shared reorder-tolerance policy.
+- Содержит:
+    - `tests/test_rx_config.cpp`
+    - `tests/test_backend_interface.cpp`
+    - `tests/test_backend_factory.cpp`
+    - `tests/test_receive_reorder_tolerance_policy.cpp`
+
+### `tests_file_map_shard_03_packet_parsing_and_reorder.md`
+- Область:
+    - RTP / ST 2110-20 packet parsing;
+    - packet view / packet policy;
+    - packet admission;
+    - generic reorder abstractions and fixed reorder behavior.
+- Содержит:
+    - `tests/test_rtp_parser.cpp`
+    - `tests/test_rtp_seq.cpp`
+    - `tests/test_rtp_payload.cpp`
+    - `tests/test_st2110_20_types.cpp`
+    - `tests/test_st2110_20_parse.cpp`
+    - `tests/test_st2110_20_validate.cpp`
+    - `tests/test_extended_seq.cpp`
+    - `tests/test_zero_length_srd.cpp`
+    - `tests/test_st2110_20_ordering.cpp`
+    - `tests/test_packet_view.cpp`
+    - `tests/test_packet_view_parse.cpp`
+    - `tests/test_packet_view_trailing_padding.cpp`
+    - `tests/test_packet_parse_stats.cpp`
+    - `tests/test_packet_parse_policy.cpp`
+    - `tests/test_packet_parse_integration_stats.cpp`
+    - `tests/test_reorder_buffer_interface.cpp`
+    - `tests/test_fixed_reorder_buffer.cpp`
+    - `tests/test_fixed_reorder_buffer_stats.cpp`
+    - `tests/test_fixed_reorder_buffer_flush.cpp`
+    - `tests/test_video_packet_admission.cpp`
+
+### `tests_file_map_shard_04_video_frame_assembly_and_pipeline.md`
+- Область:
+    - video frame storage;
+    - frame assembly;
+    - video receive semantics;
+    - depacketizer;
+    - receive pipeline and reconstructor.
+- Содержит:
+    - `tests/test_video_frame.cpp`
+    - `tests/test_video_frame_mutable_access.cpp`
+    - `tests/test_frame_write_coverage.cpp`
+    - `tests/test_frame_assembler_lifecycle.cpp`
+    - `tests/test_frame_assembler_bounds.cpp`
+    - `tests/test_frame_assembler_completeness.cpp`
+    - `tests/test_frame_assembler_partial_policy.cpp`
+    - `tests/test_video_scan_mode.cpp`
+    - `tests/test_video_receive_semantics.cpp`
+    - `tests/test_video_assembly_key.cpp`
+    - `tests/test_video_field_id_boundary.cpp`
+    - `tests/test_video_segment_constraints.cpp`
+    - `tests/test_video_segment_placement.cpp`
+    - `tests/test_video_packet_trailing_padding.cpp`
+    - `tests/test_depacketizer_api.cpp`
+    - `tests/test_depacketizer_grouping.cpp`
+    - `tests/test_depacketizer_marker.cpp`
+    - `tests/test_depacketizer_writes.cpp`
+    - `tests/test_depacketizer_stats.cpp`
+    - `tests/test_depacketizer_unit_state.cpp`
+    - `tests/test_depacketizer_segment_mapping.cpp`
+    - `tests/test_depacketizer_trailing_padding.cpp`
+    - `tests/test_depacketizer_trailing_padding_state.cpp`
+    - `tests/test_video_unit_reconstructor.cpp`
+    - `tests/test_video_receive_pipeline.cpp`
+
+### `tests_file_map_shard_05_video_signaling_and_runtime_projection.md`
+- Область:
+    - video signaling model;
+    - runtime projection;
+    - bootstrap projection;
+    - modeled sender/reference/media properties.
+- Содержит:
+    - `tests/test_video_signaling.cpp`
+    - `tests/test_video_signaling_rx_match.cpp`
+    - `tests/test_video_signaling_to_rx_config.cpp`
+    - `tests/test_video_signaling_to_pipeline_config.cpp`
+    - `tests/test_video_receiver_bootstrap.cpp`
+    - `tests/test_video_packing_mode_runtime_projection.cpp`
+    - `tests/test_video_signaled_media_properties.cpp`
+    - `tests/test_video_reference_clock.cpp`
+    - `tests/test_video_sender_signaling.cpp`
+    - `tests/test_video_timing_signaling.cpp`
+
+### `tests_file_map_shard_06_video_receiver_timing_and_timestamp_mapping.md`
+- Область:
+    - video receiver timing policy;
+    - timing-aware bootstrap wrapper;
+    - RTP timestamp mapping;
+    - playout/reconstruction timing.
+- Содержит:
+    - `tests/test_video_receiver_timing.cpp`
+    - `tests/test_video_receiver_timing_signaling.cpp`
+    - `tests/test_video_receiver_timing_bootstrap.cpp`
+    - `tests/video_receiver_timing_architecture_test.cpp`
+    - `tests/video_playout_timing_test.cpp`
+    - `tests/video_timestamp_mapping_test.cpp`
+    - `tests/video_timestamp_mapping_invariants_test.cpp`
+
+### `tests_file_map_shard_07_video_sdp_ingestion_and_transport_boundary.md`
+- Область:
+    - raw video SDP media-section parsing;
+    - fmtp / rtpmap / timing parsing;
+    - final SDP ingestion;
+    - raw transport/redundancy metadata boundaries.
+- Содержит:
+    - `tests/video_sdp_media_section_test.cpp`
+    - `tests/video_sdp_fmtp_test.cpp`
+    - `tests/video_sdp_signaling_adapter_test.cpp`
+    - `tests/video_sdp_timing_attributes_test.cpp`
+    - `tests/video_sdp_rtpmap_test.cpp`
+    - `tests/video_sdp_ingestion_test.cpp`
+    - `tests/video_sdp_fmtp_timing_parameters_test.cpp`
+    - `tests/video_sdp_maxudp_parameters_test.cpp`
+    - `tests/video_sdp_depth_16f_test.cpp`
+    - `tests/video_sdp_media_property_enum_coverage_test.cpp`
+    - `tests/video_sdp_optional_sender_timing_test.cpp`
+    - `tests/video_sdp_transport_boundary_test.cpp`
+    - `tests/video_sdp_media_cross_field_validation_test.cpp`
+    - `tests/video_sdp_source_filter_scope_test.cpp`
+    - `tests/video_sdp_redundancy_boundary_test.cpp`
+    - `tests/video_sdp_fmtp_strict_parsing_test.cpp`
+    - `tests/video_sdp_timing_scope_test.cpp`
+    - `tests/video_sdp_connection_data_test.cpp`
+
+### `tests_file_map_shard_08_audio_signaling_bootstrap_and_channel_order.md`
+- Область:
+    - audio signaling model;
+    - signaling-to-runtime projection;
+    - bootstrap composition;
+    - channel-order boundary.
+- Содержит:
+    - `tests/audio_signaling_to_rx_config_test.cpp`
+    - `tests/audio_signaling_model_test.cpp`
+    - `tests/audio_channel_order_boundary_test.cpp`
+    - `tests/audio_receiver_bootstrap_test.cpp`
+
+### `tests_file_map_shard_09_audio_sdp_ingestion.md`
+- Область:
+    - raw audio SDP media-section parsing;
+    - audio SDP signaling adapter;
+    - final audio SDP ingestion;
+    - raw audio timing/reference-clock parsing.
+- Содержит:
+    - `tests/audio_sdp_media_section_test.cpp`
+    - `tests/audio_sdp_signaling_adapter_test.cpp`
+    - `tests/audio_sdp_ingestion_test.cpp`
+    - `tests/audio_sdp_timing_attributes_test.cpp`
+
+### `tests_file_map_shard_10_audio_packet_pipeline_and_timestamping.md`
+- Область:
+    - audio frame storage;
+    - audio packet model;
+    - audio reorder and frame assembly;
+    - audio receive stats;
+    - audio RTP timestamp mapping and playout timing.
+- Содержит:
+    - `tests/test_audio_frame.cpp`
+    - `tests/test_audio_packet.cpp`
+    - `tests/test_audio_rtp_parser.cpp`
+    - `tests/test_audio_reorder_buffer.cpp`
+    - `tests/test_audio_frame_assembler.cpp`
+    - `tests/test_audio_stats.cpp`
+    - `tests/audio_timestamp_mapping_test.cpp`
+    - `tests/audio_timestamp_mapping_invariants_test.cpp`
+
+### `tests_file_map_shard_11_socket_runtime_and_concrete_backends.md`
+- Область:
+    - socket runtime abstraction;
+    - Linux socket runtime;
+    - socket operational architecture;
+    - concrete socket video/audio backends.
+- Содержит:
+    - `tests/test_socket_runtime_interface.cpp`
+    - `tests/test_linux_socket_rx_port.cpp`
+    - `tests/test_socket_rx_video_backend.cpp`
+    - `tests/test_socket_rx_audio_backend.cpp`
+    - `tests/test_socket_rx_operational_architecture.cpp`
+
+## Текущая структура тестов (file map)
+
+> Назначение раздела:
+> - держать карту тестового покрытия отдельно от production code map;
+> - фиксировать, какой subsystem / boundary покрывает каждый тест;
+> - не дублировать полную реализацию тестов;
+> - обновлять после принятия задач, если добавлены, удалены или существенно изменены тестовые файлы.
+>
+> Детальные записи ниже подтягиваются из шардов в порядке, зафиксированном в `scripts/rebuild_tests_file_map.sh`.
 
 ### tests/CMakeLists.txt
 - Роль:
@@ -25,8 +246,6 @@
 - Сущности:
     - `add_st2110_test(...)`
     - targets for smoke/base tests, RTP/ST2110 packet parsing, packet admission, reorder, frame assembly, depacketizer, video signaling, SDP ingestion, timing, playout, audio signaling model tests, audio SDP ingestion tests, audio receiver bootstrap tests, backend interface tests, backend factory tests, audio frame storage tests, audio packet model tests, socket runtime tests, Linux socket receive-port tests, socket video backend tests, and socket audio backend tests.
-
-## Smoke / common foundations
 
 ### tests/test_smoke.cpp
 - Роль:
@@ -77,7 +296,9 @@
 - Target:
     - `test_header_odr_link`
 
-## Manual config / backend interface
+### tests/test_timestamp_ns.cpp
+- Роль:
+    - проверяет базовый internal timestamp type contract.
 
 ### tests/test_rx_config.cpp
 - Роль:
@@ -196,7 +417,31 @@
     - backend selection/creation remains separate from backend lifecycle semantics;
     - factory-created backends expose both lifecycle/state and stats snapshot boundaries immediately after construction.
 
-## RTP / ST 2110-20 packet parsing
+### tests/test_receive_reorder_tolerance_policy.cpp
+- Роль:
+    - focused coverage для общей модели reorder-tolerance policy, reused by both video and audio reorder-buffer configs.
+- Покрывает:
+    - modeled enum axis:
+        - `ReceiveReorderGapPolicy::WaitForMissing`;
+        - `ReceiveReorderGapPolicy::FlushGapOnce`.
+    - `validate_receive_reorder_gap_policy(...)` for known and unknown enum values;
+    - explicit default behavior of `ReceiveReorderTolerancePolicy`:
+        - default-constructed policy stays `WaitForMissing`;
+        - default policy validates successfully.
+    - helper behavior:
+        - `receive_reorder_policy_allows_gap_flush_once(...)` distinguishes named policies correctly.
+    - `validate_receive_reorder_tolerance_policy(...)` rejection of invalid/unknown gap policy.
+    - `VideoReorderBufferConfig` validation:
+        - both named policies are accepted;
+        - zero window is rejected;
+        - invalid policy is rejected.
+    - `AudioReorderBufferConfig` validation:
+        - both named policies are accepted;
+        - zero window is rejected;
+        - invalid policy is rejected.
+- Фиксирует:
+    - reorder gap-tolerance policy is modeled once and reused consistently by video and audio reorder-buffer config boundaries;
+    - default behavior stays explicit and does not rely on hidden fallback logic.
 
 ### tests/test_rtp_parser.cpp
 - Роль:
@@ -284,8 +529,6 @@
 - Роль:
     - проверяет integrated packet parse path with stage-specific stats recording.
 
-## Reorder buffer
-
 ### tests/test_reorder_buffer_interface.cpp
 - Роль:
     - проверяет `IReorderBuffer` abstraction, `StoredPacket` ownership/view restoration, explicit gap-flush hook, and reorder stats snapshot boundary.
@@ -326,7 +569,32 @@
 - Роль:
     - проверяет missing sequence flush behavior.
 
-## Video frame storage / frame assembly
+### tests/test_video_packet_admission.cpp
+- Роль:
+    - regression tests для explicit RTP payload-type admission boundary in the video receive path.
+    - проверяет, что payload-type admission remains separate from generic RTP/ST 2110-20 parsing and that wrong-PT packets are ignored before reorder/depacketizer use.
+- Покрывает:
+    - helper-level admission boundary:
+        - matching dynamic RTP payload type accepted by `validate_rtp_payload_type_admission(...)`;
+        - matching video packet accepted by `validate_video_packet_payload_type_admission(...)`;
+        - mismatching payload type rejected as `InvalidValue`.
+    - separation of concerns:
+        - generic `PacketView` parsing still succeeds for structurally valid RTP/ST 2110-20 packets regardless of whether the payload type matches the configured stream;
+        - payload-type admission remains a separate stream-specific boundary above generic packet parsing.
+    - runtime backend behavior with the new operational start boundary:
+        - `SocketRxVideoBackend` is started from `SocketRxVideoOperationalConfig`, not manual `RxVideoConfig`;
+        - wrong-payload-type packet is treated as non-media datagram and dropped locally;
+        - wrong-PT packet does not enter reorder/depacketizer state;
+        - no frame is delivered to the sink;
+        - backend stats record:
+            - one received datagram;
+            - one ignored non-media datagram;
+            - zero parsed-ok media packets;
+            - zero rejected media packets;
+            - zero depacketizer/reorder activity.
+- Фиксирует:
+    - payload-type admission is an explicit receive-path boundary distinct from generic RTP parsing;
+    - wrong-PT packets are ignored before reorder/depacketizer mutation even after the backend’s move to the operational-only socket start API.
 
 ### tests/test_video_frame.cpp
 - Роль:
@@ -366,8 +634,6 @@
     - проверяет partial frame policy:
         - drop;
         - emit-with-flag.
-
-## Video scan mode / receive semantics / placement
 
 ### tests/test_video_scan_mode.cpp
 - Роль:
@@ -414,8 +680,6 @@
 ### tests/test_video_packet_trailing_padding.cpp
 - Роль:
     - проверяет packet trailing padding policy boundary independent from generic parsing.
-
-## Depacketizer / video receive pipeline
 
 ### tests/test_depacketizer_api.cpp
 - Роль:
@@ -488,7 +752,7 @@
         - reset;
         - config consistency.
 
-## Video signaling / runtime projection
+
 
 ### tests/test_video_signaling.cpp
 - Роль:
@@ -664,7 +928,6 @@
         - timestamp mode;
         - timing validation.
 
-## Video receiver timing / playout timing
 
 ### tests/test_video_receiver_timing.cpp
 - Роль:
@@ -708,12 +971,6 @@
 - Фиксирует:
     - receiver playout/reconstruction timing remains a separate boundary above media timestamp mapping;
     - explicit initial-anchor policy changes media timestamp origin, but does not collapse playout timing into the mapper.
-
-## Video RTP timestamp mapping
-
-### tests/test_timestamp_ns.cpp
-- Роль:
-    - проверяет базовый internal timestamp type contract.
 
 ### tests/video_timestamp_mapping_test.cpp
 - Роль:
@@ -768,8 +1025,6 @@
     - video timestamp mapping now explicitly supports both configured-reference and first-observed-local-zero semantics;
     - default/manual path no longer relies on an unexplained hidden `0/0` anchor artifact;
     - playout timing remains layered above media timestamp mapping rather than fused with it.
-
-## Video SDP raw media-section parsing / SDP ingestion
 
 ### tests/video_sdp_media_section_test.cpp
 - Роль:
@@ -1055,29 +1310,6 @@
     - raw SDP `c=` remains transport metadata outside `VideoStreamSignaling`;
     - structural validation is now tighter, but session/media preservation behavior remains unchanged.
 
-## Audio frame storage
-
-### tests/test_audio_frame.cpp
-- Роль:
-    - проверяет initial `AudioBuffer` / `AudioFrameView` contract.
-    - покрывает:
-        - construction from explicit audio dimensions;
-        - construction from `RxAudioConfig`;
-        - current MVP storage layout `InterleavedS32`;
-        - interleaved sample indexing by `(sample_index, channel)`;
-        - mutable and const sample access;
-        - total sample count;
-        - sample-frame stride;
-        - byte size;
-        - timestamp propagation into `AudioFrameView`;
-        - out-of-range sample/channel access rejection.
-    - фиксирует separation between:
-        - audio storage layout;
-        - runtime `RxAudioConfig` validation;
-        - channel-order / channel-mapping semantics;
-        - future audio RTP packet assembly and backend behavior.
-
-## Audio signaling model
 
 ### tests/audio_signaling_to_rx_config_test.cpp
 - Роль:
@@ -1217,7 +1449,7 @@
         - rejection of unsupported runtime audio sample format.
     - фиксирует, что bootstrap layer composes existing signaling/runtime/channel-order boundaries and does not implement audio buffer layout, channel reordering, packet pipeline, or backend behavior.
 
-## Audio SDP parsing / signaling adapter / ingestion
+
 
 ### tests/audio_sdp_media_section_test.cpp
 - Роль:
@@ -1341,7 +1573,63 @@
     - malformed known ST 2110 clock-signaling forms fail at the audio SDP timing boundary instead of passing accidentally into final ingestion.
     - standards-clean requirement for media-level `mediaclk` remains explicit and localized at the final audio SDP ingestion boundary.
 
-## Audio packet model
+### tests/audio_sdp_timing_attributes_test.cpp
+- Роль:
+    - focused unit test for the dedicated raw audio SDP timing/reference-clock parsing boundary in `audio_sdp_timing_attributes.hpp`.
+    - проверяет structural parsing, scope handling, and strict rejection rules for audio `ts-refclk` and `mediaclk`.
+- Покрывает:
+    - raw `ts-refclk` parsing:
+        - known PTP form with explicit domain;
+        - known PTP form without domain;
+        - known `localmac=...` form;
+        - preservation of unknown non-empty forms as `RawAudioSdpReferenceClock::Kind::Other`.
+    - raw `ts-refclk` rejection of malformed known forms:
+        - missing PTP GMID;
+        - missing PTP version payload;
+        - invalid PTP domain value.
+    - raw `mediaclk` parsing:
+        - known `direct=<u64>` form;
+        - known `sender` form;
+        - preservation of unknown non-empty forms as `RawAudioSdpMediaClock::Kind::Other`.
+    - raw `mediaclk` rejection of malformed known forms:
+        - malformed `direct=` numeric payload.
+    - aggregate timing extraction from `RawAudioSdpMediaSection` preserved unknown attributes:
+        - session-level `ts-refclk` parsing;
+        - media-level `mediaclk` parsing;
+        - `raw_audio_sdp_has_reference_clock(...)`;
+        - `raw_audio_sdp_has_media_level_mediaclk(...)`.
+    - scope-aware resolution policy:
+        - media-level `mediaclk` overrides session-level `mediaclk`;
+        - session-level-only `mediaclk` is parsed but is not treated as media-level presence.
+    - strict duplicate handling:
+        - duplicate session-level `ts-refclk` rejected;
+        - duplicate media-level `mediaclk` rejected.
+    - empty aggregate behavior:
+        - absent timing attributes produce an empty parsed timing snapshot without synthetic defaults.
+- Фиксирует:
+    - audio timing/reference-clock parsing is now a dedicated strict boundary rather than an implicit name-only check.
+    - malformed known timing forms are distinguished from unknown future/open-ended forms explicitly.
+    - session/media scope remains explicit in the parsed audio timing model, so final ingestion can enforce media-level `mediaclk` correctly.
+
+### tests/test_audio_frame.cpp
+- Роль:
+    - проверяет initial `AudioBuffer` / `AudioFrameView` contract.
+    - покрывает:
+        - construction from explicit audio dimensions;
+        - construction from `RxAudioConfig`;
+        - current MVP storage layout `InterleavedS32`;
+        - interleaved sample indexing by `(sample_index, channel)`;
+        - mutable and const sample access;
+        - total sample count;
+        - sample-frame stride;
+        - byte size;
+        - timestamp propagation into `AudioFrameView`;
+        - out-of-range sample/channel access rejection.
+    - фиксирует separation between:
+        - audio storage layout;
+        - runtime `RxAudioConfig` validation;
+        - channel-order / channel-mapping semantics;
+        - future audio RTP packet assembly and backend behavior.
 
 ### tests/test_audio_packet.cpp
 - Роль:
@@ -1372,8 +1660,6 @@
         - short RTP packet rejection;
         - bad RTP version rejection before audio-payload policy acceptance.
 
-## Audio reorder / jitter MVP
-
 ### tests/test_audio_reorder_buffer.cpp
 - Роль:
     - проверяет `AudioFixedWindowReorderBuffer` как concrete audio reorder implementation поверх `AudioRtpPacketView`.
@@ -1396,8 +1682,6 @@
 - Фиксирует:
     - audio reorder behavior remains aligned with the modeled fixed-window receive policy for audio RTP packets;
     - stored audio payload/view integrity survives reordering decisions and later pop.
-
-## Audio frame/block assembly MVP
 
 ### tests/test_audio_frame_assembler.cpp
 - Роль:
@@ -1508,45 +1792,6 @@
     - both anchoring policies are explicit and stable;
     - long-running / wraparound continuity remains correct after the architecture change.
 
-
-### tests/test_socket_rx_video_backend.cpp
-- Роль:
-    - end-to-end unit/integration-style coverage для `SocketRxVideoBackend` over fake socket port/factory and fake video sink.
-- Покрывает:
-    - compile-time/backend contract:
-        - backend is `final`;
-        - concrete backend implements `ISocketRxVideoBackend` and `IRxBackend`;
-        - concrete backend does not expose manual `IRxVideoBackend` start directly;
-        - operational `start_video(const SocketRxVideoOperationalConfig&, ...)` stays the concrete start boundary;
-        - `SocketRxVideoBackendFactory` type shape.
-    - operational-config validation:
-        - fully consistent operational config is accepted;
-        - mismatched projected open config vs `RxVideoConfig` is rejected;
-        - mismatched receive-pipeline config vs `RxVideoConfig` is rejected;
-        - invalid reorder tolerance policy is rejected.
-    - lifecycle/runtime behavior:
-        - stop-before-start is accepted;
-        - repeated stop remains accepted;
-        - successful operational start opens the socket port with projected open config;
-        - repeated start while active returns `InvalidBackendState`;
-        - null created port is rejected without opening.
-    - receive/delivery path:
-        - one valid ST 2110-20 datagram produces one delivered `VideoFrameView`;
-        - payload bytes are copied correctly into frame storage;
-        - first-observed RTP timestamp can map to local zero;
-        - configured-reference timestamp mode can produce a non-zero delivered timestamp.
-    - reorder-tolerance behavior on the socket receive path:
-        - `WaitForMissing` blocks delivery across a gap and records missing-gap state without flushing;
-        - `FlushGapOnce` allows one single-gap advance so the next unit can continue through the receive path.
-    - backend stats surface:
-        - datagrams received;
-        - parsed/rejected packets;
-        - delivered frames/media units;
-        - reorder pushed/popped/missing counters.
-- Фиксирует:
-    - concrete socket video backend consumes only the operational-config boundary;
-    - receive-loop behavior, timestamp mapping, and reorder tolerance remain observable through backend stats rather than sink-side side channels.
-
 ### tests/test_socket_runtime_interface.cpp
 - Роль:
     - проверяет OS-neutral socket runtime boundary shape, validation, and config projection behavior.
@@ -1589,6 +1834,44 @@
     - failed multicast join remains transactional and does not leak an already-bound native socket into later opens;
     - unsupported family branches stay localized in Linux runtime behavior.
 
+### tests/test_socket_rx_video_backend.cpp
+- Роль:
+    - end-to-end unit/integration-style coverage для `SocketRxVideoBackend` over fake socket port/factory and fake video sink.
+- Покрывает:
+    - compile-time/backend contract:
+        - backend is `final`;
+        - concrete backend implements `ISocketRxVideoBackend` and `IRxBackend`;
+        - concrete backend does not expose manual `IRxVideoBackend` start directly;
+        - operational `start_video(const SocketRxVideoOperationalConfig&, ...)` stays the concrete start boundary;
+        - `SocketRxVideoBackendFactory` type shape.
+    - operational-config validation:
+        - fully consistent operational config is accepted;
+        - mismatched projected open config vs `RxVideoConfig` is rejected;
+        - mismatched receive-pipeline config vs `RxVideoConfig` is rejected;
+        - invalid reorder tolerance policy is rejected.
+    - lifecycle/runtime behavior:
+        - stop-before-start is accepted;
+        - repeated stop remains accepted;
+        - successful operational start opens the socket port with projected open config;
+        - repeated start while active returns `InvalidBackendState`;
+        - null created port is rejected without opening.
+    - receive/delivery path:
+        - one valid ST 2110-20 datagram produces one delivered `VideoFrameView`;
+        - payload bytes are copied correctly into frame storage;
+        - first-observed RTP timestamp can map to local zero;
+        - configured-reference timestamp mode can produce a non-zero delivered timestamp.
+    - reorder-tolerance behavior on the socket receive path:
+        - `WaitForMissing` blocks delivery across a gap and records missing-gap state without flushing;
+        - `FlushGapOnce` allows one single-gap advance so the next unit can continue through the receive path.
+    - backend stats surface:
+        - datagrams received;
+        - parsed/rejected packets;
+        - delivered frames/media units;
+        - reorder pushed/popped/missing counters.
+- Фиксирует:
+    - concrete socket video backend consumes only the operational-config boundary;
+    - receive-loop behavior, timestamp mapping, and reorder tolerance remain observable through backend stats rather than sink-side side channels.
+
 ### tests/test_socket_rx_audio_backend.cpp
 - Роль:
     - end-to-end unit/integration-style coverage для `SocketRxAudioBackend` over fake socket port/factory and capturing audio sink.
@@ -1628,33 +1911,6 @@
     - concrete socket audio backend consumes only the operational-config boundary;
     - audio receive behavior keeps packet policy, timestamp mapping, and reorder tolerance explicit and observable at backend level rather than through sink-side side effects.
 
-### tests/test_video_packet_admission.cpp
-- Роль:
-    - regression tests для explicit RTP payload-type admission boundary in the video receive path.
-    - проверяет, что payload-type admission remains separate from generic RTP/ST 2110-20 parsing and that wrong-PT packets are ignored before reorder/depacketizer use.
-- Покрывает:
-    - helper-level admission boundary:
-        - matching dynamic RTP payload type accepted by `validate_rtp_payload_type_admission(...)`;
-        - matching video packet accepted by `validate_video_packet_payload_type_admission(...)`;
-        - mismatching payload type rejected as `InvalidValue`.
-    - separation of concerns:
-        - generic `PacketView` parsing still succeeds for structurally valid RTP/ST 2110-20 packets regardless of whether the payload type matches the configured stream;
-        - payload-type admission remains a separate stream-specific boundary above generic packet parsing.
-    - runtime backend behavior with the new operational start boundary:
-        - `SocketRxVideoBackend` is started from `SocketRxVideoOperationalConfig`, not manual `RxVideoConfig`;
-        - wrong-payload-type packet is treated as non-media datagram and dropped locally;
-        - wrong-PT packet does not enter reorder/depacketizer state;
-        - no frame is delivered to the sink;
-        - backend stats record:
-            - one received datagram;
-            - one ignored non-media datagram;
-            - zero parsed-ok media packets;
-            - zero rejected media packets;
-            - zero depacketizer/reorder activity.
-- Фиксирует:
-    - payload-type admission is an explicit receive-path boundary distinct from generic RTP parsing;
-    - wrong-PT packets are ignored before reorder/depacketizer mutation even after the backend’s move to the operational-only socket start API.
-
 ### tests/test_socket_rx_operational_architecture.cpp
 - Роль:
     - architecture regression test для socket operational boundary over `SocketRxSingleMediaBackendBase`, signaling/bootstrap-to-operational adapters, and manual-to-operational adapters for both video and audio.
@@ -1685,67 +1941,3 @@
 - Фиксирует:
     - socket runtime architecture keeps one common media-agnostic operational base layer;
     - manual config path and signaling/bootstrap path converge into one operational-config boundary without dropping modeled axes such as reorder tolerance policy.
-
-### tests/audio_sdp_timing_attributes_test.cpp
-- Роль:
-    - focused unit test for the dedicated raw audio SDP timing/reference-clock parsing boundary in `audio_sdp_timing_attributes.hpp`.
-    - проверяет structural parsing, scope handling, and strict rejection rules for audio `ts-refclk` and `mediaclk`.
-- Покрывает:
-    - raw `ts-refclk` parsing:
-        - known PTP form with explicit domain;
-        - known PTP form without domain;
-        - known `localmac=...` form;
-        - preservation of unknown non-empty forms as `RawAudioSdpReferenceClock::Kind::Other`.
-    - raw `ts-refclk` rejection of malformed known forms:
-        - missing PTP GMID;
-        - missing PTP version payload;
-        - invalid PTP domain value.
-    - raw `mediaclk` parsing:
-        - known `direct=<u64>` form;
-        - known `sender` form;
-        - preservation of unknown non-empty forms as `RawAudioSdpMediaClock::Kind::Other`.
-    - raw `mediaclk` rejection of malformed known forms:
-        - malformed `direct=` numeric payload.
-    - aggregate timing extraction from `RawAudioSdpMediaSection` preserved unknown attributes:
-        - session-level `ts-refclk` parsing;
-        - media-level `mediaclk` parsing;
-        - `raw_audio_sdp_has_reference_clock(...)`;
-        - `raw_audio_sdp_has_media_level_mediaclk(...)`.
-    - scope-aware resolution policy:
-        - media-level `mediaclk` overrides session-level `mediaclk`;
-        - session-level-only `mediaclk` is parsed but is not treated as media-level presence.
-    - strict duplicate handling:
-        - duplicate session-level `ts-refclk` rejected;
-        - duplicate media-level `mediaclk` rejected.
-    - empty aggregate behavior:
-        - absent timing attributes produce an empty parsed timing snapshot without synthetic defaults.
-- Фиксирует:
-    - audio timing/reference-clock parsing is now a dedicated strict boundary rather than an implicit name-only check.
-    - malformed known timing forms are distinguished from unknown future/open-ended forms explicitly.
-    - session/media scope remains explicit in the parsed audio timing model, so final ingestion can enforce media-level `mediaclk` correctly.
-
-### tests/test_receive_reorder_tolerance_policy.cpp
-- Роль:
-    - focused coverage для общей модели reorder-tolerance policy, reused by both video and audio reorder-buffer configs.
-- Покрывает:
-    - modeled enum axis:
-        - `ReceiveReorderGapPolicy::WaitForMissing`;
-        - `ReceiveReorderGapPolicy::FlushGapOnce`.
-    - `validate_receive_reorder_gap_policy(...)` for known and unknown enum values;
-    - explicit default behavior of `ReceiveReorderTolerancePolicy`:
-        - default-constructed policy stays `WaitForMissing`;
-        - default policy validates successfully.
-    - helper behavior:
-        - `receive_reorder_policy_allows_gap_flush_once(...)` distinguishes named policies correctly.
-    - `validate_receive_reorder_tolerance_policy(...)` rejection of invalid/unknown gap policy.
-    - `VideoReorderBufferConfig` validation:
-        - both named policies are accepted;
-        - zero window is rejected;
-        - invalid policy is rejected.
-    - `AudioReorderBufferConfig` validation:
-        - both named policies are accepted;
-        - zero window is rejected;
-        - invalid policy is rejected.
-- Фиксирует:
-    - reorder gap-tolerance policy is modeled once and reused consistently by video and audio reorder-buffer config boundaries;
-    - default behavior stays explicit and does not rely on hidden fallback logic.

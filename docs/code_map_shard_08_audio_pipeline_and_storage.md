@@ -1,0 +1,378 @@
+### libs/st2110core/include/st2110/audio_frame.hpp
+- Роль:
+    - базовая boundary для internal audio sample storage и non-owning audio frame/block views в audio receive path.
+    - отделяет internal reconstructed/decoded audio storage from:
+        - RTP/audio packet parsing;
+        - reorder/jitter handling;
+        - PCM wire decode;
+        - channel-order mapping;
+        - playout/timestamp mapping policy;
+        - backend/runtime transport logic.
+    - задает current internal audio storage contract для assembled audio blocks и backend sink delivery.
+- Связи:
+    - использует `rx_config.hpp` для convenience constructor from `RxAudioConfig`;
+    - использует `timestamp.hpp` for `TimestampNs`;
+    - используется `audio_frame_assembler.hpp` как owning decoded-block storage target;
+    - используется `backend.hpp` через `AudioFrameView` in `IAudioFrameSink::on_audio_frame(...)`;
+    - тестируется `tests/test_audio_frame.cpp`.
+- Сущности:
+    - `AudioSampleStorageFormat`
+        - modeled internal audio sample storage format axis.
+        - current value:
+            - `InterleavedS32`.
+    - `AudioFrameView`
+        - non-owning audio block/view contract:
+            - `storage_format`
+            - `sampling_rate_hz`
+            - `channel_count`
+            - `samples_per_channel`
+            - `samples`
+            - `total_sample_count`
+            - `sample_frame_stride`
+            - `size_bytes`
+            - `timestamp_ns`
+        - предназначен для sink/backend delivery without copying owned storage.
+    - `AudioBuffer`
+        - owning internal audio sample buffer.
+        - constructors:
+            - `AudioBuffer(uint32_t sampling_rate_hz, uint16_t channel_count, uint32_t samples_per_channel, AudioSampleStorageFormat storage_format = AudioSampleStorageFormat::InterleavedS32)`
+            - `AudioBuffer(const RxAudioConfig&, AudioSampleStorageFormat storage_format = AudioSampleStorageFormat::InterleavedS32)`
+        - metadata accessors:
+            - `storage_format()`
+            - `sampling_rate_hz()`
+            - `channel_count()`
+            - `samples_per_channel()`
+            - `sample_frame_stride()`
+            - `total_sample_count()`
+            - `size_bytes()`
+        - storage accessors:
+            - `samples()`
+            - `sample(uint32_t sample_index, uint16_t channel)`
+        - view adapter:
+            - `view(TimestampNs timestamp_ns = 0) const`
+                - returns zero-copy `AudioFrameView` over owned samples.
+    - internal helper boundaries in `AudioBuffer`:
+        - `checked_total_sample_count(...)`
+            - validates supported storage format;
+            - computes total owned sample count with overflow protection.
+        - `linear_sample_index(...)`
+            - validates sample/channel bounds;
+            - maps `(sample_index, channel)` to current interleaved storage index.
+- Примечание:
+    - current internal storage is explicitly modeled as `InterleavedS32`; this is a storage-format boundary, not a claim about RTP wire format or ST 2110-30 signaling format.
+    - файл intentionally does not decode PCM wire bytes and does not interpret RTP marker/timestamp semantics; that work stays above/beside this layer in `audio_frame_assembler.hpp` and later timing/playout boundaries.
+    - `AudioBuffer(const RxAudioConfig&)` uses already-derived runtime `samples_per_packet` / `channel_count` values and therefore keeps storage sizing tied to explicit runtime config rather than hardcoded Level A cadence assumptions.
+
+### libs/st2110core/include/st2110/audio_packet.hpp
+- Роль:
+    - explicit modeled boundary для normalized ST 2110-30 / RTP audio packet representation in the current receive path.
+    - отделяет:
+        - RTP header parsing and payload extraction;
+        - runtime-config-derived audio packet expectations;
+        - exact payload-size / payload-type admission;
+        - explicit RTP/audio wire-format modeling;
+          от:
+        - packet reorder/jitter handling;
+        - PCM wire-sample decoding into internal storage;
+        - RTP timestamp to `TimestampNs` mapping;
+        - channel-order interpretation/reordering;
+        - backend sink delivery.
+    - keeps audio wire-format / bit-depth axis explicit instead of leaving it as a backend-local assumption.
+- Связи:
+    - использует `ByteSpan` from `bytes.hpp` for non-owning RTP payload/data spans.
+    - использует `Error` from `error.hpp` for strict parse/validation failures.
+    - использует `RtpHeaderView`, `parse_rtp_header(...)`, and `rtp_payload_span(...)` from `rtp.hpp`.
+    - использует `RxAudioConfig`, `AudioPcmBitDepth`, and `validate_rx_audio_config(...)` from `rx_config.hpp`.
+    - используется `audio_receiver_bootstrap.hpp` при построении `AudioReceiverBootstrapConfig::audio_packet_policy`.
+    - используется `socket_rx_audio_backend.hpp` for:
+        - `SocketRxAudioOperationalConfig::audio_packet_policy`;
+        - `validate_socket_rx_audio_operational_config(...)`;
+        - runtime packet admission/parsing before reorder and frame assembly.
+    - downstream consumers include:
+        - `audio_reorder_buffer.hpp` for packet-level reorder storage;
+        - `audio_frame_assembler.hpp` for PCM wire decode into `AudioBuffer`.
+    - тестируется `tests/test_audio_packet.cpp`.
+- Сущности:
+    - `AudioPcmWireFormat`
+        - explicit RTP/audio wire-format axis for current PCM receive path:
+            - `L16`
+            - `L24`.
+    - `AudioRtpPacketPolicy`
+        - runtime-derived packet expectation/policy:
+            - `sampling_rate_hz`
+            - `channel_count`
+            - `samples_per_packet`
+            - `payload_type`
+            - `wire_format`.
+        - keeps packet validation/config-derived expectations explicit instead of rebuilding them inside backend runtime.
+    - `AudioRtpPacketView`
+        - normalized non-owning audio RTP packet view:
+            - `rtp`
+            - `payload`
+            - `sampling_rate_hz`
+            - `channel_count`
+            - `samples_per_channel`
+            - `wire_format`.
+        - current MVP path models one RTP packet as one audio block candidate with one payload span and packet-level metadata.
+    - helper functions:
+        - `audio_pcm_wire_sample_bytes(AudioPcmWireFormat)`
+            - maps wire format to explicit octets-per-sample;
+            - rejects invalid enum values.
+        - `validate_audio_rtp_packet_policy(const AudioRtpPacketPolicy&)`
+            - validates packet-policy shape before packet parsing/use;
+            - requires:
+                - non-zero sampling rate;
+                - non-zero channel count;
+                - non-zero samples per packet;
+                - dynamic RTP payload type;
+                - supported wire format.
+        - `audio_pcm_wire_format_from_bit_depth(AudioPcmBitDepth)`
+            - projects modeled PCM bit depth into explicit RTP/audio wire format;
+            - keeps runtime/config bit-depth axis separate from packet parsing.
+        - `audio_rtp_packet_policy_from_rx_audio_config(const RxAudioConfig&)`
+            - validates `RxAudioConfig`;
+            - derives `AudioRtpPacketPolicy` from runtime config;
+            - preserves explicit runtime axes:
+                - sampling rate;
+                - channel count;
+                - samples per packet;
+                - payload type;
+                - wire format.
+        - `audio_rtp_packet_payload_size_bytes(const AudioRtpPacketPolicy&)`
+            - derives exact expected RTP payload size from:
+                - `samples_per_packet`
+                - `channel_count`
+                - `wire_format`.
+        - `make_audio_rtp_packet_view(const RtpHeaderView&, ByteSpan, const AudioRtpPacketPolicy&)`
+            - validates RTP payload type against configured policy;
+            - validates exact payload byte size;
+            - returns normalized non-owning `AudioRtpPacketView`.
+        - `parse_audio_rtp_packet_view(ByteSpan, const AudioRtpPacketPolicy&)`
+            - parses RTP header from a datagram;
+            - extracts RTP payload span;
+            - applies policy-based packet validation through `make_audio_rtp_packet_view(...)`.
+- Примечание:
+    - this file intentionally does not decode PCM bytes into signed sample storage; that remains in `audio_frame_assembler.hpp`.
+    - this file intentionally does not reorder packets or track continuity/jitter; that remains in `audio_reorder_buffer.hpp`.
+    - this file intentionally does not map RTP timestamps into internal nanosecond timeline; that remains in `audio_timestamp_mapping.hpp`.
+    - current packet model keeps payload-type admission and exact payload-size validation explicit and localized, so future support for new audio wire formats should mainly require:
+        - adding enum coverage;
+        - adding `audio_pcm_wire_sample_bytes(...)` and bit-depth mapping cases;
+        - extending tests;
+        - not redesigning reorder/assembler/backend layers.
+
+### libs/st2110core/include/st2110/audio_reorder_buffer.hpp
+- Роль:
+    - explicit fixed-window audio reorder/jitter boundary for the current ST 2110-30 receive path.
+    - reorders already-validated `AudioRtpPacketView` packets by 16-bit RTP sequence number before audio block assembly.
+    - makes reorder-window sizing and receive reorder-tolerance policy explicit at config/validation boundary.
+    - separates packet ordering / gap progression from:
+        - generic RTP datagram parsing;
+        - audio packet payload-type / payload-size validation;
+        - PCM wire decode and `AudioBuffer` creation;
+        - RTP timestamp to `TimestampNs` mapping;
+        - playout/release timing;
+        - channel-order / channel-mapping semantics;
+        - backend socket/MTL transport behavior.
+- Связи:
+    - использует `AudioRtpPacketView` and `AudioPcmWireFormat` from `audio_packet.hpp`;
+    - использует `RtpHeaderView` and `seq_less(...)` from `rtp.hpp`;
+    - использует `Error` from `error.hpp` for localized admission failures;
+    - использует `ReceiveReorderTolerancePolicy` and `validate_receive_reorder_tolerance_policy(...)` from `receive_reorder_tolerance_policy.hpp`;
+    - current direct runtime consumer is `socket_rx_audio_backend.hpp`;
+    - тестируется `tests/test_audio_reorder_buffer.cpp`.
+- Сущности:
+    - `AudioReorderBufferConfig`
+        - `window_size_packets`
+            - explicit reorder-window size in packets.
+        - `reorder_tolerance_policy`
+            - explicit receive reorder-tolerance policy value carried by config and validated at construction/use boundary.
+    - `validate_audio_reorder_buffer_config(const AudioReorderBufferConfig&) -> Error`
+        - rejects zero reorder window;
+        - delegates validation of `reorder_tolerance_policy` to `validate_receive_reorder_tolerance_policy(...)`;
+        - accepts only configs whose packet window and reorder-tolerance policy are both valid.
+    - `AudioReorderBufferStats`
+        - `packets_pushed`
+        - `packets_popped`
+        - `duplicates`
+        - `late_packets`
+        - `out_of_window`
+        - `missing_packets_flushed`.
+    - `StoredAudioRtpPacket`
+        - owning stored representation of one reordered audio RTP packet:
+            - `rtp`
+            - owning `payload`
+            - `sampling_rate_hz`
+            - `channel_count`
+            - `samples_per_channel`
+            - `wire_format`.
+        - `view() const -> AudioRtpPacketView`
+            - reconstructs a non-owning packet view over stored payload bytes.
+    - `AudioFixedWindowReorderBuffer`
+        - current concrete fixed-window reorder implementation over 16-bit RTP sequence numbers.
+        - `AudioFixedWindowReorderBuffer(AudioReorderBufferConfig cfg = {})`
+        - `push(const AudioRtpPacketView&) -> Error`
+            - rejects invalid config when `validate_audio_reorder_buffer_config(cfg_) != Error::Ok`;
+            - initializes expected sequence from the first accepted packet;
+            - rejects duplicates already present in the pending map;
+            - rejects packets older than current expected sequence as late;
+            - rejects packets at or beyond the configured window distance as out-of-window;
+            - deep-copies payload and packet metadata into `StoredAudioRtpPacket`;
+            - increments `packets_pushed` only for accepted packets.
+        - `pop_next() -> std::optional<StoredAudioRtpPacket>`
+            - emits only the packet whose sequence number equals the current expected sequence;
+            - advances expected sequence after a successful pop;
+            - increments `packets_popped`.
+        - `flush_missing_once() -> bool`
+            - advances expected sequence by one only when:
+                - sequence tracking is initialized;
+                - there are pending packets;
+                - the current expected packet is missing;
+            - increments `missing_packets_flushed`.
+        - `reset()`
+            - clears expected sequence, pending packets, and stats.
+        - `has_pending() const -> bool`
+            - reports whether pending reordered packets exist.
+        - `stats() const -> const AudioReorderBufferStats&`
+            - returns a const reference to the current reorder stats object.
+    - internal helpers:
+        - `config_is_valid() const`
+            - validates localized reorder-buffer config through `validate_audio_reorder_buffer_config(...)`.
+        - `next_seq(uint16_t)`
+            - advances RTP sequence with wraparound semantics.
+        - `forward_seq_distance(uint16_t from, uint16_t to)`
+            - computes forward modular sequence distance.
+        - `store_packet(const AudioRtpPacketView&)`
+            - creates owning stored packet copy from a non-owning packet view.
+- Примечание:
+    - this file intentionally does not parse RTP datagrams and does not validate audio payload type or payload size; that remains in `audio_packet.hpp`.
+    - it preserves RTP timestamp and marker metadata in stored packets but does not interpret marker as an audio block boundary.
+    - it does not map RTP timestamps to `TimestampNs`; that remains in `audio_timestamp_mapping.hpp`.
+    - it does not create `AudioBuffer`, decode PCM wire samples, or perform channel reordering; those remain above this layer.
+    - unlike the video path, this file currently exposes a concrete reorder-buffer type rather than a generic reorder-buffer interface.
+    - `ReceiveReorderTolerancePolicy` is now an explicit modeled config axis for this boundary, but the current buffer logic still remains fixed-window and explicit-flush driven; the policy is validated and stored in config, not yet used for distinct `push(...)`, `pop_next()`, or `flush_missing_once()` behavior inside this file.
+    - sequence progression is explicitly wraparound-friendly through `seq_less(...)`, modular distance, and `next_seq(...)`, so future extensions should build on this boundary instead of embedding ad hoc sequence tracking in backend or assembler code.
+
+### libs/st2110core/include/st2110/audio_frame_assembler.hpp
+- Роль:
+    - explicit audio packet-to-owned-block assembly boundary for the MVP ST 2110-30 receive path.
+    - converts one already-validated `AudioRtpPacketView` into one owning `AssembledAudioBlock` with decoded internal sample storage.
+    - keeps PCM wire decode and internal audio storage creation separate from:
+        - RTP datagram parsing;
+        - payload-type admission;
+        - reorder/jitter handling;
+        - RTP timestamp to `TimestampNs` mapping;
+        - playout/release timing;
+        - channel-order interpretation/reordering;
+        - backend transport/runtime behavior.
+- Связи:
+    - использует `AudioBuffer` and `AudioSampleStorageFormat` from `audio_frame.hpp`;
+    - использует `AudioRtpPacketView`, `AudioPcmWireFormat`, and `audio_pcm_wire_sample_bytes(...)` from `audio_packet.hpp`;
+    - использует `ByteSpan` from `bytes.hpp` for per-sample decode slices;
+    - использует `Error` / `std::expected` for localized validation and decode failures;
+    - current upstream runtime flow is `audio_reorder_buffer.hpp` -> `audio_frame_assembler.hpp`;
+    - current concrete downstream consumer is `socket_rx_audio_backend.hpp`, which then applies `audio_timestamp_mapping.hpp` and sink delivery.
+- Сущности:
+    - `AssembledAudioBlock`
+        - owning assembled audio block:
+            - `buffer`
+            - `rtp_timestamp`
+            - `rtp_sequence_number`
+            - `rtp_marker`
+            - `complete`
+        - current MVP behavior emits one complete block per accepted packet.
+    - `AudioFrameAssemblerConfig`
+        - `storage_format`
+        - current supported internal storage format:
+            - `AudioSampleStorageFormat::InterleavedS32`.
+    - `AudioFrameAssemblerStats`
+        - `packets_used`
+        - `packets_rejected`
+        - `blocks_emitted`.
+    - `validate_audio_frame_assembler_config(const AudioFrameAssemblerConfig&)`
+        - validates currently supported internal storage-format values.
+    - `checked_audio_assembler_payload_size_bytes(uint32_t samples_per_channel, uint16_t channel_count, std::size_t wire_sample_bytes)`
+        - derives exact expected payload size from:
+            - samples per channel;
+            - channel count;
+            - wire-sample width in octets;
+        - rejects zero dimensions and overflow.
+    - `decode_audio_pcm_wire_sample_to_s32(ByteSpan sample_bytes, AudioPcmWireFormat wire_format)`
+        - decodes one signed PCM wire sample into signed 32-bit internal storage value;
+        - supports:
+            - `L16` from 2 big-endian octets;
+            - `L24` from 3 big-endian octets;
+        - rejects mismatched byte count or invalid wire-format enum.
+    - `AudioFrameAssembler`
+        - `push(const AudioRtpPacketView&) -> std::expected<AssembledAudioBlock, Error>`
+            - validates assembler config;
+            - validates packet structural dimensions (`sampling_rate_hz`, `channel_count`, `samples_per_channel`);
+            - derives wire-sample width from packet `wire_format`;
+            - validates exact payload-size match;
+            - allocates `AudioBuffer` with packet-derived rate/channel/sample geometry and configured internal storage format;
+            - decodes packet payload sample-by-sample into interleaved internal storage;
+            - preserves RTP timestamp / sequence / marker metadata without interpreting marker semantics;
+            - updates `packets_used`, `packets_rejected`, and `blocks_emitted`.
+        - `reset()`
+            - clears assembler stats.
+        - `stats()`
+            - returns current assembler stats snapshot.
+- Примечание:
+    - this file intentionally does not parse RTP datagrams and does not validate RTP payload type; that remains in `audio_packet.hpp` and outer receive admission layers.
+    - this file intentionally does not reorder packets; that remains in `audio_reorder_buffer.hpp`.
+    - this file intentionally does not map RTP timestamps to `TimestampNs`; that boundary now exists separately in `audio_timestamp_mapping.hpp` and is applied above this layer by current runtime/backend composition.
+    - this file intentionally does not apply channel-order mapping/reordering; future mapping should consume `ParsedAudioChannelOrder` / `AudioReceiverBootstrapConfig`.
+    - current one-packet-one-block behavior is an explicit MVP assembly policy and should remain localized here until fuller loss-concealment / playout aggregation policy is added above this boundary.
+
+### libs/st2110core/include/st2110/audio_stats.hpp
+- Роль:
+    - explicit stats/counter boundary for the current audio receive path.
+    - separates audio receive observability from:
+        - RTP/audio packet parsing;
+        - reorder/jitter buffering;
+        - audio block assembly;
+        - timestamp/playout logic;
+        - backend transport/runtime details.
+    - provides a small common vocabulary for packet-level and block-level receive outcomes.
+- Связи:
+    - использует `error.hpp` for explicit validation/result reporting.
+    - intended to be consumed by current and future audio receive pipeline/runtime layers that need localized audio packet/block accounting.
+    - тестируется `tests/test_audio_stats.cpp`.
+- Сущности:
+    - `AudioReceiveStats`
+        - common audio receive counters:
+            - packet-level:
+                - `packets_ok`
+                - `packets_lost`
+                - `packets_rejected`
+            - block-level:
+                - `blocks_ok`
+                - `blocks_partial`
+                - `blocks_dropped`.
+    - `AudioBlockCompletionStatus`
+        - explicit modeled block-result axis:
+            - `Complete`
+            - `Partial`
+            - `Dropped`.
+    - `validate_audio_block_completion_status(AudioBlockCompletionStatus) -> Error`
+        - validates known block completion-status enum values;
+        - rejects invalid/unknown enum values as `InvalidValue`.
+    - `record_audio_packet_ok(AudioReceiveStats&)`
+        - increments `packets_ok`.
+    - `record_audio_packet_lost(AudioReceiveStats&)`
+        - increments `packets_lost`.
+    - `record_audio_packet_rejected(AudioReceiveStats&)`
+        - increments `packets_rejected`.
+    - `record_audio_block_result(AudioReceiveStats&, AudioBlockCompletionStatus) -> Error`
+        - validates block completion status first;
+        - routes:
+            - `Complete` -> `blocks_ok`
+            - `Partial` -> `blocks_partial`
+            - `Dropped` -> `blocks_dropped`
+        - rejects invalid status as `InvalidValue`;
+        - does not mutate stats on invalid status.
+    - `reset_audio_receive_stats(AudioReceiveStats&)`
+        - clears all audio receive counters back to zero.
+- Примечание:
+    - this file is intentionally only a stats vocabulary/helper boundary;
+    - it does not define how packet loss is detected, how partial audio blocks are assembled, or when a block is considered dropped — those policy decisions must remain in higher receive/runtime layers that use these counters.

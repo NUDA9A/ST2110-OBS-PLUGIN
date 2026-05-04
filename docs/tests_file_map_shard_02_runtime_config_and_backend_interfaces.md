@@ -1,0 +1,142 @@
+### tests/test_rx_config.cpp
+- Роль:
+    - проверяет базовую validation модели `RxVideoConfig`.
+    - проверяет, что manual/backend-facing video runtime config carries already-modeled runtime axes:
+        - `VideoScanMode`;
+        - `VideoPackingMode`.
+    - проверяет current video packing-mode runtime support boundary:
+        - `VideoPackingMode::Gpm` accepted;
+        - `VideoPackingMode::Bpm` represented but rejected as `Unsupported` by current MVP runtime support;
+        - invalid packing-mode enum rejected as `InvalidValue`.
+    - проверяет `RxAudioConfig` runtime validation:
+        - Level A-oriented default runtime support;
+        - channel count bounds;
+        - sample rate / packet time validation through runtime support policy;
+        - derived `samples_per_packet` consistency;
+        - UDP port;
+        - dynamic RTP payload type;
+        - destination IP requirement;
+        - local IP allowed to be empty;
+        - unsupported audio sample format rejection;
+        - explicit `pcm_bit_depth` validation for `Bits16` / `Bits24` and rejection of invalid bit-depth enum values.
+    - проверяет architecture property for audio runtime support:
+        - `validate_rx_audio_config(...)` is a thin default-policy wrapper;
+        - `validate_rx_audio_config_against_runtime_support(...)` can validate a custom support policy without rewriting default validation;
+        - non-default packet time support can be accepted by explicit support policy while remaining rejected by current default policy.
+
+### tests/test_backend_interface.cpp
+- Роль:
+    - проверяет backend/sink interface contracts;
+    - покрывает FakeVideoBackend -> FakeVideoSink delivery path;
+    - покрывает FakeAudioBackend -> FakeAudioSink delivery path;
+    - покрывает combined video+audio backend shape over one common `IRxBackend` base;
+    - фиксирует explicit backend lifecycle result/state boundary;
+    - теперь также фиксирует generic backend stats snapshot boundary.
+- Покрывает:
+    - abstract/interface shape:
+        - `IRxBackend`;
+        - `IRxVideoBackend`;
+        - `IRxAudioBackend`;
+        - `IVideoFrameSink`;
+        - `IAudioFrameSink`.
+    - backend capability model:
+        - `RxMediaKind`;
+        - `RxBackendCapabilities`;
+        - `supports_media(...)`;
+        - unknown media enum value returns `false`.
+    - lifecycle state model:
+        - `RxBackendState`;
+        - `RxBackendLifecycleResult`;
+        - `backend_is_stopped(...)`;
+        - `backend_media_active(...)`.
+    - common backend API:
+        - `backend_name()`;
+        - `stop() -> RxBackendLifecycleResult`;
+        - `state() -> RxBackendState`;
+        - `stats() -> BackendStats`;
+        - `capabilities()`.
+    - media-specific start API:
+        - `IRxVideoBackend::start_video(...) -> RxBackendLifecycleResult`;
+        - `IRxAudioBackend::start_audio(...) -> RxBackendLifecycleResult`.
+    - lifecycle policy:
+        - stop before successful start is accepted and leaves backend stopped;
+        - repeated stop is accepted and remains stopped;
+        - repeated start on already-active media returns `InvalidBackendState`;
+        - failed start can leave backend stopped and retryable;
+        - combined backend can hold video and audio active simultaneously.
+    - stats behavior in fake backends:
+        - zero snapshot before delivery;
+        - video frame delivery increments `frames_delivered` / `media_units_delivered`;
+        - audio delivery increments `media_units_delivered`;
+        - failed-start path can expose backend-local stats changes without using sinks.
+- Фиксирует:
+    - backend lifecycle/runtime failures remain inside backend boundary and are not routed through sinks;
+    - backend observability is available through `stats()` and remains separate from sink code.
+
+### tests/test_backend_factory.cpp
+- Роль:
+    - проверяет backend factory / selector boundary.
+- Покрывает:
+    - modeled backend-kind axis:
+        - `RxBackendKind`;
+        - `validate_rx_backend_kind(...)`;
+        - `rx_backend_kind_name(...)`;
+        - `parse_rx_backend_kind(...)`.
+    - descriptor / selection validation:
+        - `RxBackendDescriptor`;
+        - `validate_rx_backend_descriptor(...)`;
+        - `RxBackendSelection`;
+        - `validate_rx_backend_selection(...)`.
+    - abstract factory shape:
+        - `IRxBackendFactory`;
+        - `descriptor()`;
+        - `create_backend()`.
+    - common backend API from created backends:
+        - `backend_name()`;
+        - `capabilities()`;
+        - `state()`;
+        - `stats()`;
+        - `stop()`.
+    - factory selection:
+        - `select_rx_backend_factory(...)`;
+        - selection by requested backend kind;
+        - selection constrained by requested media capability;
+        - unavailable backend rejection;
+        - missing backend-kind rejection;
+        - null factory entry rejection.
+    - backend creation:
+        - `create_rx_backend(...)`;
+        - uses the selected factory only;
+        - rejects null backend results from a factory;
+        - created backend starts in a stopped `RxBackendState`;
+        - created backend `stats()` starts from a zero snapshot;
+        - created backend `stop()` returns a lifecycle result.
+- Фиксирует:
+    - backend selection/creation remains separate from backend lifecycle semantics;
+    - factory-created backends expose both lifecycle/state and stats snapshot boundaries immediately after construction.
+
+### tests/test_receive_reorder_tolerance_policy.cpp
+- Роль:
+    - focused coverage для общей модели reorder-tolerance policy, reused by both video and audio reorder-buffer configs.
+- Покрывает:
+    - modeled enum axis:
+        - `ReceiveReorderGapPolicy::WaitForMissing`;
+        - `ReceiveReorderGapPolicy::FlushGapOnce`.
+    - `validate_receive_reorder_gap_policy(...)` for known and unknown enum values;
+    - explicit default behavior of `ReceiveReorderTolerancePolicy`:
+        - default-constructed policy stays `WaitForMissing`;
+        - default policy validates successfully.
+    - helper behavior:
+        - `receive_reorder_policy_allows_gap_flush_once(...)` distinguishes named policies correctly.
+    - `validate_receive_reorder_tolerance_policy(...)` rejection of invalid/unknown gap policy.
+    - `VideoReorderBufferConfig` validation:
+        - both named policies are accepted;
+        - zero window is rejected;
+        - invalid policy is rejected.
+    - `AudioReorderBufferConfig` validation:
+        - both named policies are accepted;
+        - zero window is rejected;
+        - invalid policy is rejected.
+- Фиксирует:
+    - reorder gap-tolerance policy is modeled once and reused consistently by video and audio reorder-buffer config boundaries;
+    - default behavior stays explicit and does not rely on hidden fallback logic.
