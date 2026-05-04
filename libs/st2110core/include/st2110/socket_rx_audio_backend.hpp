@@ -11,6 +11,7 @@
 #include "backend_factory.hpp"
 #include "bytes.hpp"
 #include "packet_parse.hpp"
+#include "receive_reorder_tolerance_policy.hpp"
 #include "socket_runtime.hpp"
 #include "socket_rx_single_media_backend_base.hpp"
 
@@ -202,6 +203,7 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public
         configured_samples_per_packet_.reset();
         configured_channel_count_.reset();
         packet_parse_policy_ = {};
+        reorder_tolerance_policy_ = {};
         audio_sink_ = nullptr;
     }
 
@@ -242,6 +244,18 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public
         drain_reorder_buffer_to_sink();
     }
 
+    void augment_stats_snapshot_locked(BackendStats &snapshot) const noexcept override {
+        if (reorder_buffer_ != nullptr) {
+            const auto &audio_reorder = reorder_buffer_->stats();
+            snapshot.reorder.packets_pushed = audio_reorder.packets_pushed;
+            snapshot.reorder.packets_popped = audio_reorder.packets_popped;
+            snapshot.reorder.duplicates = audio_reorder.duplicates;
+            snapshot.reorder.late_packets = audio_reorder.late_packets;
+            snapshot.reorder.out_of_window = audio_reorder.out_of_window;
+            snapshot.reorder.missing_seq_flushed = audio_reorder.missing_packets_flushed;
+        }
+    }
+
   private:
     RxBackendLifecycleResult start_audio_runtime(const SocketRxAudioOperationalConfig &cfg, IAudioFrameSink &sink,
                                                  std::unique_ptr<ISocketRxPort> port) {
@@ -255,6 +269,7 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public
 
         packet_parse_policy_ = cfg.common.packet_parse_policy;
         audio_packet_policy_ = cfg.audio_packet_policy;
+        reorder_tolerance_policy_ = cfg.reorder_buffer_config.reorder_tolerance_policy;
         reorder_buffer_ = std::move(reorder_buffer);
         audio_frame_assembler_ = std::move(audio_frame_assembler);
         audio_timestamp_mapper_ = std::move(audio_timestamp_mapper);
@@ -279,10 +294,25 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public
             return;
         }
 
+        bool gap_flush_used = false;
+
         while (true) {
             auto stored_packet = reorder_buffer_->pop_next();
             if (!stored_packet) {
-                return;
+                if (gap_flush_used) {
+                    return;
+                }
+
+                if (!receive_reorder_policy_allows_gap_flush_once(reorder_tolerance_policy_)) {
+                    return;
+                }
+
+                if (!reorder_buffer_->flush_missing_once()) {
+                    return;
+                }
+
+                gap_flush_used = true;
+                continue;
             }
 
             auto block = audio_frame_assembler_->push(stored_packet->view());
@@ -319,6 +349,7 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public
     }
 
     PacketParsePolicy packet_parse_policy_{};
+    ReceiveReorderTolerancePolicy reorder_tolerance_policy_{};
     std::optional<AudioRtpPacketPolicy> audio_packet_policy_{};
     std::unique_ptr<AudioFixedWindowReorderBuffer> reorder_buffer_{};
     std::unique_ptr<AudioFrameAssembler> audio_frame_assembler_{};

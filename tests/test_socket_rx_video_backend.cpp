@@ -21,6 +21,7 @@
 #include <st2110/backend_factory.hpp>
 #include <st2110/error.hpp>
 #include <st2110/packet_parse.hpp>
+#include <st2110/receive_reorder_tolerance_policy.hpp>
 #include <st2110/rx_config.hpp>
 #include <st2110/socket_runtime.hpp>
 #include <st2110/socket_rx_video_backend.hpp>
@@ -325,13 +326,23 @@ st2110::VideoRtpTimestampMapperConfig make_configured_reference_video_timestamp_
     };
 }
 
+st2110::VideoReorderBufferConfig
+make_video_reorder_buffer_config(st2110::ReceiveReorderGapPolicy gap_policy,
+                                 std::uint32_t window_size_packets = st2110::defaultVideoReorderWindowPackets) {
+    return st2110::VideoReorderBufferConfig{
+        .window_size_packets = window_size_packets,
+        .reorder_tolerance_policy = st2110::ReceiveReorderTolerancePolicy{.gap_policy = gap_policy},
+    };
+}
+
 st2110::SocketRxVideoOperationalConfig
 make_valid_video_operational_config(const st2110::RxVideoConfig& rx_cfg,
                                     const st2110::PacketParsePolicy& packet_parse_policy = {},
                                     st2110::PartialFramePolicy partial_frame_policy = st2110::PartialFramePolicy::Drop,
-                                    st2110::VideoRtpTimestampMapperConfig timestamp_mapper_config = {}) {
+                                    st2110::VideoRtpTimestampMapperConfig timestamp_mapper_config = {},
+                                    const st2110::VideoReorderBufferConfig& reorder_buffer_config = {}) {
     auto operational = st2110::socket_rx_video_operational_config_from_rx_video_config(
-        rx_cfg, packet_parse_policy, partial_frame_policy, timestamp_mapper_config);
+        rx_cfg, packet_parse_policy, partial_frame_policy, timestamp_mapper_config, reorder_buffer_config);
     assert(operational.has_value());
     return *operational;
 }
@@ -516,6 +527,29 @@ void test_socket_rx_video_backend_rejects_mismatched_receive_pipeline_config_vs_
     }
 }
 
+void test_socket_rx_video_backend_rejects_invalid_reorder_tolerance_policy() {
+    auto state = std::make_shared<FakeSocketRxPortState>();
+    st2110::SocketRxVideoBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
+    FakeVideoSink sink;
+
+    auto cfg = make_valid_video_operational_config(make_valid_video_unicast_rx_config());
+    cfg.reorder_buffer_config.reorder_tolerance_policy.gap_policy =
+        static_cast<st2110::ReceiveReorderGapPolicy>(255);
+
+    assert(st2110::validate_socket_rx_video_operational_config(cfg) == st2110::Error::InvalidValue);
+
+    auto started = backend.start_video(cfg, sink);
+    assert(!started.has_value());
+    assert(started.error() == st2110::Error::InvalidValue);
+    assert(st2110::backend_is_stopped(backend.state()));
+
+    {
+        std::lock_guard lock(state->mutex_);
+        assert(state->create_count == 0);
+        assert(state->open_count == 0);
+    }
+}
+
 void test_socket_rx_video_backend_rejects_null_created_port() {
     auto state = std::make_shared<FakeSocketRxPortState>();
     state->return_null_port = true;
@@ -622,6 +656,115 @@ void test_socket_rx_video_backend_delivers_frame_with_configured_reference_times
     assert(st2110::backend_is_stopped(*stopped));
 }
 
+void test_socket_rx_video_backend_wait_for_missing_policy_blocks_gap_delivery() {
+    auto state = std::make_shared<FakeSocketRxPortState>();
+    st2110::SocketRxVideoBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
+    FakeVideoSink sink;
+
+    const auto reorder_cfg = make_video_reorder_buffer_config(st2110::ReceiveReorderGapPolicy::WaitForMissing, 8U);
+    auto cfg = make_valid_video_operational_config(make_receive_video_rx_config(),
+                                                   {},
+                                                   st2110::PartialFramePolicy::Drop,
+                                                   {},
+                                                   reorder_cfg);
+
+    auto started = backend.start_video(cfg, sink);
+    assert(started.has_value());
+
+    const std::array<std::uint8_t, 8> first_row = {0x10u, 0x11u, 0x12u, 0x13u, 0x14u, 0x15u, 0x16u, 0x17u};
+    const std::array<std::uint8_t, 8> third_row = {0x30u, 0x31u, 0x32u, 0x33u, 0x34u, 0x35u, 0x36u, 0x37u};
+
+    enqueue_datagram(state,
+                     build_single_segment_video_datagram(cfg.rx_config.payload_type, 1U, 90'000U, first_row, true, 0U, 0U));
+    assert(wait_for_receive_count_at_least(state, 1U, std::chrono::milliseconds(500)));
+    assert(sink.wait_for_frame_count(1U, std::chrono::milliseconds(500)));
+
+    enqueue_datagram(
+        state, build_single_segment_video_datagram(cfg.rx_config.payload_type, 3U, 93'600U, third_row, true, 0U, 0U));
+
+    assert(wait_for_receive_count_at_least(state, 2U, std::chrono::milliseconds(500)));
+    assert(wait_until(
+        [&] {
+            const auto stats = backend.stats();
+            return stats.datagrams_received >= 2U && stats.reorder.missing_seq >= 1U;
+        },
+        std::chrono::milliseconds(500)));
+
+    assert(sink.frame_count() == 1U);
+
+    const auto first_frame = sink.frame_at(0);
+    assert(first_frame.timestamp_ns == 0ULL);
+    assert_bytes_equal(first_frame.bytes, first_row);
+
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 2U);
+    assert(stats.packets_parsed_ok == 2U);
+    assert(stats.packets_rejected == 0U);
+    assert(stats.frames_delivered == 1U);
+    assert(stats.media_units_delivered == 1U);
+    assert(stats.reorder.packets_pushed == 2U);
+    assert(stats.reorder.packets_popped == 1U);
+    assert(stats.reorder.missing_seq == 1U);
+    assert(stats.reorder.missing_seq_flushed == 0U);
+
+    auto stopped = backend.stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+}
+
+void test_socket_rx_video_backend_flush_gap_once_policy_delivers_next_frame_after_single_gap() {
+    auto state = std::make_shared<FakeSocketRxPortState>();
+    st2110::SocketRxVideoBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
+    FakeVideoSink sink;
+
+    const auto reorder_cfg = make_video_reorder_buffer_config(st2110::ReceiveReorderGapPolicy::FlushGapOnce, 8U);
+    auto cfg = make_valid_video_operational_config(make_receive_video_rx_config(),
+                                                   {},
+                                                   st2110::PartialFramePolicy::Drop,
+                                                   {},
+                                                   reorder_cfg);
+
+    auto started = backend.start_video(cfg, sink);
+    assert(started.has_value());
+
+    const std::array<std::uint8_t, 8> first_row = {0x10u, 0x11u, 0x12u, 0x13u, 0x14u, 0x15u, 0x16u, 0x17u};
+    const std::array<std::uint8_t, 8> third_row = {0x30u, 0x31u, 0x32u, 0x33u, 0x34u, 0x35u, 0x36u, 0x37u};
+
+    enqueue_datagram(state,
+                     build_single_segment_video_datagram(cfg.rx_config.payload_type, 1U, 90'000U, first_row, true, 0U, 0U));
+    assert(wait_for_receive_count_at_least(state, 1U, std::chrono::milliseconds(500)));
+    assert(sink.wait_for_frame_count(1U, std::chrono::milliseconds(500)));
+
+    enqueue_datagram(
+        state, build_single_segment_video_datagram(cfg.rx_config.payload_type, 3U, 93'600U, third_row, true, 0U, 0U));
+
+    assert(wait_for_receive_count_at_least(state, 2U, std::chrono::milliseconds(500)));
+    assert(sink.wait_for_frame_count(2U, std::chrono::milliseconds(500)));
+
+    const auto first_frame = sink.frame_at(0);
+    assert(first_frame.timestamp_ns == 0ULL);
+    assert_bytes_equal(first_frame.bytes, first_row);
+
+    const auto second_frame = sink.frame_at(1);
+    assert(second_frame.timestamp_ns == 40'000'000ULL);
+    assert_bytes_equal(second_frame.bytes, third_row);
+
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 2U);
+    assert(stats.packets_parsed_ok == 2U);
+    assert(stats.packets_rejected == 0U);
+    assert(stats.frames_delivered == 2U);
+    assert(stats.media_units_delivered == 2U);
+    assert(stats.reorder.packets_pushed == 2U);
+    assert(stats.reorder.packets_popped == 2U);
+    assert(stats.reorder.missing_seq == 1U);
+    assert(stats.reorder.missing_seq_flushed == 1U);
+
+    auto stopped = backend.stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+}
+
 void test_socket_rx_video_backend_extended_packet_policy_is_used_by_receive_runtime() {
     auto state = std::make_shared<FakeSocketRxPortState>();
     st2110::SocketRxVideoBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
@@ -665,9 +808,12 @@ int main() {
     test_socket_rx_video_backend_accepts_operational_start_and_projects_open_config();
     test_socket_rx_video_backend_rejects_mismatched_open_config_vs_rx_config();
     test_socket_rx_video_backend_rejects_mismatched_receive_pipeline_config_vs_rx_config();
+    test_socket_rx_video_backend_rejects_invalid_reorder_tolerance_policy();
     test_socket_rx_video_backend_rejects_null_created_port();
     test_socket_rx_video_backend_delivers_frame_from_operational_start_with_first_observed_local_zero_timestamp();
     test_socket_rx_video_backend_delivers_frame_with_configured_reference_timestamp_when_explicitly_requested();
+    test_socket_rx_video_backend_wait_for_missing_policy_blocks_gap_delivery();
+    test_socket_rx_video_backend_flush_gap_once_policy_delivers_next_frame_after_single_gap();
     test_socket_rx_video_backend_extended_packet_policy_is_used_by_receive_runtime();
     return 0;
 }

@@ -51,10 +51,12 @@ struct StoredPacket {
 };
 
 class IReorderBuffer {
-  public:
+public:
     virtual void push(const PacketView &packet) = 0;
 
     [[nodiscard]] virtual std::optional<StoredPacket> pop_next() = 0;
+
+    [[nodiscard]] virtual bool flush_missing_once() = 0;
 
     virtual void reset() = 0;
 

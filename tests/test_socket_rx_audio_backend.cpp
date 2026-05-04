@@ -24,6 +24,7 @@
 #include <st2110/backend_factory.hpp>
 #include <st2110/error.hpp>
 #include <st2110/packet_parse.hpp>
+#include <st2110/receive_reorder_tolerance_policy.hpp>
 #include <st2110/rx_config.hpp>
 #include <st2110/socket_runtime.hpp>
 #include <st2110/socket_rx_audio_backend.hpp>
@@ -113,6 +114,11 @@ class CapturingAudioSink final : public st2110::IAudioFrameSink {
     [[nodiscard]] bool wait_for_frame_count(std::size_t expected, std::chrono::milliseconds timeout) const {
         std::unique_lock lock(mutex_);
         return cv_.wait_for(lock, timeout, [&] { return frames_.size() >= expected; });
+    }
+
+    [[nodiscard]] std::size_t frame_count() const {
+        std::lock_guard lock(mutex_);
+        return frames_.size();
     }
 
     [[nodiscard]] CapturedAudioFrame frame_at(std::size_t index) const {
@@ -544,6 +550,29 @@ void test_socket_rx_audio_backend_rejects_invalid_reorder_config() {
     }
 }
 
+void test_socket_rx_audio_backend_rejects_invalid_reorder_tolerance_policy() {
+    auto state = std::make_shared<FakeSocketRxPortState>();
+    st2110::SocketRxAudioBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
+    DummyAudioSink sink;
+
+    auto cfg = make_valid_audio_operational_config(make_valid_audio_unicast_rx_config());
+    cfg.reorder_buffer_config.reorder_tolerance_policy.gap_policy =
+        static_cast<st2110::ReceiveReorderGapPolicy>(255);
+
+    assert(st2110::validate_socket_rx_audio_operational_config(cfg) == st2110::Error::InvalidValue);
+
+    auto started = backend.start_audio(cfg, sink);
+    assert(!started.has_value());
+    assert(started.error() == st2110::Error::InvalidValue);
+    assert(st2110::backend_is_stopped(backend.state()));
+
+    {
+        std::lock_guard lock(state->mutex_);
+        assert(state->create_count == 0);
+        assert(state->open_count == 0);
+    }
+}
+
 void test_socket_rx_audio_backend_rejects_mismatched_timestamp_mapper_config_vs_rx_config() {
     auto state = std::make_shared<FakeSocketRxPortState>();
     st2110::SocketRxAudioBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
@@ -623,6 +652,9 @@ void test_socket_rx_audio_backend_delivers_audio_block_from_operational_start_wi
     assert(stats.frames_delivered == 0U);
     assert(stats.packets_parsed_ok == 1U);
     assert(stats.packets_rejected == 0U);
+    assert(stats.reorder.packets_pushed == 1U);
+    assert(stats.reorder.packets_popped == 1U);
+    assert(stats.reorder.missing_seq_flushed == 0U);
 
     auto stopped = backend.stop();
     assert(stopped.has_value());
@@ -672,6 +704,109 @@ void test_socket_rx_audio_backend_delivers_audio_block_with_configured_reference
     assert(stats.frames_delivered == 0U);
     assert(stats.packets_parsed_ok == 1U);
     assert(stats.packets_rejected == 0U);
+    assert(stats.reorder.packets_pushed == 1U);
+    assert(stats.reorder.packets_popped == 1U);
+    assert(stats.reorder.missing_seq_flushed == 0U);
+
+    auto stopped = backend.stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+}
+
+void test_socket_rx_audio_backend_wait_for_missing_policy_stalls_on_first_gap() {
+    auto state = std::make_shared<FakeSocketRxPortState>();
+    st2110::SocketRxAudioBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
+    CapturingAudioSink sink;
+
+    st2110::AudioReorderBufferConfig reorder_cfg{};
+    reorder_cfg.window_size_packets = 8;
+    reorder_cfg.reorder_tolerance_policy.gap_policy = st2110::ReceiveReorderGapPolicy::WaitForMissing;
+
+    const auto cfg =
+        make_valid_audio_operational_config(make_receive_audio_rx_config(),
+                                            {},
+                                            st2110::AudioFrameAssemblerConfig{},
+                                            reorder_cfg);
+
+    auto started = backend.start_audio(cfg, sink);
+    assert(started.has_value());
+    assert(st2110::backend_media_active(*started, st2110::RxMediaKind::Audio));
+
+    enqueue_datagram(state, make_audio_rtp_datagram(1U, 48'000U, cfg.rx_config.payload_type, 1000));
+    assert(wait_for_receive_count_at_least(state, 1U, std::chrono::milliseconds(500)));
+    assert(sink.wait_for_frame_count(1U, std::chrono::milliseconds(500)));
+
+    enqueue_datagram(state, make_audio_rtp_datagram(3U, 48'096U, cfg.rx_config.payload_type, 3000));
+    assert(wait_for_receive_count_at_least(state, 2U, std::chrono::milliseconds(500)));
+
+    assert(!sink.wait_for_frame_count(2U, std::chrono::milliseconds(150)));
+
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 2U);
+    assert(stats.media_units_delivered == 1U);
+    assert(stats.reorder.packets_pushed == 2U);
+    assert(stats.reorder.packets_popped == 1U);
+    assert(stats.reorder.missing_seq_flushed == 0U);
+
+    const auto first = sink.frame_at(0);
+    assert(first.timestamp_ns == 0ULL);
+    assert(first.samples[0] == 1000);
+
+    auto stopped = backend.stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+}
+
+void test_socket_rx_audio_backend_flush_gap_once_policy_delivers_packet_after_first_gap() {
+    auto state = std::make_shared<FakeSocketRxPortState>();
+    st2110::SocketRxAudioBackend backend(std::make_unique<FakeSocketRxPortFactory>(state));
+    CapturingAudioSink sink;
+
+    st2110::AudioReorderBufferConfig reorder_cfg{};
+    reorder_cfg.window_size_packets = 8;
+    reorder_cfg.reorder_tolerance_policy.gap_policy = st2110::ReceiveReorderGapPolicy::FlushGapOnce;
+
+    const auto cfg =
+        make_valid_audio_operational_config(make_receive_audio_rx_config(),
+                                            {},
+                                            st2110::AudioFrameAssemblerConfig{},
+                                            reorder_cfg);
+
+    auto started = backend.start_audio(cfg, sink);
+    assert(started.has_value());
+    assert(st2110::backend_media_active(*started, st2110::RxMediaKind::Audio));
+
+    enqueue_datagram(state, make_audio_rtp_datagram(1U, 48'000U, cfg.rx_config.payload_type, 1000));
+    assert(wait_for_receive_count_at_least(state, 1U, std::chrono::milliseconds(500)));
+    assert(sink.wait_for_frame_count(1U, std::chrono::milliseconds(500)));
+
+    enqueue_datagram(state, make_audio_rtp_datagram(3U, 48'096U, cfg.rx_config.payload_type, 3000));
+    assert(wait_for_receive_count_at_least(state, 2U, std::chrono::milliseconds(500)));
+    assert(sink.wait_for_frame_count(2U, std::chrono::milliseconds(500)));
+
+    assert(wait_until(
+        [&] {
+            const auto stats = backend.stats();
+            return stats.media_units_delivered >= 2U && stats.reorder.missing_seq_flushed >= 1U;
+        },
+        std::chrono::milliseconds(500)));
+
+    const auto first = sink.frame_at(0);
+    assert(first.timestamp_ns == 0ULL);
+    assert(first.samples[0] == 1000);
+
+    const auto second = sink.frame_at(1);
+    assert(second.timestamp_ns == 2'000'000ULL);
+    assert(second.samples[0] == 3000);
+    assert(second.samples[1] == 3001);
+    assert(second.samples[2] == 3002);
+
+    const auto stats = backend.stats();
+    assert(stats.datagrams_received == 2U);
+    assert(stats.media_units_delivered == 2U);
+    assert(stats.reorder.packets_pushed == 2U);
+    assert(stats.reorder.packets_popped == 2U);
+    assert(stats.reorder.missing_seq_flushed == 1U);
 
     auto stopped = backend.stop();
     assert(stopped.has_value());
@@ -719,10 +854,13 @@ int main() {
     test_socket_rx_audio_backend_accepts_operational_start_and_projects_open_config();
     test_socket_rx_audio_backend_rejects_mismatched_audio_packet_policy_vs_rx_config();
     test_socket_rx_audio_backend_rejects_invalid_reorder_config();
+    test_socket_rx_audio_backend_rejects_invalid_reorder_tolerance_policy();
     test_socket_rx_audio_backend_rejects_mismatched_timestamp_mapper_config_vs_rx_config();
     test_socket_rx_audio_backend_rejects_invalid_created_port();
     test_socket_rx_audio_backend_delivers_audio_block_from_operational_start_with_first_observed_local_zero_timestamp();
     test_socket_rx_audio_backend_delivers_audio_block_with_configured_reference_timestamp_when_explicitly_requested();
+    test_socket_rx_audio_backend_wait_for_missing_policy_stalls_on_first_gap();
+    test_socket_rx_audio_backend_flush_gap_once_policy_delivers_packet_after_first_gap();
     test_socket_rx_audio_backend_extended_packet_policy_is_used_by_receive_runtime();
     return 0;
 }

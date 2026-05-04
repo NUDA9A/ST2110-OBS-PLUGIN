@@ -4,6 +4,7 @@
 #include "audio_packet.hpp"
 #include "error.hpp"
 #include "rtp.hpp"
+#include "receive_reorder_tolerance_policy.hpp"
 
 #include <cstdint>
 #include <map>
@@ -13,6 +14,7 @@
 namespace st2110 {
 struct AudioReorderBufferConfig {
     uint16_t window_size_packets = 64;
+    ReceiveReorderTolerancePolicy reorder_tolerance_policy{};
 };
 
 [[nodiscard]] inline Error validate_audio_reorder_buffer_config(const AudioReorderBufferConfig &cfg) {
@@ -20,7 +22,7 @@ struct AudioReorderBufferConfig {
         return Error::InvalidValue;
     }
 
-    return Error::Ok;
+    return validate_receive_reorder_tolerance_policy(cfg.reorder_tolerance_policy);
 }
 
 struct AudioReorderBufferStats {
@@ -50,7 +52,7 @@ class AudioFixedWindowReorderBuffer {
     [[nodiscard]] Error push(const AudioRtpPacketView &packet);
     [[nodiscard]] std::optional<StoredAudioRtpPacket> pop_next();
 
-    void flush_missing_once();
+    [[nodiscard]] bool flush_missing_once();
     void reset();
 
     [[nodiscard]] bool has_pending() const;
@@ -151,17 +153,18 @@ AudioFixedWindowReorderBuffer::store_packet(const AudioRtpPacketView &packet) {
     return packet;
 }
 
-inline void AudioFixedWindowReorderBuffer::flush_missing_once() {
+[[nodiscard]] inline bool AudioFixedWindowReorderBuffer::flush_missing_once() {
     if (!expected_seq_ || pending_.empty()) {
-        return;
+        return false;
     }
 
     if (pending_.find(*expected_seq_) != pending_.end()) {
-        return;
+        return false;
     }
 
     expected_seq_ = next_seq(*expected_seq_);
     ++stats_.missing_packets_flushed;
+    return true;
 }
 
 inline void AudioFixedWindowReorderBuffer::reset() {

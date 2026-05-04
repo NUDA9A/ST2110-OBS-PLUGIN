@@ -1260,6 +1260,281 @@
 
 ---
 
+## Track Jitter Buffer — full receiver playout / de-jitter buffering
+
+> Цель трека:
+> - добавить полноценный receiver-side jitter buffer, а не расширять reorder buffer до псевдо-jitter-buffer;
+> - сделать архитектуру сразу пригодной и для fixed, и для dynamic/adaptive playout delay;
+> - встроить jitter buffering в runtime video/audio backends как основной release layer перед sink/output;
+> - не захардкодить алгоритм, а выделить explicit policy / timing / stats / adaptation boundaries.
+
+- [ ] JB001: Ввести явную архитектурную boundary для jitter buffer как отдельного playout/release слоя
+  - отделить:
+    - packet reorder layer;
+    - media-unit reconstruction layer;
+    - playout / de-jitter release layer.
+  - jitter buffer не должен быть спрятан внутри:
+    - `FixedWindowReorderBuffer`;
+    - `AudioFixedWindowReorderBuffer`;
+    - `Depacketizer`;
+    - `AudioFrameAssembler`.
+  - явно смоделировать оси:
+    - media kind (`Video` / `Audio`);
+    - jitter-buffer mode (`Fixed` / `Adaptive`);
+    - playout clock source / timing source;
+    - startup policy;
+    - late-unit policy;
+    - underrun policy;
+    - shrink/grow adaptation policy;
+    - reset/discontinuity policy.
+  - текущий `video_playout_timing.hpp` использовать как уже существующую timing boundary для video, а не обходить ad hoc логикой.
+  - expected behavior:
+    - reorder продолжает отвечать только за packet sequence order;
+    - jitter buffer отвечает за release time / playout delay / adaptive hold.
+  - tests:
+    - architecture regression tests на boundary placement;
+    - tests, подтверждающие, что reorder и jitter buffer не смешаны в один helper/class.
+
+- [ ] JB002: Ввести общий receiver time-source / scheduler boundary для release-by-time
+  - добавить явную абстракцию времени для runtime release decisions:
+    - monotonic local clock;
+    - future PTP-aligned / reference-clock-aware mode;
+    - deterministic fake clock for tests.
+  - ввести scheduler boundary для:
+    - next-release deadline computation;
+    - wait/wake strategy;
+    - stop/reset/drain behavior;
+    - no busy-spin / no sink-coupled timing logic.
+  - success path:
+    - backend/runtime может спросить “что можно release сейчас” без ручной логики sleep в sink.
+  - failure / invariants:
+    - invalid clock config -> explicit `InvalidValue`;
+    - scheduler stop/reset не оставляет hanging delayed units.
+  - tests:
+    - fake clock deadline tests;
+    - reset/stop/drain tests;
+    - no-duplicate release tests.
+
+- [ ] JB003: Смоделировать общий jitter-buffer config/policy surface без hardcoded MVP-ограничений
+  - добавить explicit config model для jitter buffer:
+    - mode (`Fixed` / `Adaptive`);
+    - initial target delay;
+    - minimum delay;
+    - maximum delay;
+    - startup prefill policy;
+    - max startup wait;
+    - grow aggressiveness;
+    - shrink aggressiveness;
+    - hysteresis / hold-down interval;
+    - late tolerance / cutoff policy;
+    - underflow handling;
+    - discontinuity / restart handling.
+  - derived values должны вычисляться helper’ами, а не literals.
+  - config surface должна быть общей по архитектуре, но с media-specific validation branches там, где это реально нужно.
+  - expected behavior:
+    - один и тот же runtime path может работать и в fixed, и в adaptive mode через explicit policy switch.
+  - tests:
+    - config validation;
+    - invalid min/max/initial relations;
+    - explicit default-policy tests.
+
+- [ ] JB004: Реализовать общий adaptive controller для target playout delay
+  - добавить adaptive algorithm boundary, которая принимает наблюдения runtime и выдает новый target delay.
+  - входы adaptive controller:
+    - packet/media-unit arrival-to-playout margin;
+    - late arrivals;
+    - release underruns;
+    - queue starvation events;
+    - queue fullness / headroom;
+    - timestamp discontinuities / stream restarts.
+  - algorithm requirements:
+    - fast grow on stress / late events;
+    - slow shrink on stable periods;
+    - hysteresis, чтобы не дрожать около порога;
+    - explicit min/max clamp;
+    - no unbounded latency growth;
+    - no silent reset of learned state.
+  - adaptation decision must stay localized in one controller boundary, а не размазываться по backend/runtime loops.
+  - tests:
+    - grow under burst jitter;
+    - slow shrink after stabilization;
+    - clamp at min/max;
+    - restart/discontinuity reset behavior;
+    - non-oscillation regression tests.
+
+- [ ] JB005: Добавить общую runtime telemetry/input model для adaptive jitter estimation
+  - ввести normalized measurement snapshots/windowing для jitter adaptation:
+    - per-second window;
+    - rolling window;
+    - EWMA-like aggregates;
+    - peak/avg/min margin tracking.
+  - для audio отдельно завести telemetry path, совместимый с TS-DF / ADV-style measurement reporting;
+  - для video завести release-margin / completion-before-deadline telemetry, не pretending that ST 2110 defines one mandatory adaptive algorithm.
+  - expected behavior:
+    - controller получает structured metrics, а не raw scattered counters from several classes.
+  - tests:
+    - measurement window rollover;
+    - empty/stable/burst windows;
+    - no-loss of adaptation inputs across resets.
+
+- [ ] JB006: Реализовать video jitter buffer как post-reconstruction playout queue
+  - добавить video-specific playout buffer поверх reconstructed video units.
+  - queue element должен содержать как минимум:
+    - unit/frame identity;
+    - RTP timestamp;
+    - mapped media timestamp;
+    - scheduled reconstruction/playout timestamp;
+    - completeness/partial flags;
+    - release/drop state.
+  - интегрировать с existing `video_playout_timing.hpp`, а не дублировать timing math elsewhere.
+  - video jitter buffer должен:
+    - принимать reconstructed units от `VideoReceivePipeline`;
+    - удерживать complete units до scheduled release time;
+    - уметь работать и в `Fixed`, и в `Adaptive` mode;
+    - явно обрабатывать late-completed units;
+    - сохранять future extensibility for `Progressive | Interlaced | PsF`.
+  - policy decisions должны быть явными для:
+    - partial unit arrival before deadline;
+    - completion after deadline;
+    - release of incomplete unit when policy allows;
+    - drop when policy forbids.
+  - tests:
+    - complete frame held then released on deadline;
+    - late frame dropped/handled by explicit policy;
+    - timestamp-wrap / long-run continuity;
+    - progressive behavior unchanged except delayed release;
+    - future-mode architecture regression for Interlaced/PsF branches.
+
+- [ ] JB007: Ввести audio playout timing boundary и реализовать audio jitter buffer как post-assembly release queue
+  - добавить explicit `audio_playout_timing.hpp` / equivalent boundary, аналогичную video playout timing, но audio-specific.
+  - queue element должен содержать:
+    - block identity;
+    - RTP timestamp;
+    - mapped media timestamp;
+    - scheduled playout timestamp;
+    - completeness/continuity state.
+  - audio jitter buffer должен:
+    - принимать complete assembled audio blocks;
+    - удерживать их до playout timestamp;
+    - работать в fixed/adaptive mode;
+    - иметь explicit continuity/discontinuity handling;
+    - учитывать `sampling_rate_hz`, `packet_time_us`, `samples_per_packet` как modeled/derived inputs.
+  - policy decisions:
+    - late audio block;
+    - underrun gap;
+    - timestamp jump;
+    - stream restart.
+  - tests:
+    - steady-state playout cadence;
+    - late packet/block handling;
+    - adaptive growth under jitter;
+    - continuity after restart;
+    - no hidden dependence on channel order/storage format.
+
+- [ ] JB008: Подключить video jitter buffer в socket video runtime как основной release path
+  - изменить `SocketRxVideoBackend` так, чтобы path стал:
+    - parse;
+    - packet admission;
+    - reorder;
+    - depacketize / reconstruct;
+    - jitter buffer enqueue;
+    - timed release to sink.
+  - убрать immediate-after-reconstruction delivery semantics из runtime path.
+  - release scheduling must stay inside backend/runtime layer, not in sink.
+  - stats snapshot должен включать jitter-buffer state/metrics.
+  - failure behavior:
+    - invalid jitter-buffer config -> explicit start failure;
+    - reset/stop очищают queue/controller state.
+  - tests:
+    - backend integration tests with fake clock;
+    - stop/reset while delayed frames exist;
+    - no direct sink delivery before scheduled release.
+
+- [ ] JB009: Подключить audio jitter buffer в socket audio runtime как основной release path
+  - изменить `SocketRxAudioBackend` так, чтобы path стал:
+    - parse;
+    - payload-type admission;
+    - reorder;
+    - audio frame assemble;
+    - jitter buffer enqueue;
+    - timed release to sink/output.
+  - current immediate delivery of complete audio block must be removed from main runtime path.
+  - explicit handling for:
+    - late block;
+    - missing block / underrun;
+    - restart / discontinuity.
+  - tests:
+    - backend integration tests with fake clock;
+    - underflow/loss/jitter scenarios;
+    - no direct sink delivery before scheduled playout.
+
+- [ ] JB010: Протянуть jitter-buffer config через bootstrap / signaling / manual runtime config boundaries
+  - добавить jitter-buffer config в:
+    - manual `RxVideoConfig` / `RxAudioConfig`-driven operational composition;
+    - video receiver bootstrap composition;
+    - audio receiver bootstrap composition;
+    - backend operational configs.
+  - не вводить отдельный ad hoc side-channel config outside current bootstrap/runtime architecture.
+  - timing-related defaults должны быть explicit at config-construction layer.
+  - where signaling-derived timing inputs matter, they must be projected through existing timing/bootstrap boundaries, not bypassed.
+  - tests:
+    - projection/consistency tests;
+    - invalid config rejected before runtime start;
+    - fixed/adaptive mode preserved through projection.
+
+- [ ] JB011: Расширить stats/observability model для jitter-buffer runtime и adaptation diagnostics
+  - добавить в stats explicit jitter-buffer telemetry:
+    - current target delay;
+    - current effective delay;
+    - queue depth / buffered units;
+    - startup prefill state;
+    - late-unit drops;
+    - underruns;
+    - adaptation grow/shrink events;
+    - max/min/avg playout margin;
+    - audio ADV/TS-DF-style window metrics where applicable.
+  - stats должны быть доступны через existing backend stats snapshot boundary.
+  - no implicit logging-only observability.
+  - tests:
+    - zero/default stats;
+    - grow/shrink event accounting;
+    - reset clears runtime stats correctly;
+    - backend snapshot includes jitter metrics.
+
+- [ ] JB012: Добавить полноценное unit/integration test coverage для adaptive jitter buffer
+  - покрыть отдельно:
+    - common scheduler/time-source boundary;
+    - config validation;
+    - adaptive controller logic;
+    - video playout queue;
+    - audio playout queue;
+    - backend runtime integration.
+  - обязательные сценарии:
+    - stable low-jitter stream;
+    - short burst jitter;
+    - sustained jitter causing target-delay growth;
+    - stabilization causing shrink;
+    - packet loss + reorder;
+    - late-after-deadline arrival;
+    - timestamp discontinuity;
+    - restart/reset;
+    - long-running wraparound continuity.
+  - использовать fake clock / deterministic runtime harness, а не flaky sleep-based tests.
+
+- [ ] JB013: Добавить end-to-end/manual-test readiness и обновить MVP exit dependencies
+  - после внедрения jitter buffer обновить:
+    - manual test procedure;
+    - known limitations;
+    - Track F dependencies for `198–202`.
+  - явно документировать:
+    - supported jitter-buffer modes;
+    - current adaptive algorithm boundaries;
+    - known support limits, если какие-то останутся локализованными.
+  - acceptance result:
+    - end-to-end video/audio demos больше не зависят только от “лабораторной” low-jitter сети;
+    - runtime timing/release policy становится explicit and observable part of MVP/next-phase behavior.
+---
+
 ## Track D — Apps (MVP tools, no OBS yet)
 
 ### D0. Unified dump tools
@@ -1785,7 +2060,7 @@
         - current Level A-oriented baseline;
         - current supported rates/ptime/channel counts.
     - raw SDP → signaling adapter должен строить structurally valid signaling object отдельно от later “is supported by current receiver policy” checks.
-- [ ] 197G: Add explicit reorder flush/tolerance policy to the socket receive path
+- [x] 197G: Add explicit reorder flush/tolerance policy to the socket receive path
   - тип расхождения:
     - с правилами/архитектурой.
   - конкретное расхождение:

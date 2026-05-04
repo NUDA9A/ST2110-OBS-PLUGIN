@@ -11,6 +11,7 @@
 #include <st2110/audio_receiver_bootstrap.hpp>
 #include <st2110/backend.hpp>
 #include <st2110/packet_parse.hpp>
+#include <st2110/receive_reorder_tolerance_policy.hpp>
 #include <st2110/signaling_structs.hpp>
 #include <st2110/socket_runtime.hpp>
 #include <st2110/socket_rx_audio_backend.hpp>
@@ -73,6 +74,17 @@ st2110::VideoReceivePipelineConfig make_video_pipeline_config(const st2110::RxVi
     };
 }
 
+st2110::VideoReorderBufferConfig make_video_reorder_buffer_config(st2110::ReceiveReorderGapPolicy gap_policy,
+                                                                  std::uint32_t window_size_packets) {
+    return st2110::VideoReorderBufferConfig{
+        .window_size_packets = window_size_packets,
+        .reorder_tolerance_policy =
+            st2110::ReceiveReorderTolerancePolicy{
+                .gap_policy = gap_policy,
+            },
+    };
+}
+
 st2110::ParsedAudioChannelOrder make_stereo_channel_order() {
     auto parsed = st2110::parse_smpte2110_audio_channel_order_raw_value("SMPTE2110.(ST)");
     assert(parsed.has_value());
@@ -92,6 +104,17 @@ st2110::RxAudioConfig make_audio_rx_config() {
     cfg.format = st2110::AudioSampleFormat::LinearPcm;
     cfg.pcm_bit_depth = st2110::AudioPcmBitDepth::Bits24;
     return cfg;
+}
+
+st2110::AudioReorderBufferConfig make_audio_reorder_buffer_config(st2110::ReceiveReorderGapPolicy gap_policy,
+                                                                  std::uint16_t window_size_packets) {
+    return st2110::AudioReorderBufferConfig{
+        .window_size_packets = window_size_packets,
+        .reorder_tolerance_policy =
+            st2110::ReceiveReorderTolerancePolicy{
+                .gap_policy = gap_policy,
+            },
+    };
 }
 
 void test_socket_rx_single_media_backend_base_remains_media_agnostic() {
@@ -141,9 +164,8 @@ void test_video_bootstrap_to_operational_adapter_preserves_modeled_axes() {
         .anchor_rtp_timestamp = 90'000,
         .anchor_timestamp_ns = 123'456'789,
     };
-    const st2110::VideoReorderBufferConfig reorder_buffer_cfg{
-        .window_size_packets = 17,
-    };
+    const st2110::VideoReorderBufferConfig reorder_buffer_cfg =
+        make_video_reorder_buffer_config(st2110::ReceiveReorderGapPolicy::WaitForMissing, 17U);
 
     st2110::VideoReceiverBootstrapConfig bootstrap{
         .packet_parse_policy = packet_parse_policy,
@@ -169,6 +191,8 @@ void test_video_bootstrap_to_operational_adapter_preserves_modeled_axes() {
     assert(operational->timestamp_mapper_config.anchor_rtp_timestamp == timestamp_mapper_cfg.anchor_rtp_timestamp);
     assert(operational->timestamp_mapper_config.anchor_timestamp_ns == timestamp_mapper_cfg.anchor_timestamp_ns);
     assert(operational->reorder_buffer_config.window_size_packets == reorder_buffer_cfg.window_size_packets);
+    assert(operational->reorder_buffer_config.reorder_tolerance_policy.gap_policy ==
+           st2110::ReceiveReorderGapPolicy::WaitForMissing);
 
     auto expected_open_config = st2110::socket_rx_open_config_from_video_config(rx_cfg);
     assert(expected_open_config.has_value());
@@ -187,9 +211,11 @@ void test_video_manual_to_operational_adapter_preserves_explicit_runtime_inputs(
         .anchor_rtp_timestamp = 77,
         .anchor_timestamp_ns = 88,
     };
+    const st2110::VideoReorderBufferConfig reorder_buffer_cfg =
+        make_video_reorder_buffer_config(st2110::ReceiveReorderGapPolicy::FlushGapOnce, 19U);
 
     auto operational = st2110::socket_rx_video_operational_config_from_rx_video_config(
-        rx_cfg, packet_parse_policy, st2110::PartialFramePolicy::EmitWithFlag, timestamp_mapper_cfg);
+        rx_cfg, packet_parse_policy, st2110::PartialFramePolicy::EmitWithFlag, timestamp_mapper_cfg, reorder_buffer_cfg);
     assert(operational.has_value());
 
     assert(operational->common.packet_parse_policy.max_udp_datagram_bytes == packet_parse_policy.max_udp_datagram_bytes);
@@ -201,6 +227,9 @@ void test_video_manual_to_operational_adapter_preserves_explicit_runtime_inputs(
     assert(operational->timestamp_mapper_config.initial_anchor_mode == timestamp_mapper_cfg.initial_anchor_mode);
     assert(operational->timestamp_mapper_config.anchor_rtp_timestamp == 77U);
     assert(operational->timestamp_mapper_config.anchor_timestamp_ns == 88U);
+    assert(operational->reorder_buffer_config.window_size_packets == 19U);
+    assert(operational->reorder_buffer_config.reorder_tolerance_policy.gap_policy ==
+           st2110::ReceiveReorderGapPolicy::FlushGapOnce);
 }
 
 void test_audio_bootstrap_to_operational_adapter_preserves_modeled_axes() {
@@ -215,9 +244,8 @@ void test_audio_bootstrap_to_operational_adapter_preserves_modeled_axes() {
     const st2110::AudioFrameAssemblerConfig frame_assembler_cfg{
         .storage_format = st2110::AudioSampleStorageFormat::InterleavedS32,
     };
-    const st2110::AudioReorderBufferConfig reorder_buffer_cfg{
-        .window_size_packets = 7,
-    };
+    const st2110::AudioReorderBufferConfig reorder_buffer_cfg =
+        make_audio_reorder_buffer_config(st2110::ReceiveReorderGapPolicy::FlushGapOnce, 7U);
     const st2110::AudioRtpTimestampMapperConfig timestamp_mapper_cfg{
         .rtp_clock_rate = rx_cfg.sampling_rate_hz,
         .initial_anchor_mode = st2110::RtpTimestampInitialAnchorMode::ConfiguredReference,
@@ -244,6 +272,8 @@ void test_audio_bootstrap_to_operational_adapter_preserves_modeled_axes() {
     assert(operational->audio_packet_policy.wire_format == audio_packet_policy->wire_format);
     assert(operational->frame_assembler_config.storage_format == frame_assembler_cfg.storage_format);
     assert(operational->reorder_buffer_config.window_size_packets == reorder_buffer_cfg.window_size_packets);
+    assert(operational->reorder_buffer_config.reorder_tolerance_policy.gap_policy ==
+           st2110::ReceiveReorderGapPolicy::FlushGapOnce);
     assert(operational->timestamp_mapper_config.rtp_clock_rate == timestamp_mapper_cfg.rtp_clock_rate);
     assert(operational->timestamp_mapper_config.initial_anchor_mode == timestamp_mapper_cfg.initial_anchor_mode);
     assert(operational->timestamp_mapper_config.anchor_rtp_timestamp == timestamp_mapper_cfg.anchor_rtp_timestamp);
@@ -265,9 +295,8 @@ void test_audio_manual_to_operational_adapter_preserves_explicit_runtime_inputs(
     const st2110::AudioFrameAssemblerConfig frame_assembler_cfg{
         .storage_format = st2110::AudioSampleStorageFormat::InterleavedS32,
     };
-    const st2110::AudioReorderBufferConfig reorder_buffer_cfg{
-        .window_size_packets = 9,
-    };
+    const st2110::AudioReorderBufferConfig reorder_buffer_cfg =
+        make_audio_reorder_buffer_config(st2110::ReceiveReorderGapPolicy::WaitForMissing, 9U);
     const st2110::AudioRtpTimestampMapperConfig timestamp_mapper_cfg{
         .rtp_clock_rate = rx_cfg.sampling_rate_hz,
         .initial_anchor_mode = st2110::RtpTimestampInitialAnchorMode::ConfiguredReference,
@@ -283,6 +312,8 @@ void test_audio_manual_to_operational_adapter_preserves_explicit_runtime_inputs(
     assert(operational->common.packet_parse_policy.max_udp_datagram_bytes == packet_parse_policy.max_udp_datagram_bytes);
     assert(operational->frame_assembler_config.storage_format == frame_assembler_cfg.storage_format);
     assert(operational->reorder_buffer_config.window_size_packets == 9U);
+    assert(operational->reorder_buffer_config.reorder_tolerance_policy.gap_policy ==
+           st2110::ReceiveReorderGapPolicy::WaitForMissing);
     assert(operational->timestamp_mapper_config.rtp_clock_rate == rx_cfg.sampling_rate_hz);
     assert(operational->timestamp_mapper_config.initial_anchor_mode == timestamp_mapper_cfg.initial_anchor_mode);
     assert(operational->timestamp_mapper_config.anchor_rtp_timestamp == timestamp_mapper_cfg.anchor_rtp_timestamp);

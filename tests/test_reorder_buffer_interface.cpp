@@ -10,6 +10,7 @@
 static_assert(std::is_abstract_v<st2110::IReorderBuffer>);
 static_assert(
     std::is_same_v<decltype(std::declval<st2110::IReorderBuffer &>().pop_next()), std::optional<st2110::StoredPacket>>);
+static_assert(std::is_same_v<decltype(std::declval<st2110::IReorderBuffer &>().flush_missing_once()), bool>);
 static_assert(
     std::is_same_v<decltype(std::declval<const st2110::IReorderBuffer &>().stats()), st2110::ReorderBufferStats>);
 
@@ -42,23 +43,72 @@ class FakeReorderBuffer final : public st2110::IReorderBuffer {
             return std::nullopt;
         }
 
+        if (head_blocked_) {
+            if (!missing_head_accounted_) {
+                ++stats_.missing_seq;
+                missing_head_accounted_ = true;
+            }
+            return std::nullopt;
+        }
+
         auto out = std::move(stored_);
         stored_.reset();
         ++stats_.packets_popped;
+        missing_head_accounted_ = false;
         return out;
+    }
+
+    [[nodiscard]] bool flush_missing_once() override {
+        if (!stored_.has_value() || !head_blocked_) {
+            return false;
+        }
+
+        head_blocked_ = false;
+        missing_head_accounted_ = false;
+        ++stats_.missing_seq_flushed;
+        return true;
     }
 
     [[nodiscard]] st2110::ReorderBufferStats stats() const override { return stats_; }
 
     void reset() override {
         stored_.reset();
+        head_blocked_ = false;
+        missing_head_accounted_ = false;
         stats_ = {};
     }
+
+    void block_head_on_missing_once() { head_blocked_ = true; }
 
   private:
     std::optional<st2110::StoredPacket> stored_{};
     st2110::ReorderBufferStats stats_{};
+    bool head_blocked_ = false;
+    bool missing_head_accounted_ = false;
 };
+
+st2110::PacketView make_test_packet() {
+    static const uint8_t payload_bytes[] = {0xAA, 0xBB, 0xCC, 0xDD};
+
+    st2110::PacketView src{};
+    src.rtp.version = 2;
+    src.rtp.payload_type = 112;
+    src.rtp.seq_number = 0x0022;
+    src.rtp.timestamp = 0x99;
+    src.rtp.ssrc = 0xDEADBEEF;
+    src.extended_seq = 0x10022;
+    src.segment_count = 1;
+    src.payload_data = st2110::ByteSpan(payload_bytes, sizeof(payload_bytes));
+
+    src.segments[0].header.length = 4;
+    src.segments[0].header.row_number = 5;
+    src.segments[0].header.offset = 0;
+    src.segments[0].header.field_id = false;
+    src.segments[0].header.continuation = false;
+    src.segments[0].data = src.payload_data;
+
+    return src;
+}
 
 void test_stored_packet_view_reconstructs_segments() {
     st2110::StoredPacket pkt{};
@@ -112,24 +162,7 @@ void test_stored_packet_view_reconstructs_segments() {
 }
 
 void test_fake_reorder_buffer_push_pop_reset_and_stats() {
-    const uint8_t payload_bytes[] = {0xAA, 0xBB, 0xCC, 0xDD};
-
-    st2110::PacketView src{};
-    src.rtp.version = 2;
-    src.rtp.payload_type = 112;
-    src.rtp.seq_number = 0x0022;
-    src.rtp.timestamp = 0x99;
-    src.rtp.ssrc = 0xDEADBEEF;
-    src.extended_seq = 0x10022;
-    src.segment_count = 1;
-    src.payload_data = st2110::ByteSpan(payload_bytes, sizeof(payload_bytes));
-
-    src.segments[0].header.length = 4;
-    src.segments[0].header.row_number = 5;
-    src.segments[0].header.offset = 0;
-    src.segments[0].header.field_id = false;
-    src.segments[0].header.continuation = false;
-    src.segments[0].data = src.payload_data;
+    const st2110::PacketView src = make_test_packet();
 
     FakeReorderBuffer buf{};
 
@@ -137,8 +170,11 @@ void test_fake_reorder_buffer_push_pop_reset_and_stats() {
     assert(empty_stats.packets_pushed == 0);
     assert(empty_stats.packets_stored == 0);
     assert(empty_stats.packets_popped == 0);
+    assert(empty_stats.missing_seq == 0);
+    assert(empty_stats.missing_seq_flushed == 0);
 
     assert(!buf.pop_next().has_value());
+    assert(!buf.flush_missing_once());
 
     buf.push(src);
 
@@ -154,6 +190,8 @@ void test_fake_reorder_buffer_push_pop_reset_and_stats() {
     assert(after_pop.packets_pushed == 1);
     assert(after_pop.packets_stored == 1);
     assert(after_pop.packets_popped == 1);
+    assert(after_pop.missing_seq == 0);
+    assert(after_pop.missing_seq_flushed == 0);
 
     const st2110::PacketView out = stored->view();
     assert(out.extended_seq == 0x10022u);
@@ -174,6 +212,7 @@ void test_fake_reorder_buffer_push_pop_reset_and_stats() {
 
     buf.reset();
     assert(!buf.pop_next().has_value());
+    assert(!buf.flush_missing_once());
 
     const auto after_reset = buf.stats();
     assert(after_reset.packets_pushed == 0);
@@ -186,10 +225,45 @@ void test_fake_reorder_buffer_push_pop_reset_and_stats() {
     assert(after_reset.missing_seq_flushed == 0);
 }
 
+void test_fake_reorder_buffer_flush_missing_once_unblocks_blocked_head() {
+    const st2110::PacketView src = make_test_packet();
+
+    FakeReorderBuffer buf{};
+    buf.push(src);
+    buf.block_head_on_missing_once();
+
+    auto blocked = buf.pop_next();
+    assert(!blocked.has_value());
+
+    const auto after_blocked_pop = buf.stats();
+    assert(after_blocked_pop.packets_pushed == 1);
+    assert(after_blocked_pop.packets_stored == 1);
+    assert(after_blocked_pop.packets_popped == 0);
+    assert(after_blocked_pop.missing_seq == 1);
+    assert(after_blocked_pop.missing_seq_flushed == 0);
+
+    assert(buf.flush_missing_once());
+
+    const auto after_flush = buf.stats();
+    assert(after_flush.missing_seq == 1);
+    assert(after_flush.missing_seq_flushed == 1);
+
+    auto stored = buf.pop_next();
+    assert(stored.has_value());
+
+    const auto after_unblocked_pop = buf.stats();
+    assert(after_unblocked_pop.packets_popped == 1);
+    assert(after_unblocked_pop.missing_seq == 1);
+    assert(after_unblocked_pop.missing_seq_flushed == 1);
+
+    assert(!buf.flush_missing_once());
+}
+
 } // namespace
 
 int main() {
     test_stored_packet_view_reconstructs_segments();
     test_fake_reorder_buffer_push_pop_reset_and_stats();
+    test_fake_reorder_buffer_flush_missing_once_unblocks_blocked_head();
     return 0;
 }

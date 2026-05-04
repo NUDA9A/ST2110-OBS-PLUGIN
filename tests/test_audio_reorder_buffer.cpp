@@ -23,7 +23,7 @@ struct PacketFixture {
 
     [[nodiscard]] AudioRtpPacketView view() const {
         return AudioRtpPacketView{
-            rtp,         ByteSpan{payload.data(), payload.size()}, sampling_rate_hz, channel_count, samples_per_channel,
+            rtp, ByteSpan{payload.data(), payload.size()}, sampling_rate_hz, channel_count, samples_per_channel,
             wire_format,
         };
     }
@@ -48,6 +48,44 @@ PacketFixture make_packet(uint16_t seq, uint32_t timestamp = 0, uint8_t fill = 0
     return f;
 }
 
+void reorder_config_validation_covers_window_and_tolerance_policy() {
+    {
+        AudioReorderBufferConfig cfg{
+            .window_size_packets = 8,
+            .reorder_tolerance_policy =
+                ReceiveReorderTolerancePolicy{.gap_policy = ReceiveReorderGapPolicy::WaitForMissing},
+        };
+        assert(validate_audio_reorder_buffer_config(cfg) == Error::Ok);
+    }
+
+    {
+        AudioReorderBufferConfig cfg{
+            .window_size_packets = 8,
+            .reorder_tolerance_policy =
+                ReceiveReorderTolerancePolicy{.gap_policy = ReceiveReorderGapPolicy::FlushGapOnce},
+        };
+        assert(validate_audio_reorder_buffer_config(cfg) == Error::Ok);
+    }
+
+    {
+        AudioReorderBufferConfig cfg{
+            .window_size_packets = 0,
+            .reorder_tolerance_policy =
+                ReceiveReorderTolerancePolicy{.gap_policy = ReceiveReorderGapPolicy::WaitForMissing},
+        };
+        assert(validate_audio_reorder_buffer_config(cfg) == Error::InvalidValue);
+    }
+
+    {
+        AudioReorderBufferConfig cfg{
+            .window_size_packets = 8,
+            .reorder_tolerance_policy =
+                ReceiveReorderTolerancePolicy{.gap_policy = static_cast<ReceiveReorderGapPolicy>(255)},
+        };
+        assert(validate_audio_reorder_buffer_config(cfg) == Error::InvalidValue);
+    }
+}
+
 void in_order_packets_pop_in_order() {
     AudioFixedWindowReorderBuffer buffer{AudioReorderBufferConfig{.window_size_packets = 8}};
 
@@ -64,6 +102,7 @@ void in_order_packets_pop_in_order() {
     assert(out10->view().payload[0] == 0x10);
 
     assert(!buffer.pop_next().has_value());
+    assert(!buffer.flush_missing_once());
 
     assert(buffer.push(p11.view()) == Error::Ok);
 
@@ -74,6 +113,7 @@ void in_order_packets_pop_in_order() {
     assert(out11->view().payload[0] == 0x11);
 
     assert(!buffer.pop_next().has_value());
+    assert(!buffer.flush_missing_once());
     assert(buffer.stats().packets_pushed == 2);
     assert(buffer.stats().packets_popped == 2);
 }
@@ -107,6 +147,7 @@ void out_of_order_packets_are_reordered_within_window() {
     assert(out12->view().payload[0] == 0x12);
 
     assert(!buffer.pop_next().has_value());
+    assert(!buffer.flush_missing_once());
     assert(buffer.stats().packets_pushed == 3);
     assert(buffer.stats().packets_popped == 3);
 }
@@ -126,6 +167,7 @@ void duplicate_packet_is_rejected_without_overwriting_original() {
     assert(out->view().payload[0] == 0x10);
 
     assert(!buffer.pop_next().has_value());
+    assert(!buffer.flush_missing_once());
     assert(buffer.stats().duplicates == 1);
     assert(buffer.stats().packets_pushed == 1);
     assert(buffer.stats().packets_popped == 1);
@@ -146,14 +188,34 @@ void missing_packet_can_be_flushed_once() {
 
     assert(!buffer.pop_next().has_value());
 
-    buffer.flush_missing_once();
+    assert(buffer.flush_missing_once());
+    assert(!buffer.flush_missing_once());
 
     auto out12 = buffer.pop_next();
     assert(out12.has_value());
     assert(out12->view().rtp.seq_number == 12);
 
     assert(!buffer.pop_next().has_value());
+    assert(!buffer.flush_missing_once());
     assert(buffer.stats().missing_packets_flushed == 1);
+}
+
+void flush_missing_once_noops_without_initialized_gap() {
+    AudioFixedWindowReorderBuffer buffer{AudioReorderBufferConfig{.window_size_packets = 8}};
+
+    assert(!buffer.flush_missing_once());
+
+    auto p10 = make_packet(10, 480, 0x10);
+    assert(buffer.push(p10.view()) == Error::Ok);
+
+    assert(!buffer.flush_missing_once());
+
+    auto out10 = buffer.pop_next();
+    assert(out10.has_value());
+    assert(out10->view().rtp.seq_number == 10);
+
+    assert(!buffer.flush_missing_once());
+    assert(buffer.stats().missing_packets_flushed == 0);
 }
 
 void late_packet_after_progress_is_rejected() {
@@ -171,6 +233,7 @@ void late_packet_after_progress_is_rejected() {
     assert(buffer.push(p09.view()) == Error::InvalidValue);
     assert(buffer.stats().late_packets == 1);
     assert(!buffer.pop_next().has_value());
+    assert(!buffer.flush_missing_once());
 }
 
 void packet_beyond_fixed_window_is_rejected() {
@@ -202,10 +265,18 @@ void reset_clears_pending_packets_and_sequence_state() {
     assert(buffer.push(p12.view()) == Error::Ok);
     assert(buffer.has_pending());
 
+    auto out10 = buffer.pop_next();
+    assert(out10.has_value());
+    assert(!buffer.pop_next().has_value());
+    assert(buffer.flush_missing_once());
+    assert(buffer.stats().missing_packets_flushed == 1);
+
     buffer.reset();
 
     assert(!buffer.has_pending());
     assert(!buffer.pop_next().has_value());
+    assert(!buffer.flush_missing_once());
+    assert(buffer.stats().missing_packets_flushed == 0);
 
     auto p100 = make_packet(100, 4'800, 0x64);
     assert(buffer.push(p100.view()) == Error::Ok);
@@ -245,14 +316,17 @@ void sequence_number_wraparound_is_supported() {
     assert(out0->view().payload[0] == 0x00);
 
     assert(!buffer.pop_next().has_value());
+    assert(!buffer.flush_missing_once());
 }
 } // namespace
 
 int main() {
+    reorder_config_validation_covers_window_and_tolerance_policy();
     in_order_packets_pop_in_order();
     out_of_order_packets_are_reordered_within_window();
     duplicate_packet_is_rejected_without_overwriting_original();
     missing_packet_can_be_flushed_once();
+    flush_missing_once_noops_without_initialized_gap();
     late_packet_after_progress_is_rejected();
     packet_beyond_fixed_window_is_rejected();
     reset_clears_pending_packets_and_sequence_state();
