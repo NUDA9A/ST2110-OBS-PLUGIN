@@ -1206,13 +1206,14 @@
   - when `ST2110_WITH_MTL=OFF`, the project must build cleanly without MTL headers/libs and without compiling MTL backend code;
   - when `ST2110_WITH_MTL=ON`, MTL dependency wiring must stay localized to build/factory/runtime code rather than leaking into app/bootstrap code;
   - keep temporary build/runtime unavailability localized through factory/build selection, not by removing `mtl` from public parsing/selection.
-- [ ] 131: Implement `MtlRxVideoBackend` skeleton + focused smoke test
+- [ ] 131: Implement `MtlRxVideoBackend` skeleton
   - reuse existing backend lifecycle/state/stats/factory contracts;
   - do not introduce a parallel backend API;
   - keep MTL device/session ownership explicit inside the backend;
   - keep current MVP support boundary explicit:
     - only configs that can be projected into current MTL ST20P RX path;
     - only video output compatible with the current project `VideoFrameView` / `PixelFormat` boundary.
+  - implement smoke tests at the tests stage
 - [ ] 132: Implement minimal MTL video start/stop using ST20P RX frame API
   - use `mtl_init` / `mtl_uninit` for device lifecycle;
   - use `st20p_rx_create` / `st20p_rx_free` for session lifecycle;

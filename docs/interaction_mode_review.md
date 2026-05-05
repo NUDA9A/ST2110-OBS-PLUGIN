@@ -56,10 +56,14 @@ For each approved responsibility block, Assistant MUST actually read:
     - the relevant `code_map_shard_*.md`;
     - the actual relevant production files for the block;
 - the Relevant standards set for that block;
-- for an MTL block, all configured MTL reference files on pinned branch `mtl-ref-v26.01`;
+- for an MTL block, the compact MTL context docs required for that block:
+  - `docs/mtl_context_index.md`;
+  - `docs/mtl_task_context_map.md`;
+  - the task-specific compact MTL context docs selected by that map;
+- if those compact docs are insufficient for the current block review step, the relevant original MTL reference files on pinned branch `mtl-ref-v26.01`;
 - newer local code provided in chat, if any.
 
-If the block is NOT an MTL block, Assistant MUST NOT read MTL reference files.
+If the block is NOT an MTL block, Assistant MUST NOT read MTL compact context docs or original MTL reference files.
 
 At this stage Assistant MUST perform a code check against the actual selected production files.
 
@@ -69,7 +73,7 @@ For the current responsibility block Assistant MUST check:
 
 - compliance with the relevant standards set for that block;
 - compliance with `architecture_rules.md`;
-- compliance with MTL reference material for an MTL block;
+- compliance with the relevant original MTL reference material actually required/read for an MTL block, using the compact MTL context docs as review-scoping context;
 - whether existing implementation already satisfies the expected behavior;
 - whether the current block contains hidden narrowing, non-extensible structure, silent fallbacks, duplicated responsibility, or unmodeled varying parameters.
 

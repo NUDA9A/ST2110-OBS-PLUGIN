@@ -41,11 +41,18 @@ At Stage 1 Assistant MUST actually read:
 
 Assistant MUST determine which uploaded standards PDFs are relevant to the task and then MUST actually read that Relevant standards set.
 
-If the task is an MTL task, Assistant MUST also actually read all configured MTL reference files from:
+If the task is an MTL task, Assistant MUST first actually read:
+- `docs/mtl_context_index.md`;
+- `docs/mtl_task_context_map.md`;
+- the task-specific compact MTL context docs selected by that map.
+
+If the compact MTL context docs are insufficient for the current task step, Assistant MUST then actually read the relevant original MTL reference files from:
 - repository `NUDA9A/Media-Transport-Library`;
 - branch `mtl-ref-v26.01`.
 
-If the task is NOT an MTL task, Assistant MUST NOT read MTL reference files.
+Assistant MUST NOT read the entire configured original MTL reference set by default if the compact MTL context docs plus the relevant original files are already sufficient for the current step.
+
+If the task is NOT an MTL task, Assistant MUST NOT read MTL compact context docs or original MTL reference files.
 
 At Stage 1 Assistant MUST NOT:
 - read `tests_file_map_index.md`;
@@ -75,7 +82,7 @@ Stage 1 response MUST be grounded only in:
 - actually read rule files;
 - actually read relevant production files;
 - actually read relevant standards;
-- actually read MTL reference files for an MTL task.
+- actually read the compact MTL context docs required for an MTL task, and the relevant original MTL reference files only when the compact docs were insufficient for the current step.
 
 Assistant MUST NOT present Stage 1 as test-grounded, because tests are intentionally excluded at this stage.
 
@@ -183,10 +190,10 @@ At Stage 3 Assistant MUST actually read:
 - `conventions.md`;
 - this file `interaction_mode_task.md`;
 - the same relevant standards set that is required for the task, updated if the scope changed;
-- for an MTL task, all configured MTL reference files;
-- the actual changed production files from:
-    - the primary repository if the changes are already there;
-    - or newer local full-file versions provided by the user in chat.
+- for an MTL task, the compact MTL context docs required for the task step;
+- and, if those compact docs are insufficient for the current verification step, the relevant original MTL reference files from:
+  - repository `NUDA9A/Media-Transport-Library`;
+  - branch `mtl-ref-v26.01`;
 
 At Stage 3 Assistant MUST NOT:
 - read tests maps;
@@ -198,7 +205,7 @@ Stage 3 verification MUST check:
 - compliance with the requested task;
 - compliance with the selected relevant standards set;
 - compliance with `architecture_rules.md`;
-- compliance with the MTL reference material for an MTL task;
+- compliance with the relevant original MTL reference material actually required/read for an MTL task, using the compact MTL context docs as task-scoping context;
 - absence of duplicated responsibility or hidden fallback logic;
 - absence of newly introduced undocumented deviations.
 
