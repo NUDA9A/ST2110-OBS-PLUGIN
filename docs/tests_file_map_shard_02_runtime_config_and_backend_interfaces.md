@@ -76,7 +76,9 @@
 ### tests/test_backend_factory.cpp
 - Роль:
     - проверяет backend factory / selector boundary;
-    - дополнительно фиксирует builtin backend-registry boundary и build-configuration visibility для `RxBackendKind::Mtl`.
+    - фиксирует explicit builtin backend-registry boundary;
+    - фиксирует build-configuration visibility / public modeled presence для `RxBackendKind::Mtl`;
+    - дополнительно покрывает direct MTL video factory/backend skeleton contract, когда test build собран с MTL.
 - Покрывает:
     - modeled backend-kind axis:
         - `RxBackendKind`;
@@ -117,19 +119,38 @@
         - null factory entry rejection.
     - backend creation:
         - `create_rx_backend(...)`;
-        - uses the selected factory only;
+        - uses only the selected factory;
         - rejects null backend results from a factory;
         - created backend starts in a stopped `RxBackendState`;
         - created backend `stats()` starts from a zero snapshot;
         - created backend `stop()` returns a lifecycle result.
+    - target/build boundary:
+        - `tests/CMakeLists.txt` registers `test_backend_factory`;
+        - `tests/CMakeLists.txt` injects `ST2110_TEST_EXPECT_MTL_BUILT=$<BOOL:${ST2110_WITH_MTL}>`;
+        - the test asserts `rx_backend_kind_built(RxBackendKind::Mtl)` against that build-time expectation.
     - builtin availability/build boundary:
         - socket builtins are selected and constructable for their supported media;
-        - MTL builtins remain present in the default registry but currently report unavailable and are rejected as `Unsupported`;
-        - `rx_backend_kind_built(RxBackendKind::Mtl)` is asserted against the build-time expectation injected from `tests/CMakeLists.txt`.
+        - published MTL builtin descriptors remain present in the default registry but unavailable, and therefore are rejected by selector/creator as `Unsupported`;
+        - direct `MtlRxVideoBackendFactory` keeps an unavailable descriptor, while `create_backend()` follows the build result:
+            - returns a concrete backend when MTL is built;
+            - returns `nullptr` when MTL is not built;
+        - direct `MtlRxVideoBackend` checks are compiled only when `ST2110_TEST_EXPECT_MTL_BUILT` is true.
+    - direct MTL video backend skeleton path under MTL-enabled test build:
+        - `MtlRxVideoBackend::backend_name() == "mtl"`;
+        - video-only capabilities;
+        - initially stopped state;
+        - zero backend stats snapshot;
+        - idempotent `stop()`;
+        - `start_video(...)` with otherwise valid MVP config is currently rejected as `Unsupported`;
+        - interlaced `VideoScanMode` is rejected as `Unsupported`;
+        - `VideoPackingMode::Bpm` is rejected as `Unsupported`;
+        - invalid runtime config (`payload_type = 95`) is rejected as `InvalidValue`;
+        - failed starts do not deliver frames to the sink and keep backend state/stats unchanged.
 - Фиксирует:
     - backend selection/creation remains separate from backend lifecycle semantics;
-    - builtin backend registry remains explicit and inspectable instead of hiding backend availability behind ad hoc fallback logic;
-    - MTL remains a modeled backend-kind axis even when current builtin factories are published as unavailable in the default registry.
+    - builtin backend registry remains explicit and inspectable instead of hiding availability behind ad hoc fallback logic;
+    - `RxBackendKind::Mtl` remains a public modeled backend axis in both build modes;
+    - current MTL video backend MVP support boundary is explicit at factory/backend-start level rather than implicit in caller logic.
 
 ### tests/test_receive_reorder_tolerance_policy.cpp
 - Роль:

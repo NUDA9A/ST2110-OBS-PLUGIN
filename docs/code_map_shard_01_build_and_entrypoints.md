@@ -1,35 +1,46 @@
 ### libs/st2110core/CMakeLists.txt
 - Роль:
   - build integration для `st2110core`.
-  - локализует build-time wiring для backend factory registry и MTL-enabled / MTL-unavailable factory implementation.
-  - задает explicit build boundary для MTL integration через opt-in CMake options вместо hidden source-level fallback.
+  - локализует build-time source selection для socket runtime, builtin factory registry и MTL-enabled / MTL-unavailable receive backend units.
+  - задает explicit opt-in build boundary для MTL integration через CMake options и private include/link wiring instead of hidden source-level fallback.
 - Связи:
   - собирает:
     - `src/stub.cpp`;
     - `src/socket_rx_single_media_backend_base.cpp`;
     - `src/backend_factory_registry.cpp`;
-    - `src/mtl_rx_backend_factory_unavailable.cpp` по умолчанию;
-    - `src/mtl_rx_backend_factory.cpp` при `ST2110_WITH_MTL=ON`.
+    - `src/mtl_rx_backend_factory_unavailable.cpp` по умолчанию.
+  - при `ST2110_WITH_MTL=ON`:
+    - удаляет `src/mtl_rx_backend_factory_unavailable.cpp` из source set;
+    - добавляет:
+      - `src/mtl_rx_backend_factory.cpp`;
+      - `src/mtl_rx_video_backend.cpp`.
   - публикует include surface через `${CMAKE_CURRENT_SOURCE_DIR}/include`.
   - задает private compile definition:
     - `ST2110_WITH_MTL=$<BOOL:${ST2110_WITH_MTL}>`.
   - при `ST2110_WITH_MTL=ON` добавляет private include/link dependencies для MTL:
     - `ST2110_MTL_INCLUDE_DIRS`;
     - `ST2110_MTL_LIBRARIES`.
-  - build wiring поддерживает public factory surface из:
+  - build wiring supports public backend/factory surface from:
     - `include/st2110/backend_factory.hpp`;
-    - `include/st2110/mtl_rx_backend_factory.hpp`.
+    - `include/st2110/mtl_rx_backend_factory.hpp`;
+    - `include/st2110/mtl_rx_video_backend.hpp`.
 - Сущности:
-  - CMake options / cache variables:
+  - CMake option / cache variables:
     - `ST2110_WITH_MTL`
     - `ST2110_MTL_INCLUDE_DIRS`
     - `ST2110_MTL_LIBRARIES`
   - `ST2110CORE_SOURCES`
-    - explicit source-set selection layer for default/unavailable vs MTL-enabled factory implementation.
+    - explicit source-set selection layer for default unavailable wiring vs MTL-enabled factory/backend compilation.
+  - target definition:
+    - `add_library(st2110core STATIC ...)`
+    - `target_include_directories(...)`
+    - `target_compile_features(... cxx_std_23)`
+    - `target_compile_definitions(...)`
+    - `target_link_libraries(...)` for MTL-enabled builds.
 - Примечание:
-  - build now keeps MTL backend kind visible in the core factory registry even when real MTL runtime is not linked in.
-  - missing MTL include dirs or libraries are rejected explicitly through `message(FATAL_ERROR ...)` when `ST2110_WITH_MTL=ON`.
-  - source selection between `mtl_rx_backend_factory_unavailable.cpp` and `mtl_rx_backend_factory.cpp` is localized here instead of being hidden in app/plugin code.
+  - build wiring now includes the concrete `MtlRxVideoBackend` skeleton when `ST2110_WITH_MTL=ON`, not only the enabled factory unit.
+  - audio MTL backend implementation is still absent from the MTL-enabled source set.
+  - missing `ST2110_MTL_INCLUDE_DIRS` or `ST2110_MTL_LIBRARIES` remain explicit fatal build errors when MTL support is requested.
 
 ### apps/st2110_rx_dump/main.cpp
 - Роль:
