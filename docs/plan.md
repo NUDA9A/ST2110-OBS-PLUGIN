@@ -1556,30 +1556,90 @@
 
 ## Track E — OBS plugin MVP (video + audio, basic UI)
 
-### E0. Environment
-- [ ] 170: Create Ubuntu 24.04 VM / environment for OBS plugin work
-- [ ] 171: Install OBS and verify it runs
-- [ ] 172: Decide code sync method (git clone / shared folder / artifacts)
-
-### E1. Plugin skeleton
-- [ ] 180: Add `obs_plugin/` target that builds `.so` and installs to OBS plugins dir
-- [ ] 181: Implement source/input skeleton for ST 2110 media
-- [ ] 182: Implement minimal UI/properties for:
+### E0. Plugin skeleton
+- [ ] 180: Add `obs_plugin/` module target:
+  - build plugin as OBS-loadable `.so`
+  - link required `libobs`
+  - add `obs-frontend-api` linkage if frontend callbacks / Tools menu integration are used
+  - add Qt linkage only where plugin-global dialog/UI is required
+  - install/copy artifact into local OBS plugins directory
+- [ ] 181: Implement ST 2110 OBS input-source skeleton:
+  - register source from central module entrypoint
+  - define `obs_source_info` with:
+    - `get_name`
+    - `get_properties`
+    - `get_defaults`
+    - `create`
+    - `update`
+    - `destroy`
+    - `show`
+    - `hide`
+    - `activate`
+    - `deactivate`
+    - `get_width`
+    - `get_height`
+  - define source-local runtime/state struct and nested source-config struct
+- [ ] 182: Implement minimal source properties/defaults/update flow for ST 2110 receive source:
   - media kind
   - backend selector
-  - IP/port/payload type
+  - source address / port / payload type
   - video params
   - audio params
-  - start/stop
-- [ ] 183: Implement black video / silence audio fallback path with no network
+  - explicit no-signal / fallback policy
+  - property visibility/dependency logic where media/backend choice changes applicable fields
+- [ ] 183: Implement explicit no-network / no-signal fallback behavior:
+  - startup behavior when no packets are available
+  - timeout-based behavior when input disappears
+  - black video / clear video / hold-last-frame policy as explicitly modeled behavior
+  - silence / no-audio-output policy for audio path
 
-### E2. Connect backends to OBS
-- [ ] 190: Wire socket backend to OBS source path
-- [ ] 191: Wire MTL backend to OBS source path where available
-- [ ] 192: Implement background receive threads and handoff into OBS
-- [ ] 193: Implement frame queue / audio queue from backend threads to OBS
-- [ ] 194: Implement timestamp mapping for OBS
-- [ ] 195: Verify start/stop stability and repeated reconfiguration
+### E1. Connect backends to OBS
+- [ ] 190: Wire socket backend into the OBS source runtime boundary:
+  - project source properties into socket-backend runtime config
+  - start/stop/reset socket receive path from source lifecycle
+  - keep socket-specific logic out of module/frontend layer
+- [ ] 191: Wire MTL backend into the same OBS source runtime boundary where available:
+  - project source properties into MTL runtime config
+  - use the same source contract as socket backend
+  - report unavailable/unsupported MTL cases cleanly without reshaping generic OBS source API
+- [ ] 192: Implement source-owned background runtime for receive/start/stop/reconfigure:
+  - dedicated runtime/thread ownership per source instance
+  - explicit start / stop / join / wake / reset behavior
+  - safe cleanup after partial start failure
+  - lifecycle driven by `create/update/show/hide/activate/deactivate`
+- [ ] 193: Implement backend-to-OBS media handoff boundary:
+  - choose and localize direct handoff vs explicit bounded queue policy
+  - hand off video through `obs_source_output_video(...)`
+  - hand off audio through `obs_source_output_audio(...)`
+  - keep backend-owned frame/block lifetime valid only through the handoff boundary
+- [ ] 194: Implement localized RTP/OBS timestamp mapping policy:
+  - video timestamp mapping grounded in ST 2110 system timing rules
+  - audio timestamp mapping grounded in ST 2110 / ST 2110-30 rules
+  - synthetic and live paths handled explicitly
+  - no blind reuse of DistroAV timestamp semantics
+- [ ] 195: Verify source lifecycle stability and repeated reconfiguration:
+  - repeated create/destroy
+  - repeated show/hide
+  - repeated activate/deactivate
+  - repeated property update/reconfigure
+  - repeated backend switch
+  - clean stop/join/unload with no stale runtime state
+
+### E2. Environment
+- [ ] 170: Create Ubuntu 24.04 OBS plugin development environment:
+  - compiler/CMake toolchain
+  - OBS development packages / `libobs`
+  - frontend API headers if used
+  - Qt development packages if plugin-global dialog/frontend UI is used
+- [ ] 171: Install OBS and verify:
+  - OBS starts successfully
+  - local plugin `.so` can be discovered/loaded from the OBS plugin directory
+  - plugin log messages are visible
+- [ ] 172: Decide local code sync / build / install / run loop for OBS plugin work:
+  - preferred repo checkout location
+  - build directory strategy
+  - local install path into OBS plugins dir
+  - fastest repeatable rebuild/restart workflow
 
 ---
 
