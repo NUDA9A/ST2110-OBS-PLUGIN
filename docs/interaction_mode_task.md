@@ -70,7 +70,19 @@ If the compact MTL context docs are insufficient for the current task step, Assi
 
 Assistant MUST NOT read the entire configured original MTL reference set by default if the compact MTL context docs plus the relevant original files are already sufficient for the current step.
 
+If the task is a DistroAV task, Assistant MUST first actually read:
+- `docs/distroav_context_index.md`;
+- the relevant compact DistroAV context docs.
+
+If the compact DistroAV context docs are insufficient for the current task step, Assistant MUST then actually read the relevant original DistroAV reference files from:
+- repository `NUDA9A/DistroAV`;
+- branch `distro-av-ref-v6.2.1`.
+
+Assistant MUST NOT read the entire configured original DistroAV reference set by default if the compact DistroAV context docs plus the relevant original files are already sufficient for the current step.
+
 If the task is NOT an MTL task, Assistant MUST NOT read MTL compact context docs or original MTL reference files.
+
+If the task is NOT a DistroAV task, Assistant MUST NOT read DistroAV compact context docs or original DistroAV reference files.
 
 At Stage 1 Assistant MUST NOT:
 - read `tests_file_map_index.md`;
@@ -112,7 +124,8 @@ Stage 1 response MUST be grounded only in:
 - actually read rule files;
 - actually read relevant production files;
 - actually read relevant standards;
-- actually read the compact MTL context docs required for an MTL task, and the relevant original MTL reference files only when the compact docs were insufficient for the current step.
+- actually read the compact MTL context docs required for an MTL task, and the relevant original MTL reference files only when the compact docs were insufficient for the current step;
+- actually read the compact DistroAV context docs required for a DistroAV task, and the relevant original DistroAV reference files only when the compact docs were insufficient for the current step.
 
 Assistant MUST NOT present Stage 1 as test-grounded, because tests are intentionally excluded at this stage.
 
@@ -166,7 +179,19 @@ If the compact MTL context docs are insufficient for the current Stage 2 step, A
 
 Assistant MUST NOT read the entire configured original MTL reference set by default if the compact MTL context docs plus the relevant original files are already sufficient for the current step.
 
+If the selected plan step is a DistroAV step, Assistant MUST first actually read:
+- `docs/distroav_context_index.md`;
+- the relevant compact DistroAV context docs.
+
+If the compact DistroAV context docs are insufficient for the current Stage 2 step, Assistant MUST then actually read the relevant original DistroAV reference files from:
+- repository `NUDA9A/DistroAV`;
+- branch `distro-av-ref-v6.2.1`.
+
+Assistant MUST NOT read the entire configured original DistroAV reference set by default if the compact DistroAV context docs plus the relevant original files are already sufficient for the current step.
+
 If the selected plan step is NOT an MTL step, Assistant MUST NOT read MTL compact context docs or original MTL reference files.
+
+If the selected plan step is NOT a DistroAV step, Assistant MUST NOT read DistroAV compact context docs or original DistroAV reference files.
 
 At Stage 2 Assistant MUST NOT:
 - read `tests_file_map_index.md`;
@@ -322,7 +347,11 @@ At Stage 4 Assistant MUST actually read:
 - for an MTL task, the compact MTL context docs required for the verification step;
 - and, if those compact docs are insufficient for the current verification step, the relevant original MTL reference files from:
   - repository `NUDA9A/Media-Transport-Library`;
-  - branch `mtl-ref-v26.01`.
+  - branch `mtl-ref-v26.01`;
+- for a DistroAV task, the compact DistroAV context docs required for the verification step;
+- and, if those compact docs are insufficient for the current verification step, the relevant original DistroAV reference files from:
+  - repository `NUDA9A/DistroAV`;
+  - branch `distro-av-ref-v6.2.1`.
 
 At Stage 4 Assistant MUST NOT:
 - read tests maps;
@@ -337,6 +366,7 @@ Stage 4 verification MUST check:
 - compliance with the selected relevant standards set;
 - compliance with `architecture_rules.md`;
 - compliance with the relevant original MTL reference material actually required/read for an MTL task, using the compact MTL context docs as task-scoping context;
+- compliance with the relevant original DistroAV reference material actually required/read for a DistroAV task, using the compact DistroAV context docs as task-scoping context.
 - absence of duplicated responsibility or hidden fallback logic;
 - absence of newly introduced undocumented deviations.
 

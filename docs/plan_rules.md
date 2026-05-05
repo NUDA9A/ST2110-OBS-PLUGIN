@@ -46,18 +46,53 @@
   - `app/sample/rx_st30_pipeline_sample.c`;
   - `lib/src/st2110/pipeline/st20_pipeline_rx.c`;
   - `lib/src/st2110/pipeline/st30_pipeline_rx.c`.
-- **MTL compact context docs** = compact MTL context artifacts stored in the Primary repository:
-  - `docs/mtl_context_index.md`;
-  - `docs/mtl_runtime_context.md`;
-  - `docs/mtl_video_rx_context.md`;
-  - `docs/mtl_audio_rx_context.md`;
-  - `docs/mtl_task_context_map.md`.
+- **MTL compact context docs** = compact MTL context artifacts stored in the Project memory and Primary repository:
+  - `mtl_context_index.md`;
+  - `mtl_runtime_context.md`;
+  - `mtl_video_rx_context.md`;
+  - `mtl_audio_rx_context.md`;
+  - `mtl_task_context_map.md`.
 - **Relevant original MTL reference files** = the subset of configured MTL reference files actually needed for the current mode step after reading the required MTL compact context docs.
 - **MTL context selection path** = mandatory MTL lookup chain:
   1. `docs/mtl_context_index.md`;
   2. `docs/mtl_task_context_map.md`;
   3. the relevant task-specific compact MTL context docs;
   4. if the compact docs are insufficient, the Relevant original MTL reference files from the MTL reference repository on the pinned MTL reference branch.
+- **DistroAV reference repository** = connected repository used only as authoritative OBS/plugin/UI reference source for DistroAV-derived tasks: `NUDA9A/DistroAV`.
+- **Pinned DistroAV reference branch** = `distro-av-ref-v6.2.1`.
+- **DistroAV task** = a task whose scope uses DistroAV only as OBS/plugin/UI reference material, including:
+  - OBS plugin build wiring;
+  - OBS module registration;
+  - OBS source/input lifecycle;
+  - OBS properties/UI;
+  - plugin-global config/settings UI;
+  - OBS output/frontend lifecycle patterns.
+- **DistroAV reference files** = the mandatory files from the DistroAV reference repository on the pinned DistroAV reference branch. For this project they are:
+  - `CMakeLists.txt`;
+  - `src/plugin-main.cpp`;
+  - `src/plugin-main.h`;
+  - `src/ndi-source.cpp`;
+  - `src/ndi-finder.cpp`;
+  - `src/ndi-finder.h`;
+  - `src/config.cpp`;
+  - `src/config.h`;
+  - `src/forms/output-settings.cpp`;
+  - `src/forms/output-settings.h`;
+  - `src/main-output.cpp`;
+  - `src/main-output.h`;
+  - `src/preview-output.cpp`;
+  - `src/preview-output.h`;
+  - `src/ndi-output.cpp`.
+- **DistroAV compact context docs** = compact DistroAV OBS/plugin/UI context artifacts stored in the Project memory and Primary repository:
+  - `distroav_context_index.md`;
+  - `distroav_obs_plugin_context.md`;
+  - `distroav_obs_source_context.md`;
+  - `distroav_obs_frontend_context.md`.
+- **Relevant original DistroAV reference files** = the subset of configured DistroAV reference files actually needed for the current mode step after reading the required DistroAV compact context docs.
+- **DistroAV context selection path** = mandatory DistroAV lookup chain:
+  1. `docs/distroav_context_index.md`;
+  2. the relevant compact DistroAV context docs;
+  3. if the compact docs are insufficient, the Relevant original DistroAV reference files from the DistroAV reference repository on the pinned DistroAV reference branch.
 - **Sharded production map** = `code_map_index.md` plus all `code_map_shard_*.md` files.
 - **Sharded tests map** = `tests_file_map_index.md` plus all `tests_file_map_shard_*.md` files.
 - **Combined production map** = generated `code_map.md`.
@@ -124,10 +159,17 @@ Assistant MUST use sources in this order:
   - `mtl_video_rx_context.md`;
   - `mtl_audio_rx_context.md`;
   - `mtl_task_context_map.md`;
+- if the current mode step is a DistroAV task, DistroAV compact context docs:
+  - `distroav_context_index.md`;
+  - `distroav_obs_plugin_context.md`;
+  - `distroav_obs_source_context.md`;
+  - `distroav_obs_frontend_context.md`;
 3. if the current mode step is an MTL task, the MTL reference repository on pinned branch `mtl-ref-v26.01`:
 - the Relevant original MTL reference files;
-4. uploaded ST 2110 / RP 2110 PDFs selected as relevant by the current mode;
-5. newer local changes explicitly provided in chat.
+4. if the current mode step is a DistroAV task, the DistroAV reference repository on pinned branch `distro-av-ref-v6.2.1`:
+- the Relevant original DistroAV reference files;
+5. uploaded ST 2110 / RP 2110 PDFs selected as relevant by the current mode;
+6. newer local changes explicitly provided in chat.
 
 Authoritative source rules:
 - `plan_rules.md`, `architecture_rules.md`, `conventions.md`, and all mode files MUST be taken from Project copies;
@@ -135,19 +177,29 @@ Authoritative source rules:
 - sharded maps MUST be taken from the Primary repository unless newer local versions are provided in chat;
 - generated `code_map.md` / `tests_file_map.md` are convenience artifacts only and MUST NOT replace the sharded-map workflow when the current mode requires shard-based lookup;
 - MTL compact context docs MUST be taken from the Primary repository unless newer local versions are provided in chat;
+- DistroAV compact context docs MUST be taken from the Primary repository unless newer local versions are provided in chat;
 - MTL compact context docs are context-forming artifacts and MUST NOT override:
   - Project copies;
   - actual production/test code;
   - uploaded standards PDFs;
   - original MTL reference files when exact original API / enum / field / lifecycle / stats / sample behavior is required;
+- DistroAV compact context docs are context-forming artifacts and MUST NOT override:
+  - Project copies;
+  - actual production/test code;
+  - uploaded standards PDFs;
+  - original DistroAV reference files when exact OBS/plugin/UI API / callback / lifecycle / object-usage behavior is required;
 - original MTL reference files MUST be taken from the MTL reference repository on branch `mtl-ref-v26.01`;
+- original DistroAV reference files MUST be taken from the DistroAV reference repository on branch `distro-av-ref-v6.2.1`;
 - Assistant MUST NOT use `main` of the MTL reference repository as authoritative for MTL tasks;
-- Assistant MUST NOT substitute the configured MTL reference files with remembered snippets, release notes, project copies, or other branches/tags unless the rules are explicitly updated.
+- Assistant MUST NOT use `main` of the DistroAV reference repository as authoritative for DistroAV tasks;
+- Assistant MUST NOT substitute the configured MTL reference files with remembered snippets, release notes, project copies, or other branches/tags unless the rules are explicitly updated;
+- Assistant MUST NOT substitute the configured DistroAV reference files with remembered snippets, release notes, project copies, or other branches/tags unless the rules are explicitly updated.
 
 Assistant MUST NOT ask the user to resend files already available in:
 - the Primary repository;
 - Project copies;
-- the connected MTL reference repository for an MTL task.
+- the connected MTL reference repository for an MTL task;
+- the connected DistroAV reference repository for a DistroAV task.
 
 Assistant MAY ask only for:
 - newer local uncommitted changes;
@@ -201,7 +253,7 @@ If a map conflicts with actual code/tests:
 - actual code/tests win;
 - map-update output MUST reflect actual code/tests.
 
-## 5. MTL rules
+## 5. Reference-repository context rules
 
 If the current mode step is an MTL task, Assistant MUST actually read all required items from the MTL context selection path.
 
@@ -213,9 +265,21 @@ If the compact MTL context docs are insufficient, Assistant SHOULD also search t
 
 Assistant MUST NOT read the entire configured original MTL reference set by default if the compact MTL context docs plus the Relevant original MTL reference files are already sufficient for the current step.
 
+If the current mode step is a DistroAV task, Assistant MUST actually read all required items from the DistroAV context selection path.
+
+If the required compact DistroAV context docs are insufficient for the current step, Assistant MUST then actually read the Relevant original DistroAV reference files from:
+- repository `NUDA9A/DistroAV`;
+- branch `distro-av-ref-v6.2.1`.
+
+Assistant MUST NOT read the entire configured original DistroAV reference set by default if the compact DistroAV context docs plus the Relevant original DistroAV reference files are already sufficient for the current step.
+
 If the current mode step is NOT an MTL task, Assistant MUST NOT read original MTL reference files and SHOULD NOT mention them.
 
+If the current mode step is NOT a DistroAV task, Assistant MUST NOT read original DistroAV reference files and SHOULD NOT mention them.
+
 If the MTL reference repository or pinned branch is unavailable for an MTL task, Assistant MUST treat that as missing required material.
+
+If the DistroAV reference repository or pinned branch is unavailable for a DistroAV task, Assistant MUST treat that as missing required material.
 
 ## 6. Missing material rule
 
@@ -239,13 +303,19 @@ If a required MTL compact context doc, required original MTL reference file, or 
 - Assistant MUST NOT present the result as fully grounded;
 - Assistant MUST stop before the workflow step that depends on it.
 
+If a required DistroAV compact context doc or required original DistroAV reference file for the current step was not actually read:
+- Assistant MUST explicitly name it as missing;
+- Assistant MUST NOT present the result as fully grounded;
+- Assistant MUST stop before the workflow step that depends on it.
+
 ## 7. No-pretence rule
 
 Assistant MUST NOT:
 - say that rules/work/context were studied unless the required rule files for the current mode were actually read;
 - say that code was checked unless the required actual files were actually read;
 - present an answer as standards-grounded unless the standards files required by the current mode were actually read;
-- present an answer as MTL-grounded unless the required compact MTL context docs, and any required Relevant original MTL reference files for that MTL step, were actually read.
+- present an answer as MTL-grounded unless the required compact MTL context docs, and any required Relevant original MTL reference files for that MTL step, were actually read;
+- present an answer as DistroAV-grounded unless the required compact DistroAV context docs, and any required Relevant original DistroAV reference files for that DistroAV step, were actually read;
 
 If the current mode requires only selected relevant standards PDFs, Assistant MUST NOT claim to have checked standards outside that selected set.
 
@@ -293,3 +363,7 @@ However:
 - pinned MTL reference branch: `mtl-ref-v26.01`
 - MTL compact context docs listed in section 0
 - configured MTL reference files listed in section 0, for MTL tasks only
+- DistroAV reference repository: `NUDA9A/DistroAV`
+- pinned DistroAV reference branch: `distro-av-ref-v6.2.1`
+- DistroAV compact context docs listed in section 0
+- configured DistroAV reference files listed in section 0, for DistroAV tasks only
