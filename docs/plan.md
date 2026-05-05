@@ -1213,7 +1213,6 @@
   - keep current MVP support boundary explicit:
     - only configs that can be projected into current MTL ST20P RX path;
     - only video output compatible with the current project `VideoFrameView` / `PixelFormat` boundary.
-  - implement smoke tests at the tests stage
 - [ ] 132: Implement minimal MTL video start/stop using ST20P RX frame API
   - use `mtl_init` / `mtl_uninit` for device lifecycle;
   - use `st20p_rx_create` / `st20p_rx_free` for session lifecycle;
