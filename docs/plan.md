@@ -1206,7 +1206,7 @@
   - when `ST2110_WITH_MTL=OFF`, the project must build cleanly without MTL headers/libs and without compiling MTL backend code;
   - when `ST2110_WITH_MTL=ON`, MTL dependency wiring must stay localized to build/factory/runtime code rather than leaking into app/bootstrap code;
   - keep temporary build/runtime unavailability localized through factory/build selection, not by removing `mtl` from public parsing/selection.
-- [ ] 131: Implement `MtlRxVideoBackend` skeleton
+- [x] 131: Implement `MtlRxVideoBackend` skeleton
   - reuse existing backend lifecycle/state/stats/factory contracts;
   - do not introduce a parallel backend API;
   - keep MTL device/session ownership explicit inside the backend;
