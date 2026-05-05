@@ -114,6 +114,9 @@ add_st2110_test(test_audio_stats test_audio_stats.cpp)
 add_st2110_test(audio_timestamp_mapping_test audio_timestamp_mapping_test.cpp)
 add_st2110_test(audio_timestamp_mapping_invariants_test audio_timestamp_mapping_invariants_test.cpp)
 add_st2110_test(test_backend_factory test_backend_factory.cpp)
+target_compile_definitions(test_backend_factory PRIVATE
+        ST2110_TEST_EXPECT_MTL_BUILT=$<BOOL:${ST2110_WITH_MTL}>
+)
 add_st2110_test(test_socket_rx_video_backend test_socket_rx_video_backend.cpp)
 add_st2110_test(test_socket_runtime_interface test_socket_runtime_interface.cpp)
 add_st2110_test(test_linux_socket_rx_port test_linux_socket_rx_port.cpp)

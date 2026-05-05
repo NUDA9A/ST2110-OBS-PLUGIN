@@ -102,6 +102,10 @@ class IRxBackendFactory {
     return Error::Ok;
 }
 
+[[nodiscard]] bool rx_backend_kind_built(RxBackendKind kind) noexcept;
+
+[[nodiscard]] std::span<IRxBackendFactory *const> default_rx_backend_factories() noexcept;
+
 [[nodiscard]] inline std::expected<IRxBackendFactory *, Error>
 select_rx_backend_factory(std::span<IRxBackendFactory *const> factories, const RxBackendSelection &selection) {
     if (const Error err = validate_rx_backend_selection(selection); err != Error::Ok) {

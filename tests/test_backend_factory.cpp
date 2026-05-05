@@ -1,7 +1,9 @@
 #include <array>
 #include <cassert>
+#include <cstddef>
 #include <expected>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -9,6 +11,10 @@
 #include <st2110/backend.hpp>
 #include <st2110/backend_factory.hpp>
 #include <st2110/error.hpp>
+
+#ifndef ST2110_TEST_EXPECT_MTL_BUILT
+#error "ST2110_TEST_EXPECT_MTL_BUILT must be provided by tests/CMakeLists.txt"
+#endif
 
 static_assert(std::is_enum_v<st2110::RxBackendKind>);
 static_assert(!std::is_convertible_v<st2110::RxBackendKind, int>);
@@ -27,6 +33,11 @@ static_assert(std::is_same_v<
 static_assert(
     std::is_same_v<decltype(st2110::validate_rx_backend_selection(std::declval<const st2110::RxBackendSelection &>())),
                    st2110::Error>);
+
+static_assert(std::is_same_v<decltype(st2110::rx_backend_kind_built(st2110::RxBackendKind::Socket)), bool>);
+
+static_assert(std::is_same_v<decltype(st2110::default_rx_backend_factories()),
+                             std::span<st2110::IRxBackendFactory *const>>);
 
 static_assert(std::is_abstract_v<st2110::IRxBackend>);
 
@@ -49,6 +60,8 @@ static_assert(
                    std::expected<std::unique_ptr<st2110::IRxBackend>, st2110::Error>>);
 
 namespace {
+constexpr bool kExpectMtlBuilt = ST2110_TEST_EXPECT_MTL_BUILT != 0;
+
 class FakeBackend final : public st2110::IRxBackend {
   public:
     FakeBackend(std::string_view backend_name, st2110::RxBackendCapabilities backend_capabilities)
@@ -148,6 +161,15 @@ void test_backend_kind_validation_and_string_mapping() {
     auto unknown = st2110::parse_rx_backend_kind("udp");
     assert(!unknown.has_value());
     assert(unknown.error() == st2110::Error::InvalidValue);
+}
+
+void test_backend_kind_built_helper() {
+    assert(st2110::rx_backend_kind_built(st2110::RxBackendKind::Socket));
+
+    const bool mtl_built = st2110::rx_backend_kind_built(st2110::RxBackendKind::Mtl);
+    assert(mtl_built == kExpectMtlBuilt);
+
+    assert(!st2110::rx_backend_kind_built(static_cast<st2110::RxBackendKind>(255)));
 }
 
 void test_descriptor_validation() {
@@ -255,6 +277,135 @@ void test_selector_rejects_invalid_factory_entry() {
     assert(socket_factory.create_count == 0);
 }
 
+void test_default_factory_registry_shape() {
+    const auto factories = st2110::default_rx_backend_factories();
+    const auto factories_again = st2110::default_rx_backend_factories();
+
+    assert(factories.size() == 4);
+    assert(factories.data() == factories_again.data());
+
+    std::size_t socket_video_count = 0;
+    std::size_t socket_audio_count = 0;
+    std::size_t mtl_video_count = 0;
+    std::size_t mtl_audio_count = 0;
+
+    for (st2110::IRxBackendFactory *const factory : factories) {
+        assert(factory != nullptr);
+
+        const st2110::RxBackendDescriptor descriptor = factory->descriptor();
+        assert(st2110::validate_rx_backend_descriptor(descriptor) == st2110::Error::Ok);
+        assert(descriptor.name == st2110::rx_backend_kind_name(descriptor.kind));
+
+        if (descriptor.kind == st2110::RxBackendKind::Socket && descriptor.capabilities.video_rx &&
+            !descriptor.capabilities.audio_rx) {
+            assert(descriptor.available);
+            ++socket_video_count;
+            continue;
+        }
+
+        if (descriptor.kind == st2110::RxBackendKind::Socket && !descriptor.capabilities.video_rx &&
+            descriptor.capabilities.audio_rx) {
+            assert(descriptor.available);
+            ++socket_audio_count;
+            continue;
+        }
+
+        if (descriptor.kind == st2110::RxBackendKind::Mtl && descriptor.capabilities.video_rx &&
+            !descriptor.capabilities.audio_rx) {
+            assert(!descriptor.available);
+            ++mtl_video_count;
+            continue;
+        }
+
+        if (descriptor.kind == st2110::RxBackendKind::Mtl && !descriptor.capabilities.video_rx &&
+            descriptor.capabilities.audio_rx) {
+            assert(!descriptor.available);
+            ++mtl_audio_count;
+            continue;
+        }
+
+        assert(false && "unexpected builtin backend factory descriptor");
+    }
+
+    assert(socket_video_count == 1);
+    assert(socket_audio_count == 1);
+    assert(mtl_video_count == 1);
+    assert(mtl_audio_count == 1);
+}
+
+void test_default_factory_registry_selects_socket_backends() {
+    const auto factories = st2110::default_rx_backend_factories();
+
+    auto socket_video = st2110::select_rx_backend_factory(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Socket, st2110::RxMediaKind::Video});
+    assert(socket_video.has_value());
+    assert((*socket_video)->descriptor().kind == st2110::RxBackendKind::Socket);
+    assert((*socket_video)->descriptor().available);
+    assert((*socket_video)->descriptor().capabilities.video_rx);
+    assert(!(*socket_video)->descriptor().capabilities.audio_rx);
+
+    auto socket_audio = st2110::select_rx_backend_factory(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Socket, st2110::RxMediaKind::Audio});
+    assert(socket_audio.has_value());
+    assert((*socket_audio)->descriptor().kind == st2110::RxBackendKind::Socket);
+    assert((*socket_audio)->descriptor().available);
+    assert(!(*socket_audio)->descriptor().capabilities.video_rx);
+    assert((*socket_audio)->descriptor().capabilities.audio_rx);
+
+    auto video_backend = st2110::create_rx_backend(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Socket, st2110::RxMediaKind::Video});
+    assert(video_backend.has_value());
+    assert(*video_backend != nullptr);
+    assert(std::string_view((*video_backend)->backend_name()) == "socket");
+    assert(st2110::supports_media((*video_backend)->capabilities(), st2110::RxMediaKind::Video));
+    assert(!st2110::supports_media((*video_backend)->capabilities(), st2110::RxMediaKind::Audio));
+    assert(st2110::backend_is_stopped((*video_backend)->state()));
+
+    auto audio_backend = st2110::create_rx_backend(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Socket, st2110::RxMediaKind::Audio});
+    assert(audio_backend.has_value());
+    assert(*audio_backend != nullptr);
+    assert(std::string_view((*audio_backend)->backend_name()) == "socket");
+    assert(!st2110::supports_media((*audio_backend)->capabilities(), st2110::RxMediaKind::Video));
+    assert(st2110::supports_media((*audio_backend)->capabilities(), st2110::RxMediaKind::Audio));
+    assert(st2110::backend_is_stopped((*audio_backend)->state()));
+
+    auto stopped_video = (*video_backend)->stop();
+    assert(stopped_video.has_value());
+    assert(st2110::backend_is_stopped(*stopped_video));
+
+    auto stopped_audio = (*audio_backend)->stop();
+    assert(stopped_audio.has_value());
+    assert(st2110::backend_is_stopped(*stopped_audio));
+}
+
+void test_default_factory_registry_keeps_mtl_public_but_unavailable() {
+    const auto factories = st2110::default_rx_backend_factories();
+
+    const bool mtl_built = st2110::rx_backend_kind_built(st2110::RxBackendKind::Mtl);
+    assert(mtl_built == kExpectMtlBuilt);
+
+    auto select_video = st2110::select_rx_backend_factory(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video});
+    assert(!select_video.has_value());
+    assert(select_video.error() == st2110::Error::Unsupported);
+
+    auto select_audio = st2110::select_rx_backend_factory(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Audio});
+    assert(!select_audio.has_value());
+    assert(select_audio.error() == st2110::Error::Unsupported);
+
+    auto create_video = st2110::create_rx_backend(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video});
+    assert(!create_video.has_value());
+    assert(create_video.error() == st2110::Error::Unsupported);
+
+    auto create_audio = st2110::create_rx_backend(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Audio});
+    assert(!create_audio.has_value());
+    assert(create_audio.error() == st2110::Error::Unsupported);
+}
+
 void test_create_backend_uses_selected_factory() {
     FakeBackendFactory socket_factory{
         st2110::RxBackendDescriptor{st2110::RxBackendKind::Socket, "socket", combined_capabilities(), true}};
@@ -310,12 +461,16 @@ void test_create_backend_rejects_null_factory_result() {
 
 int main() {
     test_backend_kind_validation_and_string_mapping();
+    test_backend_kind_built_helper();
     test_descriptor_validation();
     test_selection_validation();
     test_selector_picks_requested_backend_and_media();
     test_selector_rejects_unavailable_backend();
     test_selector_rejects_missing_backend_kind();
     test_selector_rejects_invalid_factory_entry();
+    test_default_factory_registry_shape();
+    test_default_factory_registry_selects_socket_backends();
+    test_default_factory_registry_keeps_mtl_public_but_unavailable();
     test_create_backend_uses_selected_factory();
     test_create_backend_rejects_null_factory_result();
     return 0;
