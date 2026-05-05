@@ -105,12 +105,6 @@ Assistant MUST use sources in this order:
 - production `.hpp` / `.cpp`;
 - test files;
 - `plan.md`;
-- MTL compact context docs:
-  - `docs/mtl_context_index.md`;
-  - `docs/mtl_runtime_context.md`;
-  - `docs/mtl_video_rx_context.md`;
-  - `docs/mtl_audio_rx_context.md`;
-  - `docs/mtl_task_context_map.md`;
 - sharded maps:
   - `code_map_index.md`;
   - `code_map_shard_*.md`;
@@ -124,6 +118,12 @@ Assistant MUST use sources in this order:
 - `architecture_rules.md`;
 - `conventions.md`;
 - the current mode rules file;
+- if the current mode step is an MTL task, MTL compact context docs:
+  - `mtl_context_index.md`;
+  - `mtl_runtime_context.md`;
+  - `mtl_video_rx_context.md`;
+  - `mtl_audio_rx_context.md`;
+  - `mtl_task_context_map.md`;
 3. if the current mode step is an MTL task, the MTL reference repository on pinned branch `mtl-ref-v26.01`:
 - the Relevant original MTL reference files;
 4. uploaded ST 2110 / RP 2110 PDFs selected as relevant by the current mode;
