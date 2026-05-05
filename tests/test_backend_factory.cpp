@@ -11,6 +11,8 @@
 #include <st2110/backend.hpp>
 #include <st2110/backend_factory.hpp>
 #include <st2110/error.hpp>
+#include <st2110/mtl_rx_backend_factory.hpp>
+#include <st2110/mtl_rx_video_backend.hpp>
 
 #ifndef ST2110_TEST_EXPECT_MTL_BUILT
 #error "ST2110_TEST_EXPECT_MTL_BUILT must be provided by tests/CMakeLists.txt"
@@ -19,9 +21,11 @@
 static_assert(std::is_enum_v<st2110::RxBackendKind>);
 static_assert(!std::is_convertible_v<st2110::RxBackendKind, int>);
 
-static_assert(std::is_same_v<decltype(st2110::validate_rx_backend_kind(st2110::RxBackendKind::Socket)), st2110::Error>);
+static_assert(
+    std::is_same_v<decltype(st2110::validate_rx_backend_kind(st2110::RxBackendKind::Socket)), st2110::Error>);
 
-static_assert(std::is_same_v<decltype(st2110::rx_backend_kind_name(st2110::RxBackendKind::Socket)), std::string_view>);
+static_assert(
+    std::is_same_v<decltype(st2110::rx_backend_kind_name(st2110::RxBackendKind::Socket)), std::string_view>);
 
 static_assert(std::is_same_v<decltype(st2110::parse_rx_backend_kind(std::declval<std::string_view>())),
                              std::expected<st2110::RxBackendKind, st2110::Error>>);
@@ -114,6 +118,13 @@ class FakeBackendFactory final : public st2110::IRxBackendFactory {
     bool return_null_backend_ = false;
 };
 
+class FakeVideoSink final : public st2110::IVideoFrameSink {
+  public:
+    void on_video_frame(const st2110::VideoFrameView &) override { ++frames_received; }
+
+    int frames_received = 0;
+};
+
 st2110::RxBackendCapabilities video_only_capabilities() {
     st2110::RxBackendCapabilities capabilities{};
     capabilities.video_rx = true;
@@ -131,6 +142,34 @@ st2110::RxBackendCapabilities combined_capabilities() {
     capabilities.video_rx = true;
     capabilities.audio_rx = true;
     return capabilities;
+}
+
+st2110::RxVideoConfig make_valid_video_config() {
+    st2110::RxVideoConfig cfg{};
+    cfg.width = 1920;
+    cfg.height = 1080;
+    cfg.fps_num = 25;
+    cfg.fps_den = 1;
+    cfg.udp_port = 5004;
+    cfg.payload_type = 96;
+    cfg.local_ip = "";
+    cfg.dest_ip = "239.1.1.1";
+    cfg.format = st2110::PixelFormat::UYVY;
+    cfg.scan_mode = st2110::VideoScanMode::Progressive;
+    cfg.packing_mode = st2110::VideoPackingMode::Gpm;
+    return cfg;
+}
+
+void assert_zero_backend_stats(const st2110::BackendStats &stats) {
+    assert(stats.datagrams_received == 0);
+    assert(stats.bytes_received == 0);
+    assert(stats.control_datagrams_ignored == 0);
+    assert(stats.nonmedia_datagrams_ignored == 0);
+    assert(stats.packets_parsed_ok == 0);
+    assert(stats.packets_rejected == 0);
+    assert(stats.datagrams_dropped == 0);
+    assert(stats.frames_delivered == 0);
+    assert(stats.media_units_delivered == 0);
 }
 
 void test_backend_kind_validation_and_string_mapping() {
@@ -406,6 +445,116 @@ void test_default_factory_registry_keeps_mtl_public_but_unavailable() {
     assert(create_audio.error() == st2110::Error::Unsupported);
 }
 
+void test_direct_mtl_video_factory_behavior_matches_build() {
+    st2110::MtlRxVideoBackendFactory factory{};
+
+    const st2110::RxBackendDescriptor descriptor = factory.descriptor();
+    assert(descriptor.kind == st2110::RxBackendKind::Mtl);
+    assert(descriptor.name == std::string_view{"mtl"});
+    assert(descriptor.capabilities.video_rx);
+    assert(!descriptor.capabilities.audio_rx);
+    assert(!descriptor.available);
+
+    auto backend = factory.create_backend();
+    if (kExpectMtlBuilt) {
+        assert(backend != nullptr);
+        assert(std::string_view(backend->backend_name()) == "mtl");
+        assert(st2110::supports_media(backend->capabilities(), st2110::RxMediaKind::Video));
+        assert(!st2110::supports_media(backend->capabilities(), st2110::RxMediaKind::Audio));
+        assert(st2110::backend_is_stopped(backend->state()));
+        assert_zero_backend_stats(backend->stats());
+
+        auto stopped = backend->stop();
+        assert(stopped.has_value());
+        assert(st2110::backend_is_stopped(*stopped));
+    } else {
+        assert(backend == nullptr);
+    }
+}
+
+#if ST2110_TEST_EXPECT_MTL_BUILT
+void test_direct_mtl_video_backend_exposes_basic_skeleton_contract() {
+    st2110::MtlRxVideoBackend backend{};
+
+    assert(std::string_view(backend.backend_name()) == "mtl");
+    assert(st2110::supports_media(backend.capabilities(), st2110::RxMediaKind::Video));
+    assert(!st2110::supports_media(backend.capabilities(), st2110::RxMediaKind::Audio));
+    assert(st2110::backend_is_stopped(backend.state()));
+    assert_zero_backend_stats(backend.stats());
+
+    auto stopped_once = backend.stop();
+    assert(stopped_once.has_value());
+    assert(st2110::backend_is_stopped(*stopped_once));
+
+    auto stopped_twice = backend.stop();
+    assert(stopped_twice.has_value());
+    assert(st2110::backend_is_stopped(*stopped_twice));
+}
+
+void test_direct_mtl_video_backend_supported_mvp_start_is_explicitly_unsupported() {
+    st2110::MtlRxVideoBackend backend{};
+    FakeVideoSink sink{};
+    const st2110::RxVideoConfig cfg = make_valid_video_config();
+
+    auto started = backend.start_video(cfg, sink);
+    assert(!started.has_value());
+    assert(started.error() == st2110::Error::Unsupported);
+
+    assert(st2110::backend_is_stopped(backend.state()));
+    assert_zero_backend_stats(backend.stats());
+    assert(sink.frames_received == 0);
+
+    auto stopped = backend.stop();
+    assert(stopped.has_value());
+    assert(st2110::backend_is_stopped(*stopped));
+}
+
+void test_direct_mtl_video_backend_rejects_unsupported_scan_mode() {
+    st2110::MtlRxVideoBackend backend{};
+    FakeVideoSink sink{};
+    st2110::RxVideoConfig cfg = make_valid_video_config();
+    cfg.scan_mode = st2110::VideoScanMode::Interlaced;
+
+    auto started = backend.start_video(cfg, sink);
+    assert(!started.has_value());
+    assert(started.error() == st2110::Error::Unsupported);
+
+    assert(st2110::backend_is_stopped(backend.state()));
+    assert_zero_backend_stats(backend.stats());
+    assert(sink.frames_received == 0);
+}
+
+void test_direct_mtl_video_backend_rejects_unsupported_packing_mode() {
+    st2110::MtlRxVideoBackend backend{};
+    FakeVideoSink sink{};
+    st2110::RxVideoConfig cfg = make_valid_video_config();
+    cfg.packing_mode = st2110::VideoPackingMode::Bpm;
+
+    auto started = backend.start_video(cfg, sink);
+    assert(!started.has_value());
+    assert(started.error() == st2110::Error::Unsupported);
+
+    assert(st2110::backend_is_stopped(backend.state()));
+    assert_zero_backend_stats(backend.stats());
+    assert(sink.frames_received == 0);
+}
+
+void test_direct_mtl_video_backend_rejects_invalid_runtime_config() {
+    st2110::MtlRxVideoBackend backend{};
+    FakeVideoSink sink{};
+    st2110::RxVideoConfig cfg = make_valid_video_config();
+    cfg.payload_type = 95;
+
+    auto started = backend.start_video(cfg, sink);
+    assert(!started.has_value());
+    assert(started.error() == st2110::Error::InvalidValue);
+
+    assert(st2110::backend_is_stopped(backend.state()));
+    assert_zero_backend_stats(backend.stats());
+    assert(sink.frames_received == 0);
+}
+#endif
+
 void test_create_backend_uses_selected_factory() {
     FakeBackendFactory socket_factory{
         st2110::RxBackendDescriptor{st2110::RxBackendKind::Socket, "socket", combined_capabilities(), true}};
@@ -425,16 +574,7 @@ void test_create_backend_uses_selected_factory() {
     assert(!st2110::supports_media((*backend)->capabilities(), st2110::RxMediaKind::Audio));
     assert(st2110::backend_is_stopped((*backend)->state()));
 
-    const auto stats = (*backend)->stats();
-    assert(stats.datagrams_received == 0);
-    assert(stats.bytes_received == 0);
-    assert(stats.control_datagrams_ignored == 0);
-    assert(stats.nonmedia_datagrams_ignored == 0);
-    assert(stats.packets_parsed_ok == 0);
-    assert(stats.packets_rejected == 0);
-    assert(stats.datagrams_dropped == 0);
-    assert(stats.frames_delivered == 0);
-    assert(stats.media_units_delivered == 0);
+    assert_zero_backend_stats((*backend)->stats());
 
     assert(socket_factory.create_count == 0);
     assert(mtl_factory.create_count == 1);
@@ -471,6 +611,14 @@ int main() {
     test_default_factory_registry_shape();
     test_default_factory_registry_selects_socket_backends();
     test_default_factory_registry_keeps_mtl_public_but_unavailable();
+    test_direct_mtl_video_factory_behavior_matches_build();
+#if ST2110_TEST_EXPECT_MTL_BUILT
+    test_direct_mtl_video_backend_exposes_basic_skeleton_contract();
+    test_direct_mtl_video_backend_supported_mvp_start_is_explicitly_unsupported();
+    test_direct_mtl_video_backend_rejects_unsupported_scan_mode();
+    test_direct_mtl_video_backend_rejects_unsupported_packing_mode();
+    test_direct_mtl_video_backend_rejects_invalid_runtime_config();
+#endif
     test_create_backend_uses_selected_factory();
     test_create_backend_rejects_null_factory_result();
     return 0;

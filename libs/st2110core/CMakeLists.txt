@@ -15,6 +15,7 @@ if(ST2110_WITH_MTL)
     )
     list(APPEND ST2110CORE_SOURCES
             src/mtl_rx_backend_factory.cpp
+            src/mtl_rx_video_backend.cpp
     )
 endif()
 
