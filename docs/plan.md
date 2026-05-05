@@ -1199,7 +1199,7 @@
 - [x] 123: Add graceful stop and cleanup reuse
 
 ### C3. MTL video RX
-- [ ] 130: Add `ST2110_WITH_MTL` build option + localized MTL dependency/build guard
+- [x] 130: Add `ST2110_WITH_MTL` build option + localized MTL dependency/build guard
   - keep the existing public backend model unchanged:
     - `RxBackendKind::Mtl` stays in the public backend-kind axis;
     - existing backend lifecycle/state/stats/factory contracts stay unchanged;

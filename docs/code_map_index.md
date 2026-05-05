@@ -48,6 +48,7 @@
     - `libs/st2110core/include/st2110/stats.hpp`
     - `libs/st2110core/include/st2110/receive_reorder_tolerance_policy.hpp`
     - `libs/st2110core/include/st2110/rtp_timestamp_anchor_policy.hpp`
+    - `libs/st2110core/include/st2110/mtl_rx_backend_factory.hpp`
 
 ### `code_map_shard_03_packet_parsing_and_reorder.md`
 - Область:
@@ -165,6 +166,9 @@
     - `libs/st2110core/include/st2110/socket_rx_video_backend.hpp`
     - `libs/st2110core/include/st2110/socket_rx_audio_backend.hpp`
     - `libs/st2110core/src/socket_rx_single_media_backend_base.cpp`
+    - `libs/st2110core/src/backend_factory_registry.cpp`
+    - `libs/st2110core/src/mtl_rx_backend_factory.cpp`
+    - `libs/st2110core/src/mtl_rx_backend_factory_unavailable.cpp`
 
 ## Текущая структура кода (file map)
 

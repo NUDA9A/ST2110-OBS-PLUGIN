@@ -75,13 +75,15 @@
 
 ### tests/test_backend_factory.cpp
 - Роль:
-    - проверяет backend factory / selector boundary.
+    - проверяет backend factory / selector boundary;
+    - дополнительно фиксирует builtin backend-registry boundary и build-configuration visibility для `RxBackendKind::Mtl`.
 - Покрывает:
     - modeled backend-kind axis:
         - `RxBackendKind`;
         - `validate_rx_backend_kind(...)`;
         - `rx_backend_kind_name(...)`;
-        - `parse_rx_backend_kind(...)`.
+        - `parse_rx_backend_kind(...)`;
+        - `rx_backend_kind_built(...)`.
     - descriptor / selection validation:
         - `RxBackendDescriptor`;
         - `validate_rx_backend_descriptor(...)`;
@@ -97,6 +99,15 @@
         - `state()`;
         - `stats()`;
         - `stop()`.
+    - explicit builtin registry boundary:
+        - `default_rx_backend_factories()`;
+        - stable shared registry storage;
+        - expected builtin descriptor set:
+            - socket/video;
+            - socket/audio;
+            - mtl/video;
+            - mtl/audio;
+        - descriptor `name` matches `rx_backend_kind_name(...)`.
     - factory selection:
         - `select_rx_backend_factory(...)`;
         - selection by requested backend kind;
@@ -111,9 +122,14 @@
         - created backend starts in a stopped `RxBackendState`;
         - created backend `stats()` starts from a zero snapshot;
         - created backend `stop()` returns a lifecycle result.
+    - builtin availability/build boundary:
+        - socket builtins are selected and constructable for their supported media;
+        - MTL builtins remain present in the default registry but currently report unavailable and are rejected as `Unsupported`;
+        - `rx_backend_kind_built(RxBackendKind::Mtl)` is asserted against the build-time expectation injected from `tests/CMakeLists.txt`.
 - Фиксирует:
     - backend selection/creation remains separate from backend lifecycle semantics;
-    - factory-created backends expose both lifecycle/state and stats snapshot boundaries immediately after construction.
+    - builtin backend registry remains explicit and inspectable instead of hiding backend availability behind ad hoc fallback logic;
+    - MTL remains a modeled backend-kind axis even when current builtin factories are published as unavailable in the default registry.
 
 ### tests/test_receive_reorder_tolerance_policy.cpp
 - Роль:

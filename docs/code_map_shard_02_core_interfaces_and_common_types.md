@@ -87,6 +87,7 @@
     - explicit backend-kind modeling and backend selection/creation boundary.
     - отделяет выбор backend implementation (`socket` / `mtl`) от media runtime config, packet pipeline, SDP/signaling parsing и concrete backend implementation details.
     - задает extendable registration/selection layer поверх `IRxBackend`.
+    - теперь также задает public builtin-registry access boundary для default factory inventory и build-sensitive backend-kind visibility.
 - Связи:
     - использует `backend.hpp` для:
         - `IRxBackend`;
@@ -94,9 +95,14 @@
         - `RxBackendCapabilities`;
         - `supports_media(...)`.
     - использует `error.hpp` для validation/result reporting.
+    - используется public factory declarations в:
+        - `mtl_rx_backend_factory.hpp`;
+        - `socket_rx_video_backend.hpp`;
+        - `socket_rx_audio_backend.hpp`.
+    - out-of-line registry helpers реализуются в:
+        - `src/backend_factory_registry.cpp`.
     - должен потребляться app/bootstrap слоями при выборе backend’а.
-    - concrete socket/MTL implementations should provide `IRxBackendFactory` instances instead of hardcoded backend construction branches in app/plugin code.
-    - тестируется `tests/test_backend_factory.cpp`.
+    - concrete socket/MTL implementations expose `IRxBackendFactory` instances instead of hardcoded backend construction branches in app/plugin code.
 - Сущности:
     - `RxBackendKind`
         - modeled backend axis:
@@ -136,6 +142,10 @@
         - `available=false` remains structurally valid and is handled by selection, not descriptor validation.
     - `validate_rx_backend_selection(const RxBackendSelection&) -> Error`
         - validates requested backend kind and requested media kind.
+    - `rx_backend_kind_built(RxBackendKind) -> bool`
+        - out-of-line helper reporting whether the backend kind is compiled into the current build.
+    - `default_rx_backend_factories() -> std::span<IRxBackendFactory *const>`
+        - out-of-line helper exposing builtin registered receive backend factories.
     - `select_rx_backend_factory(std::span<IRxBackendFactory* const>, const RxBackendSelection&) -> std::expected<IRxBackendFactory*, Error>`
         - validates selection request first;
         - validates every registered factory entry and every returned descriptor before selection;
@@ -152,11 +162,15 @@
 - Примечание:
     - backend kind is a first-class architecture axis separate from media kind.
     - descriptors advertise capabilities instead of assuming that backend kind implies a fixed media set.
+    - builtin registry access is separated from selection logic:
+        - registry inventory comes from `default_rx_backend_factories()`;
+        - selection semantics remain in `select_rx_backend_factory(...)`.
     - localized `available=false` keeps temporary runtime/build availability explicit without reshaping the API.
     - future backend additions should mainly require:
         - adding a new `RxBackendKind` value;
         - extending kind validation/name/parser coverage;
         - providing a new concrete `IRxBackendFactory`;
+        - extending builtin registry or another registration source;
         - adding tests.
 
 ### libs/st2110core/include/st2110/bytes.hpp
@@ -514,3 +528,35 @@
     - it does not map timestamps by itself; concrete mapping behavior remains in:
         - `audio_timestamp_mapping.hpp`
         - `video_timestamp_mapping.hpp`.
+
+### libs/st2110core/include/st2110/mtl_rx_backend_factory.hpp
+- Роль:
+    - public factory declarations for MTL receive backend integration.
+    - keeps the `Mtl` backend kind represented at the same factory boundary as socket backends without exposing concrete MTL runtime/backend classes yet.
+    - задает explicit placeholder interface layer for video/audio MTL backend factories.
+- Связи:
+    - использует `backend_factory.hpp` for:
+        - `IRxBackendFactory`;
+        - `RxBackendDescriptor`;
+        - `IRxBackend`.
+    - реализуется в:
+        - `src/mtl_rx_backend_factory.cpp`;
+        - `src/mtl_rx_backend_factory_unavailable.cpp`.
+    - используется `src/backend_factory_registry.cpp` to populate builtin factory inventory exposed through `default_rx_backend_factories()`.
+- Сущности:
+    - `MtlRxVideoBackendFactory final : IRxBackendFactory`
+        - advertises the video-capable MTL factory shape.
+        - methods:
+            - `descriptor() const`
+            - `create_backend() const`.
+    - `MtlRxAudioBackendFactory final : IRxBackendFactory`
+        - advertises the audio-capable MTL factory shape.
+        - methods:
+            - `descriptor() const`
+            - `create_backend() const`.
+- Примечание:
+    - file intentionally splits video and audio MTL factory capability advertising into separate factories rather than assuming one combined backend instance.
+    - current implementation is still placeholder-only:
+        - descriptors keep backend kind/name/capabilities public;
+        - concrete creation is not implemented yet.
+    - build-time selection between enabled and unavailable implementation files is localized in `libs/st2110core/CMakeLists.txt`.

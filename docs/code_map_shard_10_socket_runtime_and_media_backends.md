@@ -761,3 +761,127 @@
         - `make_socket_stub_rx_port_factory()` на неподдерживаемых build’ах.
 - Примечание:
     - platform selection локализован здесь и не размазан по app/bootstrap code или concrete backend constructors.
+
+### libs/st2110core/src/backend_factory_registry.cpp
+- Роль:
+    - builtin receive-backend factory registry.
+    - локализует default factory inventory и build-sensitive backend-kind visibility behind out-of-line helpers declared in `backend_factory.hpp`.
+    - keeps app/plugin/bootstrap code from manually constructing the default socket/MTL factory set.
+- Связи:
+    - использует:
+        - `st2110/backend_factory.hpp`
+        - `st2110/socket_rx_video_backend.hpp`
+        - `st2110/socket_rx_audio_backend.hpp`
+        - `st2110/mtl_rx_backend_factory.hpp`.
+    - supplies implementations for:
+        - `rx_backend_kind_built(...)`
+        - `default_rx_backend_factories()`.
+    - aggregates concrete factory objects from:
+        - `SocketRxVideoBackendFactory`
+        - `SocketRxAudioBackendFactory`
+        - `MtlRxVideoBackendFactory`
+        - `MtlRxAudioBackendFactory`.
+- Сущности:
+    - anonymous-namespace singleton factory objects:
+        - `socket_rx_video_factory`
+        - `socket_rx_audio_factory`
+        - `mtl_rx_video_factory`
+        - `mtl_rx_audio_factory`.
+    - `builtin_rx_backend_factories`
+        - fixed builtin `std::array<IRxBackendFactory*, 4>` inventory.
+    - `rx_backend_kind_built(RxBackendKind) -> bool`
+        - returns `true` for `Socket`;
+        - returns `true` for `Mtl` only when `ST2110_WITH_MTL` compile definition is enabled;
+        - returns `false` for unknown enum values.
+    - `default_rx_backend_factories() -> std::span<IRxBackendFactory *const>`
+        - returns a span over the builtin registry inventory.
+- Примечание:
+    - this file models builtin registry exposure, not dynamic registration.
+    - registry inventory remains stable and includes both socket and MTL factory objects, while runtime selection still depends on descriptor validation and `available`.
+    - build awareness is localized in `rx_backend_kind_built(...)` instead of being spread across selection callers.
+
+### libs/st2110core/src/mtl_rx_backend_factory.cpp
+- Роль:
+    - out-of-line implementation unit для MTL backend factory surface.
+    - локализует текущую build-selected реализацию `MtlRxVideoBackendFactory` и `MtlRxAudioBackendFactory` отдельно от public factory declarations в `mtl_rx_backend_factory.hpp`.
+    - служит placeholder runtime boundary для MTL backend selection path, пока concrete MTL backend creation еще не введен.
+- Связи:
+    - реализует declarations из `mtl_rx_backend_factory.hpp`.
+    - использует `backend_factory.hpp` transitively через header для:
+        - `RxBackendDescriptor`;
+        - `RxBackendKind`;
+        - `RxBackendCapabilities`;
+        - `IRxBackend`.
+    - подключается в `st2110core` через `libs/st2110core/CMakeLists.txt` только при `ST2110_WITH_MTL=ON`.
+    - используется registry layer из `src/backend_factory_registry.cpp`, который включает MTL factories в builtin factory set alongside socket factories.
+- Сущности:
+    - `MtlRxAudioBackendFactory::descriptor() const`
+        - возвращает descriptor для MTL audio factory:
+            - `kind = RxBackendKind::Mtl`
+            - `name = "mtl"`
+            - capabilities:
+                - `video_rx = false`
+                - `audio_rx = true`
+            - `available = false`.
+    - `MtlRxAudioBackendFactory::create_backend() const`
+        - текущая placeholder creation path;
+        - возвращает `nullptr`.
+    - `MtlRxVideoBackendFactory::descriptor() const`
+        - возвращает descriptor для MTL video factory:
+            - `kind = RxBackendKind::Mtl`
+            - `name = "mtl"`
+            - capabilities:
+                - `video_rx = true`
+                - `audio_rx = false`
+            - `available = false`.
+    - `MtlRxVideoBackendFactory::create_backend() const`
+        - текущая placeholder creation path;
+        - возвращает `nullptr`.
+- Примечание:
+    - despite `ST2110_WITH_MTL=ON`, current implementation still advertises MTL factories as explicitly unavailable.
+    - file keeps the public MTL backend kind and media-specific MTL factory descriptors present in the registry without introducing silent fallback to socket backends.
+    - real MTL backend object construction remains a follow-up and should replace `available=false` / `nullptr` placeholder behavior without changing the factory boundary.
+
+### libs/st2110core/src/mtl_rx_backend_factory_unavailable.cpp
+- Роль:
+    - explicit unavailable-build implementation unit for the MTL backend factory surface.
+    - предоставляет ту же out-of-line реализацию `MtlRxVideoBackendFactory` и `MtlRxAudioBackendFactory`, что и normal MTL factory `.cpp`, но используется как build-selected fallback when MTL integration is not compiled in.
+    - keeps public MTL backend kind visible in the builtin registry even when concrete MTL runtime support is absent.
+- Связи:
+    - реализует declarations из `mtl_rx_backend_factory.hpp`.
+    - использует `backend_factory.hpp` transitively через header для:
+        - `RxBackendDescriptor`;
+        - `RxBackendKind`;
+        - `RxBackendCapabilities`;
+        - `IRxBackend`.
+    - подключается в `st2110core` через `libs/st2110core/CMakeLists.txt` по умолчанию, пока `ST2110_WITH_MTL=OFF`.
+    - используется registry layer из `src/backend_factory_registry.cpp`, который всегда регистрирует MTL factories alongside socket factories.
+- Сущности:
+    - `MtlRxAudioBackendFactory::descriptor() const`
+        - возвращает descriptor для unavailable MTL audio factory:
+            - `kind = RxBackendKind::Mtl`
+            - `name = "mtl"`
+            - capabilities:
+                - `video_rx = false`
+                - `audio_rx = true`
+            - `available = false`.
+    - `MtlRxAudioBackendFactory::create_backend() const`
+        - unavailable creation path;
+        - возвращает `nullptr`.
+    - `MtlRxVideoBackendFactory::descriptor() const`
+        - возвращает descriptor для unavailable MTL video factory:
+            - `kind = RxBackendKind::Mtl`
+            - `name = "mtl"`
+            - capabilities:
+                - `video_rx = true`
+                - `audio_rx = false`
+            - `available = false`.
+    - `MtlRxVideoBackendFactory::create_backend() const`
+        - unavailable creation path;
+        - возвращает `nullptr`.
+- Примечание:
+    - file models “recognized but not built / not available” explicitly through factory descriptors instead of removing the MTL backend kind from the registry.
+    - this keeps backend selection behavior stable across build variants:
+        - MTL remains a known backend kind;
+        - selection for MTL still resolves to `Unsupported` through descriptor availability filtering.
+    - current implementation intentionally duplicates the same placeholder descriptor/create behavior as `mtl_rx_backend_factory.cpp`; later real MTL enablement may keep this file as the no-MTL build branch while replacing only the enabled implementation unit.

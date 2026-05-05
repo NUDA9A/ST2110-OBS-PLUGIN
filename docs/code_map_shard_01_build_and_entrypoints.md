@@ -1,15 +1,35 @@
 ### libs/st2110core/CMakeLists.txt
 - Роль:
-    - build integration для `st2110core`.
-    - теперь собирает общий socket single-media runtime implementation отдельно от header-only concrete socket backend’ов.
+  - build integration для `st2110core`.
+  - локализует build-time wiring для backend factory registry и MTL-enabled / MTL-unavailable factory implementation.
+  - задает explicit build boundary для MTL integration через opt-in CMake options вместо hidden source-level fallback.
 - Связи:
-    - собирает:
-        - `src/stub.cpp`;
-        - `src/socket_rx_single_media_backend_base.cpp`.
-    - public headers concrete socket backend’ов (`socket_rx_video_backend.hpp`, `socket_rx_audio_backend.hpp`) остаются header-only и линкуются через `st2110core` include surface.
+  - собирает:
+    - `src/stub.cpp`;
+    - `src/socket_rx_single_media_backend_base.cpp`;
+    - `src/backend_factory_registry.cpp`;
+    - `src/mtl_rx_backend_factory_unavailable.cpp` по умолчанию;
+    - `src/mtl_rx_backend_factory.cpp` при `ST2110_WITH_MTL=ON`.
+  - публикует include surface через `${CMAKE_CURRENT_SOURCE_DIR}/include`.
+  - задает private compile definition:
+    - `ST2110_WITH_MTL=$<BOOL:${ST2110_WITH_MTL}>`.
+  - при `ST2110_WITH_MTL=ON` добавляет private include/link dependencies для MTL:
+    - `ST2110_MTL_INCLUDE_DIRS`;
+    - `ST2110_MTL_LIBRARIES`.
+  - build wiring поддерживает public factory surface из:
+    - `include/st2110/backend_factory.hpp`;
+    - `include/st2110/mtl_rx_backend_factory.hpp`.
+- Сущности:
+  - CMake options / cache variables:
+    - `ST2110_WITH_MTL`
+    - `ST2110_MTL_INCLUDE_DIRS`
+    - `ST2110_MTL_LIBRARIES`
+  - `ST2110CORE_SOURCES`
+    - explicit source-set selection layer for default/unavailable vs MTL-enabled factory implementation.
 - Примечание:
-    - platform-default socket port factory selection больше не живет в concrete video backend `.cpp`;
-    - общий runtime/default-factory слой локализован в `socket_rx_single_media_backend_base.cpp`.
+  - build now keeps MTL backend kind visible in the core factory registry even when real MTL runtime is not linked in.
+  - missing MTL include dirs or libraries are rejected explicitly through `message(FATAL_ERROR ...)` when `ST2110_WITH_MTL=ON`.
+  - source selection between `mtl_rx_backend_factory_unavailable.cpp` and `mtl_rx_backend_factory.cpp` is localized here instead of being hidden in app/plugin code.
 
 ### apps/st2110_rx_dump/main.cpp
 - Роль:
