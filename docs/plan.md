@@ -1206,6 +1206,73 @@
   - when `ST2110_WITH_MTL=OFF`, the project must build cleanly without MTL headers/libs and without compiling MTL backend code;
   - when `ST2110_WITH_MTL=ON`, MTL dependency wiring must stay localized to build/factory/runtime code rather than leaking into app/bootstrap code;
   - keep temporary build/runtime unavailability localized through factory/build selection, not by removing `mtl` from public parsing/selection.
+- [ ] 130A: Replace `ST2110_WITH_MTL` with a platform-derived MTL backend build boundary
+  - remove `ST2110_WITH_MTL` as a user-facing CMake option;
+  - introduce an internal build capability such as `ST2110_HAS_MTL_BACKEND`;
+  - derive `ST2110_HAS_MTL_BACKEND` from the target platform:
+    - Linux => MTL backend is built and required;
+    - Windows / unsupported platforms => MTL backend is not built;
+  - keep `RxBackendKind::Mtl` in the public backend-kind model even when the backend is not built on a platform;
+  - keep the future Windows port limited to the project socket backend unless MTL Windows support is explicitly re-evaluated later;
+  - do not treat MTL as an optional Linux product feature;
+  - do not leak MTL platform/build decisions into parser, signaling, app, or OBS source code.
+
+- [ ] 130B: Rewire `libs/st2110core/CMakeLists.txt` to consume installed MTL through `pkg-config`
+  - make Linux `st2110core` builds require an already installed MTL package;
+  - discover MTL through `pkg-config` package `mtl`;
+  - link MTL through an imported pkg-config target, for example `PkgConfig::ST2110_MTL`;
+  - remove manual `ST2110_MTL_INCLUDE_DIRS` / `ST2110_MTL_LIBRARIES` as the primary integration path;
+  - do not vendor or superbuild DPDK / Media Transport Library from this project CMake;
+  - keep dependency installation/building as responsibility of a future external setup/install script;
+  - ensure CMake configure fails early on Linux when MTL is required but not installed;
+  - ensure non-MTL platforms do not require MTL headers, MTL libraries, DPDK, or pkg-config `mtl`.
+
+- [ ] 130C: Remove the unavailable MTL factory build path from normal backend architecture
+  - stop compiling `src/mtl_rx_backend_factory_unavailable.cpp`;
+  - delete `src/mtl_rx_backend_factory_unavailable.cpp` if it has no remaining repository role;
+  - do not register unavailable MTL factories on platforms where MTL is not built;
+  - on unsupported platforms, represent MTL absence by absence from the compiled factory registry and by `rx_backend_kind_built(RxBackendKind::Mtl) == false`;
+  - keep unavailable/null factory behavior only as an explicit test fixture if tests still need to exercise unavailable backend selection;
+  - avoid showing an unavailable MTL backend as a normal user-selectable plugin backend on Windows / non-MTL platforms.
+
+- [ ] 130D: Rework `backend_factory_registry.cpp` around the actual compiled backend factory set
+  - include and instantiate MTL factories only when `ST2110_HAS_MTL_BACKEND` is enabled;
+  - keep socket video/audio factories always available for supported project builds;
+  - make the built-in factory array size match the compiled factory set instead of hardcoding a four-factory list on every platform;
+  - update `rx_backend_kind_built(...)` to use `ST2110_HAS_MTL_BACKEND` rather than `ST2110_WITH_MTL`;
+  - keep backend selection backend-kind-aware and media-aware without platform-specific branching in app/bootstrap/OBS code;
+  - ensure Linux builds expose both socket and MTL factories;
+  - ensure Windows / non-MTL builds expose only socket factories.
+
+- [ ] 130E: Align MTL factory descriptors with real compiled/runtime availability
+  - in the real MTL factory implementation, do not use `available = false` as a placeholder once the corresponding backend runtime is implemented;
+  - keep `MtlRxVideoBackendFactory` compiled only on MTL-capable builds;
+  - make video MTL factory availability reflect the implemented video runtime state after task `132`;
+  - keep audio MTL factory availability false or absent until `MtlRxAudioBackend` is implemented through tasks `140–142`;
+  - avoid returning `nullptr` from a factory whose descriptor says it is available;
+  - keep descriptor capability flags accurate:
+    - video MTL factory => video receive only;
+    - audio MTL factory => audio receive only after audio backend implementation.
+
+- [ ] 130F: Update `scripts/build_and_test.sh` for the new local Linux MTL-required development path
+  - remove any `ST2110_WITH_MTL` argument or expectation from the local test script;
+  - keep the script as a developer convenience only, not as final plugin packaging logic;
+  - set or preserve `PKG_CONFIG_PATH` entries needed for local `/usr/local` MTL/DPDK installs;
+  - fail early with a clear message if `pkg-config --exists mtl` fails on Linux;
+  - configure the project with ordinary CMake/Ninja commands and no MTL feature toggle;
+  - build and run existing tests through CTest;
+  - keep future Windows test/build scripting separate from this Linux MTL-required script.
+
+- [ ] 130G: Document the new MTL build/dependency policy in MTL project context docs
+  - update `docs/mtl_runtime_context.md` to state that:
+    - Linux builds consume an externally installed MTL;
+    - DPDK/MTL installation is outside project CMake;
+    - future installer/setup scripts may build/install DPDK and MTL before invoking this project build;
+    - Linux plugin builds are expected to include both socket and MTL backends;
+    - Windows builds are socket-only unless MTL support is explicitly re-evaluated later.
+  - update `docs/mtl_context_index.md` if needed so MTL build/dependency policy is discoverable from the MTL context entry point;
+  - keep this documentation as MTL-specific context, not as a new global spec/deviation note;
+  - do not change ST 2110 signaling/runtime architecture rules while documenting this build policy.
 - [x] 131: Implement `MtlRxVideoBackend` skeleton
   - reuse existing backend lifecycle/state/stats/factory contracts;
   - do not introduce a parallel backend API;
@@ -1626,6 +1693,54 @@
   - clean stop/join/unload with no stale runtime state
 
 ### E2. Environment
+- [ ] 169: Create Linux setup/build/install script for Ubuntu 24.04 OBS plugin environment
+  - create a repository script for clean Ubuntu 24.04 VM setup, for example:
+    - `scripts/setup_ubuntu_obs_plugin_env.sh`;
+    - or another clearly named Linux-only setup script.
+  - script responsibilities:
+    - install compiler/build tooling:
+      - compiler toolchain;
+      - CMake;
+      - Ninja;
+      - pkg-config;
+      - Git;
+    - install OBS runtime/development dependencies:
+      - OBS;
+      - `libobs` development headers/packages where available;
+      - OBS frontend API headers if used by the plugin;
+      - Qt development packages only if plugin-global dialog/UI requires Qt;
+    - install DPDK/MTL build dependencies needed by the chosen MTL reference version;
+    - clone/download/build/install DPDK as required by MTL;
+    - clone/download/build/install Media Transport Library;
+    - configure persistent or repeatable MTL runtime prerequisites where practical:
+      - pkg-config path visibility;
+      - dynamic linker visibility;
+      - hugepages setup;
+      - clear reboot/restart notes where the system cannot apply changes immediately.
+    - configure/build the project through CMake/Ninja;
+    - install/copy the OBS plugin artifact into the local OBS plugin directory once the plugin target exists;
+    - print final verification commands / paths for:
+      - `pkg-config --modversion mtl`;
+      - plugin artifact location;
+      - OBS plugin install location;
+      - OBS log location.
+  - keep this script Linux-only;
+  - do not make this script responsible for Windows support;
+  - do not merge this script with `scripts/build_and_test.sh`:
+    - `build_and_test.sh` remains a local developer test runner;
+    - the setup script is the clean-machine dependency/build/install orchestration path.
+  - keep project CMake responsible only for building this repository and finding installed dependencies;
+  - do not make CMake clone, patch, build, or install DPDK/MTL;
+  - make the script idempotent where practical:
+    - tolerate already-installed apt packages;
+    - tolerate existing dependency source directories when versions match;
+    - fail clearly when an existing dependency checkout is on an unexpected version/branch;
+    - avoid silently overwriting local work.
+  - support at least a documented default local layout, for example:
+    - dependency source root;
+    - project build directory;
+    - OBS plugin install directory.
+  - add a dry-run/help mode or clear usage output if practical.
 - [ ] 170: Create Ubuntu 24.04 OBS plugin development environment:
   - compiler/CMake toolchain
   - OBS development packages / `libobs`

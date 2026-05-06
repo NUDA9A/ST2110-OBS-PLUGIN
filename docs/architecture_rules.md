@@ -126,3 +126,39 @@ A new deviation SHOULD be added only when the mismatch is genuinely new:
 - **Tests** = systematic regression and coverage.
 - **Hardening** = performance, recovery, correctness polish.
 - **Windows** = optional port of own socket backend without MTL.
+
+## 8. Build, dependency, and platform policy
+
+Project build and dependency responsibilities MUST remain separated:
+
+- project CMake builds this repository;
+- project CMake may discover and link already installed external dependencies;
+- project CMake MUST NOT clone, patch, build, or install DPDK, MTL, OBS, or other heavy system/runtime dependencies.
+
+External dependency setup belongs to explicit setup/install scripts, not to production code and not to project CMake internals.
+
+For Linux MVP/plugin builds:
+
+- Linux is the primary MVP target;
+- the Linux plugin build is expected to include both the project socket backend and the MTL backend;
+- MTL is a required installed dependency for Linux MTL-capable builds;
+- MTL discovery should be localized to build/dependency wiring, preferably through the installed `pkg-config` package `mtl`;
+- DPDK/MTL installation, hugepages setup, dynamic linker visibility, and pkg-config path setup belong to the Linux setup/install script.
+
+For Windows:
+
+- Windows support is optional and limited to the project’s own socket backend unless MTL support is explicitly re-evaluated later;
+- Windows builds MUST NOT require MTL, DPDK, or MTL headers/libraries;
+- Windows plugin/backend selection MUST NOT expose MTL as a normal selectable backend when MTL is not compiled.
+
+Backend concepts MUST remain distinct:
+
+- the project `Socket` backend is the project’s own socket-based RTP/ST 2110 receive implementation;
+- the project `Mtl` backend is the backend that consumes Media Transport Library APIs;
+- MTL internal data-path choices such as DPDK PMD, MTL kernel socket, or AF_XDP are MTL runtime/configuration modes and MUST NOT be conflated with the project `Socket` backend.
+
+Setup scripts MUST remain orchestration layers:
+
+- a Linux setup/build/install script may install packages, build/install DPDK, build/install MTL, configure runtime prerequisites, build this repository, and install the OBS plugin artifact;
+- local developer scripts such as `scripts/build_and_test.sh` remain convenience test runners and MUST NOT become full clean-machine installers;
+- production/runtime code MUST NOT depend on assumptions that only hold because of an interactive local setup step unless that assumption is represented through explicit build/runtime validation.
