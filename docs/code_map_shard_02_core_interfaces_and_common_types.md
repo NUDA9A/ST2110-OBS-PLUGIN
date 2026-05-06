@@ -291,61 +291,110 @@
 
 ### libs/st2110core/include/st2110/rx_config.hpp
 - Роль:
-    - manual/runtime RX config model для текущих MVP-path’ов.
-    - содержит video runtime config и audio runtime config.
-    - audio runtime config now explicitly models both sample format and PCM bit depth, instead of leaving RTP wire format as a backend-local assumption.
+    - manual/runtime RX config model for current MVP receive paths.
+    - contains both video and audio runtime config surfaces.
+    - now separates:
+        - project video storage format (`PixelFormat`);
+        - common standards-aware video receive capability (`VideoReceiveCapability`);
+        - backend/runtime support policy.
+    - keeps structural video config validation separate from runtime/project-storage/backend support checks.
+    - audio runtime config explicitly models sample format and PCM bit depth instead of leaving wire/sample representation as a backend-local assumption.
 - Связи:
-    - используется backend/video pipeline слоями;
-    - используется audio signaling projection layer из `audio_signaling_rx_config.hpp`;
-    - использует `config_validation.hpp`, `video_scan_mode.hpp`, `video_packing_mode.hpp`, `audio_signaling.hpp`;
-    - в будущем должен сосуществовать со standards-aware signaling model, а не заменять его.
+    - uses `config_validation.hpp` for generic validation helpers and derived audio samples-per-packet calculation.
+    - uses `pixel_format.hpp` for current project video storage format.
+    - uses `video_packing_mode.hpp` and `video_scan_mode.hpp` for runtime video axes.
+    - uses `video_receive_capability.hpp` for common media/capability model, transport format, handoff format, RTP clock, topology, and project storage/handoff compatibility helpers.
+    - uses `audio_signaling.hpp` for audio media description, PCM bit depth, and conformance range helpers.
+    - consumed by:
+        - generic backend interfaces in `backend.hpp`;
+        - socket backend operational adapters in `socket_rx_video_backend.hpp` and `socket_rx_audio_backend.hpp`;
+        - MTL backend support/projection paths in `mtl_rx_video_backend.hpp` / `src/mtl_rx_video_backend.cpp`;
+        - signaling-to-runtime projection helpers such as `video_signaling.hpp` and `audio_signaling_rx_config.hpp`.
 - Сущности:
     - `RxVideoConfig`
-        - `width`, `height`
-        - `fps_num`, `fps_den`
-        - `udp_port`
-        - `payload_type`
-        - `local_ip`, `dest_ip`
-        - `format`
-        - `scan_mode`
-        - `packing_mode`
+        - runtime/manual video config.
+        - fields:
+            - `width`
+            - `height`
+            - `fps_num`
+            - `fps_den`
+            - `udp_port`
+            - `payload_type`
+            - `local_ip`
+            - `dest_ip`
+            - `format`
+                - project storage format axis.
+            - `scan_mode`
+            - `packing_mode`
+            - `receive_capability`
+                - optional common receive-capability model.
+                - when present, it is the source of truth for common media/mode axes.
+                - when absent, capability is derived from project fields through the compatibility helper path.
         - `is_valid()`
-    - `validate_rx_video_config(const RxVideoConfig&)`
-    - `AudioSampleFormat`
-        - `LinearPcm`
-    - `RxAudioConfig`
-        - `sampling_rate_hz`
-        - `packet_time_us`
-        - `samples_per_packet`
-        - `channel_count`
-        - `udp_port`
-        - `payload_type`
-        - `local_ip`
-        - `dest_ip`
-        - `format`
-        - `pcm_bit_depth`
-        - `is_valid()`
-    - `AudioRuntimeSupportPolicy`
-        - `sample_formats`
-        - `conformance_ranges`
-    - `audio_runtime_support::default_sample_formats`
-    - `audio_runtime_support::default_conformance_ranges`
-    - `audio_sample_format_supported(...)`
-    - `audio_media_description_from_rx_audio_config(...)`
-        - maps runtime audio config back to modeled `AudioMediaDescription`, including `pcm_bit_depth`.
-    - `rx_audio_config_matches_any_conformance_range(...)`
-    - `validate_rx_audio_config_against_runtime_support(...)`
-        - validates sample-format support;
-        - validates `pcm_bit_depth`;
-        - validates conformance-range support;
-        - validates derived `samples_per_packet`;
-        - validates UDP port, dynamic RTP payload type, and destination IP.
-    - `default_audio_rx_runtime_support_policy()`
-    - `validate_rx_audio_config(const RxAudioConfig&)`
+            - delegates to `validate_rx_video_config(...)`.
+    - `VideoRuntimeSupportPolicy`
+        - shared runtime/project delivery support policy for video configs.
+        - fields:
+            - `require_project_pixel_format_storage_compatibility`
+            - `require_runtime_packing_mode_support`
+            - `require_project_handoff_format_support`.
+    - video config helpers:
+        - `validate_rx_video_config_common_transport_fields(const RxVideoConfig&) -> Error`
+            - validates dimensions, frame rate, UDP port, dynamic payload type, destination IP, scan mode, and packing mode structure.
+        - `video_receive_capability_from_rx_video_config_project_fields(const RxVideoConfig&) -> std::expected<VideoReceiveCapability, Error>`
+            - derives a common `VideoReceiveCapability` from current project fields.
+            - currently maps `PixelFormat::UYVY` to 8-bit YCbCr 4:2:2, UYVY handoff, RFC4175 4:2:2 8-bit transport, default RTP clock, and single-stream topology.
+        - `rx_video_config_effective_receive_capability(const RxVideoConfig&) -> std::expected<VideoReceiveCapability, Error>`
+            - returns explicit `receive_capability` when present.
+            - otherwise derives capability from project fields.
+        - `validate_rx_video_config_matches_explicit_receive_capability(const RxVideoConfig&, const VideoReceiveCapability&) -> Error`
+            - ensures explicit capability agrees with config dimensions, frame rate, scan mode, packing mode, and transport/media-description compatibility.
+        - `validate_rx_video_config_structure(const RxVideoConfig&) -> Error`
+            - validates structural config shape and effective receive capability.
+            - does not enforce current backend/project delivery support limits.
+        - `default_video_rx_runtime_support_policy() -> VideoRuntimeSupportPolicy`
+            - returns current default runtime support policy.
+        - `validate_rx_video_config_against_runtime_support(const RxVideoConfig&, const VideoRuntimeSupportPolicy&) -> Error`
+            - validates structural config first.
+            - then applies runtime packing-mode support, project handoff-format support, and project frame-storage compatibility checks according to policy flags.
+        - `validate_rx_video_config(const RxVideoConfig&) -> Error`
+            - current structural video config validation entry point.
+    - audio runtime entities:
+        - `AudioSampleFormat`
+            - currently `LinearPcm`.
+        - `RxAudioConfig`
+            - fields:
+                - `sampling_rate_hz`
+                - `packet_time_us`
+                - `samples_per_packet`
+                - `channel_count`
+                - `udp_port`
+                - `payload_type`
+                - `local_ip`
+                - `dest_ip`
+                - `format`
+                - `pcm_bit_depth`
+            - `is_valid()`.
+        - `AudioRuntimeSupportPolicy`
+            - `sample_formats`
+            - `conformance_ranges`.
+        - namespace `audio_runtime_support`
+            - `default_sample_formats`
+            - `default_conformance_ranges`.
+        - `audio_sample_format_supported(...)`
+        - `audio_media_description_from_rx_audio_config(...)`
+            - maps runtime audio config back to modeled `AudioMediaDescription`, including PCM bit depth.
+        - `rx_audio_config_matches_any_conformance_range(...)`
+        - `validate_rx_audio_config_against_runtime_support(...)`
+            - validates sample-format support, PCM bit depth, conformance range, derived samples-per-packet, UDP port, dynamic RTP payload type, and destination IP.
+        - `default_audio_rx_runtime_support_policy()`
+        - `validate_rx_audio_config(const RxAudioConfig&)`
 - Примечание:
-    - current default audio runtime support remains Level A-oriented, but PCM bit depth is no longer implicit;
-    - runtime config still does not encode audio buffer layout or channel reordering;
-    - `samples_per_packet` remains derived/validated through `config_validation::audio_samples_per_packet_from_rate_and_packet_time(...)`.
+    - video structural validity and backend/project delivery support are intentionally separate:
+        - structural validation answers whether config/capability is well-formed and internally consistent;
+        - runtime support validation answers whether current project/backend delivery supports that already-recognized mode.
+    - explicit `receive_capability` prevents socket or MTL backend limits from narrowing the common receive capability model.
+    - audio `samples_per_packet` remains derived/validated from sampling rate and packet time rather than hardcoded.
 
 ### libs/st2110core/include/st2110/timestamp.hpp
 - Роль:

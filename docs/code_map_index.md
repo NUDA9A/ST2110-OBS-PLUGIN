@@ -99,6 +99,7 @@
     - `libs/st2110core/include/st2110/video_timestamp_mapping.hpp`
     - `libs/st2110core/include/st2110/video_playout_timing.hpp`
     - `libs/st2110core/include/st2110/video_reorder_policy.hpp`
+    - `libs/st2110core/include/st2110/video_receive_capability.hpp`
 
 ### `code_map_shard_06_video_sdp_ingestion.md`
 - Область:

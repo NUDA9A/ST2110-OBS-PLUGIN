@@ -174,26 +174,41 @@
 
 ### tests/video_sdp_media_cross_field_validation_test.cpp
 - Роль:
-    - проверяет ST 2110-20 media-description cross-field validation:
-        - progressive-only `4:2:0` variants;
-        - `KEY + ALPHA`;
-        - rejection of invalid KEY/TCS/colorimetry combinations;
-        - tightened `SSN` cross-field rule;
-        - tightened `RANGE` cross-field rule.
+    - проверяет ST 2110-20 media-description cross-field validation at both direct signaling-model and final SDP-ingestion boundaries.
 - Покрывает:
-    - `4:2:0` accepted only with progressive scan signaling;
-    - `KEY` requires `colorimetry=ALPHA` and forbids `TCS`;
-    - `BT709 + SDR + SSN=ST2110-20:2017` accepted;
-    - `BT709 + SDR + SSN=ST2110-20:2022` rejected;
-    - `ALPHA` requiring `SSN=ST2110-20:2022`;
-    - `TCS=ST2115LOGS3` requiring `SSN=ST2110-20:2022`;
-    - `BT2100 + RANGE=FULL` accepted;
-    - `BT2100 + RANGE=FULLPROTECT` rejected;
-    - non-BT2100 `RANGE=FULLPROTECT` accepted;
-    - absent `RANGE` remains accepted at signaling level;
-    - unknown future `RANGE` token preserved through `Other + raw_token`.
-    - the same cross-field rules through final SDP ingestion, not only manually constructed signaling objects;
-    - unsupported runtime projection remaining localized after structurally valid KEY/ALPHA acceptance.
+    - 4:2:0 sampling cross-field rules:
+        - `YCbCr-4:2:0`, `CLYCbCr-4:2:0`, and `ICtCp-4:2:0` accepted only for progressive scan signaling;
+        - progressive 4:2:0 remains structurally valid but current runtime pixel-format projection is `Unsupported`;
+        - interlaced and PsF 4:2:0 rejected structurally.
+    - KEY/ALPHA cross-field rules:
+        - `sampling=KEY` requires `colorimetry=ALPHA`;
+        - KEY forbids `TCS`;
+        - valid KEY/ALPHA with `SSN=ST2110-20:2022` accepted structurally;
+        - valid KEY/ALPHA remains runtime-unsupported only below validation.
+    - `SSN` / media-property cross-field rules:
+        - `BT709 + SDR + SSN=ST2110-20:2017` accepted;
+        - `BT709 + SDR + SSN=ST2110-20:2022` accepted;
+        - `ALPHA` requires `SSN=ST2110-20:2022`;
+        - `TCS=ST2115LOGS3` requires `SSN=ST2110-20:2022`.
+    - `RANGE` cross-field rules:
+        - `BT2100 + RANGE=FULL` accepted;
+        - `BT2100 + RANGE=FULLPROTECT` rejected;
+        - non-BT2100 `RANGE=FULLPROTECT` accepted;
+        - absent `RANGE` remains accepted at signaling level;
+        - unknown future `RANGE` token preserved through `Other + raw_token`.
+    - final SDP ingestion application of the same cross-field rules:
+        - progressive 4:2:0 SDP accepted and parsed into progressive signaling;
+        - interlaced 4:2:0 SDP rejected;
+        - valid KEY/ALPHA SDP accepted with no TCS;
+        - KEY with non-ALPHA colorimetry rejected;
+        - KEY with TCS rejected;
+        - invalid ALPHA / ST2115LOGS3 `SSN` combinations rejected;
+        - valid `SSN=ST2110-20:2022` ALPHA / ST2115LOGS3 combinations accepted;
+        - `RANGE=FULL`, `RANGE=FULLPROTECT`, and unknown future `RANGE` behavior applied through final ingestion.
+- Фиксирует:
+    - cross-field validation is enforced consistently through direct signaling objects and parsed SDP ingestion;
+    - structurally valid but currently unsupported media reaches the localized runtime projection boundary as `Unsupported`;
+    - current validation accepts `BT709 + SDR` for both `ST2110-20:2017` and `ST2110-20:2022`.
 
 ### tests/video_sdp_source_filter_scope_test.cpp
 - Роль:

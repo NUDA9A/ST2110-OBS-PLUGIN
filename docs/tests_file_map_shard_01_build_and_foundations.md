@@ -53,10 +53,35 @@
 ### tests/test_config_validation.cpp
 - Роль:
     - проверяет общие config validation helpers.
-    - дополнительно покрывает derived audio helper behavior where applicable:
-        - deriving `samples_per_packet` from sampling rate and packet time;
-        - invalid zero values;
-        - non-integral sample counts.
+- Покрывает:
+    - helper API shape:
+        - `config_validation::is_non_empty(...) -> bool`;
+        - `config_validation::is_dynamic_rtp_payload_type(...) -> bool`;
+        - `validate_rx_video_config(...) -> Error`;
+        - `validate_rx_video_config_against_runtime_support(...) -> Error`.
+    - non-empty string helper behavior.
+    - dynamic RTP payload-type boundary:
+        - payload types below 96 rejected;
+        - payload types 96 and 127 accepted.
+    - frame-rate validation:
+        - integer and canonical rational frame rates accepted;
+        - zero numerator or denominator rejected.
+    - low-level UYVY storage-format constraints:
+        - even width / non-zero dimensions accepted;
+        - odd UYVY width rejected at `validate_video_format_constraints(...)`;
+        - zero height rejected.
+    - unknown `PixelFormat` rejected as `Unsupported`.
+    - valid baseline `RxVideoConfig` acceptance.
+    - split structural/runtime validation for odd UYVY width:
+        - `validate_rx_video_config(...)` accepts structurally valid odd-width video config;
+        - `validate_rx_video_config_against_runtime_support(...)` rejects current UYVY runtime storage projection as `InvalidValue`.
+    - manual video config rejection for:
+        - non-dynamic RTP payload type;
+        - zero UDP port;
+        - empty destination IP.
+- Фиксирует:
+    - common `RxVideoConfig` validation is structural/common-model validation;
+    - project storage constraints remain localized at the explicit runtime-support boundary rather than hidden inside generic config validation.
 
 ### tests/test_header_odr_link_main.cpp
 ### tests/test_header_odr_link_a.cpp

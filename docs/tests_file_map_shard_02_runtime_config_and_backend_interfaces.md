@@ -1,28 +1,75 @@
 ### tests/test_rx_config.cpp
 - Роль:
-    - проверяет базовую validation модели `RxVideoConfig`.
-    - проверяет, что manual/backend-facing video runtime config carries already-modeled runtime axes:
-        - `VideoScanMode`;
-        - `VideoPackingMode`.
-    - проверяет current video packing-mode runtime support boundary:
-        - `VideoPackingMode::Gpm` accepted;
-        - `VideoPackingMode::Bpm` represented but rejected as `Unsupported` by current MVP runtime support;
+    - проверяет manual/backend-facing runtime config surface for video and audio receive.
+    - фиксирует split между structural config validation, common receive-capability modeling, runtime-support policy, and project handoff/support limits.
+- Покрывает:
+    - compile-time API shape for:
+        - `RxVideoConfig::packing_mode`;
+        - `RxVideoConfig::receive_capability`;
+        - `validate_rx_video_config(...)`;
+        - `validate_rx_video_config_against_runtime_support(...)`;
+        - `rx_video_config_effective_receive_capability(...)`;
+        - `validate_rx_audio_config(...)`;
+        - `validate_rx_audio_config_against_runtime_support(...)`;
+        - `config_validation::audio_samples_per_packet_from_rate_and_packet_time(...)`.
+    - audio `samples_per_packet` derivation:
+        - `48000 Hz / 1000 us -> 48`;
+        - `48000 Hz / 125 us -> 6`;
+        - zero sampling rate rejected;
+        - zero packet time rejected;
+        - non-integral sample count rejected.
+    - default valid video config acceptance and effective receive-capability derivation:
+        - dimensions;
+        - frame rate;
+        - scan mode;
+        - packing mode;
+        - RFC4175 4:2:2 8-bit transport marker;
+        - UYVY handoff format;
+        - 90 kHz RTP clock.
+    - video packing-mode runtime support boundary:
+        - `Gpm` accepted by default runtime support;
+        - `Bpm` structurally accepted but rejected as `Unsupported` by current runtime support;
+        - `GpmSingleLine` structurally accepted but rejected as `Unsupported` by current runtime support;
+        - custom support policy can disable the runtime packing-mode limit;
         - invalid packing-mode enum rejected as `InvalidValue`.
-    - проверяет `RxAudioConfig` runtime validation:
-        - Level A-oriented default runtime support;
-        - channel count bounds;
-        - sample rate / packet time validation through runtime support policy;
-        - derived `samples_per_packet` consistency;
-        - UDP port;
-        - dynamic RTP payload type;
-        - destination IP requirement;
-        - local IP allowed to be empty;
-        - unsupported audio sample format rejection;
-        - explicit `pcm_bit_depth` validation for `Bits16` / `Bits24` and rejection of invalid bit-depth enum values.
-    - проверяет architecture property for audio runtime support:
-        - `validate_rx_audio_config(...)` is a thin default-policy wrapper;
-        - `validate_rx_audio_config_against_runtime_support(...)` can validate a custom support policy without rewriting default validation;
-        - non-default packet time support can be accepted by explicit support policy while remaining rejected by current default policy.
+    - video scan-mode structural modeling:
+        - progressive accepted;
+        - interlaced accepted structurally when explicit receive capability matches;
+        - PsF accepted structurally when explicit receive capability matches;
+        - invalid scan-mode enum rejected as `InvalidValue`.
+    - common receive-capability modeling:
+        - 10-bit YCbCr 4:2:2 with explicit planar handoff is structurally valid;
+        - current default runtime support rejects unsupported 10-bit/project handoff as `Unsupported`;
+        - generic RFC4175 transport marker is structurally valid for known projectable media;
+        - unknown/vendor-private sampling in receive capability is rejected as `Unsupported`;
+        - redundant two-stream topology with `primary_mid` / `redundant_mid` is structurally valid;
+        - invalid redundant topology is rejected as `InvalidValue`;
+        - zero RTP clock is rejected;
+        - non-90 kHz RTP clock remains structurally valid;
+        - explicit receive capability must match common `RxVideoConfig` fields.
+    - video transport/runtime config rejection for zero UDP port.
+    - `RxAudioConfig` runtime validation:
+        - default Level A-oriented valid config;
+        - 1..8 channel bounds;
+        - PCM16 and PCM24 bit-depth acceptance;
+        - invalid PCM bit-depth enum rejection;
+        - zero and out-of-range channel counts;
+        - unsupported default sampling rate / packet time;
+        - mismatched derived samples-per-packet;
+        - zero UDP port;
+        - dynamic RTP payload-type bounds;
+        - empty destination IP rejection;
+        - empty local IP acceptance;
+        - invalid audio sample format rejection.
+    - custom audio runtime-support policy:
+        - explicit non-default packet time can be accepted when the supplied policy permits it;
+        - default MVP support still rejects that non-default packet time;
+        - wrong derived sample count remains `InvalidValue` even under custom support.
+- Фиксирует:
+    - structural validity and runtime implementation support remain separate boundaries;
+    - common video receive capability is broader than the current default runtime/handoff support;
+    - audio packet sample count is derived from modeled sampling rate and packet time, not hardcoded;
+    - default audio MVP support remains Level A-oriented while the policy boundary can validate explicitly broader support.
 
 ### tests/test_backend_interface.cpp
 - Роль:

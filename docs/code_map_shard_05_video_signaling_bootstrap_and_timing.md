@@ -1,34 +1,25 @@
 ### libs/st2110core/include/st2110/signaling_structs.hpp
 - Роль:
-    - aggregate modeled-types header для standards-aware video signaling / bootstrap domain.
-    - хранит shared enums/structs для:
-        - video media description;
-        - timing/reference-clock signaling fields;
-        - sender-type/timing fields;
-        - aggregated receiver bootstrap result.
-    - intentionally separates pure modeled data types from validation, projection, SDP-ingestion logic и concrete backend/runtime behavior.
-    - now also carries explicit video reorder-buffer bootstrap data alongside packet-parse, receive-pipeline, timestamp-mapper и timing bootstrap data.
+    - aggregate modeled-structs header for video signaling and receiver bootstrap.
+    - stores timing/reference-clock signaling fields, sender timing class fields, full `VideoStreamSignaling`, and aggregated `VideoReceiverBootstrapConfig`.
+    - intentionally separates aggregate data shapes from validation, SDP ingestion, runtime projection, packet parsing, socket runtime, and MTL runtime behavior.
+    - no longer owns the video media-description/capability token-backed types; those live in `video_receive_capability.hpp`.
 - Связи:
-    - использует:
+    - uses:
         - `packet_parse.hpp` for `PacketParsePolicy`;
         - `rx_config.hpp` for `RxVideoConfig`;
         - `video_packing_mode.hpp` for `VideoPackingMode`;
+        - `video_receive_capability.hpp` for `VideoMediaDescription`;
         - `video_receive_pipeline.hpp` for `VideoReceivePipelineConfig`;
         - `video_receiver_timing.hpp` for `VideoReceiverTimingConfig`;
+        - `video_reorder_policy.hpp` for `VideoReorderBufferConfig`;
         - `video_scan_mode.hpp` for `VideoScanMode`;
-        - `video_timestamp_mapping.hpp` for `VideoRtpTimestampMapperConfig`;
-        - `video_reorder_policy.hpp` for `VideoReorderBufferConfig`.
-    - используется `video_signaling.hpp` как lower data-model layer for:
-        - signaling validation;
-        - runtime projection;
-        - packet-parse-policy projection;
-        - receive-pipeline projection;
-        - timestamp-mapper projection;
-        - bootstrap composition.
-    - используется `video_receiver_timing_signaling.hpp` для timing-aware bootstrap composition over `VideoStreamSignaling`.
-    - используется socket operational adapter layer, в частности `socket_rx_video_backend.hpp`, при projection:
-        - `VideoReceiverBootstrapConfig` -> `SocketRxVideoOperationalConfig`.
-    - не содержит SDP parsing, validation helpers, runtime support checks, operational config projection, or backend logic by itself.
+        - `video_timestamp_mapping.hpp` for `VideoRtpTimestampMapperConfig`.
+    - consumed by:
+        - `video_signaling.hpp` for validation and runtime/bootstrap projection;
+        - `video_receiver_timing_signaling.hpp` for timing-aware bootstrap composition;
+        - socket operational adapter paths in `socket_rx_video_backend.hpp`.
+    - does not parse SDP and does not implement validation/projection logic by itself.
 - Сущности:
     - timing/reference-clock enums:
         - `MediaClockMode`
@@ -59,95 +50,11 @@
             - `Narrow`
             - `NarrowLinear`
             - `Wide`
-    - modeled media-description token-backed types:
-        - `VideoSampling`
-            - nested `Known`:
-                - `YCbCr422`
-                - `YCbCr444`
-                - `YCbCr420`
-                - `RGB`
-                - `XYZ`
-                - `Key`
-                - `CLYCbCr444`
-                - `CLYCbCr422`
-                - `CLYCbCr420`
-                - `ICtCp444`
-                - `ICtCp422`
-                - `ICtCp420`
-                - `Other`
-            - fields:
-                - `known`
-                - optional `raw_token`
-        - `VideoBitDepth`
-            - `bits`
-            - `floating_point`
-        - `VideoColorimetry`
-            - nested `Known`:
-                - `Bt601`
-                - `Bt709`
-                - `Bt2020`
-                - `Bt2100`
-                - `St2065_1`
-                - `St2065_3`
-                - `Unspecified`
-                - `Xyz`
-                - `Alpha`
-                - `Other`
-            - fields:
-                - `known`
-                - optional `raw_token`
-        - `VideoTransferCharacteristicSystem`
-            - nested `Known`:
-                - `SDR`
-                - `PQ`
-                - `HLG`
-                - `Linear`
-                - `Bt2100LinPq`
-                - `Bt2100LinHlg`
-                - `St2065_1`
-                - `St428_1`
-                - `Density`
-                - `St2115LogS3`
-                - `Unspecified`
-                - `Other`
-            - fields:
-                - `known`
-                - optional `raw_token`
-        - `VideoSignalStandard`
-            - nested `Known`:
-                - `St2110_20_2017`
-                - `St2110_20_2022`
-                - `Other`
-            - fields:
-                - `known`
-                - optional `raw_token`
-        - `VideoRange`
-            - nested `Known`:
-                - `Narrow`
-                - `FullProtect`
-                - `Full`
-                - `Other`
-            - fields:
-                - `known`
-                - optional `raw_token`
-        - `VideoPixelAspectRatio`
-            - `width`
-            - `height`
-    - aggregate media/stream structs:
-        - `VideoMediaDescription`
-            - `sampling`
-            - `width`
-            - `height`
-            - `fps_num`
-            - `fps_den`
-            - `depth`
-            - `colorimetry`
-            - optional `transfer_characteristic_system`
-            - optional `signal_standard`
-            - optional `range`
-            - `pixel_aspect_ratio`
-        - `VideoStreamSignaling`
+    - `VideoStreamSignaling`
+        - complete modeled video stream signaling object.
+        - fields:
             - `media`
+                - common `VideoMediaDescription` from `video_receive_capability.hpp`.
             - `scan_mode`
             - `packing_mode`
             - optional `max_udp_datagram_bytes`
@@ -158,22 +65,19 @@
             - `sender_type`
             - optional `troff_us`
             - optional `cmax`
-    - bootstrap aggregate:
-        - `VideoReceiverBootstrapConfig`
+    - `VideoReceiverBootstrapConfig`
+        - aggregate receiver bootstrap state.
+        - fields:
             - `packet_parse_policy`
             - `rx_config`
             - `receive_pipeline_config`
             - `timestamp_mapper_config`
             - `reorder_buffer_config`
             - `timing_config`
-        - acts as explicit richer bootstrap boundary for socket operational projection so timestamp-mapper and reorder-window runtime inputs do not need to be silently reconstructed later.
 - Примечание:
-    - this file is a data-model header, not the main logic boundary for video signaling behavior.
-    - validation/projection/bootstrap logic is layered above it in:
-        - `video_signaling.hpp`
-        - `video_receiver_timing_signaling.hpp`.
-    - despite the presence of `VideoReceiverBootstrapConfig`, this file does not itself build/bootstrap anything; it only defines the aggregate result shape.
-    - current bootstrap model includes timing, timestamp-mapper, and reorder-window runtime axes, but does not itself model playout-decision logic; that remains outside this header.
+    - this file is a data-model aggregate boundary only.
+    - common media/capability structs and their validation/projection helpers belong to `video_receive_capability.hpp`.
+    - validation/projection/bootstrap logic remains layered above this file in `video_signaling.hpp` and `video_receiver_timing_signaling.hpp`.
 
 ### libs/st2110core/include/st2110/video_scan_mode.hpp
 - Роль:
@@ -210,127 +114,135 @@
 
 ### libs/st2110core/include/st2110/video_packing_mode.hpp
 - Роль:
-    - explicit modeled packing-mode axis for the video receive/signaling/runtime path.
-    - отделяет:
-        - structural representation of signaled/runtime video packing mode;
-          от:
-        - current localized runtime support policy.
-    - keeps unsupported packing modes represented in the architecture instead of hiding them by absence of enum/model coverage.
+    - explicit modeled packing-mode axis for video receive/signaling/runtime path.
+    - separates structural recognition of video packing modes from current runtime support.
+    - keeps unsupported-but-recognized packing modes represented in the architecture instead of hiding them by absence of enum/model coverage.
 - Связи:
-    - использует `error.hpp` for explicit runtime-support result reporting.
-    - используется:
-        - `rx_config.hpp` as an explicit runtime config axis;
-        - `signaling_structs.hpp` / `video_signaling.hpp` as a signaled stream property;
-        - `depacketizer.hpp`, `video_packet_padding.hpp`, and related runtime helpers as a packing-aware dispatch/input axis.
-    - behavior is covered by `tests/test_video_packing_mode_runtime_projection.cpp` and indirectly by `tests/test_rx_config.cpp`.
+    - uses `error.hpp` for validation and runtime support result reporting.
+    - used by:
+        - `rx_config.hpp` as runtime config axis;
+        - `video_receive_capability.hpp` as common capability axis;
+        - `signaling_structs.hpp` / `video_signaling.hpp` as signaled stream property;
+        - depacketizer/padding/runtime projection paths that branch on packing behavior;
+        - socket and MTL video backend support validation.
 - Сущности:
     - `VideoPackingMode`
         - modeled packing-mode axis:
             - `Gpm`
             - `Bpm`
-    - `validate_runtime_video_packing_mode_support(VideoPackingMode) -> Error`
-        - localized current runtime-support boundary.
+            - `GpmSingleLine`
+    - `validate_video_packing_mode(VideoPackingMode) -> Error`
+        - structural packing-mode validator.
         - behavior:
-            - `VideoPackingMode::Gpm` -> `Ok`
-            - `VideoPackingMode::Bpm` -> `Unsupported`
+            - `Gpm` -> `Ok`
+            - `Bpm` -> `Ok`
+            - `GpmSingleLine` -> `Ok`
+            - unknown enum value -> `InvalidValue`
+    - `validate_runtime_video_packing_mode_support(VideoPackingMode) -> Error`
+        - current runtime-support boundary.
+        - behavior:
+            - `Gpm` -> `Ok`
+            - `Bpm` -> `Unsupported`
+            - `GpmSingleLine` -> `Unsupported`
             - unknown enum value -> `InvalidValue`
 - Примечание:
-    - this file does not say that `Bpm` is invalid structurally; it says only that current runtime support for it is not implemented.
-    - that distinction is important and intentional:
-        - signaling/model layers may still carry `Bpm`;
-        - current depacketizer/runtime/bootstrap projection layers reject it through this explicit support boundary.
-    - future BPM implementation should extend the existing runtime branches rather than reshape the modeled packing-mode axis.
+    - `Bpm` and `GpmSingleLine` are structurally recognized, not structurally invalid.
+    - current runtime/project delivery support remains limited to `Gpm`.
+    - future BPM or single-line GPM support should extend this existing support boundary rather than reshape the modeled packing-mode axis.
 
 ### libs/st2110core/include/st2110/video_signaling.hpp
 - Роль:
-    - standards-aware modeled video signaling validation and signaling-to-runtime/bootstrap projection layer.
-    - validates structural and selected cross-field ST 2110 signaling rules while keeping runtime support checks localized in explicit projection/support boundaries.
-    - now also makes the initial RTP timestamp anchoring policy explicit in signaling-derived timestamp-mapper projection.
+    - standards-aware modeled video signaling validation and signaling-to-capability/runtime/bootstrap projection layer.
+    - validates structural and selected cross-field ST 2110 video signaling rules.
+    - projects video signaling into:
+        - common `VideoReceiveCapability`;
+        - project/runtime `RxVideoConfig`;
+        - packet parse policy;
+        - depacketizer/reconstructor pipeline config;
+        - RTP timestamp mapper config;
+        - receiver bootstrap aggregate.
+    - keeps backend-specific support checks and project frame-storage/handoff support outside generic signaling validation.
 - Связи:
-    - использует:
-        - `signaling_structs.hpp` for the modeled signaling/bootstrapping types;
-        - `config_validation.hpp` for generic frame-rate and scan-mode validation;
-        - `packet_parse.hpp` for `PacketParsePolicy` and `MAXUDP` validation/projection;
+    - uses:
+        - `video_receive_capability.hpp` for common media/capability model and compatibility helpers;
+        - `signaling_structs.hpp` for `VideoStreamSignaling` and `VideoReceiverBootstrapConfig`;
+        - `config_validation.hpp` for frame-rate/scan-mode validation;
+        - `packet_parse.hpp` for packet-size policy projection;
         - `rx_config.hpp` for `RxVideoConfig`;
-        - `pixel_format.hpp` for runtime pixel-format projection;
-        - `depacketizer.hpp` for `DepacketizerConfig`;
-        - `video_unit_reconstructor.hpp` for `VideoUnitReconstructorConfig`;
-        - `video_receive_pipeline.hpp` for `VideoReceivePipelineConfig`;
-        - `video_scan_mode.hpp` for modeled scan-mode boundary.
-    - uses timestamp-mapper and bootstrap types indirectly through `signaling_structs.hpp`.
-    - используется higher layers such as:
+        - `pixel_format.hpp` for current project storage projection;
+        - `depacketizer.hpp`, `video_receive_pipeline.hpp`, and `video_unit_reconstructor.hpp` for runtime pipeline config projection;
+        - `video_scan_mode.hpp` for scan-mode axis.
+    - consumed by:
         - SDP-to-signaling ingestion;
         - receiver bootstrap composition;
-        - operational adapters for socket runtime.
+        - socket operational config projection;
+        - common video validation paths that need signaling-derived capability/runtime config.
 - Сущности:
-    - validation helpers for signaling subdomains:
+    - signaling/timing validators:
         - `validate_video_sender_signaling(...)`
-            - validates known sender types;
-            - accepts optional `TROFF` / `CMAX` presence for `Narrow`, `NarrowLinear`, and `Wide`;
-            - rejects present zero values;
-            - keeps stricter sender/conformance policy out of generic signaling validation.
+            - validates known sender timing class values.
+            - accepts optional non-zero `TROFF` / `CMAX`.
+            - rejects present zero values.
         - `validate_reference_clock(...)`
         - `validate_media_clock_mode(...)`
         - `validate_timestamp_mode(...)`
         - `validate_video_timing_signaling(...)`
-        - token-backed modeled-type validators:
-            - `validate_video_sampling(...)`
-            - `validate_video_colorimetry(...)`
-            - `validate_video_transfer_characteristic_system(...)`
-            - `validate_video_signal_standard(...)`
-            - `validate_required_video_signal_standard(...)`
-            - `validate_video_range(...)`
-            - `validate_video_pixel_aspect_ratio(...)`
-            - `validate_video_media_description_dimensions(...)`
-            - `validate_video_bit_depth(...)`
-        - cross-field helpers:
-            - `is_420_video_sampling(...)`
-            - `validate_video_media_description_cross_field_constraints(...)`
-                - keeps `4:2:0` progressive-only constraint at the signaling/model layer;
-                - keeps KEY/alpha/TCS consistency at the signaling/model layer;
-                - enforces modeled `SSN` cross-field behavior;
-                - enforces modeled `RANGE` cross-field behavior.
-    - runtime projection helpers:
+        - `validate_required_video_signal_standard(...)`
+    - `VideoReceiveCapabilityProjectionOptions`
+        - options used when projecting signaling into common receive capability.
+        - fields:
+            - `handoff_format`
+            - `rtp_clock`
+            - `topology`
+    - runtime/project projection helpers:
         - `pixel_format_from_video_stream_signaling(...) -> std::expected<PixelFormat, Error>`
-            - current runtime projection maps only supported combinations, presently `YCbCr422 + 8-bit -> UYVY`;
-            - structurally known but runtime-unsupported media returns `Unsupported`.
+            - current project runtime projection maps only known supported project storage combinations.
+            - presently maps YCbCr 4:2:2 8-bit integer media to `PixelFormat::UYVY`.
+            - structurally known but project-runtime-unsupported media returns `Unsupported`.
         - `validate_video_media_description(...)`
+            - validates common media-description structure and required signal-standard presence.
         - `validate_video_stream_signaling(...)`
-            - validates full signaling object including:
+            - validates:
                 - media-description structure;
                 - scan mode;
+                - media cross-field constraints;
                 - timing fields;
-                - sender signaling;
+                - sender timing signaling;
                 - reference clock;
-                - `MAXUDP` policy boundary.
+                - packet parse / `MAXUDP` policy.
+        - `video_receive_capability_from_video_stream_signaling(...) -> std::expected<VideoReceiveCapability, Error>`
+            - validates signaling.
+            - validates projection options.
+            - derives `VideoTransportPayloadFormat` from media description.
+            - builds a common `VideoReceiveCapability` carrying media, scan mode, packing mode, transport format, handoff format, RTP clock, and topology.
+            - validates the final capability structure.
+        - `validate_video_receive_capability_against_video_stream_signaling(...) -> Error`
+            - validates signaling and capability.
+            - checks that capability media, scan mode, packing mode, and transport payload format match the signaling.
         - `packet_parse_policy_from_video_stream_signaling(...) -> PacketParsePolicy`
-            - projects `MAXUDP` into packet-size policy.
-        - `validate_video_stream_signaling_against_rx_video_config(...)`
-            - validates consistency between modeled signaling and manual/runtime `RxVideoConfig`.
+            - projects optional `MAXUDP` into packet parse policy.
+        - `validate_video_stream_signaling_against_rx_video_config(...) -> Error`
+            - validates signaling and runtime config.
+            - resolves the config’s effective `VideoReceiveCapability`.
+            - validates that the capability agrees with signaling.
         - `depacketizer_config_from_video_stream_signaling(...)`
         - `video_unit_reconstructor_config_from_video_stream_signaling(...)`
         - `video_receive_pipeline_config_from_video_stream_signaling(...)`
         - `rx_video_config_from_video_stream_signaling(...)`
-    - timestamp-mapper projection:
-        - `video_rtp_timestamp_mapper_config_from_video_stream_signaling(const VideoStreamSignaling&) -> std::expected<VideoRtpTimestampMapperConfig, Error>`
-            - validates signaling first;
-            - currently projects the explicit named policy
-              `video_rtp_timestamp_mapper_config_first_observed_local_zero()`;
-            - validates the final timestamp-mapper config before returning it.
-    - bootstrap composition:
-        - `video_receiver_bootstrap_config_from_video_stream_signaling(...) -> std::expected<VideoReceiverBootstrapConfig, Error>`
-            - validates signaling and current runtime packing-mode support first;
-            - projects:
-                - packet-parse policy;
-                - `RxVideoConfig`;
-                - receive pipeline config;
-                - timestamp-mapper config with explicit initial-anchor policy;
-            - returns final `VideoReceiverBootstrapConfig`.
+            - projects signaling into `RxVideoConfig`.
+            - stores the derived `VideoReceiveCapability` in `RxVideoConfig::receive_capability`.
+            - projects project storage format from selected handoff format.
+        - `video_rtp_timestamp_mapper_config_from_video_stream_signaling(...)`
+            - validates signaling first.
+            - currently chooses the named first-observed-local-zero timestamp-mapper policy.
+        - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`
+            - builds signaling-derived `VideoReceiverBootstrapConfig`.
+            - projects packet parse policy, `RxVideoConfig`, receive pipeline config, timestamp mapper config, and default timing config.
 - Примечание:
-    - this file remains a signaling/projection layer, not a concrete backend/runtime implementation.
-    - current signaling-derived timestamp-mapper projection explicitly chooses:
-        - first observed RTP timestamp becomes local zero.
-    - if a future standards-aware bootstrap/reference-derived absolute relation is modeled, it should appear as another explicit projection choice through the existing `VideoRtpTimestampMapperConfig` boundary rather than as a hidden backend default.
+    - this file remains a signaling/projection layer, not a backend/runtime implementation.
+    - common receive capability projection is explicit, so socket and MTL support boundaries can consume the same capability model.
+    - current project storage projection remains deliberately narrow and returns `Unsupported` for recognized media not yet deliverable through current project frame contracts.
+    - runtime packing-mode support is enforced at runtime/pipeline projection boundaries, not by erasing unsupported packing modes from the structural model.
 
 ### libs/st2110core/include/st2110/video_receiver_timing.hpp
 - Роль:
@@ -650,3 +562,145 @@
     - this file models only the named policy boundary and its validation; it does not implement reordering itself.
     - current default `32` remains present, but only as a named explicit support/default boundary rather than as a literal in backend runtime construction.
     - current gap-tolerance policy is kept orthogonal to reorder-window sizing so future receive behavior can evolve without reshaping the config surface again.
+
+### libs/st2110core/include/st2110/video_receive_capability.hpp
+- Роль:
+    - common video media/receive-capability model for structurally recognized ST 2110 video receive modes.
+    - centralizes video media-description token-backed types, transport payload format, project frame handoff format, RTP clock, receive topology, and common receive capability validation.
+    - separates:
+        - structural media/capability validity;
+        - backend-specific implementation support;
+        - project frame-storage/handoff delivery support.
+    - prevents socket- or MTL-specific implementation limits from narrowing the project’s common video capability model.
+- Связи:
+    - uses:
+        - `config_validation.hpp` for frame-rate/dimension validation;
+        - `error.hpp` for validation/support result reporting;
+        - `pixel_format.hpp` for project storage projection helpers;
+        - `video_packing_mode.hpp` for packing-mode axis;
+        - `video_scan_mode.hpp` for scan-mode axis.
+    - consumed by:
+        - `rx_config.hpp`
+            - optional `RxVideoConfig::receive_capability`;
+            - effective capability derivation and runtime support checks.
+        - `signaling_structs.hpp`
+            - `VideoStreamSignaling::media`.
+        - `video_signaling.hpp`
+            - signaling-to-capability and signaling-to-runtime projection.
+        - `socket_rx_video_backend.hpp`
+            - socket receive capability support boundary.
+        - `mtl_rx_video_backend.hpp` / `src/mtl_rx_video_backend.cpp`
+            - MTL receive capability support/projection boundary.
+- Сущности:
+    - token-backed media-description types:
+        - `VideoSampling`
+            - known values:
+                - `YCbCr422`
+                - `YCbCr444`
+                - `YCbCr420`
+                - `RGB`
+                - `XYZ`
+                - `Key`
+                - `CLYCbCr444`
+                - `CLYCbCr422`
+                - `CLYCbCr420`
+                - `ICtCp444`
+                - `ICtCp422`
+                - `ICtCp420`
+                - `Other`
+            - optional `raw_token`.
+        - `VideoBitDepth`
+            - `bits`
+            - `floating_point`.
+        - `VideoColorimetry`
+            - known values include BT.601, BT.709, BT.2020, BT.2100, ACES-related values, XYZ, Alpha, and Other.
+            - optional `raw_token`.
+        - `VideoTransferCharacteristicSystem`
+            - known values include SDR, PQ, HLG, Linear, BT.2100 linearized variants, ACES-related values, density, ST 2115 LOG S3, Unspecified, and Other.
+            - optional `raw_token`.
+        - `VideoSignalStandard`
+            - `St2110_20_2017`
+            - `St2110_20_2022`
+            - `Other`
+            - optional `raw_token`.
+        - `VideoRange`
+            - `Narrow`
+            - `FullProtect`
+            - `Full`
+            - `Other`
+            - optional `raw_token`.
+        - `VideoPixelAspectRatio`
+            - `width`
+            - `height`.
+        - `VideoMediaDescription`
+            - `sampling`
+            - `width`
+            - `height`
+            - `fps_num`
+            - `fps_den`
+            - `depth`
+            - `colorimetry`
+            - optional `transfer_characteristic_system`
+            - optional `signal_standard`
+            - optional `range`
+            - `pixel_aspect_ratio`.
+    - receive capability axes:
+        - `VideoTransportPayloadFormat`
+            - generic `Rfc4175`;
+            - explicit RFC4175 YCbCr 4:2:2, YCbCr 4:2:0, RGB, and YCbCr 4:4:4 integer-depth payload format values;
+            - custom/project transport markers such as `CustomYcbcr422Planar10Le` and `CustomV210`.
+        - `VideoFrameHandoffFormat`
+            - project/backend frame-handoff format axis.
+            - includes current `Uyvy` plus structurally recognized YUV planar, V210/Y210, RFC4175 pgroup, RGB/BGRA/ARGB, GBR planar, and RGB RFC4175 handoff variants.
+        - `VideoReceiveRtpClock`
+            - `rtp_clock_rate`
+            - defaults to `90000`.
+        - `VideoReceiveTopologyKind`
+            - `SingleStream`
+            - `RedundantStreams`.
+        - `VideoReceiveTopology`
+            - `kind`
+            - `stream_count`
+            - optional `primary_mid`
+            - optional `redundant_mid`.
+        - `VideoReceiveCapability`
+            - aggregate common receive capability:
+                - `media`
+                - `scan_mode`
+                - `packing_mode`
+                - `transport_format`
+                - `handoff_format`
+                - `rtp_clock`
+                - `topology`.
+    - structural validation helpers:
+        - `validate_video_sampling(...)`
+        - `validate_video_bit_depth(...)`
+        - `validate_video_colorimetry(...)`
+        - `validate_video_transfer_characteristic_system(...)`
+        - `validate_video_signal_standard(...)`
+        - `validate_video_range(...)`
+        - `validate_video_pixel_aspect_ratio(...)`
+        - `validate_video_media_description_dimensions(...)`
+        - `validate_video_media_description_structure(...)`
+        - `validate_video_media_description_cross_field_constraints(...)`
+        - `validate_video_transport_payload_format(...)`
+        - `validate_video_frame_handoff_format(...)`
+        - `validate_video_receive_rtp_clock(...)`
+        - `validate_video_receive_topology(...)`
+        - `validate_video_receive_capability_structure(...)`
+    - media/capability comparison and projection helpers:
+        - `is_420_video_sampling(...)`
+        - `video_media_description_equal(...)`
+        - `video_transport_payload_format_from_media_description(...)`
+        - `validate_video_transport_payload_format_matches_media_description(...)`
+        - `validate_video_frame_handoff_format_matches_media_description(...)`
+    - project storage/handoff compatibility helpers:
+        - `video_frame_handoff_format_from_project_pixel_format(...)`
+        - `project_pixel_format_from_video_frame_handoff_format(...)`
+        - `validate_project_video_frame_handoff_format_support(...)`
+        - `validate_project_video_frame_handoff_format_matches_pixel_format(...)`
+        - `validate_project_video_frame_storage_compatibility(...)`
+- Примечание:
+    - this file is the common capability model; it is not a concrete socket, MTL, depacketizer, or OBS handoff implementation.
+    - `Unsupported` at backend/project support boundaries means “recognized by this common model but not currently implemented by that boundary.”
+    - future receive formats should extend this common model first, then add backend-specific support/projection branches where implemented.

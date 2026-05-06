@@ -1,55 +1,105 @@
 ### tests/test_video_signaling.cpp
 - Роль:
-    - проверяет modeled `VideoStreamSignaling` validation.
+    - проверяет modeled `VideoStreamSignaling` validation and selected signaling-to-runtime policy projections.
 - Покрывает:
-    - valid progressive `GPM` signaling;
-    - valid `BPM` signaling at the structural signaling layer;
+    - valid progressive `GPM` signaling.
+    - valid `BPM` signaling at the structural signaling layer.
     - standards-clean `SSN` requirement:
         - missing `SSN` rejected by `validate_video_stream_signaling(...)`;
-        - existing valid signaling with explicit `SSN` remains accepted.
-    - signaled dimension limits in the signaling/media-description boundary:
+        - valid signaling with explicit `SSN` accepted.
+    - signaled dimension limits:
         - width/height `1` accepted structurally;
         - width/height `32767` accepted structurally;
         - width/height `0` rejected structurally;
         - width/height `32768` rejected structurally.
-    - invalid frame rate;
-    - signaling-valid but runtime-invalid odd-width projection case;
-    - finalized `MAXUDP` signaling policy:
-        - Standard UDP Size Limit accepted;
-        - Extended UDP Size Limit accepted;
+    - invalid frame-rate rejection.
+    - split between structural signaling and runtime support:
+        - odd-width signaling is structurally valid;
+        - projection to `RxVideoConfig` remains structurally valid;
+        - default video runtime support rejects the current UYVY storage projection as `InvalidValue`.
+    - `MAXUDP` signaling policy:
+        - Standard UDP Datagram Size Limit accepted;
+        - Extended UDP Datagram Size Limit accepted;
         - non-boundary numeric values rejected;
         - values above Extended UDP Size Limit rejected;
         - packet-parse-policy derivation from signaling for Standard / Extended values;
         - absent `MAXUDP` keeps empty policy override and therefore Standard-by-default behavior.
-    - signaling-valid but runtime-unsupported sampling projection case.
-    - tightened ST 2110-20 `SSN` cross-field validation:
+    - structurally valid but runtime-unmappable sampling:
+        - RGB signaling validates structurally;
+        - direct current `PixelFormat` projection rejects RGB as `Unsupported`.
+    - common receive-capability projection before project handoff limit:
+        - RGB8 signaling can project to common RGB8 receive capability when requested through projection options;
+        - project `RxVideoConfig` projection rejects unsupported RGB8 handoff as `Unsupported`.
+    - ST 2110-20 media cross-field validation:
         - `BT709 + SDR + SSN=ST2110-20:2017` accepted;
-        - `BT709 + SDR + SSN=ST2110-20:2022` rejected;
-        - `ALPHA`/KEY signaling requires `SSN=ST2110-20:2022`;
+        - `BT709 + SDR + SSN=ST2110-20:2022` accepted;
+        - `KEY`/`ALPHA` requires `SSN=ST2110-20:2022`;
+        - valid `KEY`/`ALPHA` remains runtime-unsupported only through pixel-format projection;
         - `TCS=ST2115LOGS3` requires `SSN=ST2110-20:2022`.
-    - localized runtime support boundary:
-        - structurally valid odd-width signaling still fails only through runtime UYVY projection/config validation, not in signaling dimension-limit validation;
-        - structurally valid `ALPHA`/KEY signaling remains runtime-unsupported only through `pixel_format_from_video_stream_signaling(...)`.
+- Фиксирует:
+    - video signaling validation remains a structural/media-description boundary, not a current runtime support gate;
+    - packet-size policy is represented through the signaling model and projected into packet-parse policy;
+    - runtime handoff/pixel-format limitations remain localized below signaling validation.
 
 ### tests/test_video_signaling_rx_match.cpp
 - Роль:
-    - проверяет consistency между signaling model и manual `RxVideoConfig`.
+    - проверяет consistency между modeled `VideoStreamSignaling` and manual/backend-facing `RxVideoConfig`.
 - Покрывает:
-    - matching signaling and `RxVideoConfig` accepted;
-    - width / height / frame-rate / scan-mode mismatch rejected;
-    - missing `SSN` in signaling rejected before RX-match consistency logic.
+    - matching signaling and project-field fallback `RxVideoConfig` accepted when no explicit receive capability is present.
+    - matching signaling and explicit receive-capability `RxVideoConfig` accepted.
+    - mismatch rejection for:
+        - width;
+        - height;
+        - frame rate;
+        - scan mode;
+        - packing mode.
+    - explicit receive-capability consistency requirement:
+        - `RxVideoConfig` common fields must match the embedded receive capability.
+    - generic RFC4175 transport marker compatibility:
+        - explicit receive capability using generic RFC4175 marker still matches signaling when the media description is otherwise compatible.
+    - common RGB8 receive-capability match before runtime support check:
+        - RGB8 signaling can match a manually constructed `RxVideoConfig` carrying an explicit common RGB8 receive capability;
+        - default runtime support still rejects that config as `Unsupported`.
+    - missing `SSN` in signaling rejected before RX-match consistency logic is treated as valid.
+- Фиксирует:
+    - signaling/RX-config matching checks structural consistency, not current backend runtime support;
+    - current runtime limitations remain below the common signaling/config matching boundary.
 
 ### tests/test_video_signaling_to_rx_config.cpp
 - Роль:
     - проверяет projection from `VideoStreamSignaling` to `RxVideoConfig`.
+    - фиксирует separation between common receive-capability projection and current project handoff/runtime support.
 - Покрывает:
-    - valid standards-clean signaling projects successfully;
-    - invalid signaling rejected before projection;
-    - missing `SSN` rejected before projection;
-    - invalid transport arguments rejected after signaling projection;
-    - scan mode is preserved structurally;
-    - invalid payload type rejected;
-    - structurally valid but unsupported runtime pixel-format mapping rejected as `Unsupported`.
+    - valid standards-clean signaling projects successfully into `RxVideoConfig`.
+    - projected fields:
+        - dimensions;
+        - frame rate;
+        - UDP port;
+        - RTP payload type;
+        - local/destination IP;
+        - current project `PixelFormat::UYVY`;
+        - scan mode;
+        - packing mode;
+        - embedded receive capability.
+    - embedded receive-capability projection:
+        - media dimensions/frame-rate/sampling/depth/range preserved;
+        - scan mode preserved;
+        - packing mode preserved;
+        - RFC4175 4:2:2 8-bit transport marker selected;
+        - UYVY handoff format selected;
+        - 90 kHz RTP clock modeled;
+        - single-stream topology modeled.
+    - invalid signaling rejected before projection.
+    - missing `SSN` rejected before projection.
+    - invalid transport arguments rejected after signaling projection.
+    - interlaced scan mode is preserved structurally without reinterpretation.
+    - invalid RTP payload type rejected.
+    - common RGB8 capability projection:
+        - RGB8 signaling can be represented as common receive capability with RGB8 handoff when explicitly requested;
+        - project `RxVideoConfig` projection rejects unsupported RGB8 project handoff mapping as `Unsupported`.
+- Фиксирует:
+    - signaling-to-config projection preserves already-modeled runtime axes instead of collapsing them to current MVP defaults;
+    - unsupported project handoff mapping remains a localized projection/support failure, not a signaling-structure failure.
 
 ### tests/test_video_signaling_to_pipeline_config.cpp
 - Роль:
@@ -85,41 +135,70 @@
 
 ### tests/test_video_signaled_media_properties.cpp
 - Роль:
-    - проверяет modeled video SDP/media properties separate from runtime `PixelFormat`.
+    - проверяет modeled video SDP/media-description properties separate from runtime `PixelFormat`.
+    - проверяет common video receive-capability modeling before backend/runtime support checks.
 - Покрывает:
-    - validation of token-backed signaling/media enums:
-        - `sampling`;
-        - `colorimetry`;
-        - `TCS`;
-        - `SSN`;
-        - `RANGE`.
-    - structural `VideoBitDepth` validation including `16f`;
+    - token-backed signaling/media enum validation:
+        - `VideoSampling`;
+        - `VideoColorimetry`;
+        - `VideoTransferCharacteristicSystem`;
+        - `VideoSignalStandard`;
+        - `VideoRange`.
+    - known-token behavior:
+        - known enum values validate without raw token;
+        - known enum values reject unexpected raw token where applicable.
+    - `Other + raw_token` behavior:
+        - non-empty unknown/future raw tokens accepted;
+        - missing or empty raw tokens rejected.
+    - structural `VideoBitDepth` validation:
+        - `8`, `10`, `12`, `16`, and `16f` accepted;
+        - invalid integer/floating combinations rejected.
     - structural `VideoPixelAspectRatio` validation:
         - `1:1` accepted;
         - non-square ratios such as `12:11` accepted;
         - zero parts rejected.
     - signaling/media-description dimension validation:
-        - explicit helper-level acceptance of `1` and `32767`;
-        - rejection of `0` and `32768`;
+        - helper-level acceptance of `1` and `32767`;
+        - helper-level rejection of `0` and `32768`;
         - stream-level acceptance of signaled min/max dimensions;
         - stream-level rejection of out-of-range dimensions.
     - standards-clean media-description behavior:
-        - valid BT709/SDR media-description with explicit `SSN=ST2110-20:2017` accepted;
-        - missing `SSN` rejected;
-        - optional `TCS` and `RANGE` may still be absent where currently allowed.
-    - rejection of invalid structural media fields;
-    - tightened `SSN` cross-field validation;
-    - tightened `RANGE` modeling and cross-field validation.
-    - PAR/pixel-aspect-ratio as a signaling/media-description property:
-        - non-square PAR accepted structurally;
-        - invalid PAR rejected structurally;
-        - runtime projection remains independent from PAR.
-    - runtime projection remains separate:
-        - valid `YCbCr422 + 8-bit` projects to `UYVY`;
-        - structurally valid but unsupported media, including KEY/ALPHA, remain rejected only by runtime projection.
+        - explicit `SSN` required for stream validation;
+        - absent optional `TCS` and `RANGE` remain accepted where currently allowed;
+        - valid `BT709`/`SDR` with `SSN=ST2110-20:2022` accepted;
+        - `KEY`/`ALPHA` accepted only with `SSN=ST2110-20:2022`;
+        - `KEY`/`ALPHA` with `SSN=ST2110-20:2017` rejected;
+        - `ST2115LOGS3` accepted only with `SSN=ST2110-20:2022`;
+        - `ST2115LOGS3` with `SSN=ST2110-20:2017` rejected.
+    - `RANGE` cross-field behavior:
+        - `BT2100 + RANGE=FULL` accepted;
+        - `BT2100 + RANGE=FULLPROTECT` rejected;
+        - non-BT2100 `RANGE=FULLPROTECT` accepted.
+    - transport-payload projection:
+        - known YCbCr 4:2:2 10-bit media projects to specific RFC4175 4:2:2 10-bit marker;
+        - known RGB 8-bit media projects to specific RFC4175 RGB 8-bit marker;
+        - known XYZ 12-bit media projects to generic RFC4175 marker.
+    - transport marker/media-description matching:
+        - generic RFC4175 accepts known projectable media;
+        - generic RFC4175 rejects unknown/vendor-private media as `Unsupported`;
+        - specific transport markers must match sampling/depth.
+    - handoff-format/media-description matching:
+        - UYVY and planar 8-bit handoff accepted for 8-bit YCbCr 4:2:2;
+        - planar 10-bit and V210 handoff accepted for 10-bit YCbCr 4:2:2;
+        - RGB8 handoff accepted for RGB 8-bit;
+        - mismatched handoff formats rejected as `InvalidValue`.
+    - receive-capability structure:
+        - common RGB8 receive capability is structurally valid before backend support checks;
+        - redundant two-stream topology hint is structurally valid;
+        - invalid RTP clock or invalid redundant topology rejected.
+    - runtime pixel-format projection:
+        - valid YCbCr 4:2:2 8-bit projects to `PixelFormat::UYVY`;
+        - projection remains independent from pixel-aspect-ratio;
+        - structurally valid but unsupported media, including 10-bit YCbCr, RGB8, and KEY/ALPHA, remain rejected only by runtime projection as `Unsupported`.
 - Фиксирует:
-    - `SSN` is no longer treated as an optional signaling/media-description field in standards-clean validation;
-    - current UYVY-specific even-width runtime constraint still remains localized below the signaling boundary.
+    - media-description properties are modeled independently from current project storage/runtime support;
+    - `SSN` is no longer treated as optional in standards-clean stream validation;
+    - common receive capability can represent broader media/handoff shapes than the current runtime `PixelFormat` projection supports.
 
 ### tests/test_video_reference_clock.cpp
 - Роль:
