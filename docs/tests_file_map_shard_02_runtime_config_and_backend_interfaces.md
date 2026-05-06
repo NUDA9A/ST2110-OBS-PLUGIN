@@ -80,61 +80,91 @@
     - фиксирует build-configuration visibility / public modeled presence для `RxBackendKind::Mtl`;
     - дополнительно покрывает direct MTL video factory/backend skeleton contract, когда test build собран с MTL.
 - Покрывает:
+    - compile-time API shape checks through `static_assert`:
+        - `RxBackendKind` is an enum and is not implicitly convertible to `int`;
+        - `validate_rx_backend_kind(...) -> Error`;
+        - `rx_backend_kind_name(...) -> std::string_view`;
+        - `parse_rx_backend_kind(...) -> std::expected<RxBackendKind, Error>`;
+        - `validate_rx_backend_descriptor(...) -> Error`;
+        - `validate_rx_backend_selection(...) -> Error`;
+        - `rx_backend_kind_built(...) -> bool`;
+        - `default_rx_backend_factories() -> std::span<IRxBackendFactory *const>`;
+        - `IRxBackend` remains abstract;
+        - `IRxBackendFactory::descriptor() -> RxBackendDescriptor`;
+        - `IRxBackendFactory::create_backend() -> std::unique_ptr<IRxBackend>`;
+        - `IRxBackend::stats() -> BackendStats`;
+        - `select_rx_backend_factory(...) -> std::expected<IRxBackendFactory *, Error>`;
+        - `create_rx_backend(...) -> std::expected<std::unique_ptr<IRxBackend>, Error>`.
     - modeled backend-kind axis:
-        - `RxBackendKind`;
-        - `validate_rx_backend_kind(...)`;
-        - `rx_backend_kind_name(...)`;
-        - `parse_rx_backend_kind(...)`;
-        - `rx_backend_kind_built(...)`.
+        - `RxBackendKind::Socket`;
+        - `RxBackendKind::Mtl`;
+        - invalid backend-kind enum rejection as `InvalidValue`;
+        - lowercase string mapping for `"socket"` and `"mtl"`;
+        - strict parsing rejection for empty, uppercase, and unknown backend names;
+        - `rx_backend_kind_built(RxBackendKind::Socket)` is always true;
+        - `rx_backend_kind_built(RxBackendKind::Mtl)` matches `ST2110_TEST_EXPECT_MTL_BUILT`;
+        - unknown backend-kind built status is false.
     - descriptor / selection validation:
         - `RxBackendDescriptor`;
         - `validate_rx_backend_descriptor(...)`;
         - `RxBackendSelection`;
-        - `validate_rx_backend_selection(...)`.
+        - `validate_rx_backend_selection(...)`;
+        - unavailable but structurally valid MTL descriptors are accepted by descriptor validation;
+        - invalid backend kind, empty descriptor name, and no-media capability descriptors are rejected;
+        - invalid selected backend kind and invalid selected media kind are rejected.
     - abstract factory shape:
         - `IRxBackendFactory`;
         - `descriptor()`;
-        - `create_backend()`.
-    - common backend API from created backends:
+        - `create_backend()`;
+        - fake factory call-count behavior.
+    - common backend API from created/fake backends:
         - `backend_name()`;
         - `capabilities()`;
         - `state()`;
         - `stats()`;
         - `stop()`.
-    - explicit builtin registry boundary:
-        - `default_rx_backend_factories()`;
-        - stable shared registry storage;
-        - expected builtin descriptor set:
-            - socket/video;
-            - socket/audio;
-            - mtl/video;
-            - mtl/audio;
-        - descriptor `name` matches `rx_backend_kind_name(...)`.
     - factory selection:
         - `select_rx_backend_factory(...)`;
         - selection by requested backend kind;
         - selection constrained by requested media capability;
-        - unavailable backend rejection;
-        - missing backend-kind rejection;
-        - null factory entry rejection.
+        - unavailable backend rejection as `Unsupported`;
+        - missing backend-kind rejection as `Unsupported`;
+        - null factory entry rejection as `InvalidValue`;
+        - selector does not call `create_backend()`.
     - backend creation:
         - `create_rx_backend(...)`;
         - uses only the selected factory;
-        - rejects null backend results from a factory;
+        - rejects null backend results from a factory as `InvalidValue`;
         - created backend starts in a stopped `RxBackendState`;
         - created backend `stats()` starts from a zero snapshot;
         - created backend `stop()` returns a lifecycle result.
+    - explicit builtin registry boundary:
+        - `default_rx_backend_factories()`;
+        - stable shared registry storage across calls;
+        - expected builtin descriptor set:
+            - always `socket` / video;
+            - always `socket` / audio;
+            - `mtl` / video only when `ST2110_TEST_EXPECT_MTL_BUILT` is true;
+            - `mtl` / audio only when `ST2110_TEST_EXPECT_MTL_BUILT` is true;
+        - descriptor `name` matches `rx_backend_kind_name(descriptor.kind)`;
+        - socket builtin descriptors are available;
+        - MTL builtin descriptors, when compiled into the registry, remain unavailable.
     - target/build boundary:
         - `tests/CMakeLists.txt` registers `test_backend_factory`;
-        - `tests/CMakeLists.txt` injects `ST2110_TEST_EXPECT_MTL_BUILT=$<BOOL:${ST2110_WITH_MTL}>`;
-        - the test asserts `rx_backend_kind_built(RxBackendKind::Mtl)` against that build-time expectation.
+        - `tests/CMakeLists.txt` injects `ST2110_TEST_EXPECT_MTL_BUILT=$<BOOL:${ST2110_TEST_EXPECT_MTL_BUILT}>`;
+        - the test asserts `rx_backend_kind_built(RxBackendKind::Mtl)` against that target-local compile definition.
     - builtin availability/build boundary:
         - socket builtins are selected and constructable for their supported media;
-        - published MTL builtin descriptors remain present in the default registry but unavailable, and therefore are rejected by selector/creator as `Unsupported`;
-        - direct `MtlRxVideoBackendFactory` keeps an unavailable descriptor, while `create_backend()` follows the build result:
-            - returns a concrete backend when MTL is built;
-            - returns `nullptr` when MTL is not built;
-        - direct `MtlRxVideoBackend` checks are compiled only when `ST2110_TEST_EXPECT_MTL_BUILT` is true.
+        - selecting or creating MTL through `default_rx_backend_factories()` returns `Unsupported`;
+        - in a non-MTL test build, MTL remains a public modeled backend kind even though no MTL builtin registry entries are expected;
+        - in an MTL-enabled test build, published MTL builtin descriptors remain present but unavailable, and therefore are rejected by selector/creator as `Unsupported`.
+    - direct MTL video factory path under MTL-enabled test build:
+        - `MtlRxVideoBackendFactory` descriptor reports:
+            - `RxBackendKind::Mtl`;
+            - name `"mtl"`;
+            - video-only capabilities;
+            - `available == false`;
+        - `MtlRxVideoBackendFactory::create_backend()` currently returns `nullptr` while runtime start/stop implementation is still unavailable.
     - direct MTL video backend skeleton path under MTL-enabled test build:
         - `MtlRxVideoBackend::backend_name() == "mtl"`;
         - video-only capabilities;
@@ -150,7 +180,8 @@
     - backend selection/creation remains separate from backend lifecycle semantics;
     - builtin backend registry remains explicit and inspectable instead of hiding availability behind ad hoc fallback logic;
     - `RxBackendKind::Mtl` remains a public modeled backend axis in both build modes;
-    - current MTL video backend MVP support boundary is explicit at factory/backend-start level rather than implicit in caller logic.
+    - current MTL video backend MVP support boundary is explicit at factory/backend-start level rather than implicit in caller logic;
+    - direct MTL video factory unavailability remains explicit until runtime start/stop construction is implemented.
 
 ### tests/test_receive_reorder_tolerance_policy.cpp
 - Роль:

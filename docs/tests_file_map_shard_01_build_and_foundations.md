@@ -4,11 +4,18 @@
     - регистрирует все unit / architecture / regression tests через CTest;
     - каждый test executable линкуется с `st2110core`;
     - каждому test target явно задается `cxx_std_23`, чтобы IDE/test-target compilation model не расходился с project/toolchain requirements;
-    - задает per-target build/test contract для `test_backend_factory` через `ST2110_TEST_EXPECT_MTL_BUILT=$<BOOL:${ST2110_WITH_MTL}>`, чтобы runtime assertions о built/unavailable MTL boundary были привязаны к фактической сборочной конфигурации.
+    - регистрирует `test_backend_factory` как обычный test target, а затем задает для него per-target build/test contract через `ST2110_TEST_EXPECT_MTL_BUILT`;
+    - выводит `ST2110_TEST_EXPECT_MTL_BUILT` из текущей platform/build expectation:
+        - `ON` для `CMAKE_SYSTEM_NAME STREQUAL "Linux"`;
+        - `OFF` для остальных платформ;
+    - инжектирует `ST2110_TEST_EXPECT_MTL_BUILT=$<BOOL:${ST2110_TEST_EXPECT_MTL_BUILT}>` только в `test_backend_factory`, чтобы assertions о MTL built/unavailable boundary были привязаны к test-target compile definition, а не к ad hoc логике внутри теста.
 - Сущности:
     - `add_st2110_test(...)`
-    - `target_compile_definitions(test_backend_factory PRIVATE ST2110_TEST_EXPECT_MTL_BUILT=$<BOOL:${ST2110_WITH_MTL}>)`
-    - targets for smoke/base tests, ODR/link regression target, RTP/ST 2110 packet parsing, packet admission, reorder, frame assembly, depacketizer, video signaling, video timing/playout/timestamp mapping, video SDP ingestion, audio signaling model tests, audio SDP ingestion/timing tests, audio receiver bootstrap tests, backend interface tests, backend factory tests, socket runtime tests, Linux socket receive-port tests, socket video/audio backend tests, and shared reorder-tolerance policy tests.
+    - `add_st2110_test(test_backend_factory test_backend_factory.cpp)`
+    - `set(ST2110_TEST_EXPECT_MTL_BUILT ON)` under Linux
+    - `set(ST2110_TEST_EXPECT_MTL_BUILT OFF)` for non-Linux
+    - `target_compile_definitions(test_backend_factory PRIVATE ST2110_TEST_EXPECT_MTL_BUILT=$<BOOL:${ST2110_TEST_EXPECT_MTL_BUILT}>)`
+    - targets for smoke/base tests, ODR/link regression target, RTP/ST 2110 packet parsing, packet admission, reorder, frame assembly, depacketizer, video signaling, video timing/playout/timestamp mapping, video SDP ingestion, audio signaling model tests, audio SDP ingestion/timing tests, audio receiver bootstrap tests, backend interface tests, backend factory tests, socket runtime tests, Linux socket receive-port tests, socket video/audio backend tests, socket operational architecture tests, and shared reorder-tolerance policy tests.
 
 ### tests/test_smoke.cpp
 - Роль:

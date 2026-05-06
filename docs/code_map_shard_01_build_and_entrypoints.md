@@ -1,46 +1,46 @@
 ### libs/st2110core/CMakeLists.txt
 - Роль:
   - build integration для `st2110core`.
-  - локализует build-time source selection для socket runtime, builtin factory registry и MTL-enabled / MTL-unavailable receive backend units.
-  - задает explicit opt-in build boundary для MTL integration через CMake options и private include/link wiring instead of hidden source-level fallback.
+  - локализует platform-derived MTL build capability через `ST2110_HAS_MTL_BACKEND`.
+  - keeps MTL dependency discovery and link wiring in CMake rather than leaking MTL build details into generic backend-selection code.
 - Связи:
-  - собирает:
+  - для Linux:
+    - sets `ST2110_HAS_MTL_BACKEND ON`;
+    - requires `PkgConfig`;
+    - discovers installed Media Transport Library through pkg-config package `mtl`;
+    - fails configure explicitly if `ST2110_MTL_FOUND` is false.
+  - для non-Linux:
+    - sets `ST2110_HAS_MTL_BACKEND OFF`;
+    - does not require MTL pkg-config package or MTL libraries.
+  - always builds:
     - `src/stub.cpp`;
     - `src/socket_rx_single_media_backend_base.cpp`;
-    - `src/backend_factory_registry.cpp`;
-    - `src/mtl_rx_backend_factory_unavailable.cpp` по умолчанию.
-  - при `ST2110_WITH_MTL=ON`:
-    - удаляет `src/mtl_rx_backend_factory_unavailable.cpp` из source set;
-    - добавляет:
-      - `src/mtl_rx_backend_factory.cpp`;
-      - `src/mtl_rx_video_backend.cpp`.
-  - публикует include surface через `${CMAKE_CURRENT_SOURCE_DIR}/include`.
-  - задает private compile definition:
-    - `ST2110_WITH_MTL=$<BOOL:${ST2110_WITH_MTL}>`.
-  - при `ST2110_WITH_MTL=ON` добавляет private include/link dependencies для MTL:
-    - `ST2110_MTL_INCLUDE_DIRS`;
-    - `ST2110_MTL_LIBRARIES`.
-  - build wiring supports public backend/factory surface from:
-    - `include/st2110/backend_factory.hpp`;
-    - `include/st2110/mtl_rx_backend_factory.hpp`;
-    - `include/st2110/mtl_rx_video_backend.hpp`.
+    - `src/backend_factory_registry.cpp`.
+  - when `ST2110_HAS_MTL_BACKEND` is enabled, also builds:
+    - `src/mtl_rx_backend_factory.cpp`;
+    - `src/mtl_rx_video_backend.cpp`.
+  - publishes core public include surface through `${CMAKE_CURRENT_SOURCE_DIR}/include`.
+  - sets private compile definition:
+    - `ST2110_HAS_MTL_BACKEND=$<BOOL:${ST2110_HAS_MTL_BACKEND}>`.
+  - links `PkgConfig::ST2110_MTL` privately only for MTL-capable builds.
 - Сущности:
-  - CMake option / cache variables:
-    - `ST2110_WITH_MTL`
-    - `ST2110_MTL_INCLUDE_DIRS`
-    - `ST2110_MTL_LIBRARIES`
+  - `ST2110_HAS_MTL_BACKEND`
+    - internal platform-derived build capability flag.
+  - `ST2110_MTL`
+    - pkg-config imported target namespace for the installed `mtl` package.
   - `ST2110CORE_SOURCES`
-    - explicit source-set selection layer for default unavailable wiring vs MTL-enabled factory/backend compilation.
+    - explicit source-set selection layer for common core sources and Linux MTL-capable sources.
   - target definition:
     - `add_library(st2110core STATIC ...)`
     - `target_include_directories(...)`
     - `target_compile_features(... cxx_std_23)`
     - `target_compile_definitions(...)`
-    - `target_link_libraries(...)` for MTL-enabled builds.
+    - `target_link_libraries(...)`
 - Примечание:
-  - build wiring now includes the concrete `MtlRxVideoBackend` skeleton when `ST2110_WITH_MTL=ON`, not only the enabled factory unit.
-  - audio MTL backend implementation is still absent from the MTL-enabled source set.
-  - missing `ST2110_MTL_INCLUDE_DIRS` or `ST2110_MTL_LIBRARIES` remain explicit fatal build errors when MTL support is requested.
+  - Linux builds are intentionally MTL-capable builds and require an externally installed MTL pkg-config package.
+  - project CMake discovers and links MTL but does not build, vendor, install, or configure DPDK/MTL itself.
+  - `src/mtl_rx_backend_factory_unavailable.cpp` is no longer part of the current source selection path.
+  - MTL audio backend implementation source is still absent from the MTL-capable source set.
 
 ### apps/st2110_rx_dump/main.cpp
 - Роль:

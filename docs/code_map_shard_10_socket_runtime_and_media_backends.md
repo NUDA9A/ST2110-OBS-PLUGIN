@@ -764,115 +764,125 @@
 
 ### libs/st2110core/src/backend_factory_registry.cpp
 - Роль:
-    - builtin receive-backend factory registry.
-    - локализует default factory inventory и build-sensitive backend-kind visibility behind out-of-line helpers declared in `backend_factory.hpp`.
-    - keeps app/plugin/bootstrap code from manually constructing the default socket/MTL factory set.
+    - builtin receive backend factory registry for `st2110core`.
+    - centralizes which backend factories are compiled into the library for the current build capability set.
+    - keeps MTL factory registration behind the internal `ST2110_HAS_MTL_BACKEND` compile-time capability.
 - Связи:
-    - использует:
-        - `st2110/backend_factory.hpp`
-        - `st2110/socket_rx_video_backend.hpp`
-        - `st2110/socket_rx_audio_backend.hpp`
-        - `st2110/mtl_rx_backend_factory.hpp`.
-    - supplies implementations for:
-        - `rx_backend_kind_built(...)`
-        - `default_rx_backend_factories()`.
-    - aggregates concrete factory objects from:
-        - `SocketRxVideoBackendFactory`
-        - `SocketRxAudioBackendFactory`
-        - `MtlRxVideoBackendFactory`
-        - `MtlRxAudioBackendFactory`.
+    - includes socket backend factory declarations from:
+        - `st2110/socket_rx_video_backend.hpp`;
+        - `st2110/socket_rx_audio_backend.hpp`.
+    - conditionally includes `st2110/mtl_rx_backend_factory.hpp` only when `ST2110_HAS_MTL_BACKEND` is enabled.
+    - uses `backend_factory.hpp` for:
+        - `IRxBackendFactory`;
+        - `RxBackendKind`;
+        - registry-facing factory functions.
+    - factory implementations are supplied by:
+        - socket backend headers / implementation units;
+        - `src/mtl_rx_backend_factory.cpp` when MTL is built.
 - Сущности:
-    - anonymous-namespace singleton factory objects:
+    - builtin factory singletons:
         - `socket_rx_video_factory`
         - `socket_rx_audio_factory`
-        - `mtl_rx_video_factory`
-        - `mtl_rx_audio_factory`.
+        - `mtl_rx_video_factory` when `ST2110_HAS_MTL_BACKEND`;
+        - `mtl_rx_audio_factory` when `ST2110_HAS_MTL_BACKEND`.
     - `builtin_rx_backend_factories`
-        - fixed builtin `std::array<IRxBackendFactory*, 4>` inventory.
-    - `rx_backend_kind_built(RxBackendKind) -> bool`
-        - returns `true` for `Socket`;
-        - returns `true` for `Mtl` only when `ST2110_WITH_MTL` compile definition is enabled;
-        - returns `false` for unknown enum values.
-    - `default_rx_backend_factories() -> std::span<IRxBackendFactory *const>`
-        - returns a span over the builtin registry inventory.
+        - `std::array<IRxBackendFactory*, 2>` in non-MTL builds:
+            - socket video;
+            - socket audio.
+        - `std::array<IRxBackendFactory*, 4>` in MTL-capable builds:
+            - socket video;
+            - socket audio;
+            - MTL video;
+            - MTL audio.
+    - `rx_backend_kind_built(RxBackendKind kind) -> bool`
+        - returns `true` for `RxBackendKind::Socket`;
+        - returns `true` for `RxBackendKind::Mtl` only when `ST2110_HAS_MTL_BACKEND` is enabled;
+        - returns `false` for all other/default cases.
+    - `default_rx_backend_factories() -> std::span<IRxBackendFactory* const>`
+        - exposes the compiled builtin factory array without transferring ownership.
 - Примечание:
-    - this file models builtin registry exposure, not dynamic registration.
-    - registry inventory remains stable and includes both socket and MTL factory objects, while runtime selection still depends on descriptor validation and `available`.
-    - build awareness is localized in `rx_backend_kind_built(...)` instead of being spread across selection callers.
+    - this file models build presence, not runtime availability.
+    - MTL factories can be compiled into Linux builds while individual MTL factory descriptors still report `available = false` until their concrete runtime paths are implemented.
+    - generic backend selection code should consume this registry rather than branching directly on platform or MTL dependency details.
 
 ### libs/st2110core/src/mtl_rx_backend_factory.cpp
 - Роль:
-    - MTL-enabled builtin factory implementation for the current split video/audio MTL backend inventory.
-    - keeps `RxBackendKind::Mtl` represented in the builtin factory layer while preserving a temporary per-factory availability boundary.
-    - currently exposes direct construction of the video backend skeleton, but keeps both MTL descriptors unavailable so generic backend selection still does not advertise MTL as selectable runtime.
+    - MTL-capable build implementation of the MTL receive backend factories.
+    - provides separate MTL factory descriptors for video and audio receive capability.
+    - keeps current MTL runtime availability explicit and conservative while concrete runtime paths are still incomplete.
 - Связи:
-    - реализует declarations из `include/st2110/mtl_rx_backend_factory.hpp`.
-    - использует `include/st2110/mtl_rx_video_backend.hpp` to instantiate the current video backend skeleton.
-    - intended builtin registration point for `src/backend_factory_registry.cpp`.
-    - selected by build wiring in `libs/st2110core/CMakeLists.txt` instead of `src/mtl_rx_backend_factory_unavailable.cpp` when `ST2110_WITH_MTL=ON`.
+    - includes `st2110/mtl_rx_backend_factory.hpp` for factory class declarations.
+    - includes `st2110/mtl_rx_video_backend.hpp` so the video factory can construct `MtlRxVideoBackend` once the runtime availability flag is enabled.
+    - compiled only when `libs/st2110core/CMakeLists.txt` enables `ST2110_HAS_MTL_BACKEND`.
+    - registered by `src/backend_factory_registry.cpp` only in MTL-capable builds.
 - Сущности:
+    - internal availability constants:
+        - `kMtlVideoRuntimeAvailable = false`
+        - `kMtlAudioRuntimeAvailable = false`
     - `MtlRxAudioBackendFactory::descriptor()`
         - returns:
-            - `kind = RxBackendKind::Mtl`
-            - `name = "mtl"`
-            - audio-only capabilities
-            - `available = false`
+            - `kind = RxBackendKind::Mtl`;
+            - `name = "mtl"`;
+            - `capabilities.audio_rx = true`;
+            - `capabilities.video_rx = false`;
+            - `available = kMtlAudioRuntimeAvailable`.
     - `MtlRxAudioBackendFactory::create_backend()`
-        - currently returns `nullptr`
-        - audio MTL backend implementation is not wired yet.
+        - currently returns `nullptr`.
     - `MtlRxVideoBackendFactory::descriptor()`
         - returns:
-            - `kind = RxBackendKind::Mtl`
-            - `name = "mtl"`
-            - video-only capabilities
-            - `available = false`
+            - `kind = RxBackendKind::Mtl`;
+            - `name = "mtl"`;
+            - `capabilities.video_rx = true`;
+            - `capabilities.audio_rx = false`;
+            - `available = kMtlVideoRuntimeAvailable`.
     - `MtlRxVideoBackendFactory::create_backend()`
-        - currently returns a new `MtlRxVideoBackend`
-        - direct construction exists even though descriptor availability remains disabled.
+        - returns `nullptr` while `kMtlVideoRuntimeAvailable` is false;
+        - otherwise constructs `std::make_unique<MtlRxVideoBackend>()`.
 - Примечание:
-    - video/audio MTL factory split remains explicit instead of assuming one combined backend instance.
-    - descriptor availability is intentionally stricter than direct construction:
-        - generic selection still treats MTL as unavailable;
-        - direct factory instantiation can already return the video backend skeleton in MTL-enabled builds.
+    - factory descriptors intentionally distinguish compiled backend kind from currently usable runtime.
+    - MTL audio is represented at factory level but has no concrete backend implementation yet.
+    - MTL video has a concrete skeleton class, but factory availability remains false because actual MTL device/session start is not implemented.
 
 ### libs/st2110core/include/st2110/mtl_rx_video_backend.hpp
 - Роль:
-    - public header текущего MTL video receive backend skeleton.
-    - вводит concrete `IRxVideoBackend`-реализацию для backend kind `Mtl` без протекания MTL headers / raw MTL handles в public include surface.
-    - держит explicit MVP boundary для manual `RxVideoConfig` start path:
-        - backend-local support/projection boundary;
-        - opaque ownership boundary для device/session runtime state;
-        - lifecycle/state/stats surface для будущего ST20P RX backend.
-    - пока задает только API, validation/projection helpers и runtime ownership shape; actual MTL start/receive logic еще не включена в public/backend contract.
+    - public header for the current concrete MTL video receive backend skeleton.
+    - keeps the backend-facing MTL video class on the existing `IRxVideoBackend` API rather than creating a parallel MTL-specific public backend API.
+    - keeps MTL handles and MTL headers out of the public include surface by using backend-local placeholder context structs.
+    - models the current MTL ST20P MVP support/projection boundary for video config values.
 - Связи:
-    - наследуется от `IRxVideoBackend` из `backend.hpp`;
-    - использует modeled/runtime types:
+    - includes `backend.hpp` for:
+        - `IRxVideoBackend`;
         - `RxVideoConfig`;
+        - `IVideoFrameSink`;
+        - `RxBackendLifecycleResult`;
+        - `RxBackendState`;
+        - `RxBackendCapabilities`;
+        - `BackendStats`;
         - `PixelFormat`;
         - `VideoScanMode`;
-        - `VideoPackingMode`;
-        - `RxBackendState`;
-        - `BackendStats`;
-        - `Error`.
-    - реализуется в `src/mtl_rx_video_backend.cpp`.
-    - создается `MtlRxVideoBackendFactory` из `src/mtl_rx_backend_factory.cpp`.
+        - `VideoPackingMode`.
+    - implemented by `libs/st2110core/src/mtl_rx_video_backend.cpp`.
+    - constructed indirectly by `MtlRxVideoBackendFactory` in `src/mtl_rx_backend_factory.cpp` when the factory availability policy allows it.
+    - compiled into `st2110core` only for `ST2110_HAS_MTL_BACKEND` builds.
 - Сущности:
-    - forward-declared opaque runtime contexts:
-        - `MtlRxVideoDeviceContext`
-        - `MtlRxVideoSessionContext`
-        - keep MTL-owned runtime objects hidden behind the backend boundary.
-    - `MtlRxVideoBackend final : IRxVideoBackend`
-        - concrete manual-start MTL video backend surface.
-        - public methods:
+    - `MtlRxVideoDeviceContext`
+        - backend-local placeholder for future owned MTL device state.
+        - intentionally empty in the current skeleton.
+    - `MtlRxVideoSessionContext`
+        - backend-local placeholder for future owned ST20P RX session state.
+        - intentionally empty in the current skeleton.
+    - `MtlRxVideoBackend final : public IRxVideoBackend`
+        - non-copyable and non-movable.
+        - destructor calls `stop()` through implementation.
+        - public backend API:
             - `backend_name() const`
             - `start_video(const RxVideoConfig&, IVideoFrameSink&)`
             - `stop()`
             - `state() const`
             - `capabilities() const`
             - `stats() const`
-        - backend is non-copyable and non-movable.
     - `ProjectedVideoStartConfig`
-        - backend-local projection result for the currently supported video start parameters.
+        - private projected start-config model for the current MTL ST20P MVP boundary.
         - fields:
             - `width`
             - `height`
@@ -885,17 +895,18 @@
             - `scan_mode`
             - `packing_mode`
             - `frame_buffer_count`
-    - private constants:
+    - constants:
         - `kDefaultFrameBufferCount = 3`
         - `kVideoRtpClockRate = 90000`
-    - private helper boundaries:
-        - `validate_video_frame_view_compatibility(...)`
-        - `validate_mtl_st20p_mvp_compatibility(const RxVideoConfig&)`
-        - `scan_mode_maps_to_mtl_interlaced(VideoScanMode)`
-        - `project_video_start_config(const RxVideoConfig&)`
-        - `validate_start_state_locked() const`
+    - private support/projection helpers:
+        - `validate_video_frame_view_compatibility(PixelFormat, VideoScanMode, VideoPackingMode) -> Error`
+        - `validate_mtl_st20p_mvp_compatibility(const RxVideoConfig&) -> Error`
+        - `scan_mode_maps_to_mtl_interlaced(VideoScanMode) -> bool`
+        - `project_video_start_config(const RxVideoConfig&) -> std::expected<ProjectedVideoStartConfig, Error>`
+    - private lifecycle helpers:
+        - `validate_start_state_locked() const -> Error`
         - `reset_runtime_locked()`
-    - backend-owned runtime state:
+    - private state:
         - `mutex_`
         - `state_`
         - `stats_`
@@ -903,72 +914,72 @@
         - `device_`
         - `session_`
 - Примечание:
-    - file keeps the current MTL video support boundary explicit through named helpers instead of hiding temporary limits inside `start_video(...)`.
-    - declaration order of `session_` before `device_` is intentional so teardown can release session state before device state.
+    - actual MTL `mtl_handle`, `st20p_rx_handle`, MTL ops projection, and receive thread state are not present yet.
+    - declaration order keeps future session teardown before future device teardown.
+    - the current header describes a validation/projection skeleton, not a running MTL receiver.
 
 ### libs/st2110core/src/mtl_rx_video_backend.cpp
 - Роль:
-    - out-of-line implementation of the current MTL video backend skeleton.
-    - локализует backend-local validation/projection boundary for `RxVideoConfig` before future ST20P RX runtime wiring.
-    - currently implements only lifecycle/state/stats/reset behavior and explicit MVP compatibility checks; actual MTL device/session creation and receive-thread start are intentionally not implemented yet.
+    - implementation of the current MTL video backend skeleton.
+    - provides lifecycle/state/stats plumbing and explicit MVP validation/projection for a future ST20P RX path.
+    - intentionally rejects actual start with `Error::Unsupported` until MTL device/session creation and receive delivery are implemented.
 - Связи:
-    - реализует `include/st2110/mtl_rx_video_backend.hpp`.
-    - relies on generic backend/config modeled axes from:
-        - `backend.hpp`
-        - `rx_config.hpp`
-        - `pixel_format.hpp`
-        - `video_scan_mode.hpp`
-        - `video_packing_mode.hpp`
-        - `stats.hpp`
-    - instantiated by `src/mtl_rx_backend_factory.cpp`.
+    - implements `MtlRxVideoBackend` from `st2110/mtl_rx_video_backend.hpp`.
+    - uses current generic backend contracts from `backend.hpp` through the header.
+    - uses current video config validation through `validate_rx_video_config(...)`.
+    - owned by MTL-capable build source selection in `libs/st2110core/CMakeLists.txt`.
+    - constructed through `MtlRxVideoBackendFactory` only if that factory marks video runtime available in the future.
 - Сущности:
-    - local opaque runtime structs:
-        - `MtlRxVideoDeviceContext`
-        - `MtlRxVideoSessionContext`
-        - currently empty placeholder runtime holders for future MTL-owned state.
-    - common backend surface:
-        - `~MtlRxVideoBackend()`
-            - delegates teardown to `stop()`.
-        - `backend_name() const`
-            - returns `"mtl"`.
-        - `capabilities() const`
-            - advertises video-only receive support.
-        - `state() const`
-        - `stats() const`
+    - `MtlRxVideoBackend::~MtlRxVideoBackend()`
+        - calls `stop()` and ignores the returned result.
+    - `backend_name() const`
+        - returns `"mtl"`.
     - `start_video(const RxVideoConfig&, IVideoFrameSink&)`
         - locks backend state;
-        - validates stopped/empty-runtime preconditions;
-        - projects the input config through `project_video_start_config(...)`;
-        - currently returns `Unsupported` even after successful projection because actual MTL runtime startup is deferred to later steps.
+        - validates stopped/clean start state;
+        - validates and projects the requested video config through `project_video_start_config(...)`;
+        - currently returns `Error::Unsupported` after successful projection because runtime creation is not implemented.
     - `stop()`
-        - idempotent reset path;
-        - if backend is already stopped and no sink/device/session runtime exists, returns current state unchanged;
-        - otherwise clears runtime objects through `reset_runtime_locked()`.
-    - validation / projection helpers:
-        - `validate_start_state_locked()`
-            - rejects non-stopped state or leftover sink/device/session runtime as `InvalidBackendState`.
-        - `validate_video_frame_view_compatibility(PixelFormat, VideoScanMode, VideoPackingMode)`
-            - current explicit MVP compatibility boundary:
-                - `VideoScanMode::Progressive` accepted;
-                - `VideoScanMode::Interlaced` and `VideoScanMode::PsF` rejected as `Unsupported`;
-                - `VideoPackingMode::Gpm` accepted;
-                - `VideoPackingMode::Bpm` rejected as `Unsupported`;
-                - `PixelFormat::UYVY` accepted.
-        - `validate_mtl_st20p_mvp_compatibility(const RxVideoConfig&)`
-            - composes generic `validate_rx_video_config(...)` with backend-local frame-view compatibility validation.
-        - `scan_mode_maps_to_mtl_interlaced(VideoScanMode)`
-            - projects current scan-mode modeling into the future MTL interlace boolean:
-                - `Progressive` -> `false`
-                - `Interlaced` -> `true`
-                - `PsF` -> `false`
-        - `project_video_start_config(const RxVideoConfig&)`
-            - validates the config through the current MTL MVP boundary;
-            - copies supported runtime inputs into `ProjectedVideoStartConfig`;
-            - derives `frame_buffer_count` from `kDefaultFrameBufferCount`.
-        - `reset_runtime_locked()`
-            - releases `session_` before `device_`;
-            - clears sink pointer;
-            - resets backend state and stats snapshots.
+        - locks backend state;
+        - returns current state when already stopped and no sink/device/session state exists;
+        - otherwise calls `reset_runtime_locked()` and returns reset state.
+    - `state() const`
+        - returns locked `RxBackendState` snapshot.
+    - `capabilities() const`
+        - reports video-only capability:
+            - `video_rx = true`;
+            - `audio_rx = false`.
+    - `stats() const`
+        - returns locked `BackendStats` snapshot.
+    - `validate_start_state_locked() const`
+        - requires stopped backend state;
+        - rejects non-null sink, device, or session state as `InvalidBackendState`.
+    - `validate_video_frame_view_compatibility(PixelFormat, VideoScanMode, VideoPackingMode)`
+        - currently supports:
+            - `VideoScanMode::Progressive`;
+            - `VideoPackingMode::Gpm`;
+            - `PixelFormat::UYVY`.
+        - returns `Unsupported` for:
+            - interlaced scan mode;
+            - PsF scan mode;
+            - BPM packing mode.
+        - returns `InvalidValue` for impossible/default fallthrough values.
+    - `validate_mtl_st20p_mvp_compatibility(const RxVideoConfig&)`
+        - validates the generic `RxVideoConfig`;
+        - then applies the MTL ST20P MVP frame-view compatibility boundary.
+    - `scan_mode_maps_to_mtl_interlaced(VideoScanMode)`
+        - maps `VideoScanMode::Interlaced` to `true`;
+        - maps progressive and PsF to `false`.
+    - `project_video_start_config(const RxVideoConfig&)`
+        - validates MTL ST20P MVP compatibility;
+        - copies width, height, frame-rate numerator/denominator, payload type, local/destination IP, pixel format, scan mode, and packing mode;
+        - applies `kDefaultFrameBufferCount`.
+    - `reset_runtime_locked()`
+        - releases `session_` before `device_`;
+        - clears sink pointer;
+        - resets backend state and stats.
 - Примечание:
-    - this file currently defines only the support/projection boundary and backend-local lifecycle skeleton; it does not yet create `mtl_handle`, ST20P RX sessions, or a receive thread.
-    - `start_video(...)` intentionally does not retain the sink because no runtime delivery path exists yet.
+    - no MTL headers are included in this implementation yet.
+    - no MTL device/session handles are created or freed yet.
+    - no frame delivery occurs yet; `video_sink_` is not assigned in the current start path.
+    - current support limits are explicit and localized rather than hidden inside a future ST20P ops projection.

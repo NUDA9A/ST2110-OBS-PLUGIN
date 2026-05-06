@@ -1263,7 +1263,7 @@
   - build and run existing tests through CTest;
   - keep future Windows test/build scripting separate from this Linux MTL-required script.
 
-- [ ] 130G: Document the new MTL build/dependency policy in MTL project context docs
+- [x] 130G: Document the new MTL build/dependency policy in MTL project context docs
   - update `docs/mtl_runtime_context.md` to state that:
     - Linux builds consume an externally installed MTL;
     - DPDK/MTL installation is outside project CMake;
