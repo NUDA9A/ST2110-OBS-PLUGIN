@@ -1216,7 +1216,6 @@
   - keep the future Windows port limited to the project socket backend unless MTL Windows support is explicitly re-evaluated later;
   - do not treat MTL as an optional Linux product feature;
   - do not leak MTL platform/build decisions into parser, signaling, app, or OBS source code.
-
 - [x] 130B: Rewire `libs/st2110core/CMakeLists.txt` to consume installed MTL through `pkg-config`
   - make Linux `st2110core` builds require an already installed MTL package;
   - discover MTL through `pkg-config` package `mtl`;
@@ -1226,7 +1225,6 @@
   - keep dependency installation/building as responsibility of a future external setup/install script;
   - ensure CMake configure fails early on Linux when MTL is required but not installed;
   - ensure non-MTL platforms do not require MTL headers, MTL libraries, DPDK, or pkg-config `mtl`.
-
 - [x] 130C: Remove the unavailable MTL factory build path from normal backend architecture
   - stop compiling `src/mtl_rx_backend_factory_unavailable.cpp`;
   - delete `src/mtl_rx_backend_factory_unavailable.cpp` if it has no remaining repository role;
@@ -1234,7 +1232,6 @@
   - on unsupported platforms, represent MTL absence by absence from the compiled factory registry and by `rx_backend_kind_built(RxBackendKind::Mtl) == false`;
   - keep unavailable/null factory behavior only as an explicit test fixture if tests still need to exercise unavailable backend selection;
   - avoid showing an unavailable MTL backend as a normal user-selectable plugin backend on Windows / non-MTL platforms.
-
 - [x] 130D: Rework `backend_factory_registry.cpp` around the actual compiled backend factory set
   - include and instantiate MTL factories only when `ST2110_HAS_MTL_BACKEND` is enabled;
   - keep socket video/audio factories always available for supported project builds;
@@ -1243,7 +1240,6 @@
   - keep backend selection backend-kind-aware and media-aware without platform-specific branching in app/bootstrap/OBS code;
   - ensure Linux builds expose both socket and MTL factories;
   - ensure Windows / non-MTL builds expose only socket factories.
-
 - [x] 130E: Align MTL factory descriptors with real compiled/runtime availability
   - in the real MTL factory implementation, do not use `available = false` as a placeholder once the corresponding backend runtime is implemented;
   - keep `MtlRxVideoBackendFactory` compiled only on MTL-capable builds;
@@ -1253,7 +1249,6 @@
   - keep descriptor capability flags accurate:
     - video MTL factory => video receive only;
     - audio MTL factory => audio receive only after audio backend implementation.
-
 - [x] 130F: Update `scripts/build_and_test.sh` for the new local Linux MTL-required development path
   - remove any `ST2110_WITH_MTL` argument or expectation from the local test script;
   - keep the script as a developer convenience only, not as final plugin packaging logic;
@@ -1262,7 +1257,6 @@
   - configure the project with ordinary CMake/Ninja commands and no MTL feature toggle;
   - build and run existing tests through CTest;
   - keep future Windows test/build scripting separate from this Linux MTL-required script.
-
 - [x] 130G: Document the new MTL build/dependency policy in MTL project context docs
   - update `docs/mtl_runtime_context.md` to state that:
     - Linux builds consume an externally installed MTL;
@@ -1277,53 +1271,297 @@
   - reuse existing backend lifecycle/state/stats/factory contracts;
   - do not introduce a parallel backend API;
   - keep MTL device/session ownership explicit inside the backend;
-  - keep current MVP support boundary explicit:
-    - only configs that can be projected into current MTL ST20P RX path;
-    - only video output compatible with the current project `VideoFrameView` / `PixelFormat` boundary.
-- [ ] 132: Implement minimal MTL video start/stop using ST20P RX frame API
+  - keep MTL-specific lifecycle, MTL device/runtime projection, frame mapping, and stats boundaries localized in the backend/runtime layer;
+  - do not encode project-local video format, scan-mode, packing-mode, or `VideoFrameView` limitations as MTL backend capability limitations;
+  - leave the common video capability-model expansion, backend-support validation, ST20P projection, runtime start/stop, frame delivery, and stats behavior to the follow-up MTL tasks below.
+- [ ] 131A: Expand the common ST 2110 video receive capability model beyond current Socket MVP limits
+  - extend existing common video enums / structs / helpers so the project can represent the standard and MTL-known video receive space independently of whether the Socket backend has implemented each branch;
+  - keep the capability model common to Socket and MTL rather than introducing an MTL-only media model for formats/modes;
+  - cover common video receive axes such as:
+    - scan mode: progressive, interlaced, PsF;
+    - packing mode: GPM, BPM, and future/recognized packing branches where modeled;
+    - signaled sampling variants already represented by the SDP/signaling model;
+    - bit depths including integer and floating-point depth representation already modeled at signaling level;
+    - transport/payload format needed for backend projection;
+    - output/storage/handoff format as a separate axis from signaled sampling and MTL transport format;
+    - frame-rate / RTP clock / timestamp policy axes already modeled elsewhere;
+    - one-stream and redundant-stream/topology hints where they affect backend construction.
+  - do not collapse common capability into `PixelFormat::UYVY`, `VideoScanMode::Progressive`, or `VideoPackingMode::Gpm`;
+  - do not make Socket implementation limits define which formats/modes are structurally recognized by the project;
+  - completion condition:
+    - common video receive config/validation can represent standard/MTL-known video modes before backend-specific implementation support is checked.
+- [ ] 131B: Split common video structural validation from backend implementation-support validation
+  - keep structural validation responsible for determining whether a video receive description is well-formed, standards-aware, and internally consistent;
+  - add a separate backend-support validation boundary that answers whether a specific backend currently implements that already-recognized mode;
+  - ensure failure semantics are explicit:
+    - malformed or contradictory stream/config values => `InvalidValue`;
+    - recognized but not implemented by the selected backend => `Unsupported`;
+    - runtime/system/MTL/socket failure => backend/runtime error, not config invalidity.
+  - Socket must reject not-yet-implemented common video modes through Socket implementation-support validation, not by treating them as unknown or invalid;
+  - MTL must accept/project common video modes that MTL can implement, even when Socket cannot;
+  - completion condition:
+    - the same structurally valid video config can pass common validation, fail Socket support validation, and pass MTL support/projection validation where MTL supports it.
+- [ ] 131C: Add a common video backend support matrix/policy for Socket and MTL
+  - introduce explicit backend-specific support policy helpers for common video receive capabilities;
+  - define Socket support in terms of actual project Socket implementation status, not in terms of whether a format/mode is standard-valid;
+  - define MTL support in terms of what can be projected into MTL ST20P RX and delivered or handled through the project handoff/conversion boundary;
+  - keep Socket and MTL policies consuming the same common video capability/config model;
+  - avoid separate duplicated validation logic that can diverge between backends;
+  - make unsupported branches named and testable:
+    - Socket unsupported because depacketizer/reconstructor/storage path is not implemented yet;
+    - MTL unsupported only when the value cannot be projected to MTL or is deliberately disabled by a named local MTL policy.
+  - completion condition:
+    - backend selection checks common video capability through a shared pipeline and diverges only at backend implementation-support policy.
+- [ ] 131D: Project the common video receive config into MTL ST20P RX ops
+  - add a named projection boundary from the common video receive config plus MTL device/runtime config into MTL `st20p_rx_ops`;
+  - keep MTL device/runtime fields backend-specific:
+    - MTL device ports;
+    - session ports `P` / `R`;
+    - PMD selection;
+    - network protocol;
+    - queue counts;
+    - MTL flags;
+    - lcores / socket / NUMA policy where consumed.
+  - project common media axes into MTL ST20P fields through explicit helpers/switches:
+    - payload type;
+    - width / height / frame rate;
+    - scan/interlace-related fields;
+    - ST20 transport format;
+    - ST frame output format;
+    - packing/session mode;
+    - frame buffer count;
+    - receive flags and session policies.
+  - do not infer MTL transport/output format only from project `PixelFormat`;
+  - do not silently coerce unknown or unsupported projection values to defaults;
+  - completion condition:
+    - MTL video start can consume the same common video config validated for Socket/MTL, then use a backend-local projection into `st20p_rx_ops`.
+- [ ] 131E: Keep Socket video backend on the same common video validation path
+  - rewire or preserve Socket video operational assembly so it consumes the common video receive capability/config model before Socket-specific runtime construction;
+  - ensure Socket limitations are expressed by Socket support policy:
+    - not implemented in Socket depacketizer/reconstructor;
+    - not implemented in Socket storage/handoff;
+    - not implemented in Socket timing/playout;
+    - not implemented in Socket packing/scan branch.
+  - do not use common structural validation to reject modes merely because Socket lacks implementation;
+  - keep existing Socket MVP behavior unchanged for currently implemented modes;
+  - completion condition:
+    - Socket and MTL run through the same common video structural validation, and Socket-only failures for broader modes are localized as implementation-support failures.
+- [ ] 131F: Split project video delivery/handoff compatibility from receive-session capability
+  - introduce or tighten a common video delivery/handoff support boundary separate from backend receive-session support;
+  - this boundary must decide whether an already-received frame/unit can currently be exposed through:
+    - `VideoFrameView`;
+    - a conversion helper;
+    - OBS handoff;
+    - a future native frame contract.
+  - do not reject MTL session creation or common config validation only because a particular output frame format cannot yet be represented by current `PixelFormat`;
+  - Socket may still fail earlier if the depacketizer/storage implementation for a recognized mode is not implemented;
+  - MTL may receive broader MTL-supported modes and then handle project delivery limitations through localized conversion/drop/report policy;
+  - completion condition:
+    - receive capability and project handoff capability are independent validation/support boundaries.
+- [ ] 131G: Add regression coverage for common video capability validation across Socket and MTL
+  - add tests proving common structural validation accepts recognized video modes beyond current Socket MVP implementation;
+  - add tests proving Socket rejects not-yet-implemented recognized modes through Socket support policy, not common structural validation;
+  - add tests proving MTL support/projection accepts corresponding MTL-supported modes where projection exists;
+  - cover at least:
+    - progressive and interlaced/PsF recognized branches;
+    - GPM and BPM recognized branches;
+    - non-UYVY output/storage branches;
+    - 10-bit / 12-bit / 16-bit-related branches where represented;
+    - 4:4:4 / 4:2:2 / 4:2:0 recognized branches where represented;
+    - one-stream and redundant/topology branches where modeled.
+  - completion condition:
+    - tests fail if recognized common video modes are incorrectly rejected as invalid or if MTL support is narrowed by Socket implementation limits.
+- [ ] 132: Implement full MTL video start/stop using ST20P RX frame API
+  - consume the common video receive config after common structural validation and MTL backend-support validation;
+  - consume MTL-specific device/runtime config only for MTL device/session construction;
   - use `mtl_init` / `mtl_uninit` for device lifecycle;
-  - use `st20p_rx_create` / `st20p_rx_free` for session lifecycle;
-  - use blocking `st20p_rx_get_frame` / `st20p_rx_put_frame` receive flow;
+  - use `st20p_rx_create` / `st20p_rx_free` for ST20P session lifecycle;
+  - project ST20P RX operations through the common-to-MTL projection boundary from task `131D`;
+  - use blocking `st20p_rx_get_frame` / `st20p_rx_put_frame` receive flow where configured;
+  - use the MTL wake mechanism on stop so blocked receive can terminate cleanly;
+  - support MTL-projected video session axes through explicit projection / policy branches rather than hidden project-local defaults;
   - keep start-failure cleanup, retry-after-failure behavior, and stop/shutdown semantics explicit;
-  - keep MTL-specific lifecycle handling localized in the backend/runtime layer.
-- [ ] 133: Map MTL video frame to current `VideoFrameView` and deliver to sink
-  - for the current MVP path, support only MTL video output that can be exposed through the existing `VideoFrameView` contract without reshaping public frame APIs;
+  - do not reject MTL session creation only because the current project `VideoFrameView` mapping cannot deliver a particular MTL output format;
+  - completion condition:
+    - MTL video start/stop constructs and tears down the MTL device/session path from common validated video config plus MTL runtime config, without hardcoded Socket MVP format/mode restrictions.
+- [ ] 133: Map MTL video frames through the common delivery boundary and deliver to sink where representable
+  - consume frames from `st20p_rx_get_frame(...)` and return them with `st20p_rx_put_frame(...)`;
+  - deliver any sink-facing view synchronously within the valid lifetime of the MTL frame;
+  - map MTL frame metadata through a dedicated boundary:
+    - frame format;
+    - plane pointers;
+    - linesizes;
+    - width / height;
+    - interlaced / second-field metadata;
+    - frame status;
+    - packet counters;
+    - RTP timestamp and MTL timestamp metadata.
   - keep `rtp_timestamp` -> `TimestampNs` mapping on the existing timestamp-mapping boundary;
-  - deliver frames synchronously within the valid lifetime of the MTL frame before `st20p_rx_put_frame`;
-  - keep any current unsupported video format / scan-mode / packing-mode combinations as explicit localized `Unsupported` branches.
+  - use the common delivery/handoff boundary from task `131F` for deciding:
+    - direct `VideoFrameView` delivery;
+    - conversion before delivery;
+    - future/native frame delivery;
+    - counted/reportable delivery-unsupported/drop behavior.
+  - do not treat broader MTL-supported receive-session values as session-start failures merely because current project delivery is narrower;
+  - completion condition:
+    - MTL video frame delivery capability is separated from MTL receive-session capability, and unsupported project handoff cases are localized, observable, and non-corrupting.
 - [ ] 134: Add meaningful backend-local MTL video stats
-  - populate delivery counters and MTL session stats that are actually available/meaningful;
+  - populate delivery counters and MTL session/device stats that are actually available/meaningful;
+  - include frame-level metadata that MTL exposes where useful:
+    - delivered frames;
+    - delivery-unsupported frames;
+    - incomplete/status-marked frames;
+    - packet totals / received packet counters where available;
+    - receive timestamps / timing metadata where consumed;
+    - MTL port/device counters where available.
   - do not force socket packet-parse / reorder / depacketizer stats concepts onto the MTL video backend;
-  - keep unavailable MTL counters explicit rather than inventing synthetic values.
+  - keep unavailable MTL counters explicit rather than inventing synthetic values;
+  - keep stats collection backend-local and snapshot-oriented;
+  - completion condition:
+    - MTL video stats describe actual MTL runtime/session/frame behavior and remain valid across broader common video capability branches.
 
 ### C4. MTL audio RX
-- [ ] 140: Define the minimal viable MTL audio RX path and current support boundary
-  - replace the old vague “investigate” wording with a concrete architecture task;
-  - minimal viable MTL audio RX path is:
-    - `mtl_init` / `mtl_uninit`;
-    - `st30p_rx_create` / `st30p_rx_free`;
-    - blocking `st30p_rx_get_frame` / `st30p_rx_put_frame`;
-  - define the projection boundary from current `RxAudioConfig` / `AudioPcmBitDepth` into MTL `st30p_rx_ops` / `st30_fmt`;
-  - keep current MVP support aligned to the already-modeled Level A receiver baseline:
-    - `48 kHz`;
-    - `1 ms`;
-    - `1..8` channels;
-    - linear PCM only;
-  - keep unsupported sampling rates / packet times / channel counts / wire formats explicit and localized.
+- [ ] 140: Expand the common ST 2110 audio receive capability model beyond current Socket Level-A limits
+  - extend existing common audio enums / structs / helpers so the project can represent the standard and MTL-known ST30/ST31 receive space independently of whether the Socket backend has implemented each branch;
+  - keep the capability model common to Socket and MTL rather than introducing an MTL-only media model for audio formats/modes;
+  - cover common audio receive axes such as:
+    - RTP payload type;
+    - PCM format / bit depth;
+    - ST31/AM824 or other non-current audio payload branches as distinct modeled branches where relevant;
+    - sampling rate;
+    - packet time;
+    - samples per packet as a derived value;
+    - channel count;
+    - channel order / channel mapping;
+    - frame/block duration policy;
+    - one-stream and redundant-stream/topology hints where they affect backend construction.
+  - do not collapse common audio capability into `48 kHz`, `1 ms`, `1..8 channels`, linear PCM, or current `InterleavedS32` delivery limits;
+  - do not make Socket implementation limits define which audio formats/modes are structurally recognized by the project;
+  - completion condition:
+    - common audio receive config/validation can represent recognized ST30/ST31/MTL-known audio modes before backend-specific implementation support is checked.
+- [ ] 140A: Split common audio structural validation from backend implementation-support validation
+  - keep structural validation responsible for determining whether an audio receive description is well-formed, standards-aware, and internally consistent;
+  - add a separate backend-support validation boundary that answers whether a specific backend currently implements that already-recognized mode;
+  - ensure failure semantics are explicit:
+    - malformed or contradictory stream/config values => `InvalidValue`;
+    - recognized but not implemented by the selected backend => `Unsupported`;
+    - runtime/system/MTL/socket failure => backend/runtime error, not config invalidity.
+  - Socket must reject not-yet-implemented common audio modes through Socket implementation-support validation, not by treating them as unknown or invalid;
+  - MTL must accept/project common audio modes that MTL can implement, even when Socket cannot;
+  - completion condition:
+    - the same structurally valid audio config can pass common validation, fail Socket support validation, and pass MTL support/projection validation where MTL supports it.
+- [ ] 140B: Add a common audio backend support matrix/policy for Socket and MTL
+  - introduce explicit backend-specific support policy helpers for common audio receive capabilities;
+  - define Socket support in terms of actual project Socket implementation status, not in terms of whether an audio format/mode is standard-valid;
+  - define MTL support in terms of what can be projected into MTL ST30P RX and delivered or handled through the project handoff/conversion boundary;
+  - keep Socket and MTL policies consuming the same common audio capability/config model;
+  - avoid separate duplicated validation logic that can diverge between backends;
+  - make unsupported branches named and testable:
+    - Socket unsupported because parser/reorder/assembler/storage path is not implemented yet;
+    - MTL unsupported only when the value cannot be projected to MTL or is deliberately disabled by a named local MTL policy.
+  - completion condition:
+    - backend selection checks common audio capability through a shared pipeline and diverges only at backend implementation-support policy.
+- [ ] 140C: Project the common audio receive config into MTL ST30P RX ops
+  - add a named projection boundary from the common audio receive config plus MTL device/runtime config into MTL `st30p_rx_ops`;
+  - keep MTL device/runtime fields backend-specific:
+    - MTL device ports;
+    - session ports `P` / `R`;
+    - PMD selection;
+    - network protocol;
+    - queue counts;
+    - MTL flags;
+    - lcores / socket / NUMA policy where consumed.
+  - project common media axes into MTL ST30P fields through explicit helpers/switches:
+    - payload type;
+    - `st30_fmt`;
+    - `st30_sampling`;
+    - `st30_ptime`;
+    - channel count;
+    - frame buffer count;
+    - frame buffer size/duration policy;
+    - receive flags and session policies.
+  - use MTL helper APIs or named derived-value helpers for packet/frame sizes where available;
+  - do not hardcode `48` samples, `48 kHz`, `1 ms`, stereo, or PCM24 as backend defaults except through named external adapter/default policy;
+  - do not silently map ST31/AM824 to linear PCM;
+  - completion condition:
+    - MTL audio start can consume the same common audio config validated for Socket/MTL, then use a backend-local projection into `st30p_rx_ops`.
+- [ ] 140D: Keep Socket audio backend on the same common audio validation path
+  - rewire or preserve Socket audio operational assembly so it consumes the common audio receive capability/config model before Socket-specific runtime construction;
+  - ensure Socket limitations are expressed by Socket support policy:
+    - not implemented in Socket parser/reorder/assembler;
+    - not implemented in Socket storage/handoff;
+    - not implemented in Socket timing/playout;
+    - not implemented in Socket wire-format branch.
+  - do not use common structural validation to reject modes merely because Socket lacks implementation;
+  - keep existing Socket MVP behavior unchanged for currently implemented modes;
+  - completion condition:
+    - Socket and MTL run through the same common audio structural validation, and Socket-only failures for broader modes are localized as implementation-support failures.
+- [ ] 140E: Split project audio delivery/conversion compatibility from receive-session capability
+  - introduce or tighten a common audio delivery/conversion support boundary separate from backend receive-session support;
+  - this boundary must decide whether an already-received audio frame/block can currently be exposed through:
+    - `AudioBuffer`;
+    - `AudioFrameView`;
+    - a PCM conversion helper;
+    - OBS handoff;
+    - a future native audio contract.
+  - do not reject MTL session creation or common config validation only because a particular MTL audio frame format cannot yet be represented as current `InterleavedS32`;
+  - Socket may still fail earlier if parser/assembler implementation for a recognized mode is not implemented;
+  - MTL may receive broader MTL-supported modes and then handle project delivery/conversion limitations through localized conversion/drop/report policy;
+  - completion condition:
+    - receive capability and project audio handoff/conversion capability are independent validation/support boundaries.
+- [ ] 140F: Add regression coverage for common audio capability validation across Socket and MTL
+  - add tests proving common structural validation accepts recognized audio modes beyond current Socket Level-A implementation;
+  - add tests proving Socket rejects not-yet-implemented recognized modes through Socket support policy, not common structural validation;
+  - add tests proving MTL support/projection accepts corresponding MTL-supported modes where projection exists;
+  - cover at least:
+    - PCM16 and PCM24;
+    - at least one additional modeled MTL audio format branch;
+    - multiple sampling-rate branches;
+    - multiple packet-time branches;
+    - multiple channel counts;
+    - one-stream and redundant/topology branches where modeled.
+  - add tests that verify project `InterleavedS32` conversion limitations are reported only by the conversion/delivery boundary;
+  - completion condition:
+    - tests fail if recognized common audio modes are incorrectly rejected as invalid or if MTL support is narrowed by Socket implementation limits.
 - [ ] 141: Implement `MtlRxAudioBackend` skeleton + focused smoke test
   - reuse existing backend lifecycle/state/stats/factory contracts;
   - do not introduce a parallel audio backend API;
   - keep MTL device/session ownership explicit inside the backend;
-  - keep current MVP support limits explicit rather than implicit.
-- [ ] 142: Implement minimal audio start/stop and frame/block delivery using ST30P RX
-  - use blocking `st30p_rx_get_frame` / `st30p_rx_put_frame` receive flow;
-  - map supported MTL PCM frame data into the current `AudioBuffer` / `AudioFrameView` contract;
-  - keep the current `InterleavedS32` storage boundary explicit and localize any required PCM16/PCM24 -> S32 conversion there;
-  - keep unsupported MTL audio formats such as non-current wire-format cases out of the generic backend API and localized in the MTL audio backend support boundary.
+  - make the skeleton consume the common audio receive config after common structural validation and MTL support validation;
+  - keep MTL device/runtime projection, session projection, frame mapping, conversion, and stats as explicit backend-local boundaries;
+  - do not encode current project audio storage/conversion limits as MTL session capability limits;
+  - add focused smoke coverage proving:
+    - backend lifecycle/state behavior is explicit;
+    - MTL-owned resource handles remain backend-local;
+    - broader common audio capability branches are not collapsed into the Socket Level-A adapter path before MTL support/projection validation.
+- [ ] 142: Implement full audio start/stop and frame/block delivery using ST30P RX
+  - consume the common audio receive config after common structural validation and MTL backend-support validation;
+  - consume MTL-specific device/runtime config only for MTL device/session construction;
+  - use `mtl_init` / `mtl_uninit` for device lifecycle;
+  - use `st30p_rx_create` / `st30p_rx_free` for ST30P session lifecycle;
+  - use blocking `st30p_rx_get_frame` / `st30p_rx_put_frame` receive flow where configured;
+  - use the MTL wake mechanism on stop so blocked receive can terminate cleanly;
+  - project ST30P RX operations through the common-to-MTL projection boundary from task `140C`;
+  - map supported MTL PCM frame data into the current `AudioBuffer` / `AudioFrameView` contract through explicit conversion helpers;
+  - keep the current `InterleavedS32` storage boundary explicit and localize any PCM8/PCM16/PCM24 -> S32 conversion there;
+  - keep ST31/AM824 and any other non-linear-PCM branch distinct unless an explicit decode boundary is implemented;
+  - handle project delivery/conversion unsupported cases through localized report/drop/conversion policy, not through MTL session-start failure;
+  - completion condition:
+    - MTL audio start/stop constructs and tears down the MTL device/session path from common validated audio config plus MTL runtime config, while project audio delivery limitations remain localized to conversion/handoff.
 - [ ] 143: Add meaningful backend-local MTL audio stats
-  - populate delivery counters and MTL session stats that are actually available/meaningful;
-  - do not force socket/video packet-parse stats concepts onto the MTL audio backend;
-  - keep unavailable counters explicit rather than synthetic.
+  - populate delivery counters and MTL session/device stats that are actually available/meaningful;
+  - include frame-level metadata that MTL exposes where useful:
+    - delivered audio frames/blocks;
+    - delivery-unsupported frames/blocks;
+    - conversion failures;
+    - packet totals / received packet counters where available;
+    - receive timestamps / timing metadata where consumed;
+    - MTL port/device counters where available.
+  - do not force socket/video packet-parse, reorder, depacketizer, or assembler stats concepts onto the MTL audio backend;
+  - keep unavailable counters explicit rather than synthetic;
+  - keep stats valid across broader common audio format, sampling, packet-time, channel-count, and topology branches;
+  - completion condition:
+    - MTL audio stats describe actual MTL runtime/session/frame behavior and do not depend on Socket Level-A-only assumptions.
 
 ---
 

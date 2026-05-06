@@ -58,9 +58,62 @@ The following are mandatory examples and are NOT exhaustive:
 - audio sampling rate / packet time / `samples_per_packet` derivation;
 - audio conformance level / current support boundary;
 - audio channel count / order / mapping;
-- receiver capability / support policy.
+- receiver capability / support policy;
+- backend implementation-support policy;
+- backend-local runtime/device/session projection boundaries;
+- receive-session capability versus project delivery / handoff / conversion capability.
 
 Any known variable standard / signaling / runtime / backend parameter MUST be treated as a modeled axis or derived value unless clearly proven otherwise.
+
+### 3.1 Common backend capability architecture
+
+For a given media type, the structurally recognized receive capability model MUST be common across backends.
+
+This means:
+
+- common signaling/runtime/media capability modeling MUST describe what the project recognizes structurally, not only what one backend currently implements;
+- backend-specific code MUST consume that common capability model rather than redefine its own separate truth for which formats, modes, or combinations are recognized;
+- Socket implementation limits MUST NOT narrow the project’s common capability model;
+- MTL-specific device/runtime/session configuration MAY be backend-local, but it MUST NOT replace the common media capability model.
+
+### 3.2 Structural validity versus backend support
+
+Structural validation and backend implementation support MUST remain separate boundaries.
+
+Required split:
+
+- structural validation answers whether a config/stream description is well-formed, standards-aware, and internally consistent;
+- backend support validation answers whether the selected backend currently implements that already-recognized mode;
+- project delivery / handoff / conversion validation answers whether the already-received media can currently be exposed through the project’s current frame/audio/output contracts.
+
+Error meaning MUST remain consistent:
+
+- `InvalidValue` = violates required structural/semantic constraints;
+- `Unsupported` = recognized but not supported yet by the relevant boundary;
+- runtime/system/backend failures = operational failures, not config invalidity.
+
+### 3.3 Backend-specific limits
+
+If a format, mode, or combination is structurally recognized by the common model but not yet implemented in the selected backend, it MUST fail only at that backend’s implementation-support boundary.
+
+In particular:
+
+- Socket backend gaps MUST be represented as Socket implementation limits, not as proof that the common model is invalid or unknown;
+- MTL backend support MUST be evaluated against the same common model, then projected into MTL-specific APIs through explicit backend-local projection helpers;
+- backend-local projection failure MUST NOT be hidden as generic structural invalidity unless the input is actually malformed.
+
+### 3.4 Receive capability versus delivery capability
+
+The ability to receive or construct a backend/session path MUST remain separate from the ability to expose the result through current project delivery/handoff contracts.
+
+Examples include:
+
+- current `VideoFrameView` / `PixelFormat` limitations;
+- current `AudioBuffer` / `AudioFrameView` / storage-layout limitations;
+- current OBS handoff limitations;
+- current conversion-helper availability.
+
+A backend/session path MUST NOT be rejected early only because the current project handoff contract is narrower, unless that handoff limitation is itself the active support boundary being checked.
 
 ## 4. MVP limitations
 
