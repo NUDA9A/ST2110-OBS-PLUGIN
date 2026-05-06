@@ -1,18 +1,27 @@
-option(ST2110_WITH_MTL "Build MTL-backed receive integration" OFF)
-set(ST2110_MTL_INCLUDE_DIRS "" CACHE PATH "MTL include directory when ST2110_WITH_MTL=ON")
-set(ST2110_MTL_LIBRARIES "" CACHE STRING "MTL libraries when ST2110_WITH_MTL=ON")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(ST2110_HAS_MTL_BACKEND ON)
+else()
+    set(ST2110_HAS_MTL_BACKEND OFF)
+endif()
+
+if(ST2110_HAS_MTL_BACKEND)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(ST2110_MTL IMPORTED_TARGET mtl)
+
+    if(NOT ST2110_MTL_FOUND)
+        message(FATAL_ERROR
+                "Linux st2110core builds require an installed MTL pkg-config package named 'mtl'. "
+                "Install Media Transport Library and set PKG_CONFIG_PATH if it is installed outside the default pkg-config search paths.")
+    endif()
+endif()
 
 set(ST2110CORE_SOURCES
         src/stub.cpp
         src/socket_rx_single_media_backend_base.cpp
         src/backend_factory_registry.cpp
-        src/mtl_rx_backend_factory_unavailable.cpp
 )
 
-if(ST2110_WITH_MTL)
-    list(REMOVE_ITEM ST2110CORE_SOURCES
-            src/mtl_rx_backend_factory_unavailable.cpp
-    )
+if(ST2110_HAS_MTL_BACKEND)
     list(APPEND ST2110CORE_SOURCES
             src/mtl_rx_backend_factory.cpp
             src/mtl_rx_video_backend.cpp
@@ -30,23 +39,11 @@ target_include_directories(st2110core PUBLIC
 target_compile_features(st2110core PUBLIC cxx_std_23)
 
 target_compile_definitions(st2110core PRIVATE
-        ST2110_WITH_MTL=$<BOOL:${ST2110_WITH_MTL}>
+        ST2110_HAS_MTL_BACKEND=$<BOOL:${ST2110_HAS_MTL_BACKEND}>
 )
 
-if(ST2110_WITH_MTL)
-    if(ST2110_MTL_INCLUDE_DIRS STREQUAL "")
-        message(FATAL_ERROR "ST2110_WITH_MTL=ON requires ST2110_MTL_INCLUDE_DIRS")
-    endif()
-
-    if(ST2110_MTL_LIBRARIES STREQUAL "")
-        message(FATAL_ERROR "ST2110_WITH_MTL=ON requires ST2110_MTL_LIBRARIES")
-    endif()
-
-    target_include_directories(st2110core PRIVATE
-            ${ST2110_MTL_INCLUDE_DIRS}
-    )
-
+if(ST2110_HAS_MTL_BACKEND)
     target_link_libraries(st2110core PRIVATE
-            ${ST2110_MTL_LIBRARIES}
+            PkgConfig::ST2110_MTL
     )
 endif()

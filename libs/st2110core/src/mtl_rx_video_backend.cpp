@@ -3,10 +3,6 @@
 #include <utility>
 
 namespace st2110 {
-
-struct MtlRxVideoDeviceContext {};
-struct MtlRxVideoSessionContext {};
-
 MtlRxVideoBackend::~MtlRxVideoBackend() { (void)stop(); }
 
 const char *MtlRxVideoBackend::backend_name() const { return "mtl"; }

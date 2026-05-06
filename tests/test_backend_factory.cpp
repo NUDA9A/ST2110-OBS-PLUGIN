@@ -11,11 +11,14 @@
 #include <st2110/backend.hpp>
 #include <st2110/backend_factory.hpp>
 #include <st2110/error.hpp>
-#include <st2110/mtl_rx_backend_factory.hpp>
-#include <st2110/mtl_rx_video_backend.hpp>
 
 #ifndef ST2110_TEST_EXPECT_MTL_BUILT
 #error "ST2110_TEST_EXPECT_MTL_BUILT must be provided by tests/CMakeLists.txt"
+#endif
+
+#if ST2110_TEST_EXPECT_MTL_BUILT
+#include <st2110/mtl_rx_backend_factory.hpp>
+#include <st2110/mtl_rx_video_backend.hpp>
 #endif
 
 static_assert(std::is_enum_v<st2110::RxBackendKind>);
@@ -320,7 +323,7 @@ void test_default_factory_registry_shape() {
     const auto factories = st2110::default_rx_backend_factories();
     const auto factories_again = st2110::default_rx_backend_factories();
 
-    assert(factories.size() == 4);
+    assert(factories.size() == (kExpectMtlBuilt ? 4U : 2U));
     assert(factories.data() == factories_again.data());
 
     std::size_t socket_video_count = 0;
@@ -351,6 +354,7 @@ void test_default_factory_registry_shape() {
 
         if (descriptor.kind == st2110::RxBackendKind::Mtl && descriptor.capabilities.video_rx &&
             !descriptor.capabilities.audio_rx) {
+            assert(kExpectMtlBuilt);
             assert(!descriptor.available);
             ++mtl_video_count;
             continue;
@@ -358,6 +362,7 @@ void test_default_factory_registry_shape() {
 
         if (descriptor.kind == st2110::RxBackendKind::Mtl && !descriptor.capabilities.video_rx &&
             descriptor.capabilities.audio_rx) {
+            assert(kExpectMtlBuilt);
             assert(!descriptor.available);
             ++mtl_audio_count;
             continue;
@@ -368,8 +373,8 @@ void test_default_factory_registry_shape() {
 
     assert(socket_video_count == 1);
     assert(socket_audio_count == 1);
-    assert(mtl_video_count == 1);
-    assert(mtl_audio_count == 1);
+    assert(mtl_video_count == (kExpectMtlBuilt ? 1U : 0U));
+    assert(mtl_audio_count == (kExpectMtlBuilt ? 1U : 0U));
 }
 
 void test_default_factory_registry_selects_socket_backends() {
@@ -445,7 +450,8 @@ void test_default_factory_registry_keeps_mtl_public_but_unavailable() {
     assert(create_audio.error() == st2110::Error::Unsupported);
 }
 
-void test_direct_mtl_video_factory_behavior_matches_build() {
+#if ST2110_TEST_EXPECT_MTL_BUILT
+void test_direct_mtl_video_factory_reports_runtime_unavailable_until_start_stop_is_implemented() {
     st2110::MtlRxVideoBackendFactory factory{};
 
     const st2110::RxBackendDescriptor descriptor = factory.descriptor();
@@ -456,21 +462,9 @@ void test_direct_mtl_video_factory_behavior_matches_build() {
     assert(!descriptor.available);
 
     auto backend = factory.create_backend();
-    if (kExpectMtlBuilt) {
-        assert(backend != nullptr);
-        assert(std::string_view(backend->backend_name()) == "mtl");
-        assert(st2110::supports_media(backend->capabilities(), st2110::RxMediaKind::Video));
-        assert(!st2110::supports_media(backend->capabilities(), st2110::RxMediaKind::Audio));
-        assert(st2110::backend_is_stopped(backend->state()));
-        assert_zero_backend_stats(backend->stats());
-
-        auto stopped = backend->stop();
-        assert(stopped.has_value());
-        assert(st2110::backend_is_stopped(*stopped));
-    } else {
-        assert(backend == nullptr);
-    }
+    assert(backend == nullptr);
 }
+#endif
 
 #if ST2110_TEST_EXPECT_MTL_BUILT
 void test_direct_mtl_video_backend_exposes_basic_skeleton_contract() {
@@ -611,8 +605,8 @@ int main() {
     test_default_factory_registry_shape();
     test_default_factory_registry_selects_socket_backends();
     test_default_factory_registry_keeps_mtl_public_but_unavailable();
-    test_direct_mtl_video_factory_behavior_matches_build();
 #if ST2110_TEST_EXPECT_MTL_BUILT
+    test_direct_mtl_video_factory_reports_runtime_unavailable_until_start_stop_is_implemented();
     test_direct_mtl_video_backend_exposes_basic_skeleton_contract();
     test_direct_mtl_video_backend_supported_mvp_start_is_explicitly_unsupported();
     test_direct_mtl_video_backend_rejects_unsupported_scan_mode();

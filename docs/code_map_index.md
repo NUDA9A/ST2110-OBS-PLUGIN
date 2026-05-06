@@ -168,7 +168,6 @@
     - `libs/st2110core/src/socket_rx_single_media_backend_base.cpp`
     - `libs/st2110core/src/backend_factory_registry.cpp`
     - `libs/st2110core/src/mtl_rx_backend_factory.cpp`
-    - `libs/st2110core/src/mtl_rx_backend_factory_unavailable.cpp`
     - `libs/st2110core/include/st2110/mtl_rx_video_backend.hpp`
     - `libs/st2110core/src/mtl_rx_video_backend.cpp`
 

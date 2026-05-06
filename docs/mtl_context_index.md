@@ -4,7 +4,7 @@
 
 This file is the entry point for MTL-related task context.
 
-It summarizes which compact MTL context documents should be read before working on `ST2110_WITH_MTL`, `MtlRxVideoBackend`, `MtlRxAudioBackend`, MTL lifecycle, MTL frame mapping, or MTL backend-local stats.
+It summarizes which compact MTL context documents should be read before working on `ST2110_HAS_MTL_BACKEND`, `MtlRxVideoBackend`, `MtlRxAudioBackend`, MTL lifecycle, MTL frame mapping, MTL build/dependency policy, or MTL backend-local stats.
 
 These notes are derived from `NUDA9A/Media-Transport-Library` on pinned branch `mtl-ref-v26.01`.
 
@@ -13,6 +13,10 @@ These notes are derived from `NUDA9A/Media-Transport-Library` on pinned branch `
 Read in this order for MTL tasks:
 
 1. `mtl_runtime_context.md`
+   - MTL build/dependency policy.
+   - Linux externally installed MTL requirement.
+   - DPDK/MTL setup responsibility split.
+   - Platform-derived `ST2110_HAS_MTL_BACKEND`.
    - MTL device lifecycle.
    - `mtl_init` / `mtl_uninit`.
    - `mtl_init_params`.

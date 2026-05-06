@@ -11,8 +11,8 @@
 
 namespace st2110 {
 
-struct MtlRxVideoDeviceContext;
-struct MtlRxVideoSessionContext;
+struct MtlRxVideoDeviceContext {};
+struct MtlRxVideoSessionContext {};
 
 class MtlRxVideoBackend final : public IRxVideoBackend {
   public:

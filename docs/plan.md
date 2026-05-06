@@ -1206,7 +1206,7 @@
   - when `ST2110_WITH_MTL=OFF`, the project must build cleanly without MTL headers/libs and without compiling MTL backend code;
   - when `ST2110_WITH_MTL=ON`, MTL dependency wiring must stay localized to build/factory/runtime code rather than leaking into app/bootstrap code;
   - keep temporary build/runtime unavailability localized through factory/build selection, not by removing `mtl` from public parsing/selection.
-- [ ] 130A: Replace `ST2110_WITH_MTL` with a platform-derived MTL backend build boundary
+- [x] 130A: Replace `ST2110_WITH_MTL` with a platform-derived MTL backend build boundary
   - remove `ST2110_WITH_MTL` as a user-facing CMake option;
   - introduce an internal build capability such as `ST2110_HAS_MTL_BACKEND`;
   - derive `ST2110_HAS_MTL_BACKEND` from the target platform:
@@ -1217,7 +1217,7 @@
   - do not treat MTL as an optional Linux product feature;
   - do not leak MTL platform/build decisions into parser, signaling, app, or OBS source code.
 
-- [ ] 130B: Rewire `libs/st2110core/CMakeLists.txt` to consume installed MTL through `pkg-config`
+- [x] 130B: Rewire `libs/st2110core/CMakeLists.txt` to consume installed MTL through `pkg-config`
   - make Linux `st2110core` builds require an already installed MTL package;
   - discover MTL through `pkg-config` package `mtl`;
   - link MTL through an imported pkg-config target, for example `PkgConfig::ST2110_MTL`;
@@ -1227,7 +1227,7 @@
   - ensure CMake configure fails early on Linux when MTL is required but not installed;
   - ensure non-MTL platforms do not require MTL headers, MTL libraries, DPDK, or pkg-config `mtl`.
 
-- [ ] 130C: Remove the unavailable MTL factory build path from normal backend architecture
+- [x] 130C: Remove the unavailable MTL factory build path from normal backend architecture
   - stop compiling `src/mtl_rx_backend_factory_unavailable.cpp`;
   - delete `src/mtl_rx_backend_factory_unavailable.cpp` if it has no remaining repository role;
   - do not register unavailable MTL factories on platforms where MTL is not built;
@@ -1235,7 +1235,7 @@
   - keep unavailable/null factory behavior only as an explicit test fixture if tests still need to exercise unavailable backend selection;
   - avoid showing an unavailable MTL backend as a normal user-selectable plugin backend on Windows / non-MTL platforms.
 
-- [ ] 130D: Rework `backend_factory_registry.cpp` around the actual compiled backend factory set
+- [x] 130D: Rework `backend_factory_registry.cpp` around the actual compiled backend factory set
   - include and instantiate MTL factories only when `ST2110_HAS_MTL_BACKEND` is enabled;
   - keep socket video/audio factories always available for supported project builds;
   - make the built-in factory array size match the compiled factory set instead of hardcoding a four-factory list on every platform;
@@ -1244,7 +1244,7 @@
   - ensure Linux builds expose both socket and MTL factories;
   - ensure Windows / non-MTL builds expose only socket factories.
 
-- [ ] 130E: Align MTL factory descriptors with real compiled/runtime availability
+- [x] 130E: Align MTL factory descriptors with real compiled/runtime availability
   - in the real MTL factory implementation, do not use `available = false` as a placeholder once the corresponding backend runtime is implemented;
   - keep `MtlRxVideoBackendFactory` compiled only on MTL-capable builds;
   - make video MTL factory availability reflect the implemented video runtime state after task `132`;
@@ -1254,7 +1254,7 @@
     - video MTL factory => video receive only;
     - audio MTL factory => audio receive only after audio backend implementation.
 
-- [ ] 130F: Update `scripts/build_and_test.sh` for the new local Linux MTL-required development path
+- [x] 130F: Update `scripts/build_and_test.sh` for the new local Linux MTL-required development path
   - remove any `ST2110_WITH_MTL` argument or expectation from the local test script;
   - keep the script as a developer convenience only, not as final plugin packaging logic;
   - set or preserve `PKG_CONFIG_PATH` entries needed for local `/usr/local` MTL/DPDK installs;

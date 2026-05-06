@@ -2,7 +2,9 @@
 
 ## Scope
 
-This document captures MTL runtime/device context needed for `ST2110_WITH_MTL`, MTL backend construction, and common device lifecycle for video/audio RX backends.
+This document captures MTL runtime/device context and MTL build/dependency policy needed for
+`ST2110_HAS_MTL_BACKEND`, MTL backend construction, and common device lifecycle for video/audio RX
+backends.
 
 Derived from MTL reference repository `NUDA9A/Media-Transport-Library` on branch `mtl-ref-v26.01`.
 
@@ -185,16 +187,38 @@ int mtl_get_var_info(mtl_handle mt, struct mtl_var_info* info);
 
 Do not invent packet-parse/reorder/depacketizer stats for the MTL backend. Use available MTL session/device counters and explicit unavailable values.
 
-## Build/wiring implications for `ST2110_WITH_MTL`
+## MTL build/dependency policy
 
-Expected project boundary:
+Expected project build boundary:
 
-- `RxBackendKind::Mtl` remains in public backend-kind axis regardless of build flag.
-- `ST2110_WITH_MTL=OFF` must build without MTL headers/libs and without compiling MTL backend code.
-- `ST2110_WITH_MTL=ON` may include MTL headers only inside MTL-specific implementation/build/factory/runtime files.
-- App/bootstrap code should not include MTL headers.
-- Factory/build selection should localize temporary unavailability.
-- Parser/selection should still recognize `mtl`.
+- `RxBackendKind::Mtl` remains in the public backend-kind axis regardless of platform or build capability.
+- `ST2110_HAS_MTL_BACKEND` is an internal build capability derived from the target platform.
+- Linux builds are MTL-capable builds:
+    - the project socket backend is built;
+    - the MTL backend is built;
+    - MTL is a required externally installed dependency;
+    - MTL is discovered through the installed `pkg-config` package `mtl`.
+- Windows and unsupported-platform builds are non-MTL builds:
+    - the project socket backend remains the supported backend path;
+    - MTL backend implementation files are not compiled;
+    - MTL headers, MTL libraries, DPDK, and pkg-config package `mtl` are not required.
+- Windows remains socket-only unless MTL support is explicitly re-evaluated later.
+- Linux MTL support is not a user-facing optional product feature.
+
+Dependency responsibility split:
+
+- project CMake builds this repository;
+- project CMake may discover and link already installed MTL through `pkg-config`;
+- project CMake must not vendor, clone, patch, build, or install DPDK or Media Transport Library;
+- DPDK/MTL installation, hugepages setup, dynamic linker visibility, and pkg-config path setup belong to external Linux setup/install scripts;
+- future setup/install scripts may build and install DPDK and MTL before invoking this project build.
+
+Architecture boundary:
+
+- MTL headers and MTL handles must stay localized to MTL backend/build/factory/runtime implementation files.
+- Parser, signaling, app/bootstrap, OBS source code, and generic backend-selection code must not include MTL headers or branch on MTL platform/build details.
+- Factory/build selection represents MTL absence by omitting MTL factories from the compiled registry.
+- Parser/selection may still recognize the textual/backend-kind value `mtl`; build/runtime availability is reported through backend capability/factory state.
 
 ## Error-handling policy
 
