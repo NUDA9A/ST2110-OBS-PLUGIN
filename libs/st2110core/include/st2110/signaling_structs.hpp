@@ -2,6 +2,7 @@
 #define ST2110_OBS_PLUGIN_SIGNALING_STRUCTS_HPP
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -9,11 +10,12 @@
 #include "packet_parse.hpp"
 #include "rx_config.hpp"
 #include "video_packing_mode.hpp"
+#include "video_receive_capability.hpp"
 #include "video_receive_pipeline.hpp"
 #include "video_receiver_timing.hpp"
+#include "video_reorder_policy.hpp"
 #include "video_scan_mode.hpp"
 #include "video_timestamp_mapping.hpp"
-#include "video_reorder_policy.hpp"
 
 namespace st2110 {
 enum class MediaClockMode { Direct, Sender };
@@ -45,92 +47,6 @@ struct ReferenceClock {
 };
 
 enum class VideoSenderType { Narrow, NarrowLinear, Wide };
-
-struct VideoSampling {
-    enum class Known {
-        YCbCr422,
-        YCbCr444,
-        YCbCr420,
-        RGB,
-        XYZ,
-        Key,
-        CLYCbCr444,
-        CLYCbCr422,
-        CLYCbCr420,
-        ICtCp444,
-        ICtCp422,
-        ICtCp420,
-        Other
-    };
-
-    Known known = Known::YCbCr422;
-    std::optional<std::string> raw_token{};
-};
-
-struct VideoBitDepth {
-    uint8_t bits = 8;
-    bool floating_point = false;
-};
-
-struct VideoColorimetry {
-    enum class Known { Bt601, Bt709, Bt2020, Bt2100, St2065_1, St2065_3, Unspecified, Xyz, Alpha, Other };
-
-    Known known = Known::Bt709;
-    std::optional<std::string> raw_token{};
-};
-
-struct VideoTransferCharacteristicSystem {
-    enum class Known {
-        SDR,
-        PQ,
-        HLG,
-        Linear,
-        Bt2100LinPq,
-        Bt2100LinHlg,
-        St2065_1,
-        St428_1,
-        Density,
-        St2115LogS3,
-        Unspecified,
-        Other
-    };
-
-    Known known = Known::SDR;
-    std::optional<std::string> raw_token{};
-};
-
-struct VideoSignalStandard {
-    enum class Known { St2110_20_2017, St2110_20_2022, Other };
-
-    Known known = Known::St2110_20_2022;
-    std::optional<std::string> raw_token{};
-};
-
-struct VideoRange {
-    enum class Known { Narrow, FullProtect, Full, Other };
-
-    Known known = Known::Narrow;
-    std::optional<std::string> raw_token{};
-};
-
-struct VideoPixelAspectRatio {
-    uint32_t width = 1;
-    uint32_t height = 1;
-};
-
-struct VideoMediaDescription {
-    VideoSampling sampling{};
-    uint32_t width = 0;
-    uint32_t height = 0;
-    uint32_t fps_num = 0;
-    uint32_t fps_den = 1;
-    VideoBitDepth depth{};
-    VideoColorimetry colorimetry{};
-    std::optional<VideoTransferCharacteristicSystem> transfer_characteristic_system{};
-    std::optional<VideoSignalStandard> signal_standard{};
-    std::optional<VideoRange> range{};
-    VideoPixelAspectRatio pixel_aspect_ratio{};
-};
 
 struct VideoStreamSignaling {
     VideoMediaDescription media{};

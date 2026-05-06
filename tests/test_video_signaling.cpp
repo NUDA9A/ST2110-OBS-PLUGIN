@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <optional>
 
+#include <st2110/rx_config.hpp>
 #include <st2110/video_signaling.hpp>
 
 static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
@@ -22,8 +23,7 @@ static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStand
     return st2110::VideoSignalStandard{known, std::nullopt};
 }
 
-static st2110::VideoTransferCharacteristicSystem
-make_tcs(st2110::VideoTransferCharacteristicSystem::Known known) {
+static st2110::VideoTransferCharacteristicSystem make_tcs(st2110::VideoTransferCharacteristicSystem::Known known) {
     return st2110::VideoTransferCharacteristicSystem{known, std::nullopt};
 }
 
@@ -160,7 +160,7 @@ static void test_invalid_frame_rate_is_rejected() {
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
 }
 
-static void test_odd_width_is_structurally_valid_but_runtime_projection_rejects_it() {
+static void test_odd_width_is_structurally_valid_but_runtime_support_rejects_storage_projection() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.media.width = 1919;
     s.media.height = 1080;
@@ -171,8 +171,10 @@ static void test_odd_width_is_structurally_valid_but_runtime_projection_rejects_
 
     auto cfg = st2110::rx_video_config_from_video_stream_signaling(s, 5004, 112, "0.0.0.0", "239.1.1.1");
 
-    assert(!cfg.has_value());
-    assert(cfg.error() == st2110::Error::InvalidValue);
+    assert(cfg.has_value());
+    assert(st2110::validate_rx_video_config(*cfg) == st2110::Error::Ok);
+    assert(st2110::validate_rx_video_config_against_runtime_support(
+               *cfg, st2110::default_video_rx_runtime_support_policy()) == st2110::Error::InvalidValue);
 }
 
 static void test_standard_sized_maxudp_is_accepted() {
@@ -258,6 +260,27 @@ static void test_unsupported_sampling_is_structurally_valid_but_not_runtime_mapp
     assert(projected.error() == st2110::Error::Unsupported);
 }
 
+static void test_rgb8_capability_is_structurally_valid_but_project_rx_config_projection_is_unsupported() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.sampling = st2110::VideoSampling{st2110::VideoSampling::Known::RGB, std::nullopt};
+    s.media.depth = st2110::VideoBitDepth{8, false};
+
+    st2110::VideoReceiveCapabilityProjectionOptions options{};
+    options.handoff_format = st2110::VideoFrameHandoffFormat::Rgb8;
+
+    auto capability = st2110::video_receive_capability_from_video_stream_signaling(s, options);
+    assert(capability.has_value());
+    assert(capability->media.sampling.known == st2110::VideoSampling::Known::RGB);
+    assert(capability->handoff_format == st2110::VideoFrameHandoffFormat::Rgb8);
+    assert(capability->transport_format == st2110::VideoTransportPayloadFormat::Rfc4175Rgb_8Bit);
+
+    auto cfg = st2110::rx_video_config_from_video_stream_signaling(
+        s, 5004, 112, "0.0.0.0", "239.1.1.1", options);
+
+    assert(!cfg.has_value());
+    assert(cfg.error() == st2110::Error::Unsupported);
+}
+
 static void test_bt709_sdr_with_st2110_20_2017_is_accepted() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.media.transfer_characteristic_system = make_tcs(st2110::VideoTransferCharacteristicSystem::Known::SDR);
@@ -266,12 +289,12 @@ static void test_bt709_sdr_with_st2110_20_2017_is_accepted() {
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
 }
 
-static void test_bt709_sdr_with_st2110_20_2022_is_rejected() {
+static void test_bt709_sdr_with_st2110_20_2022_is_accepted() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.media.transfer_characteristic_system = make_tcs(st2110::VideoTransferCharacteristicSystem::Known::SDR);
     s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2022);
 
-    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
+    assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
 }
 
 static void test_alpha_requires_st2110_20_2022_and_runtime_projection_remains_localized() {
@@ -329,7 +352,7 @@ int main() {
     test_zero_dimensions_are_rejected_structurally();
     test_overflow_dimensions_are_rejected_structurally();
     test_invalid_frame_rate_is_rejected();
-    test_odd_width_is_structurally_valid_but_runtime_projection_rejects_it();
+    test_odd_width_is_structurally_valid_but_runtime_support_rejects_storage_projection();
 
     test_standard_sized_maxudp_is_accepted();
     test_extended_sized_maxudp_is_accepted();
@@ -340,9 +363,10 @@ int main() {
     test_absent_maxudp_produces_empty_policy_override();
 
     test_unsupported_sampling_is_structurally_valid_but_not_runtime_mappable();
+    test_rgb8_capability_is_structurally_valid_but_project_rx_config_projection_is_unsupported();
 
     test_bt709_sdr_with_st2110_20_2017_is_accepted();
-    test_bt709_sdr_with_st2110_20_2022_is_rejected();
+    test_bt709_sdr_with_st2110_20_2022_is_accepted();
     test_alpha_requires_st2110_20_2022_and_runtime_projection_remains_localized();
     test_st2115logs3_requires_st2110_20_2022();
 

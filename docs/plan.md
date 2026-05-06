@@ -1274,7 +1274,7 @@
   - keep MTL-specific lifecycle, MTL device/runtime projection, frame mapping, and stats boundaries localized in the backend/runtime layer;
   - do not encode project-local video format, scan-mode, packing-mode, or `VideoFrameView` limitations as MTL backend capability limitations;
   - leave the common video capability-model expansion, backend-support validation, ST20P projection, runtime start/stop, frame delivery, and stats behavior to the follow-up MTL tasks below.
-- [ ] 131A: Expand the common ST 2110 video receive capability model beyond current Socket MVP limits
+- [x] 131A: Expand the common ST 2110 video receive capability model beyond current Socket MVP limits
   - extend existing common video enums / structs / helpers so the project can represent the standard and MTL-known video receive space independently of whether the Socket backend has implemented each branch;
   - keep the capability model common to Socket and MTL rather than introducing an MTL-only media model for formats/modes;
   - cover common video receive axes such as:
@@ -1354,6 +1354,7 @@
     - OBS handoff;
     - a future native frame contract.
   - do not reject MTL session creation or common config validation only because a particular output frame format cannot yet be represented by current `PixelFormat`;
+  - ensure `rx_video_config_from_video_stream_signaling()` preserves/builds structurally valid `RxVideoConfig::receive_capability` for recognized signaling modes without requiring immediate `VideoFrameHandoffFormat -> PixelFormat` projection; current project handoff/storage limits must fail only at the explicit delivery/handoff support boundary.
   - Socket may still fail earlier if the depacketizer/storage implementation for a recognized mode is not implemented;
   - MTL may receive broader MTL-supported modes and then handle project delivery limitations through localized conversion/drop/report policy;
   - completion condition:

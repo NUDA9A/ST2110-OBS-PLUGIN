@@ -8,6 +8,7 @@
 #include "packet_admission.hpp"
 #include "packet_parse.hpp"
 #include "receive_reorder_tolerance_policy.hpp"
+#include "rx_config.hpp"
 #include "signaling_structs.hpp"
 #include "socket_runtime.hpp"
 #include "socket_rx_single_media_backend_base.hpp"
@@ -17,6 +18,7 @@
 
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace st2110 {
@@ -28,6 +30,54 @@ struct SocketRxVideoOperationalConfig {
     VideoReorderBufferConfig reorder_buffer_config{};
 };
 
+struct SocketRxVideoSupportPolicy {
+    VideoRuntimeSupportPolicy runtime_support{};
+    bool require_progressive_scan_mode = true;
+    bool require_single_stream_topology = true;
+    bool require_90khz_rtp_clock = true;
+};
+
+[[nodiscard]] inline SocketRxVideoSupportPolicy default_socket_rx_video_support_policy() {
+    return SocketRxVideoSupportPolicy{};
+}
+
+[[nodiscard]] inline Error
+validate_socket_rx_video_receive_capability_support(const VideoReceiveCapability &capability,
+                                                    const SocketRxVideoSupportPolicy &support) {
+    if (Error err = validate_video_receive_capability_structure(capability); err != Error::Ok) {
+        return err;
+    }
+
+    if (support.require_progressive_scan_mode && capability.scan_mode != VideoScanMode::Progressive) {
+        return Error::Unsupported;
+    }
+
+    if (support.require_single_stream_topology &&
+        (capability.topology.kind != VideoReceiveTopologyKind::SingleStream || capability.topology.stream_count != 1)) {
+        return Error::Unsupported;
+    }
+
+    if (support.require_90khz_rtp_clock && capability.rtp_clock.rtp_clock_rate != 90000) {
+        return Error::Unsupported;
+    }
+
+    return Error::Ok;
+}
+
+[[nodiscard]] inline Error validate_socket_rx_video_config_support(const RxVideoConfig &cfg,
+                                                                   const SocketRxVideoSupportPolicy &support) {
+    if (Error err = validate_rx_video_config_against_runtime_support(cfg, support.runtime_support); err != Error::Ok) {
+        return err;
+    }
+
+    auto capability = rx_video_config_effective_receive_capability(cfg);
+    if (!capability.has_value()) {
+        return capability.error();
+    }
+
+    return validate_socket_rx_video_receive_capability_support(*capability, support);
+}
+
 [[nodiscard]] inline Error validate_socket_rx_video_operational_config(const SocketRxVideoOperationalConfig &cfg) {
     if (const Error err = validate_video_reorder_buffer_config(cfg.reorder_buffer_config); err != Error::Ok) {
         return err;
@@ -37,12 +87,23 @@ struct SocketRxVideoOperationalConfig {
         return err;
     }
 
-    if (const Error err = validate_rx_video_config(cfg.rx_config); err != Error::Ok) {
+    if (const Error err =
+            validate_socket_rx_video_config_support(cfg.rx_config, default_socket_rx_video_support_policy());
+        err != Error::Ok) {
         return err;
     }
 
     if (const Error err = validate_video_rtp_timestamp_mapper_config(cfg.timestamp_mapper_config); err != Error::Ok) {
         return err;
+    }
+
+    auto capability = rx_video_config_effective_receive_capability(cfg.rx_config);
+    if (!capability.has_value()) {
+        return capability.error();
+    }
+
+    if (cfg.timestamp_mapper_config.rtp_clock_rate != capability->rtp_clock.rtp_clock_rate) {
+        return Error::InvalidValue;
     }
 
     auto expected_open_config = socket_rx_open_config_from_video_config(cfg.rx_config);
@@ -71,16 +132,18 @@ struct SocketRxVideoOperationalConfig {
         return Error::InvalidValue;
     }
 
-    if (cfg.timestamp_mapper_config.rtp_clock_rate != 90000) {
-        return Error::InvalidValue;
-    }
-
     return Error::Ok;
 }
 
 [[nodiscard]] inline std::expected<SocketRxVideoOperationalConfig, Error>
 socket_rx_video_operational_config_from_video_receiver_bootstrap(const VideoReceiverBootstrapConfig &bootstrap) {
     if (const Error err = validate_video_receiver_timing_config(bootstrap.timing_config); err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
+    if (const Error err =
+            validate_socket_rx_video_config_support(bootstrap.rx_config, default_socket_rx_video_support_policy());
+        err != Error::Ok) {
         return std::unexpected(err);
     }
 
@@ -114,6 +177,11 @@ socket_rx_video_operational_config_from_rx_video_config(const RxVideoConfig &cfg
                                                         PartialFramePolicy partial_frame_policy,
                                                         const VideoRtpTimestampMapperConfig &timestamp_mapper_config,
                                                         const VideoReorderBufferConfig &reorder_buffer_config = {}) {
+    if (const Error err = validate_socket_rx_video_config_support(cfg, default_socket_rx_video_support_policy());
+        err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
     auto open_config = socket_rx_open_config_from_video_config(cfg);
     if (!open_config) {
         return std::unexpected(open_config.error());

@@ -1,5 +1,6 @@
 #include <array>
 #include <cassert>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -10,8 +11,7 @@ static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStand
     return st2110::VideoSignalStandard{known, std::nullopt};
 }
 
-static st2110::VideoTransferCharacteristicSystem
-make_tcs(st2110::VideoTransferCharacteristicSystem::Known known) {
+static st2110::VideoTransferCharacteristicSystem make_tcs(st2110::VideoTransferCharacteristicSystem::Known known) {
     return st2110::VideoTransferCharacteristicSystem{known, std::nullopt};
 }
 
@@ -129,10 +129,11 @@ static void test_key_sampling_requires_alpha_colorimetry_and_no_tcs() {
     }
 }
 
-static void test_bt709_sdr_ssn_cross_field_validation() {
+static void test_bt709_sdr_ssn_cross_field_validation_accepts_2017_and_2022() {
     {
         auto signaling = make_valid_video_signaling();
-        signaling.media.transfer_characteristic_system = make_tcs(st2110::VideoTransferCharacteristicSystem::Known::SDR);
+        signaling.media.transfer_characteristic_system =
+            make_tcs(st2110::VideoTransferCharacteristicSystem::Known::SDR);
         signaling.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
 
         assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::Ok);
@@ -140,10 +141,11 @@ static void test_bt709_sdr_ssn_cross_field_validation() {
 
     {
         auto signaling = make_valid_video_signaling();
-        signaling.media.transfer_characteristic_system = make_tcs(st2110::VideoTransferCharacteristicSystem::Known::SDR);
+        signaling.media.transfer_characteristic_system =
+            make_tcs(st2110::VideoTransferCharacteristicSystem::Known::SDR);
         signaling.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2022);
 
-        assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::InvalidValue);
+        assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::Ok);
     }
 }
 
@@ -225,8 +227,8 @@ static void test_range_cross_field_validation() {
 
     {
         auto signaling = make_valid_video_signaling();
-        signaling.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Other,
-                                                               std::string{"FUTURE-COLOR"}};
+        signaling.media.colorimetry =
+            st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Other, std::string{"FUTURE-COLOR"}};
         signaling.media.range = st2110::VideoRange{st2110::VideoRange::Known::Other, std::string{"FUTURE-RANGE"}};
 
         assert(st2110::validate_video_stream_signaling(signaling) == st2110::Error::Ok);
@@ -320,8 +322,10 @@ static void test_sdp_ingestion_applies_ssn_cross_field_validation() {
                                                    "SSN=ST2110-20:2022");
 
         auto signaling = st2110::parse_video_stream_signaling_from_sdp(sdp, 112);
-        assert(!signaling.has_value());
-        assert(signaling.error() == st2110::Error::InvalidValue);
+        assert(signaling.has_value());
+        assert(signaling->media.signal_standard.has_value());
+        assert(signaling->media.signal_standard->known == st2110::VideoSignalStandard::Known::St2110_20_2022);
+        assert(signaling->sender_type == st2110::VideoSenderType::Narrow);
     }
 
     {
@@ -424,7 +428,7 @@ int main() {
     test_interlaced_and_psf_420_sampling_are_structurally_rejected();
     test_key_sampling_requires_alpha_colorimetry_and_no_tcs();
 
-    test_bt709_sdr_ssn_cross_field_validation();
+    test_bt709_sdr_ssn_cross_field_validation_accepts_2017_and_2022();
     test_alpha_requires_st2110_20_2022();
     test_st2115logs3_requires_st2110_20_2022();
     test_range_cross_field_validation();

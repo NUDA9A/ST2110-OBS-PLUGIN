@@ -1,7 +1,11 @@
 #include <cassert>
+#include <cstdint>
 #include <type_traits>
+#include <utility>
 
 #include <st2110/config_validation.hpp>
+#include <st2110/error.hpp>
+#include <st2110/pixel_format.hpp>
 #include <st2110/rx_config.hpp>
 
 static_assert(std::is_same_v<decltype(st2110::config_validation::is_non_empty("x")), bool>);
@@ -10,6 +14,11 @@ static_assert(
     std::is_same_v<decltype(st2110::config_validation::is_dynamic_rtp_payload_type(static_cast<uint8_t>(96))), bool>);
 
 static_assert(std::is_same_v<decltype(st2110::validate_rx_video_config(std::declval<const st2110::RxVideoConfig &>())),
+                             st2110::Error>);
+
+static_assert(std::is_same_v<decltype(st2110::validate_rx_video_config_against_runtime_support(
+                                 std::declval<const st2110::RxVideoConfig &>(),
+                                 std::declval<const st2110::VideoRuntimeSupportPolicy &>())),
                              st2110::Error>);
 
 static void test_non_empty_helper() {
@@ -66,14 +75,24 @@ static void test_validate_rx_video_config_ok() {
     const st2110::RxVideoConfig cfg = make_valid_cfg();
     assert(st2110::validate_rx_video_config(cfg) == st2110::Error::Ok);
     assert(cfg.is_valid());
+
+    assert(st2110::validate_rx_video_config_against_runtime_support(
+               cfg, st2110::default_video_rx_runtime_support_policy()) == st2110::Error::Ok);
 }
 
-static void test_validate_rx_video_config_rejects_odd_uyvy_width() {
+static void test_validate_rx_video_config_allows_odd_uyvy_width_structurally() {
     st2110::RxVideoConfig cfg = make_valid_cfg();
     cfg.width = 1919;
 
-    assert(st2110::validate_rx_video_config(cfg) == st2110::Error::InvalidValue);
-    assert(!cfg.is_valid());
+    /*
+     * validate_rx_video_config() is now structural/common-model validation.
+     * Project storage constraints are checked at the explicit runtime-support boundary.
+     */
+    assert(st2110::validate_rx_video_config(cfg) == st2110::Error::Ok);
+    assert(cfg.is_valid());
+
+    assert(st2110::validate_rx_video_config_against_runtime_support(
+               cfg, st2110::default_video_rx_runtime_support_policy()) == st2110::Error::InvalidValue);
 }
 
 static void test_validate_rx_video_config_rejects_non_dynamic_payload_type() {
@@ -107,7 +126,7 @@ int main() {
     test_video_format_constraints_for_uyvy();
     test_unknown_format_is_unsupported();
     test_validate_rx_video_config_ok();
-    test_validate_rx_video_config_rejects_odd_uyvy_width();
+    test_validate_rx_video_config_allows_odd_uyvy_width_structurally();
     test_validate_rx_video_config_rejects_non_dynamic_payload_type();
     test_validate_rx_video_config_rejects_zero_port();
     test_validate_rx_video_config_rejects_empty_dest_ip();

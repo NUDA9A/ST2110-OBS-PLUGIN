@@ -18,6 +18,10 @@ static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStand
     return st2110::VideoSignalStandard{known, std::nullopt};
 }
 
+static st2110::VideoRange make_range(st2110::VideoRange::Known known) {
+    return st2110::VideoRange{known, std::nullopt};
+}
+
 static st2110::VideoStreamSignaling make_base_signaling() {
     st2110::VideoStreamSignaling s{};
 
@@ -29,6 +33,7 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     s.media.depth = st2110::VideoBitDepth{8, false};
     s.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Bt709, std::nullopt};
     s.media.signal_standard = make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
+    s.media.range = make_range(st2110::VideoRange::Known::Narrow);
 
     s.scan_mode = st2110::VideoScanMode::Progressive;
 
@@ -49,6 +54,13 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     return s;
 }
 
+static st2110::VideoStreamSignaling make_rgb8_signaling() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.media.sampling = st2110::VideoSampling{st2110::VideoSampling::Known::RGB, std::nullopt};
+    s.media.depth = st2110::VideoBitDepth{8, false};
+    return s;
+}
+
 static void test_valid_signaling_projects_to_rx_config() {
     const st2110::VideoStreamSignaling s = make_base_signaling();
 
@@ -66,6 +78,24 @@ static void test_valid_signaling_projects_to_rx_config() {
     assert(cfg->format == st2110::PixelFormat::UYVY);
     assert(cfg->scan_mode == st2110::VideoScanMode::Progressive);
     assert(cfg->packing_mode == st2110::VideoPackingMode::Gpm);
+
+    assert(cfg->receive_capability.has_value());
+    assert(cfg->receive_capability->media.width == s.media.width);
+    assert(cfg->receive_capability->media.height == s.media.height);
+    assert(cfg->receive_capability->media.fps_num == s.media.fps_num);
+    assert(cfg->receive_capability->media.fps_den == s.media.fps_den);
+    assert(cfg->receive_capability->media.sampling.known == st2110::VideoSampling::Known::YCbCr422);
+    assert(cfg->receive_capability->media.depth.bits == 8);
+    assert(!cfg->receive_capability->media.depth.floating_point);
+    assert(cfg->receive_capability->media.range.has_value());
+    assert(cfg->receive_capability->media.range->known == st2110::VideoRange::Known::Narrow);
+    assert(cfg->receive_capability->scan_mode == st2110::VideoScanMode::Progressive);
+    assert(cfg->receive_capability->packing_mode == st2110::VideoPackingMode::Gpm);
+    assert(cfg->receive_capability->transport_format == st2110::VideoTransportPayloadFormat::Rfc4175Ycbcr422_8Bit);
+    assert(cfg->receive_capability->handoff_format == st2110::VideoFrameHandoffFormat::Uyvy);
+    assert(cfg->receive_capability->rtp_clock.rtp_clock_rate == 90000);
+    assert(cfg->receive_capability->topology.kind == st2110::VideoReceiveTopologyKind::SingleStream);
+    assert(cfg->receive_capability->topology.stream_count == 1);
 }
 
 static void test_invalid_signaling_is_rejected_before_projection() {
@@ -106,6 +136,8 @@ static void test_projection_preserves_scan_mode_without_reinterpreting_it() {
     assert(cfg.has_value());
     assert(cfg->scan_mode == st2110::VideoScanMode::Interlaced);
     assert(cfg->packing_mode == st2110::VideoPackingMode::Gpm);
+    assert(cfg->receive_capability.has_value());
+    assert(cfg->receive_capability->scan_mode == st2110::VideoScanMode::Interlaced);
 }
 
 static void test_projection_rejects_invalid_payload_type() {
@@ -117,11 +149,30 @@ static void test_projection_rejects_invalid_payload_type() {
     assert(cfg.error() == st2110::Error::InvalidValue);
 }
 
-static void test_projection_rejects_unsupported_pixel_format_mapping() {
-    st2110::VideoStreamSignaling s = make_base_signaling();
-    s.media.sampling = st2110::VideoSampling{st2110::VideoSampling::Known::RGB, std::nullopt};
+static void test_common_rgb8_capability_is_structurally_representable_before_project_handoff_projection() {
+    const st2110::VideoStreamSignaling s = make_rgb8_signaling();
 
-    auto cfg = st2110::rx_video_config_from_video_stream_signaling(s, 5004, 112, "0.0.0.0", "239.1.1.1");
+    st2110::VideoReceiveCapabilityProjectionOptions options{};
+    options.handoff_format = st2110::VideoFrameHandoffFormat::Rgb8;
+
+    auto capability = st2110::video_receive_capability_from_video_stream_signaling(s, options);
+
+    assert(capability.has_value());
+    assert(capability->media.sampling.known == st2110::VideoSampling::Known::RGB);
+    assert(capability->media.depth.bits == 8);
+    assert(!capability->media.depth.floating_point);
+    assert(capability->transport_format == st2110::VideoTransportPayloadFormat::Rfc4175Rgb_8Bit);
+    assert(capability->handoff_format == st2110::VideoFrameHandoffFormat::Rgb8);
+}
+
+static void test_projection_rejects_unsupported_project_handoff_mapping() {
+    const st2110::VideoStreamSignaling s = make_rgb8_signaling();
+
+    st2110::VideoReceiveCapabilityProjectionOptions options{};
+    options.handoff_format = st2110::VideoFrameHandoffFormat::Rgb8;
+
+    auto cfg =
+        st2110::rx_video_config_from_video_stream_signaling(s, 5004, 112, "0.0.0.0", "239.1.1.1", options);
 
     assert(!cfg.has_value());
     assert(cfg.error() == st2110::Error::Unsupported);
@@ -134,6 +185,7 @@ int main() {
     test_invalid_transport_args_are_rejected_after_projection();
     test_projection_preserves_scan_mode_without_reinterpreting_it();
     test_projection_rejects_invalid_payload_type();
-    test_projection_rejects_unsupported_pixel_format_mapping();
+    test_common_rgb8_capability_is_structurally_representable_before_project_handoff_projection();
+    test_projection_rejects_unsupported_project_handoff_mapping();
     return 0;
 }

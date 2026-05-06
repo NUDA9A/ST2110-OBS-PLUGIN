@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -11,6 +12,7 @@
 #include "config_validation.hpp"
 #include "pixel_format.hpp"
 #include "video_packing_mode.hpp"
+#include "video_receive_capability.hpp"
 #include "video_scan_mode.hpp"
 
 namespace st2110 {
@@ -26,12 +28,228 @@ struct RxVideoConfig {
     uint8_t payload_type;
     std::string local_ip;
     std::string dest_ip;
+
+    /*
+     * Project storage format axis.
+     * This is the currently implemented VideoFrame/VideoFrameView storage format.
+     * Common ST 2110 media and backend projection state live in receive_capability.
+     */
     PixelFormat format;
+
     VideoScanMode scan_mode = VideoScanMode::Progressive;
     VideoPackingMode packing_mode = VideoPackingMode::Gpm;
 
+    /*
+     * Optional common receive-capability model.
+     * When present, this is the source of truth for common media/mode axes.
+     * Project storage/runtime support is checked later through explicit support boundaries.
+     */
+    std::optional<VideoReceiveCapability> receive_capability{};
+
     [[nodiscard]] bool is_valid() const { return (validate_rx_video_config(*this) == Error::Ok); }
 };
+
+struct VideoRuntimeSupportPolicy {
+    bool require_project_pixel_format_storage_compatibility = true;
+    bool require_runtime_packing_mode_support = true;
+    bool require_project_handoff_format_support = true;
+};
+
+[[nodiscard]] inline Error validate_rx_video_config_common_transport_fields(const RxVideoConfig &cfg) {
+    if (Error err = config_validation::validate_video_dimensions(cfg.width, cfg.height); err != Error::Ok) {
+        return err;
+    }
+
+    if (Error err = config_validation::validate_frame_rate(cfg.fps_num, cfg.fps_den); err != Error::Ok) {
+        return err;
+    }
+
+    if (Error err = config_validation::validate_udp_port(cfg.udp_port); err != Error::Ok) {
+        return err;
+    }
+
+    if (!config_validation::is_dynamic_rtp_payload_type(cfg.payload_type)) {
+        return Error::InvalidValue;
+    }
+
+    if (!config_validation::is_non_empty(cfg.dest_ip)) {
+        return Error::InvalidValue;
+    }
+
+    if (Error err = config_validation::validate_video_scan_mode(cfg.scan_mode); err != Error::Ok) {
+        return err;
+    }
+
+    if (Error err = validate_video_packing_mode(cfg.packing_mode); err != Error::Ok) {
+        return err;
+    }
+
+    return Error::Ok;
+}
+
+[[nodiscard]] inline std::expected<VideoReceiveCapability, Error>
+video_receive_capability_from_rx_video_config_project_fields(const RxVideoConfig &cfg) {
+    auto handoff_format = video_frame_handoff_format_from_project_pixel_format(cfg.format);
+    if (!handoff_format.has_value()) {
+        return std::unexpected(handoff_format.error());
+    }
+
+    VideoMediaDescription media{};
+    media.width = cfg.width;
+    media.height = cfg.height;
+    media.fps_num = cfg.fps_num;
+    media.fps_den = cfg.fps_den;
+
+    switch (cfg.format) {
+    case PixelFormat::UYVY:
+        media.sampling.known = VideoSampling::Known::YCbCr422;
+        media.depth.bits = 8;
+        media.depth.floating_point = false;
+        media.colorimetry.known = VideoColorimetry::Known::Bt709;
+        media.signal_standard = VideoSignalStandard{.known = VideoSignalStandard::Known::St2110_20_2017};
+        media.range = VideoRange{.known = VideoRange::Known::Narrow};
+        media.pixel_aspect_ratio = VideoPixelAspectRatio{.width = 1, .height = 1};
+        break;
+
+    default:
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    auto transport_format = video_transport_payload_format_from_media_description(media);
+    if (!transport_format.has_value()) {
+        return std::unexpected(transport_format.error());
+    }
+
+    VideoReceiveCapability capability{};
+    capability.media = media;
+    capability.scan_mode = cfg.scan_mode;
+    capability.packing_mode = cfg.packing_mode;
+    capability.transport_format = *transport_format;
+    capability.handoff_format = *handoff_format;
+    capability.rtp_clock = VideoReceiveRtpClock{};
+    capability.topology = VideoReceiveTopology{};
+
+    if (Error err = validate_video_receive_capability_structure(capability); err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
+    return capability;
+}
+
+[[nodiscard]] inline std::expected<VideoReceiveCapability, Error>
+rx_video_config_effective_receive_capability(const RxVideoConfig &cfg) {
+    if (cfg.receive_capability.has_value()) {
+        return *cfg.receive_capability;
+    }
+
+    return video_receive_capability_from_rx_video_config_project_fields(cfg);
+}
+
+[[nodiscard]] inline Error
+validate_rx_video_config_matches_explicit_receive_capability(const RxVideoConfig &cfg,
+                                                             const VideoReceiveCapability &capability) {
+    if (cfg.width != capability.media.width) {
+        return Error::InvalidValue;
+    }
+
+    if (cfg.height != capability.media.height) {
+        return Error::InvalidValue;
+    }
+
+    if (cfg.fps_num != capability.media.fps_num) {
+        return Error::InvalidValue;
+    }
+
+    if (cfg.fps_den != capability.media.fps_den) {
+        return Error::InvalidValue;
+    }
+
+    if (cfg.scan_mode != capability.scan_mode) {
+        return Error::InvalidValue;
+    }
+
+    if (cfg.packing_mode != capability.packing_mode) {
+        return Error::InvalidValue;
+    }
+
+    if (Error err = validate_video_transport_payload_format_matches_media_description(capability.transport_format,
+                                                                                      capability.media);
+        err != Error::Ok) {
+        return err;
+    }
+
+    return Error::Ok;
+}
+
+[[nodiscard]] inline Error validate_rx_video_config_structure(const RxVideoConfig &cfg) {
+    if (Error err = validate_rx_video_config_common_transport_fields(cfg); err != Error::Ok) {
+        return err;
+    }
+
+    /*
+     * This validates only that the project storage enum value is known.
+     * It intentionally does not validate VideoFrame storage constraints here.
+     */
+    if (auto project_handoff = video_frame_handoff_format_from_project_pixel_format(cfg.format); !project_handoff) {
+        return project_handoff.error();
+    }
+
+    auto capability = rx_video_config_effective_receive_capability(cfg);
+    if (!capability.has_value()) {
+        return capability.error();
+    }
+
+    if (Error err = validate_video_receive_capability_structure(*capability); err != Error::Ok) {
+        return err;
+    }
+
+    if (cfg.receive_capability.has_value()) {
+        if (Error err = validate_rx_video_config_matches_explicit_receive_capability(cfg, *capability);
+            err != Error::Ok) {
+            return err;
+        }
+    }
+
+    return Error::Ok;
+}
+
+[[nodiscard]] inline VideoRuntimeSupportPolicy default_video_rx_runtime_support_policy() {
+    return VideoRuntimeSupportPolicy{};
+}
+
+[[nodiscard]] inline Error validate_rx_video_config_against_runtime_support(const RxVideoConfig &cfg,
+                                                                            const VideoRuntimeSupportPolicy &support) {
+    if (Error err = validate_rx_video_config_structure(cfg); err != Error::Ok) {
+        return err;
+    }
+
+    auto capability = rx_video_config_effective_receive_capability(cfg);
+    if (!capability.has_value()) {
+        return capability.error();
+    }
+
+    if (support.require_runtime_packing_mode_support) {
+        if (Error err = validate_runtime_video_packing_mode_support(capability->packing_mode); err != Error::Ok) {
+            return err;
+        }
+    }
+
+    if (support.require_project_handoff_format_support) {
+        if (Error err = validate_project_video_frame_handoff_format_matches_pixel_format(capability->handoff_format,
+                                                                                         cfg.format);
+            err != Error::Ok) {
+            return err;
+        }
+    }
+
+    if (support.require_project_pixel_format_storage_compatibility) {
+        if (Error err = validate_project_video_frame_storage_compatibility(*capability, cfg.format); err != Error::Ok) {
+            return err;
+        }
+    }
+
+    return Error::Ok;
+}
 
 enum class AudioSampleFormat { LinearPcm };
 
@@ -159,40 +377,7 @@ audio_media_description_from_rx_audio_config(const RxAudioConfig &cfg) {
 }
 
 [[nodiscard]] inline Error validate_rx_video_config(const RxVideoConfig &cfg) {
-    Error err = config_validation::validate_video_format_constraints(cfg.format, cfg.width, cfg.height);
-    if (err != Error::Ok) {
-        return err;
-    }
-
-    err = config_validation::validate_frame_rate(cfg.fps_num, cfg.fps_den);
-    if (err != Error::Ok) {
-        return err;
-    }
-
-    err = config_validation::validate_udp_port(cfg.udp_port);
-    if (err != Error::Ok) {
-        return err;
-    }
-
-    if (!config_validation::is_dynamic_rtp_payload_type(cfg.payload_type)) {
-        return Error::InvalidValue;
-    }
-
-    if (!config_validation::is_non_empty(cfg.dest_ip)) {
-        return Error::InvalidValue;
-    }
-
-    err = config_validation::validate_video_scan_mode(cfg.scan_mode);
-    if (err != Error::Ok) {
-        return err;
-    }
-
-    err = validate_runtime_video_packing_mode_support(cfg.packing_mode);
-    if (err != Error::Ok) {
-        return err;
-    }
-
-    return Error::Ok;
+    return validate_rx_video_config_structure(cfg);
 }
 } // namespace st2110
 

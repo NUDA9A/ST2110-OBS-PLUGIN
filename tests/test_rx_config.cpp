@@ -2,6 +2,8 @@
 #include <cassert>
 #include <cstdint>
 #include <expected>
+#include <optional>
+#include <span>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -11,6 +13,7 @@
 #include <st2110/pixel_format.hpp>
 #include <st2110/rx_config.hpp>
 #include <st2110/video_packing_mode.hpp>
+#include <st2110/video_receive_capability.hpp>
 #include <st2110/video_scan_mode.hpp>
 
 namespace {
@@ -28,6 +31,38 @@ st2110::RxVideoConfig make_valid_video_config() {
     cfg.scan_mode = st2110::VideoScanMode::Progressive;
     cfg.packing_mode = st2110::VideoPackingMode::Gpm;
     return cfg;
+}
+
+st2110::VideoMediaDescription make_ycbcr422_media(std::uint8_t bits = 8) {
+    st2110::VideoMediaDescription media{};
+    media.sampling.known = st2110::VideoSampling::Known::YCbCr422;
+    media.width = 1280;
+    media.height = 720;
+    media.fps_num = 30;
+    media.fps_den = 1;
+    media.depth.bits = bits;
+    media.depth.floating_point = false;
+    media.colorimetry.known = st2110::VideoColorimetry::Known::Bt709;
+    media.signal_standard = st2110::VideoSignalStandard{.known = st2110::VideoSignalStandard::Known::St2110_20_2022};
+    media.range = st2110::VideoRange{.known = st2110::VideoRange::Known::Narrow};
+    media.pixel_aspect_ratio = st2110::VideoPixelAspectRatio{.width = 1, .height = 1};
+    return media;
+}
+
+st2110::VideoReceiveCapability make_ycbcr422_receive_capability(
+    std::uint8_t bits = 8,
+    st2110::VideoTransportPayloadFormat transport_format = st2110::VideoTransportPayloadFormat::Rfc4175Ycbcr422_8Bit,
+    st2110::VideoFrameHandoffFormat handoff_format = st2110::VideoFrameHandoffFormat::Uyvy) {
+    st2110::VideoReceiveCapability capability{};
+    capability.media = make_ycbcr422_media(bits);
+    capability.scan_mode = st2110::VideoScanMode::Progressive;
+    capability.packing_mode = st2110::VideoPackingMode::Gpm;
+    capability.transport_format = transport_format;
+    capability.handoff_format = handoff_format;
+    capability.rtp_clock = st2110::VideoReceiveRtpClock{.rtp_clock_rate = 90000};
+    capability.topology = st2110::VideoReceiveTopology{.kind = st2110::VideoReceiveTopologyKind::SingleStream,
+                                                       .stream_count = 1};
+    return capability;
 }
 
 st2110::RxAudioConfig make_valid_level_a_audio_config(std::uint16_t channels = 2) {
@@ -53,9 +88,21 @@ int main() {
     static_assert(
         std::is_same_v<decltype(std::declval<st2110::RxVideoConfig &>().packing_mode), st2110::VideoPackingMode>);
 
+    static_assert(std::is_same_v<decltype(std::declval<st2110::RxVideoConfig &>().receive_capability),
+                                 std::optional<st2110::VideoReceiveCapability>>);
+
     static_assert(
         std::is_same_v<decltype(st2110::validate_rx_video_config(std::declval<const st2110::RxVideoConfig &>())),
                        st2110::Error>);
+
+    static_assert(std::is_same_v<decltype(st2110::validate_rx_video_config_against_runtime_support(
+                                     std::declval<const st2110::RxVideoConfig &>(),
+                                     std::declval<const st2110::VideoRuntimeSupportPolicy &>())),
+                                 st2110::Error>);
+
+    static_assert(std::is_same_v<decltype(st2110::rx_video_config_effective_receive_capability(
+                                     std::declval<const st2110::RxVideoConfig &>())),
+                                 std::expected<st2110::VideoReceiveCapability, st2110::Error>>);
 
     static_assert(
         std::is_same_v<decltype(st2110::validate_rx_audio_config(std::declval<const st2110::RxAudioConfig &>())),
@@ -103,27 +150,155 @@ int main() {
         assert(st2110::validate_rx_video_config(cfg) == st2110::Error::Ok);
         assert(cfg.packing_mode == st2110::VideoPackingMode::Gpm);
 
+        auto effective_capability = st2110::rx_video_config_effective_receive_capability(cfg);
+        assert(effective_capability.has_value());
+        assert(effective_capability->media.width == cfg.width);
+        assert(effective_capability->media.height == cfg.height);
+        assert(effective_capability->media.fps_num == cfg.fps_num);
+        assert(effective_capability->media.fps_den == cfg.fps_den);
+        assert(effective_capability->scan_mode == cfg.scan_mode);
+        assert(effective_capability->packing_mode == cfg.packing_mode);
+        assert(effective_capability->transport_format == st2110::VideoTransportPayloadFormat::Rfc4175Ycbcr422_8Bit);
+        assert(effective_capability->handoff_format == st2110::VideoFrameHandoffFormat::Uyvy);
+        assert(effective_capability->rtp_clock.rtp_clock_rate == 90000);
+    }
+
+    {
         st2110::RxVideoConfig default_packing = make_valid_video_config();
         default_packing.packing_mode = st2110::VideoPackingMode::Gpm;
         assert(default_packing.is_valid());
+        assert(st2110::validate_rx_video_config_against_runtime_support(
+                   default_packing, st2110::default_video_rx_runtime_support_policy()) == st2110::Error::Ok);
 
-        st2110::RxVideoConfig unsupported_bpm = make_valid_video_config();
-        unsupported_bpm.packing_mode = st2110::VideoPackingMode::Bpm;
-        assert(!unsupported_bpm.is_valid());
-        assert(st2110::validate_rx_video_config(unsupported_bpm) == st2110::Error::Unsupported);
+        st2110::RxVideoConfig recognized_bpm = make_valid_video_config();
+        recognized_bpm.packing_mode = st2110::VideoPackingMode::Bpm;
+        assert(recognized_bpm.is_valid());
+        assert(st2110::validate_rx_video_config(recognized_bpm) == st2110::Error::Ok);
+        assert(st2110::validate_rx_video_config_against_runtime_support(
+                   recognized_bpm, st2110::default_video_rx_runtime_support_policy()) == st2110::Error::Unsupported);
+
+        st2110::VideoRuntimeSupportPolicy support_without_packing_limit =
+            st2110::default_video_rx_runtime_support_policy();
+        support_without_packing_limit.require_runtime_packing_mode_support = false;
+        assert(st2110::validate_rx_video_config_against_runtime_support(recognized_bpm,
+                                                                        support_without_packing_limit) ==
+               st2110::Error::Ok);
+
+        st2110::RxVideoConfig recognized_gpm_single_line = make_valid_video_config();
+        recognized_gpm_single_line.packing_mode = st2110::VideoPackingMode::GpmSingleLine;
+        assert(recognized_gpm_single_line.is_valid());
+        assert(st2110::validate_rx_video_config(recognized_gpm_single_line) == st2110::Error::Ok);
+        assert(st2110::validate_rx_video_config_against_runtime_support(
+                   recognized_gpm_single_line, st2110::default_video_rx_runtime_support_policy()) ==
+               st2110::Error::Unsupported);
 
         st2110::RxVideoConfig invalid_packing = make_valid_video_config();
         invalid_packing.packing_mode = static_cast<st2110::VideoPackingMode>(255);
         assert(!invalid_packing.is_valid());
         assert(st2110::validate_rx_video_config(invalid_packing) == st2110::Error::InvalidValue);
+    }
+
+    {
+        st2110::RxVideoConfig interlaced = make_valid_video_config();
+        interlaced.scan_mode = st2110::VideoScanMode::Interlaced;
+        interlaced.receive_capability = make_ycbcr422_receive_capability();
+        interlaced.receive_capability->scan_mode = st2110::VideoScanMode::Interlaced;
+        assert(interlaced.is_valid());
+        assert(st2110::validate_rx_video_config(interlaced) == st2110::Error::Ok);
+
+        st2110::RxVideoConfig psf = make_valid_video_config();
+        psf.scan_mode = st2110::VideoScanMode::PsF;
+        psf.receive_capability = make_ycbcr422_receive_capability();
+        psf.receive_capability->scan_mode = st2110::VideoScanMode::PsF;
+        assert(psf.is_valid());
+        assert(st2110::validate_rx_video_config(psf) == st2110::Error::Ok);
 
         st2110::RxVideoConfig invalid_scan_mode = make_valid_video_config();
         invalid_scan_mode.scan_mode = static_cast<st2110::VideoScanMode>(255);
         assert(!invalid_scan_mode.is_valid());
+        assert(st2110::validate_rx_video_config(invalid_scan_mode) == st2110::Error::InvalidValue);
+    }
+
+    {
+        st2110::RxVideoConfig ten_bit_ycbcr422 = make_valid_video_config();
+        ten_bit_ycbcr422.receive_capability =
+            make_ycbcr422_receive_capability(10, st2110::VideoTransportPayloadFormat::Rfc4175Ycbcr422_10Bit,
+                                             st2110::VideoFrameHandoffFormat::Yuv422Planar10Le);
+
+        assert(ten_bit_ycbcr422.is_valid());
+        assert(st2110::validate_rx_video_config(ten_bit_ycbcr422) == st2110::Error::Ok);
+
+        assert(st2110::validate_rx_video_config_against_runtime_support(
+                   ten_bit_ycbcr422, st2110::default_video_rx_runtime_support_policy()) ==
+               st2110::Error::Unsupported);
+
+        st2110::RxVideoConfig generic_rfc4175 = make_valid_video_config();
+        generic_rfc4175.receive_capability =
+            make_ycbcr422_receive_capability(10, st2110::VideoTransportPayloadFormat::Rfc4175,
+                                             st2110::VideoFrameHandoffFormat::Yuv422Planar10Le);
+
+        assert(generic_rfc4175.is_valid());
+        assert(st2110::validate_rx_video_config(generic_rfc4175) == st2110::Error::Ok);
+
+        st2110::RxVideoConfig unsupported_generic_rfc4175 = make_valid_video_config();
+        unsupported_generic_rfc4175.receive_capability =
+            make_ycbcr422_receive_capability(8, st2110::VideoTransportPayloadFormat::Rfc4175,
+                                             st2110::VideoFrameHandoffFormat::Uyvy);
+        unsupported_generic_rfc4175.receive_capability->media.sampling.known = st2110::VideoSampling::Known::Other;
+        unsupported_generic_rfc4175.receive_capability->media.sampling.raw_token = "vendor-private-sampling";
+        assert(!unsupported_generic_rfc4175.is_valid());
+        assert(st2110::validate_rx_video_config(unsupported_generic_rfc4175) == st2110::Error::Unsupported);
+    }
+
+    {
+        st2110::RxVideoConfig redundant = make_valid_video_config();
+        redundant.receive_capability = make_ycbcr422_receive_capability();
+        redundant.receive_capability->topology = st2110::VideoReceiveTopology{
+            .kind = st2110::VideoReceiveTopologyKind::RedundantStreams,
+            .stream_count = 2,
+            .primary_mid = std::string{"primary"},
+            .redundant_mid = std::string{"redundant"},
+        };
+
+        assert(redundant.is_valid());
+        assert(st2110::validate_rx_video_config(redundant) == st2110::Error::Ok);
+
+        st2110::RxVideoConfig invalid_redundant = make_valid_video_config();
+        invalid_redundant.receive_capability = make_ycbcr422_receive_capability();
+        invalid_redundant.receive_capability->topology = st2110::VideoReceiveTopology{
+            .kind = st2110::VideoReceiveTopologyKind::RedundantStreams,
+            .stream_count = 1,
+        };
+
+        assert(!invalid_redundant.is_valid());
+        assert(st2110::validate_rx_video_config(invalid_redundant) == st2110::Error::InvalidValue);
+    }
+
+    {
+        st2110::RxVideoConfig invalid_rtp_clock = make_valid_video_config();
+        invalid_rtp_clock.receive_capability = make_ycbcr422_receive_capability();
+        invalid_rtp_clock.receive_capability->rtp_clock.rtp_clock_rate = 0;
+        assert(!invalid_rtp_clock.is_valid());
+        assert(st2110::validate_rx_video_config(invalid_rtp_clock) == st2110::Error::InvalidValue);
+
+        st2110::RxVideoConfig non_90khz_rtp_clock = make_valid_video_config();
+        non_90khz_rtp_clock.receive_capability = make_ycbcr422_receive_capability();
+        non_90khz_rtp_clock.receive_capability->rtp_clock.rtp_clock_rate = 48000;
+        assert(non_90khz_rtp_clock.is_valid());
+        assert(st2110::validate_rx_video_config(non_90khz_rtp_clock) == st2110::Error::Ok);
+    }
+
+    {
+        st2110::RxVideoConfig mismatched_explicit_capability = make_valid_video_config();
+        mismatched_explicit_capability.receive_capability = make_ycbcr422_receive_capability();
+        mismatched_explicit_capability.receive_capability->media.width = 1920;
+        assert(!mismatched_explicit_capability.is_valid());
+        assert(st2110::validate_rx_video_config(mismatched_explicit_capability) == st2110::Error::InvalidValue);
 
         st2110::RxVideoConfig zero_udp_port = make_valid_video_config();
         zero_udp_port.udp_port = 0;
         assert(!zero_udp_port.is_valid());
+        assert(st2110::validate_rx_video_config(zero_udp_port) == st2110::Error::InvalidValue);
     }
 
     {

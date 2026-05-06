@@ -28,7 +28,9 @@ static VideoTransferCharacteristicSystem make_tcs(VideoTransferCharacteristicSys
     return VideoTransferCharacteristicSystem{known, std::nullopt};
 }
 
-static VideoRange make_range(VideoRange::Known known) { return VideoRange{known, std::nullopt}; }
+static VideoRange make_range(VideoRange::Known known) {
+    return VideoRange{known, std::nullopt};
+}
 
 static VideoPixelAspectRatio make_par(uint32_t width, uint32_t height) {
     return VideoPixelAspectRatio{.width = width, .height = height};
@@ -54,6 +56,13 @@ static VideoStreamSignaling make_valid_signaling() {
     signaling.reference_clock = make_valid_reference_clock();
 
     return signaling;
+}
+
+static VideoMediaDescription make_rgb8_media_description() {
+    VideoMediaDescription media = make_valid_signaling().media;
+    media.sampling = VideoSampling{VideoSampling::Known::RGB, std::nullopt};
+    media.depth = VideoBitDepth{8, false};
+    return media;
 }
 
 static void test_known_sampling_is_valid_without_raw_token() {
@@ -293,11 +302,11 @@ static void test_video_stream_signaling_rejects_invalid_optional_media_field() {
     assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
 }
 
-static void test_video_stream_signaling_rejects_bt709_sdr_with_st2110_20_2022() {
+static void test_video_stream_signaling_accepts_bt709_sdr_with_st2110_20_2022() {
     VideoStreamSignaling signaling = make_valid_signaling();
     signaling.media.signal_standard = make_signal_standard(VideoSignalStandard::Known::St2110_20_2022);
 
-    assert(validate_video_stream_signaling(signaling) == Error::InvalidValue);
+    assert(validate_video_stream_signaling(signaling) == Error::Ok);
 }
 
 static void test_video_stream_signaling_accepts_alpha_with_st2110_20_2022() {
@@ -358,6 +367,177 @@ static void test_video_stream_signaling_accepts_non_bt2100_fullprotect_range() {
     signaling.media.range = make_range(VideoRange::Known::FullProtect);
 
     assert(validate_video_stream_signaling(signaling) == Error::Ok);
+}
+
+static void test_transport_payload_projection_covers_common_known_media() {
+    {
+        VideoMediaDescription media = make_valid_signaling().media;
+        media.sampling = VideoSampling{VideoSampling::Known::YCbCr422, std::nullopt};
+        media.depth = VideoBitDepth{10, false};
+
+        const auto projected = video_transport_payload_format_from_media_description(media);
+        assert(projected.has_value());
+        assert(*projected == VideoTransportPayloadFormat::Rfc4175Ycbcr422_10Bit);
+    }
+
+    {
+        VideoMediaDescription media = make_rgb8_media_description();
+
+        const auto projected = video_transport_payload_format_from_media_description(media);
+        assert(projected.has_value());
+        assert(*projected == VideoTransportPayloadFormat::Rfc4175Rgb_8Bit);
+    }
+
+    {
+        VideoMediaDescription media = make_valid_signaling().media;
+        media.sampling = VideoSampling{VideoSampling::Known::XYZ, std::nullopt};
+        media.depth = VideoBitDepth{12, false};
+
+        const auto projected = video_transport_payload_format_from_media_description(media);
+        assert(projected.has_value());
+        assert(*projected == VideoTransportPayloadFormat::Rfc4175);
+    }
+}
+
+static void test_generic_rfc4175_transport_marker_accepts_known_projectable_media() {
+    {
+        const VideoMediaDescription media = make_valid_signaling().media;
+
+        assert(validate_video_transport_payload_format_matches_media_description(VideoTransportPayloadFormat::Rfc4175,
+                                                                                 media) == Error::Ok);
+    }
+
+    {
+        const VideoMediaDescription media = make_rgb8_media_description();
+
+        assert(validate_video_transport_payload_format_matches_media_description(VideoTransportPayloadFormat::Rfc4175,
+                                                                                 media) == Error::Ok);
+    }
+
+    {
+        VideoMediaDescription media = make_valid_signaling().media;
+        media.sampling = VideoSampling{VideoSampling::Known::Other, std::string{"CUSTOM-SAMPLING"}};
+
+        assert(validate_video_transport_payload_format_matches_media_description(VideoTransportPayloadFormat::Rfc4175,
+                                                                                 media) == Error::Unsupported);
+    }
+}
+
+static void test_specific_transport_payload_marker_must_match_media_description() {
+    {
+        VideoMediaDescription media = make_valid_signaling().media;
+        media.sampling = VideoSampling{VideoSampling::Known::YCbCr422, std::nullopt};
+        media.depth = VideoBitDepth{10, false};
+
+        assert(validate_video_transport_payload_format_matches_media_description(
+                   VideoTransportPayloadFormat::Rfc4175Ycbcr422_10Bit, media) == Error::Ok);
+
+        assert(validate_video_transport_payload_format_matches_media_description(
+                   VideoTransportPayloadFormat::Rfc4175Ycbcr422_8Bit, media) == Error::InvalidValue);
+    }
+
+    {
+        VideoMediaDescription media = make_rgb8_media_description();
+
+        assert(validate_video_transport_payload_format_matches_media_description(
+                   VideoTransportPayloadFormat::Rfc4175Rgb_8Bit, media) == Error::Ok);
+
+        assert(validate_video_transport_payload_format_matches_media_description(
+                   VideoTransportPayloadFormat::Rfc4175Ycbcr422_8Bit, media) == Error::InvalidValue);
+    }
+}
+
+static void test_handoff_format_validation_tracks_media_sampling_and_depth() {
+    {
+        VideoMediaDescription media = make_valid_signaling().media;
+        media.sampling = VideoSampling{VideoSampling::Known::YCbCr422, std::nullopt};
+        media.depth = VideoBitDepth{8, false};
+
+        assert(validate_video_frame_handoff_format_matches_media_description(VideoFrameHandoffFormat::Uyvy, media) ==
+               Error::Ok);
+        assert(validate_video_frame_handoff_format_matches_media_description(VideoFrameHandoffFormat::Yuv422Planar8,
+                                                                             media) == Error::Ok);
+        assert(validate_video_frame_handoff_format_matches_media_description(VideoFrameHandoffFormat::Yuv422Planar10Le,
+                                                                             media) == Error::InvalidValue);
+    }
+
+    {
+        VideoMediaDescription media = make_valid_signaling().media;
+        media.sampling = VideoSampling{VideoSampling::Known::YCbCr422, std::nullopt};
+        media.depth = VideoBitDepth{10, false};
+
+        assert(validate_video_frame_handoff_format_matches_media_description(VideoFrameHandoffFormat::Yuv422Planar10Le,
+                                                                             media) == Error::Ok);
+        assert(validate_video_frame_handoff_format_matches_media_description(VideoFrameHandoffFormat::V210, media) ==
+               Error::Ok);
+        assert(validate_video_frame_handoff_format_matches_media_description(VideoFrameHandoffFormat::Uyvy, media) ==
+               Error::InvalidValue);
+    }
+
+    {
+        const VideoMediaDescription media = make_rgb8_media_description();
+
+        assert(validate_video_frame_handoff_format_matches_media_description(VideoFrameHandoffFormat::Rgb8, media) ==
+               Error::Ok);
+        assert(validate_video_frame_handoff_format_matches_media_description(VideoFrameHandoffFormat::Uyvy, media) ==
+               Error::InvalidValue);
+    }
+}
+
+static void test_receive_capability_structure_accepts_common_rgb8_capability_before_backend_support_check() {
+    VideoReceiveCapability capability{};
+    capability.media = make_rgb8_media_description();
+    capability.scan_mode = VideoScanMode::Progressive;
+    capability.packing_mode = VideoPackingMode::Gpm;
+    capability.transport_format = VideoTransportPayloadFormat::Rfc4175Rgb_8Bit;
+    capability.handoff_format = VideoFrameHandoffFormat::Rgb8;
+    capability.rtp_clock = VideoReceiveRtpClock{.rtp_clock_rate = 90000};
+    capability.topology = VideoReceiveTopology{.kind = VideoReceiveTopologyKind::SingleStream, .stream_count = 1};
+
+    assert(validate_video_receive_capability_structure(capability) == Error::Ok);
+}
+
+static void test_receive_capability_structure_accepts_redundant_topology_hint() {
+    VideoReceiveCapability capability{};
+    capability.media = make_valid_signaling().media;
+    capability.scan_mode = VideoScanMode::Progressive;
+    capability.packing_mode = VideoPackingMode::Gpm;
+    capability.transport_format = VideoTransportPayloadFormat::Rfc4175Ycbcr422_10Bit;
+    capability.handoff_format = VideoFrameHandoffFormat::Yuv422Planar10Le;
+    capability.rtp_clock = VideoReceiveRtpClock{.rtp_clock_rate = 90000};
+    capability.topology = VideoReceiveTopology{
+        .kind = VideoReceiveTopologyKind::RedundantStreams,
+        .stream_count = 2,
+        .primary_mid = std::string{"primary"},
+        .redundant_mid = std::string{"redundant"},
+    };
+
+    assert(validate_video_receive_capability_structure(capability) == Error::Ok);
+}
+
+static void test_receive_capability_structure_rejects_invalid_rtp_clock_and_topology() {
+    {
+        VideoReceiveCapability capability{};
+        capability.media = make_valid_signaling().media;
+        capability.transport_format = VideoTransportPayloadFormat::Rfc4175Ycbcr422_10Bit;
+        capability.handoff_format = VideoFrameHandoffFormat::Yuv422Planar10Le;
+        capability.rtp_clock = VideoReceiveRtpClock{.rtp_clock_rate = 0};
+
+        assert(validate_video_receive_capability_structure(capability) == Error::InvalidValue);
+    }
+
+    {
+        VideoReceiveCapability capability{};
+        capability.media = make_valid_signaling().media;
+        capability.transport_format = VideoTransportPayloadFormat::Rfc4175Ycbcr422_10Bit;
+        capability.handoff_format = VideoFrameHandoffFormat::Yuv422Planar10Le;
+        capability.topology = VideoReceiveTopology{
+            .kind = VideoReceiveTopologyKind::RedundantStreams,
+            .stream_count = 1,
+        };
+
+        assert(validate_video_receive_capability_structure(capability) == Error::InvalidValue);
+    }
 }
 
 static void test_pixel_format_projection_accepts_ycbcr422_8bit() {
@@ -434,7 +614,7 @@ int main() {
     test_video_stream_signaling_rejects_invalid_sampling();
     test_video_stream_signaling_rejects_invalid_bit_depth();
     test_video_stream_signaling_rejects_invalid_optional_media_field();
-    test_video_stream_signaling_rejects_bt709_sdr_with_st2110_20_2022();
+    test_video_stream_signaling_accepts_bt709_sdr_with_st2110_20_2022();
     test_video_stream_signaling_accepts_alpha_with_st2110_20_2022();
     test_video_stream_signaling_rejects_alpha_with_st2110_20_2017();
     test_video_stream_signaling_accepts_st2115logs3_with_st2110_20_2022();
@@ -442,6 +622,13 @@ int main() {
     test_video_stream_signaling_accepts_bt2100_with_full_range();
     test_video_stream_signaling_rejects_bt2100_with_fullprotect_range();
     test_video_stream_signaling_accepts_non_bt2100_fullprotect_range();
+    test_transport_payload_projection_covers_common_known_media();
+    test_generic_rfc4175_transport_marker_accepts_known_projectable_media();
+    test_specific_transport_payload_marker_must_match_media_description();
+    test_handoff_format_validation_tracks_media_sampling_and_depth();
+    test_receive_capability_structure_accepts_common_rgb8_capability_before_backend_support_check();
+    test_receive_capability_structure_accepts_redundant_topology_hint();
+    test_receive_capability_structure_rejects_invalid_rtp_clock_and_topology();
     test_pixel_format_projection_accepts_ycbcr422_8bit();
     test_pixel_format_projection_remains_independent_from_pixel_aspect_ratio();
     test_pixel_format_projection_rejects_structurally_valid_but_unsupported_media();
