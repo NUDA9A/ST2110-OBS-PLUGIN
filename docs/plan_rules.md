@@ -236,9 +236,10 @@ Assistant MUST NOT silently reinterpret:
 When the current mode requires choosing production files, Assistant MUST use the Production-file selection path:
 
 1. read `code_map_index.md`;
-2. identify the relevant shard(s);
-3. read the relevant shard entries;
-4. read the actual production files.
+2. identify the relevant responsibility block(s);
+3. read the shard(s) for those block(s);
+4. use the shard file lists and block/subblock responsibilities to choose the concrete production files;
+5. read the actual production files.
 
 When the current mode requires choosing test files, Assistant MUST use the Test-file selection path:
 
@@ -247,7 +248,15 @@ When the current mode requires choosing test files, Assistant MUST use the Test-
 3. read the relevant shard entries;
 4. read the actual test files.
 
-Maps help file selection and expected subsystem placement, but MUST NOT replace reading actual files when the mode requires actual-file reading.
+Block-shard rules:
+
+- `code_map_index.md` is the entry point for block-aware production-file selection.
+- Each `code_map_shard_*.md` describes one responsibility block, its subblocks, and the files that belong to that block.
+- A shard is authoritative for block/file selection only as a map artifact; it MUST NOT replace actual file reading when the mode requires actual-file reading.
+- Assistant MUST use block responsibility and file membership from the shards to avoid selecting files by name similarity alone.
+- If a file appears to mix multiple block responsibilities, Assistant MUST treat that as an architectural smell and verify by reading the actual file before making block-grounded claims.
+
+Maps help block/file selection and expected subsystem placement, but MUST NOT replace reading actual files when the mode requires actual-file reading.
 
 If a map conflicts with actual code/tests:
 - actual code/tests win;
