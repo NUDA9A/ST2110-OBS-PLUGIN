@@ -1,11 +1,11 @@
 #include <cassert>
 #include <cstdint>
 
-#include <st2110/error.hpp>
-#include <st2110/pixel_format.hpp>
-#include <st2110/video_packing_mode.hpp>
-#include <st2110/video_scan_mode.hpp>
-#include <st2110/video_segment_placement.hpp>
+#include <st2110/delivery/video/pixel_format.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/model/video/video_packing_mode.hpp>
+#include <st2110/model/video/video_scan_mode.hpp>
+#include <st2110/receive/video/video_segment_placement.hpp>
 
 static st2110::SrdSegmentView make_segment(uint16_t row, uint16_t offset, uint16_t length, const uint8_t *data,
                                            std::size_t size) {

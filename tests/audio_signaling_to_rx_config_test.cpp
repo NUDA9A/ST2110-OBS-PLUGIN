@@ -1,6 +1,6 @@
-#include <st2110/audio_signaling.hpp>
-#include <st2110/audio_signaling_rx_config.hpp>
-#include <st2110/error.hpp>
+#include <st2110/contracts/audio/audio_signaling_rx_config.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/model/audio/audio_signaling.hpp>
 #include <st2110/rx_config.hpp>
 
 #include <cassert>

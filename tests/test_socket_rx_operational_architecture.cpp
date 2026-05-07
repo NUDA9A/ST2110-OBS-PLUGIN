@@ -7,16 +7,16 @@
 #include <type_traits>
 #include <utility>
 
-#include <st2110/audio_channel_order.hpp>
-#include <st2110/audio_receiver_bootstrap.hpp>
-#include <st2110/backend.hpp>
-#include <st2110/packet_parse.hpp>
-#include <st2110/receive_reorder_tolerance_policy.hpp>
+#include <st2110/backends/socket/platform/socket_runtime.hpp>
+#include <st2110/backends/socket/socket_rx_audio_backend.hpp>
+#include <st2110/backends/socket/socket_rx_video_backend.hpp>
+#include <st2110/contracts/audio/audio_receiver_bootstrap.hpp>
+#include <st2110/contracts/backend/backend.hpp>
+#include <st2110/ingress/shared/packet_parse.hpp>
+#include <st2110/model/audio/audio_channel_order.hpp>
+#include <st2110/receive/shared/receive_reorder_tolerance_policy.hpp>
 #include <st2110/signaling_structs.hpp>
-#include <st2110/socket_runtime.hpp>
-#include <st2110/socket_rx_audio_backend.hpp>
-#include <st2110/socket_rx_single_media_backend_base.hpp>
-#include <st2110/socket_rx_video_backend.hpp>
+#include <st2110/backends/socket/socket_rx_single_media_backend_base.hpp>
 
 static_assert(std::is_base_of_v<st2110::IRxBackend, st2110::SocketRxSingleMediaBackendBase>);
 static_assert(!std::is_base_of_v<st2110::ISocketRxVideoBackend, st2110::SocketRxSingleMediaBackendBase>);

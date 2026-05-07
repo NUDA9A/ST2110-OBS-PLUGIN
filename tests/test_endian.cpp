@@ -2,8 +2,8 @@
 #include <cstdint>
 #include <span>
 
+#include <st2110/foundation/endian.hpp>
 #include <iostream>
-#include <st2110/endian.hpp>
 
 static void test_be16_basic() {
     const uint8_t b[] = {0x12, 0x34};

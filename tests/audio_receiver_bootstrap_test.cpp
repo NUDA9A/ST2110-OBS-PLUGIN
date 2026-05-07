@@ -1,4 +1,4 @@
-#include "st2110/audio_receiver_bootstrap.hpp"
+#include "st2110/contracts/audio/audio_receiver_bootstrap.hpp"
 
 #include <cassert>
 #include <string>

@@ -1,7 +1,7 @@
 #include <cassert>
 #include <cstdint>
 
-#include <st2110/rtp.hpp>
+#include <st2110/ingress/shared/rtp.hpp>
 
 static void test_basic_distance() {
     assert(st2110::seq_distance(100, 101) == 1);

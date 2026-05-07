@@ -1,8 +1,8 @@
-#include <st2110/error.hpp>
-#include <st2110/pixel_format.hpp>
-#include <st2110/video_frame.hpp>
-#include <st2110/video_playout_timing.hpp>
-#include <st2110/video_timestamp_mapping.hpp>
+#include <st2110/delivery/video/pixel_format.hpp>
+#include <st2110/delivery/video/video_frame.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/receive/video/video_playout_timing.hpp>
+#include <st2110/receive/video/video_timestamp_mapping.hpp>
 
 #include <cassert>
 #include <cstdint>

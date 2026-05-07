@@ -1,8 +1,8 @@
 #include <cassert>
 #include <cstdint>
 
-#include <st2110/bytes.hpp>
-#include <st2110/rtp.hpp>
+#include <st2110/foundation/bytes.hpp>
+#include <st2110/ingress/shared/rtp.hpp>
 
 static void test_basic_payload_span() {
     const uint8_t pkt[] = {0x80, 0xF0, 0x12, 0x34, 0x01, 0x02, 0x03, 0x04, 0x0A, 0x0B, 0x0C, 0x0D, 0x11, 0x22, 0x33};

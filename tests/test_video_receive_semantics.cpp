@@ -3,10 +3,10 @@
 #include <stdexcept>
 #include <vector>
 
-#include <st2110/depacketizer.hpp>
-#include <st2110/error.hpp>
-#include <st2110/video_receive_semantics.hpp>
-#include <st2110/video_scan_mode.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/model/video/video_scan_mode.hpp>
+#include <st2110/receive/video/depacketizer.hpp>
+#include <st2110/receive/video/video_receive_semantics.hpp>
 
 static st2110::PacketView make_packet(uint32_t rtp_timestamp, bool marker, uint32_t ext_seq) {
     st2110::PacketView pkt{};

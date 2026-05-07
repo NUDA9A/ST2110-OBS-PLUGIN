@@ -2,15 +2,15 @@
 #define ST2110_OBS_PLUGIN_VIDEO_SIGNALING_HPP
 
 #include "config_validation.hpp"
-#include "depacketizer.hpp"
-#include "error.hpp"
-#include "packet_parse.hpp"
-#include "pixel_format.hpp"
+#include "delivery/video/pixel_format.hpp"
+#include "foundation/error.hpp"
+#include "ingress/shared/packet_parse.hpp"
+#include "model/video/video_scan_mode.hpp"
+#include "receive/video/depacketizer.hpp"
+#include "receive/video/video_unit_reconstructor.hpp"
 #include "rx_config.hpp"
 #include "video_receive_capability.hpp"
-#include "video_receive_pipeline.hpp"
-#include "video_scan_mode.hpp"
-#include "video_unit_reconstructor.hpp"
+#include "st2110/receive/video/video_receive_pipeline.hpp"
 
 #include <array>
 #include <cstdint>

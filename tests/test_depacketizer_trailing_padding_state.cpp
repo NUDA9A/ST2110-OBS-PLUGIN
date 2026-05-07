@@ -3,8 +3,8 @@
 #include <stdexcept>
 #include <vector>
 
-#include <st2110/depacketizer.hpp>
-#include <st2110/packet_view.hpp>
+#include <st2110/ingress/shared/packet_view.hpp>
+#include <st2110/receive/video/depacketizer.hpp>
 
 static std::vector<uint8_t> make_packet(uint16_t seq, uint32_t rtp_timestamp, bool marker, uint16_t srd_length,
                                         const std::vector<uint8_t> &segment_bytes,

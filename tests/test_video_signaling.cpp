@@ -2,9 +2,9 @@
 #include <cstdint>
 #include <optional>
 
-#include <st2110/mtl_rx_video_backend.hpp>
+#include <st2110/backends/mtl/mtl_rx_video_backend.hpp>
+#include <st2110/backends/socket/socket_rx_video_backend.hpp>
 #include <st2110/rx_config.hpp>
-#include <st2110/socket_rx_video_backend.hpp>
 #include <st2110/video_signaling.hpp>
 
 static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {

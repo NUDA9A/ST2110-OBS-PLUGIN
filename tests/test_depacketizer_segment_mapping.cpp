@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-#include <st2110/depacketizer.hpp>
+#include <st2110/receive/video/depacketizer.hpp>
 
 static st2110::PacketView make_packet_with_one_segment(uint32_t rtp_timestamp, uint32_t ext_seq, bool marker,
                                                        uint16_t row, uint16_t offset, uint16_t length,

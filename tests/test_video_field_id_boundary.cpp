@@ -2,8 +2,8 @@
 #include <cstdint>
 #include <stdexcept>
 
-#include <st2110/depacketizer.hpp>
-#include <st2110/st2110_20.hpp>
+#include <st2110/ingress/shared/st2110_20.hpp>
+#include <st2110/receive/video/depacketizer.hpp>
 
 static st2110::St2110PayloadHeaderView make_payload_header_with_field_id(bool field_id) {
     st2110::St2110PayloadHeaderView h{};

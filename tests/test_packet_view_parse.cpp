@@ -1,7 +1,7 @@
 #include <cassert>
 #include <cstdint>
 
-#include <st2110/packet_view.hpp>
+#include <st2110/ingress/shared/packet_view.hpp>
 
 static void test_from_udp_datagram_parses_single_segment_packet() {
     const uint8_t udp_payload[] = {0x80, 0xF0, 0x34, 0x56, 0x01, 0x02, 0x03, 0x04, 0x11, 0x22, 0x33, 0x44,

@@ -2,7 +2,7 @@
 #include <cassert>
 #include <cstring>
 
-#include <st2110/error.hpp>
+#include <st2110/foundation/error.hpp>
 
 namespace {
 using st2110::Error;

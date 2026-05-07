@@ -1,0 +1,8 @@
+//
+// Created by nuda9a on 5/7/26.
+//
+
+#ifndef ST2110_OBS_SOURCE_CONFIG_HPP
+#define ST2110_OBS_SOURCE_CONFIG_HPP
+
+#endif // ST2110_OBS_SOURCE_CONFIG_HPP

@@ -1,5 +1,5 @@
-#include "st2110/video_sdp_ingestion.hpp"
-#include "st2110/video_sdp_media_section.hpp"
+#include "st2110/ingress/video/video_sdp_ingestion.hpp"
+#include "st2110/ingress/video/video_sdp_media_section.hpp"
 
 #include <cassert>
 #include <string>

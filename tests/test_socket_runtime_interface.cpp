@@ -8,12 +8,12 @@
 #include <type_traits>
 #include <utility>
 
-#include <st2110/error.hpp>
-#include <st2110/pixel_format.hpp>
+#include <st2110/backends/socket/platform/socket_runtime.hpp>
+#include <st2110/delivery/video/pixel_format.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/model/video/video_packing_mode.hpp>
+#include <st2110/model/video/video_scan_mode.hpp>
 #include <st2110/rx_config.hpp>
-#include <st2110/socket_runtime.hpp>
-#include <st2110/video_packing_mode.hpp>
-#include <st2110/video_scan_mode.hpp>
 
 static_assert(std::is_enum_v<st2110::SocketAddressFamily>);
 

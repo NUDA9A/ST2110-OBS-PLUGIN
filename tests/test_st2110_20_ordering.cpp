@@ -2,8 +2,8 @@
 #include <cstdint>
 #include <initializer_list>
 
-#include <st2110/error.hpp>
-#include <st2110/st2110_20.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/st2110_20.hpp>
 
 static st2110::SrdHeader make_srd(uint16_t length, uint16_t row, uint16_t offset, bool field_id = false) {
     st2110::SrdHeader h{};

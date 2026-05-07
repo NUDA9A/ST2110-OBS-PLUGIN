@@ -4,10 +4,10 @@
 #include <span>
 #include <type_traits>
 
-#include <st2110/audio_packet.hpp>
-#include <st2110/bytes.hpp>
-#include <st2110/error.hpp>
-#include <st2110/rtp.hpp>
+#include <st2110/foundation/bytes.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/rtp.hpp>
+#include <st2110/receive/audio/audio_packet.hpp>
 #include <st2110/rx_config.hpp>
 
 static_assert(std::is_trivially_copyable_v<st2110::AudioRtpPacketPolicy>);

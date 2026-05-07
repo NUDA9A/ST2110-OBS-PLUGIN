@@ -17,17 +17,17 @@
 #include <utility>
 #include <vector>
 
-#include <st2110/audio_channel_order.hpp>
-#include <st2110/audio_frame.hpp>
-#include <st2110/audio_packet.hpp>
-#include <st2110/backend.hpp>
-#include <st2110/backend_factory.hpp>
-#include <st2110/error.hpp>
-#include <st2110/packet_parse.hpp>
-#include <st2110/receive_reorder_tolerance_policy.hpp>
+#include <st2110/backends/socket/platform/socket_runtime.hpp>
+#include <st2110/backends/socket/socket_rx_audio_backend.hpp>
+#include <st2110/contracts/backend/backend.hpp>
+#include <st2110/contracts/backend/backend_factory.hpp>
+#include <st2110/delivery/audio/audio_frame.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/packet_parse.hpp>
+#include <st2110/model/audio/audio_channel_order.hpp>
+#include <st2110/receive/audio/audio_packet.hpp>
+#include <st2110/receive/shared/receive_reorder_tolerance_policy.hpp>
 #include <st2110/rx_config.hpp>
-#include <st2110/socket_runtime.hpp>
-#include <st2110/socket_rx_audio_backend.hpp>
 
 static_assert(std::is_final_v<st2110::SocketRxAudioBackend>);
 static_assert(std::is_base_of_v<st2110::ISocketRxAudioBackend, st2110::SocketRxAudioBackend>);

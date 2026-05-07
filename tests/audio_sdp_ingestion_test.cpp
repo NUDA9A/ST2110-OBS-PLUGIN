@@ -1,7 +1,7 @@
-#include "st2110/audio_sdp_ingestion.hpp"
-#include "st2110/audio_sdp_media_section.hpp"
-#include "st2110/audio_signaling.hpp"
-#include "st2110/error.hpp"
+#include "st2110/foundation/error.hpp"
+#include "st2110/ingress/audio/audio_sdp_ingestion.hpp"
+#include "st2110/ingress/audio/audio_sdp_media_section.hpp"
+#include "st2110/model/audio/audio_signaling.hpp"
 
 #include <cassert>
 #include <cstdint>

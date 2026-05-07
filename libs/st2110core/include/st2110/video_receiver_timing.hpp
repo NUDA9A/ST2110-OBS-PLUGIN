@@ -1,7 +1,7 @@
 #ifndef ST2110_OBS_PLUGIN_VIDEO_RECEIVER_TIMING_HPP
 #define ST2110_OBS_PLUGIN_VIDEO_RECEIVER_TIMING_HPP
 
-#include "error.hpp"
+#include "foundation/error.hpp"
 
 namespace st2110 {
 struct VideoReceiverTimingCapability {

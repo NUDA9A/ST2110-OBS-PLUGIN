@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-#include <st2110/video_frame.hpp>
+#include <st2110/delivery/video/video_frame.hpp>
 
 static void test_video_frame_basic_properties() {
     st2110::VideoFrame frame(1920, 1080, st2110::PixelFormat::UYVY);

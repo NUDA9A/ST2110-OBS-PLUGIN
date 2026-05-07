@@ -1,10 +1,10 @@
 #include <cassert>
 #include <cstdint>
 
-#include <st2110/depacketizer.hpp>
-#include <st2110/error.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/model/video/video_scan_mode.hpp>
+#include <st2110/receive/video/depacketizer.hpp>
 #include <st2110/rx_config.hpp>
-#include <st2110/video_scan_mode.hpp>
 
 static st2110::RxVideoConfig make_base_rx_config() {
     st2110::RxVideoConfig cfg{};

@@ -2,8 +2,8 @@
 #include <optional>
 #include <string_view>
 
-#include <st2110/video_sdp_ingestion.hpp>
-#include <st2110/video_sdp_media_section.hpp>
+#include <st2110/ingress/video/video_sdp_ingestion.hpp>
+#include <st2110/ingress/video/video_sdp_media_section.hpp>
 
 static constexpr std::string_view kBaseFmtp = "sampling=YCbCr-4:2:2; width=1920; height=1080; exactframerate=25; "
                                               "depth=8; colorimetry=BT709; PM=2110GPM; SSN=ST2110-20:2017";

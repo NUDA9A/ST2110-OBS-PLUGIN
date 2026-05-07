@@ -1,9 +1,9 @@
 #include <cassert>
 #include <cstdint>
 
-#include <st2110/bytes.hpp>
-#include <st2110/error.hpp>
-#include <st2110/st2110_20.hpp>
+#include <st2110/foundation/bytes.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/st2110_20.hpp>
 
 static void test_single_srd() {
     // ext_seq = 0x1234

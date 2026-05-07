@@ -1,7 +1,7 @@
 #include <cassert>
 
-#include <st2110/packet_view.hpp>
-#include <st2110/st2110_20.hpp>
+#include <st2110/ingress/shared/packet_view.hpp>
+#include <st2110/ingress/shared/st2110_20.hpp>
 
 static void test_validate_allows_single_zero_length_srd() {
     st2110::St2110PayloadHeaderView h{};

@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-#include <st2110/frame_assembler.hpp>
+#include <st2110/receive/video/frame_assembler.hpp>
 
 static void test_write_segment_allows_write_ending_exactly_at_row_boundary() {
     st2110::FrameAssembler assembler(4, 1, st2110::PixelFormat::UYVY);

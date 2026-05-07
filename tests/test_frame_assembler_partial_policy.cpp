@@ -1,7 +1,7 @@
 #include <cassert>
 #include <cstdint>
 
-#include <st2110/frame_assembler.hpp>
+#include <st2110/receive/video/frame_assembler.hpp>
 
 static void test_emit_with_flag_policy_emits_partial_unit() {
     st2110::FrameAssembler assembler(4, 1, st2110::PixelFormat::UYVY, st2110::PartialFramePolicy::EmitWithFlag);

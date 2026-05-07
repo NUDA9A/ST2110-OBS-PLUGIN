@@ -1,5 +1,5 @@
-#include <st2110/audio_channel_order.hpp>
-#include <st2110/audio_signaling.hpp>
+#include <st2110/model/audio/audio_channel_order.hpp>
+#include <st2110/model/audio/audio_signaling.hpp>
 
 #include <cassert>
 #include <cstdint>

@@ -1,8 +1,8 @@
 #include <cassert>
 #include <cstdint>
 
-#include <st2110/error.hpp>
-#include <st2110/st2110_20.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/st2110_20.hpp>
 
 static st2110::St2110PayloadHeaderView make_valid_header() {
     st2110::St2110PayloadHeaderView h{};

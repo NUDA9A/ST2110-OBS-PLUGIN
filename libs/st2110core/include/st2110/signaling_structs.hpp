@@ -7,15 +7,15 @@
 #include <optional>
 #include <string>
 
-#include "packet_parse.hpp"
+#include "ingress/shared/packet_parse.hpp"
+#include "model/video/video_packing_mode.hpp"
+#include "model/video/video_scan_mode.hpp"
+#include "receive/video/video_receive_pipeline.hpp"
+#include "receive/video/video_reorder_policy.hpp"
+#include "receive/video/video_timestamp_mapping.hpp"
 #include "rx_config.hpp"
-#include "video_packing_mode.hpp"
 #include "video_receive_capability.hpp"
-#include "video_receive_pipeline.hpp"
 #include "video_receiver_timing.hpp"
-#include "video_reorder_policy.hpp"
-#include "video_scan_mode.hpp"
-#include "video_timestamp_mapping.hpp"
 
 namespace st2110 {
 enum class MediaClockMode { Direct, Sender };

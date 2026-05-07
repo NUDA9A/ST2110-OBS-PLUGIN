@@ -1,7 +1,7 @@
-#include "st2110/video_frame.hpp"
-#include "st2110/video_playout_timing.hpp"
-#include "st2110/video_timestamp_mapping.hpp"
-#include "st2110/video_unit_reconstructor.hpp"
+#include "st2110/delivery/video/video_frame.hpp"
+#include "st2110/receive/video/video_playout_timing.hpp"
+#include "st2110/receive/video/video_timestamp_mapping.hpp"
+#include "st2110/receive/video/video_unit_reconstructor.hpp"
 
 #include <cassert>
 #include <cstdint>

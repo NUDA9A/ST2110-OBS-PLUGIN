@@ -1,4 +1,4 @@
-#include "st2110/video_timestamp_mapping.hpp"
+#include "st2110/receive/video/video_timestamp_mapping.hpp"
 
 #include <cassert>
 #include <cstdint>

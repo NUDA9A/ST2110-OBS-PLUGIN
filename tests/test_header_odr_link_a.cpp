@@ -1,10 +1,10 @@
 #include <array>
 #include <cstdint>
 
-#include <st2110/bytes.hpp>
-#include <st2110/endian.hpp>
-#include <st2110/error.hpp>
-#include <st2110/st2110_20.hpp>
+#include <st2110/foundation/bytes.hpp>
+#include <st2110/foundation/endian.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/st2110_20.hpp>
 
 st2110::Error odr_helper_a() {
     const std::array<uint8_t, 8> payload = {

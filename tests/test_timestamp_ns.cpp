@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <type_traits>
 
-#include <st2110/timestamp.hpp>
+#include <st2110/foundation/timestamp.hpp>
 
 static_assert(std::is_same_v<st2110::TimestampNs, std::uint64_t>);
 

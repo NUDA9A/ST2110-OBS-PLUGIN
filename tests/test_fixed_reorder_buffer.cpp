@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include <st2110/fixed_reorder_buffer.hpp>
+#include <st2110/receive/shared/fixed_reorder_buffer.hpp>
 
 namespace {
 

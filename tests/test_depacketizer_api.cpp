@@ -4,7 +4,7 @@
 #include <type_traits>
 #include <vector>
 
-#include <st2110/depacketizer.hpp>
+#include <st2110/receive/video/depacketizer.hpp>
 
 static_assert(
     std::is_same_v<decltype(std::declval<st2110::Depacketizer &>().push(std::declval<const st2110::PacketView &>())),

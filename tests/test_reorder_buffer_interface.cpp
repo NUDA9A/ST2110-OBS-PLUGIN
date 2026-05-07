@@ -5,7 +5,7 @@
 #include <utility>
 #include <vector>
 
-#include <st2110/reorder_buffer.hpp>
+#include <st2110/receive/shared/reorder_buffer.hpp>
 
 static_assert(std::is_abstract_v<st2110::IReorderBuffer>);
 static_assert(

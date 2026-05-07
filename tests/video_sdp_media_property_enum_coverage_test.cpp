@@ -4,11 +4,11 @@
 #include <expected>
 #include <string_view>
 
-#include "st2110/error.hpp"
-#include "st2110/pixel_format.hpp"
+#include "st2110/delivery/video/pixel_format.hpp"
+#include "st2110/foundation/error.hpp"
+#include "st2110/ingress/video/video_sdp_fmtp.hpp"
+#include "st2110/ingress/video/video_sdp_signaling_adapter.hpp"
 #include "st2110/signaling_structs.hpp"
-#include "st2110/video_sdp_fmtp.hpp"
-#include "st2110/video_sdp_signaling_adapter.hpp"
 #include "st2110/video_signaling.hpp"
 
 using namespace st2110;

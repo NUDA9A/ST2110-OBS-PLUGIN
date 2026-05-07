@@ -2,9 +2,9 @@
 #include <cstdint>
 #include <vector>
 
-#include <st2110/bytes.hpp>
-#include <st2110/error.hpp>
-#include <st2110/rtp.hpp>
+#include <st2110/foundation/bytes.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/rtp.hpp>
 
 static void test_basic_header() {
     // V=2,P=0,X=0,CC=0 => 0x80

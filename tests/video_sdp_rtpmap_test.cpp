@@ -1,4 +1,4 @@
-#include "st2110/video_sdp_rtpmap.hpp"
+#include "st2110/ingress/video/video_sdp_rtpmap.hpp"
 
 #include <cassert>
 #include <string>

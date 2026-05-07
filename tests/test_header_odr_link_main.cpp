@@ -1,6 +1,6 @@
 #include <cassert>
 
-#include <st2110/error.hpp>
+#include <st2110/foundation/error.hpp>
 
 st2110::Error odr_helper_a();
 st2110::Error odr_helper_b();

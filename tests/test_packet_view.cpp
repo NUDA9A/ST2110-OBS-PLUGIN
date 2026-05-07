@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <type_traits>
 
-#include <st2110/packet_view.hpp>
+#include <st2110/ingress/shared/packet_view.hpp>
 
 static_assert(std::is_standard_layout_v<st2110::SrdSegmentView>);
 static_assert(std::is_standard_layout_v<st2110::PacketView>);

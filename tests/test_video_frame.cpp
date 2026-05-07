@@ -1,8 +1,8 @@
 #include <cassert>
 #include <cstdint>
 
-#include <st2110/pixel_format.hpp>
-#include <st2110/video_frame.hpp>
+#include <st2110/delivery/video/pixel_format.hpp>
+#include <st2110/delivery/video/video_frame.hpp>
 
 int main() {
     const uint32_t w = 1280;

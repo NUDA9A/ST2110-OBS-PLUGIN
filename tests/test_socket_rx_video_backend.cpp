@@ -17,15 +17,15 @@
 #include <utility>
 #include <vector>
 
-#include <st2110/backend.hpp>
-#include <st2110/backend_factory.hpp>
-#include <st2110/error.hpp>
-#include <st2110/packet_parse.hpp>
-#include <st2110/receive_reorder_tolerance_policy.hpp>
+#include <st2110/backends/socket/platform/socket_runtime.hpp>
+#include <st2110/backends/socket/socket_rx_video_backend.hpp>
+#include <st2110/contracts/backend/backend.hpp>
+#include <st2110/contracts/backend/backend_factory.hpp>
+#include <st2110/delivery/video/video_frame.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/packet_parse.hpp>
+#include <st2110/receive/shared/receive_reorder_tolerance_policy.hpp>
 #include <st2110/rx_config.hpp>
-#include <st2110/socket_runtime.hpp>
-#include <st2110/socket_rx_video_backend.hpp>
-#include <st2110/video_frame.hpp>
 
 static_assert(std::is_final_v<st2110::SocketRxVideoBackend>);
 static_assert(std::is_base_of_v<st2110::ISocketRxVideoBackend, st2110::SocketRxVideoBackend>);

@@ -13,13 +13,13 @@
 #include <utility>
 #include <vector>
 
-#include <st2110/backend.hpp>
-#include <st2110/packet_admission.hpp>
-#include <st2110/packet_view.hpp>
+#include <st2110/backends/socket/platform/socket_runtime.hpp>
+#include <st2110/backends/socket/socket_rx_video_backend.hpp>
+#include <st2110/contracts/backend/backend.hpp>
+#include <st2110/delivery/video/video_frame.hpp>
+#include <st2110/ingress/shared/packet_view.hpp>
+#include <st2110/receive/shared/packet_admission.hpp>
 #include <st2110/rx_config.hpp>
-#include <st2110/socket_runtime.hpp>
-#include <st2110/socket_rx_video_backend.hpp>
-#include <st2110/video_frame.hpp>
 
 namespace {
 

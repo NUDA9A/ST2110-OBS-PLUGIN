@@ -6,11 +6,11 @@
 #include <type_traits>
 #include <utility>
 
-#include <st2110/audio_frame.hpp>
-#include <st2110/backend.hpp>
-#include <st2110/error.hpp>
+#include <st2110/contracts/backend/backend.hpp>
+#include <st2110/delivery/audio/audio_frame.hpp>
+#include <st2110/delivery/video/video_frame.hpp>
+#include <st2110/foundation/error.hpp>
 #include <st2110/rx_config.hpp>
-#include <st2110/video_frame.hpp>
 
 static_assert(std::is_abstract_v<st2110::IRxBackend>);
 

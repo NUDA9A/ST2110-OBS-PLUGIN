@@ -1,11 +1,11 @@
-#include "st2110/backend_factory.hpp"
-#include "st2110/socket_rx_audio_backend.hpp"
-#include "st2110/socket_rx_video_backend.hpp"
+#include "st2110/backends/socket/socket_rx_audio_backend.hpp"
+#include "st2110/contracts/backend/backend_factory.hpp"
+#include "st2110/backends/socket/socket_rx_video_backend.hpp"
 #include "st2110/video_backend_support.hpp"
 
 #if defined(ST2110_HAS_MTL_BACKEND) && ST2110_HAS_MTL_BACKEND
-#include "st2110/mtl_rx_backend_factory.hpp"
-#include "st2110/mtl_rx_video_backend.hpp"
+#include "st2110/backends/mtl/mtl_rx_backend_factory.hpp"
+#include "st2110/backends/mtl/mtl_rx_video_backend.hpp"
 #endif
 
 #include <array>

@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include <st2110/video_receive_pipeline.hpp>
+#include <st2110/receive/video/video_receive_pipeline.hpp>
 
 static st2110::PacketView make_packet_header(uint32_t rtp_timestamp, uint32_t ext_seq, bool marker) {
     st2110::PacketView pkt{};

@@ -4,7 +4,7 @@
 #include <string>
 #include <string_view>
 
-#include <st2110/video_sdp_ingestion.hpp>
+#include <st2110/ingress/video/video_sdp_ingestion.hpp>
 #include <st2110/video_signaling.hpp>
 
 static st2110::VideoSignalStandard make_signal_standard(st2110::VideoSignalStandard::Known known) {

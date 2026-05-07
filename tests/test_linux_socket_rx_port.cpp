@@ -8,9 +8,9 @@
 #include <utility>
 #include <vector>
 
-#include <st2110/error.hpp>
-#include <st2110/linux_socket_rx_port.hpp>
-#include <st2110/socket_runtime.hpp>
+#include <st2110/backends/socket/platform/socket_runtime.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/backends/socket/platform/linux_socket_rx_port.hpp>
 
 #if defined(__linux__)
 

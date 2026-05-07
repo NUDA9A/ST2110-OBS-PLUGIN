@@ -1,6 +1,6 @@
-#include "st2110/packet_parse.hpp"
-#include "st2110/video_sdp_fmtp.hpp"
-#include "st2110/video_sdp_ingestion.hpp"
+#include "st2110/ingress/shared/packet_parse.hpp"
+#include "st2110/ingress/video/video_sdp_fmtp.hpp"
+#include "st2110/ingress/video/video_sdp_ingestion.hpp"
 #include "st2110/video_signaling.hpp"
 
 #include <cassert>

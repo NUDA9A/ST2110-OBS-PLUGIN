@@ -2,11 +2,11 @@
 #include <cstdint>
 #include <vector>
 
-#include <st2110/error.hpp>
-#include <st2110/packet_view.hpp>
-#include <st2110/video_packet_padding.hpp>
-#include <st2110/video_packing_mode.hpp>
-#include <st2110/video_scan_mode.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/packet_view.hpp>
+#include <st2110/model/video/video_packing_mode.hpp>
+#include <st2110/model/video/video_scan_mode.hpp>
+#include <st2110/receive/video/video_packet_padding.hpp>
 
 static std::vector<uint8_t> make_packet(bool marker, const std::vector<uint8_t> &segment_bytes,
                                         const std::vector<uint8_t> &trailing_bytes) {

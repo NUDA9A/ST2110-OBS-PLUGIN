@@ -2,8 +2,8 @@
 #include <cstdint>
 #include <type_traits>
 
-#include <st2110/error.hpp>
-#include <st2110/stats.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/foundation/stats.hpp>
 
 static_assert(std::is_standard_layout_v<st2110::ParserStats>);
 static_assert(std::is_standard_layout_v<st2110::DepacketizerStats>);

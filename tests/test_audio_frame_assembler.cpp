@@ -1,4 +1,4 @@
-#include "st2110/audio_frame_assembler.hpp"
+#include "st2110/receive/audio/audio_frame_assembler.hpp"
 
 #include <cassert>
 #include <cstdint>

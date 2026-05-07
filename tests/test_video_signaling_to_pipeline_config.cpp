@@ -2,10 +2,10 @@
 #include <optional>
 #include <string>
 
-#include <st2110/depacketizer.hpp>
-#include <st2110/video_receive_pipeline.hpp>
+#include <st2110/receive/video/depacketizer.hpp>
+#include <st2110/receive/video/video_unit_reconstructor.hpp>
+#include <st2110/receive/video/video_receive_pipeline.hpp>
 #include <st2110/video_signaling.hpp>
-#include <st2110/video_unit_reconstructor.hpp>
 
 static st2110::ReferenceClock make_valid_reference_clock() {
     st2110::ReferenceClock clock{};

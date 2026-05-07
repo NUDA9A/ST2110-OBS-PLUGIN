@@ -17,14 +17,14 @@ endif()
 
 set(ST2110CORE_SOURCES
         src/stub.cpp
-        src/socket_rx_single_media_backend_base.cpp
+        src/backends/socket/socket_rx_single_media_backend_base.cpp
         src/backend_factory_registry.cpp
 )
 
 if(ST2110_HAS_MTL_BACKEND)
     list(APPEND ST2110CORE_SOURCES
-            src/mtl_rx_backend_factory.cpp
-            src/mtl_rx_video_backend.cpp
+            src/backends/mtl/mtl_rx_backend_factory.cpp
+            src/backends/mtl/mtl_rx_video_backend.cpp
     )
 endif()
 

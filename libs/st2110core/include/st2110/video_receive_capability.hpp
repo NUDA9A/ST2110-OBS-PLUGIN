@@ -7,10 +7,10 @@
 #include <string>
 
 #include "config_validation.hpp"
-#include "error.hpp"
-#include "pixel_format.hpp"
-#include "video_packing_mode.hpp"
-#include "video_scan_mode.hpp"
+#include "delivery/video/pixel_format.hpp"
+#include "foundation/error.hpp"
+#include "model/video/video_packing_mode.hpp"
+#include "model/video/video_scan_mode.hpp"
 
 namespace st2110 {
 

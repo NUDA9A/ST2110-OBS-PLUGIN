@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-#include <st2110/packet_parse.hpp>
+#include <st2110/ingress/shared/packet_parse.hpp>
 
 static void test_udp_datagram_size_helper_adds_udp_header_bytes() {
     std::vector<uint8_t> payload(1452, 0x00);

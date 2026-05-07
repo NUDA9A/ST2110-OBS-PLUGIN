@@ -1,6 +1,6 @@
 #include <cassert>
 
-#include <st2110/error.hpp>
+#include <st2110/foundation/error.hpp>
 #include <st2110/video_receiver_timing.hpp>
 
 static void test_default_capability_has_supported_sender_types() {

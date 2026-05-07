@@ -1,7 +1,7 @@
 #include <cassert>
 #include <cstdint>
 
-#include <st2110/frame_assembler.hpp>
+#include <st2110/receive/video/frame_assembler.hpp>
 
 static void test_marker_seen_full_coverage_is_complete() {
     st2110::FrameAssembler assembler(4, 2, st2110::PixelFormat::UYVY);

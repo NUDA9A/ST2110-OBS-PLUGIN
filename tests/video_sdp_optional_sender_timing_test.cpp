@@ -1,7 +1,7 @@
 // tests/video_sdp_optional_sender_timing_test.cpp
 
+#include "st2110/ingress/video/video_sdp_ingestion.hpp"
 #include "st2110/video_receiver_timing_signaling.hpp"
-#include "st2110/video_sdp_ingestion.hpp"
 #include "st2110/video_signaling.hpp"
 
 #include <cassert>

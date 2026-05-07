@@ -2,9 +2,9 @@
 #include <type_traits>
 #include <utility>
 
-#include <st2110/audio_reorder_buffer.hpp>
-#include <st2110/receive_reorder_tolerance_policy.hpp>
-#include <st2110/video_reorder_policy.hpp>
+#include <st2110/receive/audio/audio_reorder_buffer.hpp>
+#include <st2110/receive/shared/receive_reorder_tolerance_policy.hpp>
+#include <st2110/receive/video/video_reorder_policy.hpp>
 
 static_assert(std::is_enum_v<st2110::ReceiveReorderGapPolicy>);
 static_assert(std::is_same_v<decltype(std::declval<st2110::ReceiveReorderTolerancePolicy>().gap_policy),

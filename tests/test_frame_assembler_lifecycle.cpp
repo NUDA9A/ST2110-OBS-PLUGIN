@@ -2,8 +2,8 @@
 #include <cstdint>
 #include <stdexcept>
 
-#include <st2110/bytes.hpp>
-#include <st2110/frame_assembler.hpp>
+#include <st2110/foundation/bytes.hpp>
+#include <st2110/receive/video/frame_assembler.hpp>
 
 static void test_begin_write_end_roundtrip() {
     st2110::FrameAssembler assembler(8, 2, st2110::PixelFormat::UYVY);

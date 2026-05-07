@@ -1,4 +1,4 @@
-#include <st2110/audio_packet.hpp>
+#include <st2110/receive/audio/audio_packet.hpp>
 
 #include <algorithm>
 #include <cassert>

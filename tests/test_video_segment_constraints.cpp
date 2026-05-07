@@ -2,11 +2,11 @@
 #include <cstdint>
 #include <vector>
 
-#include <st2110/bytes.hpp>
-#include <st2110/error.hpp>
-#include <st2110/pixel_format.hpp>
-#include <st2110/st2110_20.hpp>
-#include <st2110/video_segment_constraints.hpp>
+#include <st2110/delivery/video/pixel_format.hpp>
+#include <st2110/foundation/bytes.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/st2110_20.hpp>
+#include <st2110/receive/video/video_segment_constraints.hpp>
 
 static st2110::SrdHeader make_header(uint16_t length, uint16_t row, uint16_t offset) {
     st2110::SrdHeader h{};

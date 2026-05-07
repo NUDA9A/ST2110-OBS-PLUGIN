@@ -1,6 +1,6 @@
-#include <st2110/audio_timestamp_mapping.hpp>
-#include <st2110/error.hpp>
-#include <st2110/timestamp.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/foundation/timestamp.hpp>
+#include <st2110/receive/audio/audio_timestamp_mapping.hpp>
 
 #include <cassert>
 #include <cstdint>

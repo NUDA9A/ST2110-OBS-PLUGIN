@@ -1,7 +1,7 @@
 #include <cassert>
 #include <cstdint>
 
-#include <st2110/st2110_20.hpp>
+#include <st2110/ingress/shared/st2110_20.hpp>
 
 int main() {
     st2110::ExtendedSequenceNumber ext{};

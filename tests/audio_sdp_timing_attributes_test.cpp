@@ -1,4 +1,4 @@
-#include <st2110/audio_sdp_timing_attributes.hpp>
+#include <st2110/ingress/audio/audio_sdp_timing_attributes.hpp>
 
 #include <cassert>
 #include <optional>

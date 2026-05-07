@@ -1,4 +1,4 @@
-#include "st2110/audio_frame.hpp"
+#include "st2110/delivery/audio/audio_frame.hpp"
 #include "st2110/rx_config.hpp"
 
 #include <cassert>

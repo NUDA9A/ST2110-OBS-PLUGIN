@@ -5,10 +5,10 @@
 #include <type_traits>
 #include <vector>
 
-#include <st2110/frame_assembler.hpp>
-#include <st2110/pixel_format.hpp>
-#include <st2110/video_scan_mode.hpp>
-#include <st2110/video_unit_reconstructor.hpp>
+#include <st2110/delivery/video/pixel_format.hpp>
+#include <st2110/model/video/video_scan_mode.hpp>
+#include <st2110/receive/video/frame_assembler.hpp>
+#include <st2110/receive/video/video_unit_reconstructor.hpp>
 
 static st2110::AssembledVideoUnit make_unit(st2110::VideoAssemblyUnitKind kind, uint32_t rtp_timestamp, bool complete,
                                             const uint8_t *bytes, std::size_t size_bytes) {

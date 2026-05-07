@@ -6,9 +6,9 @@
 #include <limits>
 #include <string_view>
 
-#include "error.hpp"
-#include "pixel_format.hpp"
-#include "video_scan_mode.hpp"
+#include "delivery/video/pixel_format.hpp"
+#include "foundation/error.hpp"
+#include "model/video/video_scan_mode.hpp"
 
 namespace st2110::config_validation {
 [[nodiscard]] inline std::expected<uint32_t, Error>

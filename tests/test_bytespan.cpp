@@ -1,7 +1,7 @@
 #include <cassert>
 #include <cstdint>
 
-#include <st2110/bytes.hpp>
+#include <st2110/foundation/bytes.hpp>
 
 int main() {
     uint8_t buf[4] = {1, 2, 3, 4};

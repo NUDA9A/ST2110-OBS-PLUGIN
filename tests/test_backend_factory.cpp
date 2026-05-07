@@ -8,17 +8,17 @@
 #include <type_traits>
 #include <utility>
 
-#include <st2110/backend.hpp>
-#include <st2110/backend_factory.hpp>
-#include <st2110/error.hpp>
+#include <st2110/contracts/backend/backend.hpp>
+#include <st2110/contracts/backend/backend_factory.hpp>
+#include <st2110/foundation/error.hpp>
 
 #ifndef ST2110_TEST_EXPECT_MTL_BUILT
 #error "ST2110_TEST_EXPECT_MTL_BUILT must be provided by tests/CMakeLists.txt"
 #endif
 
 #if ST2110_TEST_EXPECT_MTL_BUILT
-#include <st2110/mtl_rx_backend_factory.hpp>
-#include <st2110/mtl_rx_video_backend.hpp>
+#include <st2110/backends/mtl/mtl_rx_backend_factory.hpp>
+#include <st2110/backends/mtl/mtl_rx_video_backend.hpp>
 #endif
 
 static_assert(std::is_enum_v<st2110::RxBackendKind>);

@@ -1,8 +1,8 @@
 #ifndef ST2110_OBS_PLUGIN_VIDEO_BACKEND_SUPPORT_HPP
 #define ST2110_OBS_PLUGIN_VIDEO_BACKEND_SUPPORT_HPP
 
-#include "error.hpp"
-#include "pixel_format.hpp"
+#include "delivery/video/pixel_format.hpp"
+#include "foundation/error.hpp"
 #include "rx_config.hpp"
 #include "video_receive_capability.hpp"
 

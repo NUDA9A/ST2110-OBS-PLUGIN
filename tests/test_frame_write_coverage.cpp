@@ -2,7 +2,7 @@
 #include <cstdint>
 #include <stdexcept>
 
-#include <st2110/frame_write_coverage.hpp>
+#include <st2110/receive/video/frame_write_coverage.hpp>
 
 static void test_reset_from_video_frame_initializes_expected_sizes() {
     st2110::VideoFrame frame(4, 2, st2110::PixelFormat::UYVY);

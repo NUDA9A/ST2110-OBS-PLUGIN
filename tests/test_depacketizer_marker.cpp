@@ -1,7 +1,7 @@
 #include <cassert>
 #include <cstdint>
 
-#include <st2110/depacketizer.hpp>
+#include <st2110/receive/video/depacketizer.hpp>
 
 static st2110::PacketView make_packet(uint32_t rtp_timestamp, uint32_t ext_seq, bool marker) {
     st2110::PacketView pkt{};

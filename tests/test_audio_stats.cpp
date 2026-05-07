@@ -1,4 +1,4 @@
-#include "st2110/audio_stats.hpp"
+#include "st2110/receive/audio/audio_stats.hpp"
 
 #include <cassert>
 #include <cstdint>

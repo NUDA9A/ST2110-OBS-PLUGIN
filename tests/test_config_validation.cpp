@@ -3,9 +3,9 @@
 #include <type_traits>
 #include <utility>
 
+#include <st2110/delivery/video/pixel_format.hpp>
+#include <st2110/foundation/error.hpp>
 #include <st2110/config_validation.hpp>
-#include <st2110/error.hpp>
-#include <st2110/pixel_format.hpp>
 #include <st2110/rx_config.hpp>
 
 static_assert(std::is_same_v<decltype(st2110::config_validation::is_non_empty("x")), bool>);
