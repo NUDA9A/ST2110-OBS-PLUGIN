@@ -17,8 +17,9 @@ struct MtlRxVideoDeviceContext {};
 struct MtlRxVideoSessionContext {};
 
 struct MtlRxVideoSupportPolicy {
-    VideoRuntimeSupportPolicy runtime_support{};
-    bool require_progressive_scan_mode = true;
+    VideoProjectDeliverySupportPolicy project_delivery{};
+    bool require_mtl_session_packing_mode_support = true;
+    bool require_progressive_scan_mode = false;
     bool require_single_stream_topology = true;
     bool require_90khz_rtp_clock = true;
     bool require_project_handoff_format_support = true;
@@ -26,8 +27,15 @@ struct MtlRxVideoSupportPolicy {
 
 [[nodiscard]] MtlRxVideoSupportPolicy default_mtl_rx_video_support_policy();
 
-[[nodiscard]] Error validate_mtl_rx_video_receive_capability_support(const VideoReceiveCapability &capability,
-                                                                     const MtlRxVideoSupportPolicy &support) noexcept;
+[[nodiscard]] Error validate_mtl_rx_video_packing_mode_support(VideoPackingMode mode) noexcept;
+
+[[nodiscard]] Error
+validate_mtl_rx_video_receive_capability_session_support(const VideoReceiveCapability &capability,
+                                                         const MtlRxVideoSupportPolicy &support) noexcept;
+
+[[nodiscard]] Error
+validate_mtl_rx_video_receive_capability_project_projection_support(const VideoReceiveCapability &capability,
+                                                                    const MtlRxVideoSupportPolicy &support) noexcept;
 
 [[nodiscard]] Error validate_mtl_rx_video_config_support(const RxVideoConfig &cfg,
                                                          const MtlRxVideoSupportPolicy &support);
@@ -72,11 +80,25 @@ class MtlRxVideoBackend final : public IRxVideoBackend {
         std::uint16_t frame_buffer_count = kDefaultFrameBufferCount;
     };
 
+    /*
+     * Current project VideoFrameView delivery boundary only.
+     * This is intentionally narrower than MTL session/project projection support
+     * and must not be used as the backend support/projection acceptance boundary.
+     */
     [[nodiscard]] static Error
-    validate_video_frame_view_compatibility(const RxVideoConfig &cfg,
-                                            const VideoReceiveCapability &capability) noexcept;
+    validate_video_frame_view_delivery_support(const RxVideoConfig &cfg,
+                                               const VideoReceiveCapability &capability) noexcept;
 
-    [[nodiscard]] static Error validate_mtl_st20p_mvp_compatibility(const RxVideoConfig &cfg);
+    /*
+     * MTL support/projection boundary for start-config projection.
+     * This covers:
+     * - MTL config support;
+     * - MTL session support;
+     * - MTL project/start projection support.
+     *
+     * It must not apply current VideoFrameView delivery restrictions.
+     */
+    [[nodiscard]] static Error validate_projected_video_start_support(const RxVideoConfig &cfg);
 
     [[nodiscard]] static std::expected<bool, Error> scan_mode_maps_to_mtl_interlaced(VideoScanMode scan_mode) noexcept;
 

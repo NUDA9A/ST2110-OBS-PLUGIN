@@ -8,21 +8,30 @@ MtlRxVideoBackend::~MtlRxVideoBackend() { (void)stop(); }
 const char *MtlRxVideoBackend::backend_name() const { return "mtl"; }
 
 MtlRxVideoSupportPolicy default_mtl_rx_video_support_policy() {
-    MtlRxVideoSupportPolicy policy{};
-    policy.runtime_support.require_project_pixel_format_storage_compatibility = true;
-    policy.runtime_support.require_runtime_packing_mode_support = true;
-    policy.runtime_support.require_project_handoff_format_support = true;
-    policy.require_progressive_scan_mode = true;
-    policy.require_single_stream_topology = true;
-    policy.require_90khz_rtp_clock = true;
-    policy.require_project_handoff_format_support = true;
-    return policy;
+    return MtlRxVideoSupportPolicy{
+        .project_delivery = default_video_project_delivery_support_policy(),
+        .require_mtl_session_packing_mode_support = true,
+        .require_progressive_scan_mode = false,
+        .require_single_stream_topology = true,
+        .require_90khz_rtp_clock = true,
+        .require_project_handoff_format_support = true,
+    };
 }
 
-Error validate_mtl_rx_video_receive_capability_support(const VideoReceiveCapability &capability,
-                                                       const MtlRxVideoSupportPolicy &support) noexcept {
+Error validate_mtl_rx_video_packing_mode_support(VideoPackingMode mode) noexcept {
+    return validate_runtime_video_packing_mode_support(mode);
+}
+
+Error validate_mtl_rx_video_receive_capability_session_support(const VideoReceiveCapability &capability,
+                                                               const MtlRxVideoSupportPolicy &support) noexcept {
     if (Error err = validate_video_receive_capability_structure(capability); err != Error::Ok) {
         return err;
+    }
+
+    if (support.require_mtl_session_packing_mode_support) {
+        if (Error err = validate_mtl_rx_video_packing_mode_support(capability.packing_mode); err != Error::Ok) {
+            return err;
+        }
     }
 
     if (support.require_progressive_scan_mode && capability.scan_mode != VideoScanMode::Progressive) {
@@ -36,6 +45,15 @@ Error validate_mtl_rx_video_receive_capability_support(const VideoReceiveCapabil
 
     if (support.require_90khz_rtp_clock && capability.rtp_clock.rtp_clock_rate != 90000) {
         return Error::Unsupported;
+    }
+
+    return Error::Ok;
+}
+
+Error validate_mtl_rx_video_receive_capability_project_projection_support(
+    const VideoReceiveCapability &capability, const MtlRxVideoSupportPolicy &support) noexcept {
+    if (Error err = validate_video_receive_capability_structure(capability); err != Error::Ok) {
+        return err;
     }
 
     if (support.require_project_handoff_format_support) {
@@ -55,7 +73,8 @@ Error validate_mtl_rx_video_receive_capability_support(const VideoReceiveCapabil
 }
 
 Error validate_mtl_rx_video_config_support(const RxVideoConfig &cfg, const MtlRxVideoSupportPolicy &support) {
-    if (Error err = validate_rx_video_config_against_runtime_support(cfg, support.runtime_support); err != Error::Ok) {
+    if (Error err = validate_rx_video_config_against_project_delivery_support(cfg, support.project_delivery);
+        err != Error::Ok) {
         return err;
     }
 
@@ -64,7 +83,11 @@ Error validate_mtl_rx_video_config_support(const RxVideoConfig &cfg, const MtlRx
         return capability.error();
     }
 
-    return validate_mtl_rx_video_receive_capability_support(*capability, support);
+    if (Error err = validate_mtl_rx_video_receive_capability_session_support(*capability, support); err != Error::Ok) {
+        return err;
+    }
+
+    return validate_mtl_rx_video_receive_capability_project_projection_support(*capability, support);
 }
 
 RxBackendLifecycleResult MtlRxVideoBackend::start_video(const RxVideoConfig &cfg, IVideoFrameSink &sink) {
@@ -82,9 +105,14 @@ RxBackendLifecycleResult MtlRxVideoBackend::start_video(const RxVideoConfig &cfg
     }
 
     /*
-     * Task 131 / step 2 adds the explicit support/projection boundary only.
-     * Actual MTL device/session creation and start/stop runtime behavior
-     * remain in later steps.
+     * Task 131 currently establishes the explicit MTL support/projection split:
+     * - common structural validity;
+     * - MTL session support;
+     * - MTL project/start projection support;
+     * - current VideoFrameView delivery support.
+     *
+     * Actual MTL device/session creation and runtime start/stop behavior
+     * remain for later implementation steps.
      */
     return std::unexpected(Error::Unsupported);
 }
@@ -137,8 +165,8 @@ Error MtlRxVideoBackend::validate_start_state_locked() const noexcept {
     return Error::Ok;
 }
 
-Error MtlRxVideoBackend::validate_video_frame_view_compatibility(const RxVideoConfig &cfg,
-                                                                 const VideoReceiveCapability &capability) noexcept {
+Error MtlRxVideoBackend::validate_video_frame_view_delivery_support(const RxVideoConfig &cfg,
+                                                                    const VideoReceiveCapability &capability) noexcept {
     if (Error err = validate_project_video_frame_storage_compatibility(capability, cfg.format); err != Error::Ok) {
         return err;
     }
@@ -171,18 +199,13 @@ Error MtlRxVideoBackend::validate_video_frame_view_compatibility(const RxVideoCo
     }
 }
 
-Error MtlRxVideoBackend::validate_mtl_st20p_mvp_compatibility(const RxVideoConfig &cfg) {
+Error MtlRxVideoBackend::validate_projected_video_start_support(const RxVideoConfig &cfg) {
     if (const Error err = validate_mtl_rx_video_config_support(cfg, default_mtl_rx_video_support_policy());
         err != Error::Ok) {
         return err;
     }
 
-    auto capability = rx_video_config_effective_receive_capability(cfg);
-    if (!capability.has_value()) {
-        return capability.error();
-    }
-
-    return validate_video_frame_view_compatibility(cfg, *capability);
+    return Error::Ok;
 }
 
 std::expected<bool, Error> MtlRxVideoBackend::scan_mode_maps_to_mtl_interlaced(VideoScanMode scan_mode) noexcept {
@@ -218,7 +241,7 @@ MtlRxVideoBackend::session_port_count_from_receive_topology(const VideoReceiveTo
 
 std::expected<MtlRxVideoBackend::ProjectedVideoStartConfig, Error>
 MtlRxVideoBackend::project_video_start_config(const RxVideoConfig &cfg) {
-    if (const Error err = validate_mtl_st20p_mvp_compatibility(cfg); err != Error::Ok) {
+    if (const Error err = validate_projected_video_start_support(cfg); err != Error::Ok) {
         return std::unexpected(err);
     }
 

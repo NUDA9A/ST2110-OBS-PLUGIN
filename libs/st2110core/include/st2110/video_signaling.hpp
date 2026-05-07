@@ -145,6 +145,15 @@ struct VideoReceiveCapabilityProjectionOptions {
     VideoReceiveTopology topology{};
 };
 
+/*
+ * Current project-delivery projection from signaling into project storage format.
+ *
+ * This is not a structural signaling-validity boundary.
+ * Structurally recognized but not currently project-deliverable media must return
+ * Error::Unsupported here rather than being treated as invalid signaling.
+ *
+ * Backend/runtime implementation support must not be checked here.
+ */
 inline std::expected<PixelFormat, Error>
 pixel_format_from_video_stream_signaling(const VideoStreamSignaling &signaling) {
     if (Error err = validate_video_sampling(signaling.media.sampling); err != Error::Ok) {
@@ -255,6 +264,41 @@ video_receive_capability_from_video_stream_signaling(const VideoStreamSignaling 
     return capability;
 }
 
+[[nodiscard]] inline Error validate_video_stream_signaling_against_project_delivery_support(
+    const VideoStreamSignaling &signaling, const VideoReceiveCapabilityProjectionOptions &options = {},
+    const VideoProjectDeliverySupportPolicy &support = default_video_project_delivery_support_policy()) {
+    if (Error err = validate_video_stream_signaling(signaling); err != Error::Ok) {
+        return err;
+    }
+
+    auto capability = video_receive_capability_from_video_stream_signaling(signaling, options);
+    if (!capability.has_value()) {
+        return capability.error();
+    }
+
+    auto projected_format = project_pixel_format_from_video_frame_handoff_format(capability->handoff_format);
+    if (!projected_format.has_value()) {
+        return projected_format.error();
+    }
+
+    if (support.require_project_handoff_format_support) {
+        if (Error err = validate_project_video_frame_handoff_format_matches_pixel_format(capability->handoff_format,
+                                                                                         *projected_format);
+            err != Error::Ok) {
+            return err;
+        }
+    }
+
+    if (support.require_project_pixel_format_storage_compatibility) {
+        if (Error err = validate_project_video_frame_storage_compatibility(*capability, *projected_format);
+            err != Error::Ok) {
+            return err;
+        }
+    }
+
+    return Error::Ok;
+}
+
 [[nodiscard]] inline Error
 validate_video_receive_capability_against_video_stream_signaling(const VideoReceiveCapability &capability,
                                                                  const VideoStreamSignaling &signaling) {
@@ -314,18 +358,29 @@ inline Error validate_video_stream_signaling_against_rx_video_config(const Video
     return Error::Ok;
 }
 
-inline std::expected<DepacketizerConfig, Error>
+/*
+ * Project runtime-config projection from signaling into DepacketizerConfig.
+ *
+ * This helper must:
+ * - validate signaling structurally;
+ * - apply current project-delivery projection;
+ * - project the recognized packing mode into DepacketizerConfig unchanged.
+ *
+ * This helper must not reject a structurally recognized packing mode only because
+ * current runtime/backend implementation support is narrower.
+ * Runtime/backend support is checked later at the relevant support boundary.
+ */
+[[nodiscard]] inline std::expected<DepacketizerConfig, Error>
 depacketizer_config_from_video_stream_signaling(const VideoStreamSignaling &signaling, PartialFramePolicy policy) {
-    if (Error err = validate_video_stream_signaling(signaling); err != Error::Ok) {
+    if (Error err = validate_video_stream_signaling_against_project_delivery_support(signaling); err != Error::Ok) {
         return std::unexpected(err);
     }
-    if (Error err = validate_runtime_video_packing_mode_support(signaling.packing_mode); err != Error::Ok) {
-        return std::unexpected(err);
-    }
+
     auto expected_format = pixel_format_from_video_stream_signaling(signaling);
     if (!expected_format.has_value()) {
         return std::unexpected(std::move(expected_format.error()));
     }
+
     PixelFormat format = *expected_format;
     return DepacketizerConfig{.width = signaling.media.width,
                               .height = signaling.media.height,
@@ -348,19 +403,29 @@ video_unit_reconstructor_config_from_video_stream_signaling(const VideoStreamSig
     return VideoUnitReconstructorConfig{.format = format, .scan_mode = signaling.scan_mode};
 }
 
-inline std::expected<VideoReceivePipelineConfig, Error>
+/*
+ * Project runtime-config projection from signaling into VideoReceivePipelineConfig.
+ *
+ * This helper must:
+ * - validate signaling structurally;
+ * - apply current project-delivery projection;
+ * - preserve the structurally recognized packing mode in the projected pipeline config.
+ *
+ * It must not use current runtime/backend implementation limits as an early
+ * rejection boundary for otherwise recognized signaling.
+ */
+[[nodiscard]] inline std::expected<VideoReceivePipelineConfig, Error>
 video_receive_pipeline_config_from_video_stream_signaling(const VideoStreamSignaling &signaling,
                                                           PartialFramePolicy policy) {
-    if (Error err = validate_video_stream_signaling(signaling); err != Error::Ok) {
+    if (Error err = validate_video_stream_signaling_against_project_delivery_support(signaling); err != Error::Ok) {
         return std::unexpected(err);
     }
-    if (Error err = validate_runtime_video_packing_mode_support(signaling.packing_mode); err != Error::Ok) {
-        return std::unexpected(err);
-    }
+
     auto expected_format = pixel_format_from_video_stream_signaling(signaling);
     if (!expected_format.has_value()) {
         return std::unexpected(std::move(expected_format.error()));
     }
+
     PixelFormat format = *expected_format;
     return VideoReceivePipelineConfig{
         .depacketizer = DepacketizerConfig{.width = signaling.media.width,
@@ -399,7 +464,9 @@ rx_video_config_from_video_stream_signaling(const VideoStreamSignaling &signalin
                       .packing_mode = capability->packing_mode,
                       .receive_capability = *capability};
 
-    if (Error err = validate_rx_video_config(res); err != Error::Ok) {
+    if (Error err = validate_rx_video_config_against_project_delivery_support(
+            res, default_video_project_delivery_support_policy());
+        err != Error::Ok) {
         return std::unexpected(err);
     }
 
@@ -421,12 +488,23 @@ video_rtp_timestamp_mapper_config_from_video_stream_signaling(const VideoStreamS
     return cfg;
 }
 
+/*
+ * Signaling-derived bootstrap projection for the current project runtime model.
+ *
+ * This helper must remain above backend-specific support validation:
+ * - structural signaling validity is checked here;
+ * - current project-delivery projection is checked here;
+ * - backend/runtime implementation support is not decided here.
+ *
+ * A structurally recognized mode must not be rejected here solely because the
+ * current backend/runtime path does not yet implement that mode.
+ */
 [[nodiscard]] inline std::expected<VideoReceiverBootstrapConfig, Error>
 video_receiver_bootstrap_config_from_video_stream_signaling(const VideoStreamSignaling &signaling, uint16_t udp_port,
                                                             uint8_t payload_type, std::string local_ip,
                                                             std::string dest_ip,
                                                             PartialFramePolicy partial_frame_policy) {
-    if (Error err = validate_video_stream_signaling(signaling); err != Error::Ok) {
+    if (Error err = validate_video_stream_signaling_against_project_delivery_support(signaling); err != Error::Ok) {
         return std::unexpected(err);
     }
 
@@ -438,10 +516,6 @@ video_receiver_bootstrap_config_from_video_stream_signaling(const VideoStreamSig
         return std::unexpected(std::move(expected_rx_config.error()));
     }
     auto rx_config = *expected_rx_config;
-
-    if (Error err = validate_runtime_video_packing_mode_support(signaling.packing_mode); err != Error::Ok) {
-        return std::unexpected(err);
-    }
 
     auto expected_receive_pipeline =
         video_receive_pipeline_config_from_video_stream_signaling(signaling, partial_frame_policy);

@@ -107,6 +107,24 @@ static void test_pipeline_projection_preserves_interlaced_scan_mode_structurally
     assert(cfg->reconstructor.scan_mode == st2110::VideoScanMode::Interlaced);
 }
 
+static void test_pipeline_projection_preserves_bpm_without_backend_support_gate() {
+    st2110::VideoStreamSignaling s = make_base_signaling();
+    s.packing_mode = st2110::VideoPackingMode::Bpm;
+
+    auto dep_cfg =
+        st2110::depacketizer_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
+    assert(dep_cfg.has_value());
+    assert(dep_cfg->packing_mode == st2110::VideoPackingMode::Bpm);
+    assert(dep_cfg->scan_mode == st2110::VideoScanMode::Progressive);
+
+    auto pipe_cfg =
+        st2110::video_receive_pipeline_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
+    assert(pipe_cfg.has_value());
+    assert(pipe_cfg->depacketizer.packing_mode == st2110::VideoPackingMode::Bpm);
+    assert(pipe_cfg->depacketizer.scan_mode == st2110::VideoScanMode::Progressive);
+    assert(pipe_cfg->reconstructor.scan_mode == st2110::VideoScanMode::Progressive);
+}
+
 static void test_invalid_signaling_is_rejected_before_runtime_projection() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.reference_clock.ptp = std::nullopt;
@@ -145,7 +163,7 @@ static void test_missing_ssn_is_rejected_before_runtime_projection() {
     assert(pipe_cfg.error() == st2110::Error::InvalidValue);
 }
 
-static void test_structurally_valid_but_unmappable_runtime_format_is_unsupported() {
+static void test_structurally_valid_but_unmappable_project_format_is_unsupported() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.media.depth = st2110::VideoBitDepth{10, false};
 
@@ -169,8 +187,9 @@ int main() {
     test_reconstructor_config_is_projected_from_signaling();
     test_pipeline_config_is_projected_from_signaling();
     test_pipeline_projection_preserves_interlaced_scan_mode_structurally();
+    test_pipeline_projection_preserves_bpm_without_backend_support_gate();
     test_invalid_signaling_is_rejected_before_runtime_projection();
     test_missing_ssn_is_rejected_before_runtime_projection();
-    test_structurally_valid_but_unmappable_runtime_format_is_unsupported();
+    test_structurally_valid_but_unmappable_project_format_is_unsupported();
     return 0;
 }

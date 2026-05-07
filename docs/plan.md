@@ -1290,7 +1290,7 @@
   - do not make Socket implementation limits define which formats/modes are structurally recognized by the project;
   - completion condition:
     - common video receive config/validation can represent standard/MTL-known video modes before backend-specific implementation support is checked.
-- [ ] 131B: Split common video structural validation from backend implementation-support validation
+- [x] 131B: Split common video structural validation from backend implementation-support validation
   - keep structural validation responsible for determining whether a video receive description is well-formed, standards-aware, and internally consistent;
   - add a separate backend-support validation boundary that answers whether a specific backend currently implements that already-recognized mode;
   - ensure failure semantics are explicit:

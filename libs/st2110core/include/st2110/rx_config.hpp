@@ -17,6 +17,12 @@
 
 namespace st2110 {
 struct RxVideoConfig;
+
+/*
+ * Structural/common validation entry point.
+ * This must remain equivalent to validate_rx_video_config_structure(...)
+ * and must not apply backend-specific or project-delivery support limits.
+ */
 [[nodiscard]] Error validate_rx_video_config(const RxVideoConfig &cfg);
 
 struct RxVideoConfig {
@@ -42,18 +48,50 @@ struct RxVideoConfig {
     /*
      * Optional common receive-capability model.
      * When present, this is the source of truth for common media/mode axes.
-     * Project storage/runtime support is checked later through explicit support boundaries.
+     *
+     * Validation boundaries:
+     * - validate_rx_video_config_structure(...)
+     *     common structural validity only;
+     * - validate_rx_video_config_against_project_delivery_support(...)
+     *     current project handoff/storage support only;
+     * - backend-specific support helpers
+     *     selected-backend implementation support only.
      */
     std::optional<VideoReceiveCapability> receive_capability{};
 
     [[nodiscard]] bool is_valid() const { return (validate_rx_video_config(*this) == Error::Ok); }
 };
 
-struct VideoRuntimeSupportPolicy {
+struct VideoProjectDeliverySupportPolicy {
     bool require_project_pixel_format_storage_compatibility = true;
-    bool require_runtime_packing_mode_support = true;
     bool require_project_handoff_format_support = true;
 };
+
+/*
+ * Compatibility-layer aggregate for callers that still want a combined
+ * project-delivery + runtime-support check in one helper.
+ *
+ * This is not the primary common validation boundary.
+ * New backend-specific code should prefer:
+ * - validate_rx_video_config(...)
+ * - validate_rx_video_config_against_project_delivery_support(...)
+ * - backend-local support helpers
+ */
+struct VideoRuntimeSupportPolicy {
+    VideoProjectDeliverySupportPolicy project_delivery{};
+    bool require_runtime_packing_mode_support = true;
+};
+
+[[nodiscard]] inline VideoProjectDeliverySupportPolicy default_video_project_delivery_support_policy() {
+    return VideoProjectDeliverySupportPolicy{};
+}
+
+[[nodiscard]] inline VideoRuntimeSupportPolicy default_video_rx_runtime_support_policy() {
+    return VideoRuntimeSupportPolicy{
+        .project_delivery = default_video_project_delivery_support_policy(),
+        .require_runtime_packing_mode_support = true,
+    };
+}
 
 [[nodiscard]] inline Error validate_rx_video_config_common_transport_fields(const RxVideoConfig &cfg) {
     if (Error err = config_validation::validate_video_dimensions(cfg.width, cfg.height); err != Error::Ok) {
@@ -213,12 +251,9 @@ validate_rx_video_config_matches_explicit_receive_capability(const RxVideoConfig
     return Error::Ok;
 }
 
-[[nodiscard]] inline VideoRuntimeSupportPolicy default_video_rx_runtime_support_policy() {
-    return VideoRuntimeSupportPolicy{};
-}
-
-[[nodiscard]] inline Error validate_rx_video_config_against_runtime_support(const RxVideoConfig &cfg,
-                                                                            const VideoRuntimeSupportPolicy &support) {
+[[nodiscard]] inline Error
+validate_rx_video_config_against_project_delivery_support(const RxVideoConfig &cfg,
+                                                          const VideoProjectDeliverySupportPolicy &support) {
     if (Error err = validate_rx_video_config_structure(cfg); err != Error::Ok) {
         return err;
     }
@@ -226,12 +261,6 @@ validate_rx_video_config_matches_explicit_receive_capability(const RxVideoConfig
     auto capability = rx_video_config_effective_receive_capability(cfg);
     if (!capability.has_value()) {
         return capability.error();
-    }
-
-    if (support.require_runtime_packing_mode_support) {
-        if (Error err = validate_runtime_video_packing_mode_support(capability->packing_mode); err != Error::Ok) {
-            return err;
-        }
     }
 
     if (support.require_project_handoff_format_support) {
@@ -244,6 +273,35 @@ validate_rx_video_config_matches_explicit_receive_capability(const RxVideoConfig
 
     if (support.require_project_pixel_format_storage_compatibility) {
         if (Error err = validate_project_video_frame_storage_compatibility(*capability, cfg.format); err != Error::Ok) {
+            return err;
+        }
+    }
+
+    return Error::Ok;
+}
+
+/*
+ * Compatibility wrapper that composes:
+ * 1) project-delivery support;
+ * 2) generic runtime packing-mode support.
+ *
+ * This helper must not be used to reintroduce backend-specific narrowing
+ * into common validation paths.
+ */
+[[nodiscard]] inline Error validate_rx_video_config_against_runtime_support(const RxVideoConfig &cfg,
+                                                                            const VideoRuntimeSupportPolicy &support) {
+    if (Error err = validate_rx_video_config_against_project_delivery_support(cfg, support.project_delivery);
+        err != Error::Ok) {
+        return err;
+    }
+
+    auto capability = rx_video_config_effective_receive_capability(cfg);
+    if (!capability.has_value()) {
+        return capability.error();
+    }
+
+    if (support.require_runtime_packing_mode_support) {
+        if (Error err = validate_runtime_video_packing_mode_support(capability->packing_mode); err != Error::Ok) {
             return err;
         }
     }

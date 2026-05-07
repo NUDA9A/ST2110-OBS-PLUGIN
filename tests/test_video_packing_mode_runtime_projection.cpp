@@ -102,36 +102,58 @@ static void test_bpm_remains_structurally_valid_in_signaling_model() {
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::Ok);
 }
 
-static void test_bpm_is_rejected_by_runtime_depacketizer_projection() {
+static void test_bpm_is_preserved_by_depacketizer_projection_without_backend_support_gate() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.packing_mode = st2110::VideoPackingMode::Bpm;
 
     auto cfg = st2110::depacketizer_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
 
-    assert(!cfg.has_value());
-    assert(cfg.error() == st2110::Error::Unsupported);
+    assert(cfg.has_value());
+    assert(cfg->width == 1920);
+    assert(cfg->height == 1080);
+    assert(cfg->format == st2110::PixelFormat::UYVY);
+    assert(cfg->scan_mode == st2110::VideoScanMode::Progressive);
+    assert(cfg->partial_frame_policy == st2110::PartialFramePolicy::EmitWithFlag);
+    assert(cfg->packing_mode == st2110::VideoPackingMode::Bpm);
 }
 
-static void test_bpm_is_rejected_by_runtime_receive_pipeline_projection() {
+static void test_bpm_is_preserved_by_receive_pipeline_projection_without_backend_support_gate() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.packing_mode = st2110::VideoPackingMode::Bpm;
 
     auto cfg =
         st2110::video_receive_pipeline_config_from_video_stream_signaling(s, st2110::PartialFramePolicy::EmitWithFlag);
 
-    assert(!cfg.has_value());
-    assert(cfg.error() == st2110::Error::Unsupported);
+    assert(cfg.has_value());
+    assert(cfg->depacketizer.width == 1920);
+    assert(cfg->depacketizer.height == 1080);
+    assert(cfg->depacketizer.format == st2110::PixelFormat::UYVY);
+    assert(cfg->depacketizer.scan_mode == st2110::VideoScanMode::Progressive);
+    assert(cfg->depacketizer.partial_frame_policy == st2110::PartialFramePolicy::EmitWithFlag);
+    assert(cfg->depacketizer.packing_mode == st2110::VideoPackingMode::Bpm);
+
+    assert(cfg->reconstructor.format == st2110::PixelFormat::UYVY);
+    assert(cfg->reconstructor.scan_mode == st2110::VideoScanMode::Progressive);
 }
 
-static void test_bpm_is_rejected_by_runtime_bootstrap_projection() {
+static void test_bpm_is_preserved_by_bootstrap_projection_without_backend_support_gate() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.packing_mode = st2110::VideoPackingMode::Bpm;
 
     auto cfg = st2110::video_receiver_bootstrap_config_from_video_stream_signaling(
         s, 5004, 112, "0.0.0.0", "239.1.1.1", st2110::PartialFramePolicy::EmitWithFlag);
 
-    assert(!cfg.has_value());
-    assert(cfg.error() == st2110::Error::Unsupported);
+    assert(cfg.has_value());
+    assert(cfg->packet_parse_policy.max_udp_datagram_bytes.has_value());
+    assert(*cfg->packet_parse_policy.max_udp_datagram_bytes == st2110::standardUdpDatagramSizeLimitBytes);
+
+    assert(cfg->rx_config.width == 1920);
+    assert(cfg->rx_config.height == 1080);
+    assert(cfg->rx_config.format == st2110::PixelFormat::UYVY);
+    assert(cfg->rx_config.scan_mode == st2110::VideoScanMode::Progressive);
+    assert(cfg->rx_config.packing_mode == st2110::VideoPackingMode::Bpm);
+
+    assert(cfg->receive_pipeline_config.depacketizer.packing_mode == st2110::VideoPackingMode::Bpm);
 }
 
 static void test_missing_ssn_is_rejected_before_runtime_projection() {
@@ -160,9 +182,9 @@ int main() {
     test_gpm_projects_to_bootstrap_config_with_runtime_packing_mode();
 
     test_bpm_remains_structurally_valid_in_signaling_model();
-    test_bpm_is_rejected_by_runtime_depacketizer_projection();
-    test_bpm_is_rejected_by_runtime_receive_pipeline_projection();
-    test_bpm_is_rejected_by_runtime_bootstrap_projection();
+    test_bpm_is_preserved_by_depacketizer_projection_without_backend_support_gate();
+    test_bpm_is_preserved_by_receive_pipeline_projection_without_backend_support_gate();
+    test_bpm_is_preserved_by_bootstrap_projection_without_backend_support_gate();
     test_missing_ssn_is_rejected_before_runtime_projection();
     return 0;
 }

@@ -898,20 +898,61 @@ validate_project_video_frame_handoff_format_matches_pixel_format(VideoFrameHando
 
 [[nodiscard]] inline Error validate_project_video_frame_storage_compatibility(const VideoReceiveCapability &capability,
                                                                               PixelFormat pixel_format) {
-    if (Error err =
-            validate_video_frame_handoff_format_matches_media_description(capability.handoff_format, capability.media);
-        err != Error::Ok) {
+    if (Error err = validate_video_receive_capability_structure(capability); err != Error::Ok) {
         return err;
     }
 
-    if (Error err =
-            validate_project_video_frame_handoff_format_matches_pixel_format(capability.handoff_format, pixel_format);
-        err != Error::Ok) {
-        return err;
-    }
+    switch (pixel_format) {
+    case PixelFormat::UYVY:
+        /*
+         * Current project storage path:
+         * - supports only integer YCbCr 4:2:2 8-bit in UYVY storage;
+         * - structurally valid but non-deliverable media must return Unsupported;
+         * - malformed/contradictory capability values must already have been rejected
+         *   by validate_video_receive_capability_structure(...).
+         */
+        if (capability.media.depth.floating_point) {
+            return Error::Unsupported;
+        }
 
-    return config_validation::validate_video_format_constraints(pixel_format, capability.media.width,
-                                                                capability.media.height);
+        switch (capability.media.sampling.known) {
+        case VideoSampling::Known::YCbCr422:
+            switch (capability.media.depth.bits) {
+            case 8:
+                break;
+            case 10:
+            case 12:
+            case 16:
+                return Error::Unsupported;
+            default:
+                return Error::InvalidValue;
+            }
+            break;
+
+        case VideoSampling::Known::YCbCr444:
+        case VideoSampling::Known::YCbCr420:
+        case VideoSampling::Known::RGB:
+        case VideoSampling::Known::XYZ:
+        case VideoSampling::Known::Key:
+        case VideoSampling::Known::CLYCbCr444:
+        case VideoSampling::Known::CLYCbCr422:
+        case VideoSampling::Known::CLYCbCr420:
+        case VideoSampling::Known::ICtCp444:
+        case VideoSampling::Known::ICtCp422:
+        case VideoSampling::Known::ICtCp420:
+        case VideoSampling::Known::Other:
+            return Error::Unsupported;
+
+        default:
+            return Error::InvalidValue;
+        }
+
+        return config_validation::validate_video_format_constraints(pixel_format, capability.media.width,
+                                                                    capability.media.height);
+
+    default:
+        return Error::InvalidValue;
+    }
 }
 
 } // namespace st2110

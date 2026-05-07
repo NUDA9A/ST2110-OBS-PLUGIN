@@ -2,7 +2,9 @@
 #include <cstdint>
 #include <optional>
 
+#include <st2110/mtl_rx_video_backend.hpp>
 #include <st2110/rx_config.hpp>
+#include <st2110/socket_rx_video_backend.hpp>
 #include <st2110/video_signaling.hpp>
 
 static st2110::PtpReferenceClock make_valid_ptp_reference_clock() {
@@ -55,6 +57,43 @@ static st2110::VideoStreamSignaling make_base_signaling() {
     s.cmax = std::nullopt;
 
     return s;
+}
+
+static st2110::RxVideoConfig make_interlaced_gpm_rx_config_supported_by_mtl_but_not_socket() {
+    st2110::VideoReceiveCapability capability{};
+    capability.media.sampling = st2110::VideoSampling{st2110::VideoSampling::Known::YCbCr422, std::nullopt};
+    capability.media.width = 1920;
+    capability.media.height = 1080;
+    capability.media.fps_num = 30000;
+    capability.media.fps_den = 1001;
+    capability.media.depth = st2110::VideoBitDepth{8, false};
+    capability.media.colorimetry = st2110::VideoColorimetry{st2110::VideoColorimetry::Known::Bt709, std::nullopt};
+    capability.media.signal_standard =
+        make_signal_standard(st2110::VideoSignalStandard::Known::St2110_20_2017);
+    capability.media.range = st2110::VideoRange{st2110::VideoRange::Known::Narrow, std::nullopt};
+
+    capability.scan_mode = st2110::VideoScanMode::Interlaced;
+    capability.packing_mode = st2110::VideoPackingMode::Gpm;
+    capability.transport_format = st2110::VideoTransportPayloadFormat::Rfc4175Ycbcr422_8Bit;
+    capability.handoff_format = st2110::VideoFrameHandoffFormat::Uyvy;
+    capability.rtp_clock = st2110::VideoReceiveRtpClock{};
+    capability.topology = st2110::VideoReceiveTopology{};
+
+    st2110::RxVideoConfig cfg{};
+    cfg.width = capability.media.width;
+    cfg.height = capability.media.height;
+    cfg.fps_num = capability.media.fps_num;
+    cfg.fps_den = capability.media.fps_den;
+    cfg.udp_port = 5004;
+    cfg.payload_type = 112;
+    cfg.local_ip = "0.0.0.0";
+    cfg.dest_ip = "239.1.1.1";
+    cfg.format = st2110::PixelFormat::UYVY;
+    cfg.scan_mode = capability.scan_mode;
+    cfg.packing_mode = capability.packing_mode;
+    cfg.receive_capability = capability;
+
+    return cfg;
 }
 
 static void test_valid_progressive_gpm_signaling_is_accepted() {
@@ -160,7 +199,7 @@ static void test_invalid_frame_rate_is_rejected() {
     assert(st2110::validate_video_stream_signaling(s) == st2110::Error::InvalidValue);
 }
 
-static void test_odd_width_is_structurally_valid_but_runtime_support_rejects_storage_projection() {
+static void test_odd_width_is_structurally_valid_but_project_rx_config_projection_is_rejected() {
     st2110::VideoStreamSignaling s = make_base_signaling();
     s.media.width = 1919;
     s.media.height = 1080;
@@ -171,10 +210,22 @@ static void test_odd_width_is_structurally_valid_but_runtime_support_rejects_sto
 
     auto cfg = st2110::rx_video_config_from_video_stream_signaling(s, 5004, 112, "0.0.0.0", "239.1.1.1");
 
-    assert(cfg.has_value());
-    assert(st2110::validate_rx_video_config(*cfg) == st2110::Error::Ok);
-    assert(st2110::validate_rx_video_config_against_runtime_support(
-               *cfg, st2110::default_video_rx_runtime_support_policy()) == st2110::Error::InvalidValue);
+    assert(!cfg.has_value());
+    assert(cfg.error() == st2110::Error::InvalidValue);
+}
+
+static void test_interlaced_gpm_rx_config_passes_common_validation_fails_socket_support_and_passes_mtl_support() {
+    st2110::RxVideoConfig cfg = make_interlaced_gpm_rx_config_supported_by_mtl_but_not_socket();
+
+    assert(st2110::validate_rx_video_config(cfg) == st2110::Error::Ok);
+    assert(st2110::validate_rx_video_config_against_project_delivery_support(
+               cfg, st2110::default_video_project_delivery_support_policy()) == st2110::Error::Ok);
+
+    assert(st2110::validate_socket_rx_video_config_support(
+               cfg, st2110::default_socket_rx_video_support_policy()) == st2110::Error::Unsupported);
+
+    assert(st2110::validate_mtl_rx_video_config_support(
+               cfg, st2110::default_mtl_rx_video_support_policy()) == st2110::Error::Ok);
 }
 
 static void test_standard_sized_maxudp_is_accepted() {
@@ -352,7 +403,8 @@ int main() {
     test_zero_dimensions_are_rejected_structurally();
     test_overflow_dimensions_are_rejected_structurally();
     test_invalid_frame_rate_is_rejected();
-    test_odd_width_is_structurally_valid_but_runtime_support_rejects_storage_projection();
+    test_odd_width_is_structurally_valid_but_project_rx_config_projection_is_rejected();
+    test_interlaced_gpm_rx_config_passes_common_validation_fails_socket_support_and_passes_mtl_support();
 
     test_standard_sized_maxudp_is_accepted();
     test_extended_sized_maxudp_is_accepted();

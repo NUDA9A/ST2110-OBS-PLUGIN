@@ -31,19 +31,30 @@ struct SocketRxVideoOperationalConfig {
 };
 
 struct SocketRxVideoSupportPolicy {
-    VideoRuntimeSupportPolicy runtime_support{};
+    VideoProjectDeliverySupportPolicy project_delivery{};
+    bool require_socket_runtime_packing_mode_support = true;
     bool require_progressive_scan_mode = true;
     bool require_single_stream_topology = true;
     bool require_90khz_rtp_clock = true;
 };
 
 [[nodiscard]] inline SocketRxVideoSupportPolicy default_socket_rx_video_support_policy() {
-    return SocketRxVideoSupportPolicy{};
+    return SocketRxVideoSupportPolicy{
+        .project_delivery = default_video_project_delivery_support_policy(),
+        .require_socket_runtime_packing_mode_support = true,
+        .require_progressive_scan_mode = true,
+        .require_single_stream_topology = true,
+        .require_90khz_rtp_clock = true,
+    };
+}
+
+[[nodiscard]] inline Error validate_socket_rx_video_packing_mode_support(VideoPackingMode mode) {
+    return validate_runtime_video_packing_mode_support(mode);
 }
 
 [[nodiscard]] inline Error
-validate_socket_rx_video_receive_capability_support(const VideoReceiveCapability &capability,
-                                                    const SocketRxVideoSupportPolicy &support) {
+validate_socket_rx_video_receive_capability_implementation_support(const VideoReceiveCapability &capability,
+                                                                   const SocketRxVideoSupportPolicy &support) {
     if (Error err = validate_video_receive_capability_structure(capability); err != Error::Ok) {
         return err;
     }
@@ -66,7 +77,8 @@ validate_socket_rx_video_receive_capability_support(const VideoReceiveCapability
 
 [[nodiscard]] inline Error validate_socket_rx_video_config_support(const RxVideoConfig &cfg,
                                                                    const SocketRxVideoSupportPolicy &support) {
-    if (Error err = validate_rx_video_config_against_runtime_support(cfg, support.runtime_support); err != Error::Ok) {
+    if (Error err = validate_rx_video_config_against_project_delivery_support(cfg, support.project_delivery);
+        err != Error::Ok) {
         return err;
     }
 
@@ -75,7 +87,13 @@ validate_socket_rx_video_receive_capability_support(const VideoReceiveCapability
         return capability.error();
     }
 
-    return validate_socket_rx_video_receive_capability_support(*capability, support);
+    if (support.require_socket_runtime_packing_mode_support) {
+        if (Error err = validate_socket_rx_video_packing_mode_support(capability->packing_mode); err != Error::Ok) {
+            return err;
+        }
+    }
+
+    return validate_socket_rx_video_receive_capability_implementation_support(*capability, support);
 }
 
 [[nodiscard]] inline Error validate_socket_rx_video_operational_config(const SocketRxVideoOperationalConfig &cfg) {
