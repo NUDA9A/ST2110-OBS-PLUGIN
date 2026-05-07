@@ -10,6 +10,7 @@
 #include <expected>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 namespace st2110 {
@@ -70,23 +71,69 @@ class MtlRxVideoBackend final : public IRxVideoBackend {
     static constexpr std::uint16_t kDefaultFrameBufferCount = 3;
     static constexpr std::uint32_t kVideoRtpClockRate = 90000;
 
-    struct ProjectedVideoStartConfig {
+    struct ProjectedCommonVideoConfig {
         VideoReceiveCapability receive_capability{};
-        std::uint32_t width = 0;
-        std::uint32_t height = 0;
-        std::uint32_t fps_num = 0;
-        std::uint32_t fps_den = 1;
         std::uint8_t payload_type = 0;
         std::string local_ip{};
         std::string dest_ip{};
-        PixelFormat pixel_format = PixelFormat::UYVY;
+        PixelFormat project_pixel_format = PixelFormat::UYVY;
         VideoFrameHandoffFormat handoff_format = VideoFrameHandoffFormat::Uyvy;
         VideoTransportPayloadFormat transport_format = VideoTransportPayloadFormat::Rfc4175Ycbcr422_8Bit;
         VideoScanMode scan_mode = VideoScanMode::Progressive;
         VideoPackingMode packing_mode = VideoPackingMode::Gpm;
-        bool mtl_interlaced = false;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        std::uint32_t fps_num = 0;
+        std::uint32_t fps_den = 1;
         std::uint16_t session_port_count = 1;
+    };
+
+    enum class MtlDevicePortPmd {
+        DpdkUser,
+        NativeAfXdp,
+        KernelSocket,
+        DpdkAfXdp,
+        DpdkAfPacket,
+    };
+
+    enum class MtlDevicePortNetProtocol {
+        Static,
+        Dhcp,
+    };
+
+    struct MtlDevicePortRuntimeConfig {
+        std::string port_name{};
+        std::string source_ip{};
+        MtlDevicePortPmd pmd = MtlDevicePortPmd::DpdkUser;
+        MtlDevicePortNetProtocol net_protocol = MtlDevicePortNetProtocol::Static;
+        std::uint16_t rx_queue_count = 1;
+    };
+
+    struct MtlDeviceRuntimeConfig {
+        MtlDevicePortRuntimeConfig primary_port{};
+        std::optional<MtlDevicePortRuntimeConfig> redundant_port{};
+        bool auto_start_stop = true;
+        bool enable_hw_timestamp = false;
+        int socket_id = -1;
+        std::string lcores{};
+    };
+
+    struct MtlSessionRuntimeConfig {
+        std::uint16_t primary_udp_port = 0;
+        std::optional<std::uint16_t> redundant_udp_port{};
         std::uint16_t frame_buffer_count = kDefaultFrameBufferCount;
+        bool enable_block_get = true;
+        bool receive_incomplete_frame = false;
+        bool enable_rtcp = false;
+        bool enable_timing_parser_stat = false;
+        bool enable_timing_parser_meta = false;
+    };
+
+    struct ProjectedMtlVideoSessionConfig {
+        ProjectedCommonVideoConfig common{};
+        MtlDeviceRuntimeConfig device_runtime{};
+        MtlSessionRuntimeConfig session_runtime{};
+        bool mtl_interlaced = false;
     };
 
     /*
@@ -95,26 +142,72 @@ class MtlRxVideoBackend final : public IRxVideoBackend {
      * and must not be used as the backend support/projection acceptance boundary.
      */
     [[nodiscard]] static Error
-    validate_video_frame_view_delivery_support(const CommonVideoBackendSupportMatrix &matrix) noexcept;
+    validate_video_frame_view_delivery_support(const RxVideoConfig &cfg,
+                                               const VideoReceiveCapability &capability) noexcept;
 
     /*
-     * MTL support/projection boundary for start-config projection.
-     * This covers:
-     * - common-video matrix consumption;
-     * - MTL session support;
-     * - MTL project/start projection support.
+     * Common-video projection acceptance boundary.
+     * This validates that the generic config can be resolved into the common
+     * receive-capability model that the MTL backend consumes locally.
      *
-     * It must not apply current VideoFrameView delivery restrictions.
+     * It must not apply backend-local device/session runtime defaults.
+     * It must not apply current VideoFrameView delivery limits.
      */
-    [[nodiscard]] static Error validate_projected_video_start_support(const CommonVideoBackendSupportMatrix &matrix);
+    [[nodiscard]] static Error validate_projected_common_video_support(const RxVideoConfig &cfg);
 
     [[nodiscard]] static std::expected<bool, Error> scan_mode_maps_to_mtl_interlaced(VideoScanMode scan_mode) noexcept;
 
     [[nodiscard]] static std::expected<std::uint16_t, Error>
     session_port_count_from_receive_topology(const VideoReceiveTopology &topology) noexcept;
 
-    [[nodiscard]] static std::expected<ProjectedVideoStartConfig, Error>
-    project_video_start_config(const RxVideoConfig &cfg);
+    /*
+     * Stage 1 of the MTL-local projection boundary:
+     * resolve RxVideoConfig into a backend-consumable common-video projection.
+     */
+    [[nodiscard]] static std::expected<ProjectedCommonVideoConfig, Error>
+    project_common_video_config(const RxVideoConfig &cfg);
+
+    /*
+     * Named default runtime/device policy for callers that do not yet supply
+     * backend-local runtime config explicitly.
+     *
+     * Defaults must stay explicit at the call site instead of being hidden in
+     * the final st20p/session projection helper.
+     */
+    [[nodiscard]] static MtlDeviceRuntimeConfig default_mtl_device_runtime_config() noexcept;
+
+    [[nodiscard]] static std::expected<MtlSessionRuntimeConfig, Error>
+    default_mtl_session_runtime_config(const RxVideoConfig &cfg, const ProjectedCommonVideoConfig &common);
+
+    /*
+     * Stage 2 of the MTL-local projection boundary:
+     * combine already-projected common video state with backend-local
+     * MTL device/session runtime policy.
+     *
+     * This helper still does not build st20p_rx_ops directly.
+     * It produces the named intermediate session-projection object which later
+     * step(s) will map into st20p_rx_ops through explicit per-axis helpers.
+     */
+    [[nodiscard]] static std::expected<ProjectedMtlVideoSessionConfig, Error>
+    project_mtl_video_session_config(const ProjectedCommonVideoConfig &common,
+                                     const MtlDeviceRuntimeConfig &device_runtime,
+                                     const MtlSessionRuntimeConfig &session_runtime);
+
+    /*
+     * Convenience overload for the current start path.
+     * It must call:
+     * - project_common_video_config(...)
+     * - default_mtl_device_runtime_config()
+     * - default_mtl_session_runtime_config(...)
+     * - project_mtl_video_session_config(...)
+     *
+     * in that order, so that the defaulting remains explicit.
+     */
+    [[nodiscard]] static std::expected<ProjectedMtlVideoSessionConfig, Error>
+    project_mtl_video_session_config(const RxVideoConfig &cfg);
+
+    [[nodiscard]] static Error
+    validate_projected_mtl_video_session_config(const ProjectedMtlVideoSessionConfig &cfg) noexcept;
 
     [[nodiscard]] Error validate_start_state_locked() const noexcept;
     void reset_runtime_locked() noexcept;
