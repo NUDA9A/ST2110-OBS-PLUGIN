@@ -91,6 +91,11 @@ Required rules:
 - Socket backend MUST consume lower-block contracts and processing logic; it MUST NOT redefine the standard media model.
 - MTL backend MUST consume lower-block contracts and processing logic; it MUST NOT replace the common media model with an MTL-private truth.
 - OBS plugin composition MUST remain the top composition layer and MUST NOT know internal backend/platform implementation details beyond public contracts.
+- Responsibility blocks MUST be weakly coupled.
+- A block MUST interact with other blocks only through explicit public contracts/boundaries.
+- A block MUST NOT depend on the internal types, helper functions, constants, or implementation details of a sibling block.
+- Cross-block knowledge MUST flow through lower/common contracts, not through direct sibling-to-sibling implementation coupling.
+- If two blocks need the same concept, that concept MUST live in the appropriate lower/common block rather than be duplicated or imported from one sibling into another.
 
 ## 3. Standard-defined axes, modeled coverage, and localized missing logic
 
