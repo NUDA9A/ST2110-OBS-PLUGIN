@@ -411,6 +411,44 @@ Error MtlRxVideoBackend::validate_projected_common_video_support(const RxVideoCo
     return validate_mtl_rx_video_config_support(cfg, default_mtl_rx_video_support_policy());
 }
 
+std::expected<bool, Error>
+MtlRxVideoBackend::scan_mode_maps_to_mtl_interlaced(VideoScanMode scan_mode) noexcept {
+    if (const Error err = config_validation::validate_video_scan_mode(scan_mode); err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
+    switch (scan_mode) {
+    case VideoScanMode::Progressive:
+    case VideoScanMode::PsF:
+        return false;
+    case VideoScanMode::Interlaced:
+        return true;
+    default:
+        return std::unexpected(Error::InvalidValue);
+    }
+}
+
+std::expected<std::uint16_t, Error>
+MtlRxVideoBackend::session_port_count_from_receive_topology(const VideoReceiveTopology &topology) noexcept {
+    if (const Error err = validate_video_receive_topology(topology); err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
+    switch (topology.kind) {
+    case VideoReceiveTopologyKind::SingleStream:
+        return 1;
+
+    case VideoReceiveTopologyKind::RedundantStreams:
+        if (topology.stream_count == 2) {
+            return 2;
+        }
+        return std::unexpected(Error::Unsupported);
+
+    default:
+        return std::unexpected(Error::InvalidValue);
+    }
+}
+
 std::expected<MtlRxVideoBackend::ProjectedCommonVideoConfig, Error>
 MtlRxVideoBackend::project_common_video_config(const RxVideoConfig &cfg) {
     if (const Error err = validate_projected_common_video_support(cfg); err != Error::Ok) {
