@@ -1198,6 +1198,1363 @@
   - signaling/runtime/backend path now carries explicit PCM bit depth via `AudioMediaDescription::pcm_bit_depth`, `RxAudioConfig::pcm_bit_depth`, SDP `L16`/`L24` mapping, and `audio_rtp_packet_policy_from_rx_audio_config(...)`.
 - [x] 123: Add graceful stop and cleanup reuse
 
+# Phase R — Responsibility-block refactoring
+
+> Цель этой фазы:
+> - привести каждый responsibility block к виду, который удовлетворяет `architecture_rules.md`;
+> - убрать смешение обязанностей между блоками;
+> - убрать generic enum-validation / helper-level `Unsupported` architecture;
+> - довести архитектуру до состояния, где расширение поддержки означает дописывание concrete logic branch в нужном месте, а не переписывание соседних подсистем.
+>
+> Порядок блоков ниже выбран по dependency order:
+> - сначала самые низкие и общие блоки;
+> - затем блоки, которые потребляют их как public contracts;
+> - затем backend/runtime composition;
+> - затем OBS/plugin composition;
+> - в самом конце build/wiring/entrypoints, чтобы фиксировать уже стабилизированную структуру.
+>
+> Важное уточнение:
+> - `Phase R` стабилизирует архитектуру и responsibility-block decomposition, но сама по себе не завершает MVP.
+> - После завершения `Phase R` remaining MVP work должен сводиться в основном к дописыванию concrete logic branches и runtime/plugin integration в уже подготовленных boundaries, а не к новому reshaping архитектуры.
+> - Основные ожидаемые post-`Phase R` функциональные блокеры:
+>   - незавершенный MTL video runtime/projection/delivery path;
+>   - отсутствующий/незавершенный MTL audio path;
+>   - еще не реализованный OBS plugin MVP layer;
+>   - финальные end-to-end/demo/readiness tasks.
+
+---
+
+## Track R0 — Foundation block refactor
+
+> Это блок рефакторинга responsibility block `foundation`.
+>
+> Ответственность блока:
+> - media/backend/platform-agnostic primitives;
+> - byte/endian helpers;
+> - common error/result vocabulary;
+> - timestamp/stat primitives;
+> - named derived-value helpers.
+>
+> После рефакторинга блок должен отвечать **только** за это.
+> Блок не должен знать:
+> - SDP;
+> - ST 2110 signaling/media semantics;
+> - receive pipelines;
+> - socket/MTL runtime;
+> - OBS/plugin concerns.
+
+- [ ] R001: Refactor `libs/st2110core/include/st2110/foundation/bytes.hpp`
+  - file responsibility:
+    - common byte-span / byte-view aliases and tiny byte-oriented helpers only.
+  - after refactor file must answer only for:
+    - byte-level generic primitives with no RTP/ST2110/media/backend meaning.
+  - file must not contain:
+    - RTP parsing;
+    - packet validation;
+    - video/audio/domain-specific helpers.
+
+- [ ] R002: Refactor `libs/st2110core/include/st2110/foundation/endian.hpp`
+  - file responsibility:
+    - endian-aware primitive load/store helpers only.
+  - after refactor file must answer only for:
+    - integer byte-order conversion primitives.
+  - file must not contain:
+    - RTP/ST2110 field interpretation;
+    - payload-header semantics;
+    - transport-policy logic.
+
+- [ ] R003: Refactor `libs/st2110core/include/st2110/foundation/error.hpp`
+  - file responsibility:
+    - common error codes / result helpers only.
+  - after refactor file must answer only for:
+    - project-wide failure vocabulary.
+  - keep explicit distinction between:
+    - malformed external input;
+    - unsupported missing concrete logic;
+    - runtime/system/backend failure.
+  - file must not contain:
+    - subsystem-specific validation logic;
+    - hidden error mapping policy for socket/MTL/OBS.
+
+- [ ] R004: Refactor `libs/st2110core/include/st2110/foundation/timestamp.hpp`
+  - file responsibility:
+    - internal timestamp scalar/types only.
+  - after refactor file must answer only for:
+    - common timestamp primitives and tiny generic utilities.
+  - file must not contain:
+    - RTP timestamp interpretation;
+    - playout policy;
+    - media-specific timing logic.
+
+- [ ] R005: Refactor `libs/st2110core/include/st2110/foundation/stats.hpp`
+  - file responsibility:
+    - common backend-agnostic stats primitives and small shared stat carriers only.
+  - after refactor file must answer only for:
+    - generic stat vocabulary that is truly cross-block.
+  - file must not become:
+    - a dump of video/audio/socket/MTL-specific counters.
+
+- [ ] R006: Refactor `libs/st2110core/include/st2110/foundation/rtp_timestamp_anchor_policy.hpp`
+  - file responsibility:
+    - explicit named policy for initial RTP-to-internal anchor semantics only.
+  - after refactor file must answer only for:
+    - modeled anchor-policy axis, not actual mapping execution.
+  - move/refactor from:
+    - implicit hardcoded mapper anchoring currently buried in runtime/timestamp-construction paths.
+  - file must not contain:
+    - backend-local defaults;
+    - socket runtime code;
+    - synthetic fallback hidden inside constructors.
+
+- [ ] R007: Refactor `libs/st2110core/include/st2110/foundation/derived_values.hpp`
+  - file responsibility:
+    - named derived-value helpers only.
+  - after refactor file must answer only for:
+    - values that are computed from already-modeled typed inputs.
+  - move/refactor from:
+    - the pure derivation part of `libs/st2110core/include/st2110/config_validation.hpp`.
+  - move here only helpers such as:
+    - `samples_per_packet`-style derivations;
+    - packet/frame sizing derivations;
+    - other formula-based helpers that are not ingress validation.
+  - file must not contain:
+    - enum validity checks;
+    - broad self-consistency validators;
+    - backend support decisions.
+
+- [ ] R008: Refactor/delete `libs/st2110core/include/st2110/config_validation.hpp`
+  - file responsibility:
+    - temporary compatibility shim only while logic is being redistributed.
+  - move/refactor out of this file:
+    - pure derivations -> `foundation/derived_values.hpp`;
+    - ingress-only validation -> exact ingress/adapter files that consume external input;
+    - config-cross-consistency checks -> exact contract/bootstrap files that own those typed boundaries.
+  - file must not retain:
+    - generic enum validators;
+    - “is this internal config valid?” theater;
+    - catch-all validation helpers spanning several blocks.
+  - if after this redistribution no declarations/helpers remain that are still the unique responsibility of this file, delete `libs/st2110core/include/st2110/config_validation.hpp` in this same task.
+  - do not leave this file in the tree as:
+    - an empty shim;
+    - a deprecated forwarding header;
+    - a compatibility placeholder with no remaining architectural responsibility.
+
+---
+
+## Track R1 — Standard media model block refactor
+
+> Это блок рефакторинга responsibility block `standard media model`.
+>
+> Ответственность блока:
+> - описать полную common typed model осей, задаваемых стандартами и required external APIs;
+> - отдельно от runtime support, storage format, backend limits, OBS limits.
+>
+> После рефакторинга блок должен отвечать **только** за это.
+> Блок не должен:
+> - сужаться до текущего Socket MVP;
+> - знать delivery/storage limits;
+> - знать socket/MTL runtime internals;
+> - возвращать `Unsupported` как substitute for missing model.
+
+- [ ] R009: Refactor `libs/st2110core/include/st2110/model/video/video_scan_mode.hpp`
+  - file responsibility:
+    - modeled scan-mode axis only.
+  - after refactor file must answer only for:
+    - `Progressive | Interlaced | PsF` as common standard-defined axis.
+  - file must not contain:
+    - packet grouping policy;
+    - runtime support validation;
+    - backend-specific acceptance logic.
+
+- [ ] R010: Refactor `libs/st2110core/include/st2110/model/video/video_packing_mode.hpp`
+  - file responsibility:
+    - modeled packing-mode axis only.
+  - after refactor file must answer only for:
+    - recognized packing-mode variants such as `GPM` / `BPM`.
+  - file must not contain:
+    - payload mapping logic;
+    - support matrix logic;
+    - parser/runtime coupling.
+
+- [ ] R011: Refactor `libs/st2110core/include/st2110/model/video/video_media_types.hpp`
+  - file responsibility:
+    - standards-facing typed representation of signaled/recognized video media-description axes only.
+  - after refactor file must answer only for:
+    - sampling;
+    - depth;
+    - colorimetry;
+    - TCS;
+    - SSN;
+    - RANGE;
+    - PAR;
+    - frame-rate representation;
+    - other common video media-description types.
+  - move/refactor from:
+    - the video media-description/model part of `libs/st2110core/include/st2110/video_receive_capability.hpp`.
+  - file must not contain:
+    - `PixelFormat` projection;
+    - MTL output-format projection;
+    - delivery/handoff narrowing;
+    - backend support checks.
+
+- [ ] R012: Refactor `libs/st2110core/include/st2110/model/video/video_signaling_types.hpp`
+  - file responsibility:
+    - typed video signaling structures only.
+  - after refactor file must answer only for:
+    - common video signaling carriers and related strongly-typed fields.
+  - move/refactor from:
+    - the typed signaling-structure part of `libs/st2110core/include/st2110/signaling_structs.hpp`;
+    - the pure typed-model part of `libs/st2110core/include/st2110/video_signaling.hpp`.
+  - file must not contain:
+    - SDP parsing;
+    - bootstrap projection;
+    - backend support logic;
+    - runtime pipeline config assembly.
+
+- [ ] R013: Refactor `libs/st2110core/include/st2110/model/audio/audio_signaling.hpp`
+  - file responsibility:
+    - standards-facing typed audio signaling/media model only.
+  - after refactor file must answer only for:
+    - PCM bit depth;
+    - sampling rate;
+    - packet time;
+    - channel count;
+    - channel-order signaling carrier;
+    - other in-scope ST 2110-30 modeled axes.
+  - file must not contain:
+    - runtime audio buffer layout;
+    - assembler/reorder logic;
+    - Level-A-only support narrowing.
+
+- [ ] R014: Refactor `libs/st2110core/include/st2110/model/audio/audio_channel_order.hpp`
+  - file responsibility:
+    - modeled channel-order convention and parsed channel-group representation only.
+  - after refactor file must answer only for:
+    - typed parsed/effective channel-order model.
+  - file must not contain:
+    - runtime reordering;
+    - audio buffer layout policy;
+    - backend-specific adaptation behavior.
+
+- [ ] R015: Refactor/delete `libs/st2110core/include/st2110/signaling_structs.hpp`
+  - file responsibility:
+    - temporary compatibility shim only while typed signaling structures are moved out.
+  - move/refactor out of this file:
+    - typed video signaling structures -> `model/video/video_signaling_types.hpp`;
+    - any bootstrap-oriented carriers -> `contracts/video/video_receiver_bootstrap.hpp`.
+  - after refactor file must not remain as a mixed model/bootstrap dump.
+  - if after this move no declarations remain that are still uniquely owned by this file and no production code still includes it for real responsibility-bearing content, delete `libs/st2110core/include/st2110/signaling_structs.hpp` in this same task.
+  - do not keep this file as a compatibility umbrella once all real content has been redistributed.
+
+- [ ] R016: Refactor/delete `libs/st2110core/include/st2110/video_signaling.hpp`
+  - file responsibility:
+    - temporary compatibility shim only while pure model and bootstrap/projection logic are split.
+  - move/refactor out of this file:
+    - typed signaling/model content -> `model/video/video_signaling_types.hpp`;
+    - bootstrap/projection logic -> `contracts/video/video_receiver_bootstrap.hpp`.
+  - after refactor file must not mix:
+    - structural model;
+    - runtime projection;
+    - receiver timing bootstrap;
+    - support logic.
+  - if after this split no declarations/helpers remain that are still uniquely owned by this file and no production code still depends on it for non-forwarding content, delete `libs/st2110core/include/st2110/video_signaling.hpp` in this same task.
+  - do not leave this file as a broad transitional façade after the split is complete.
+
+- [ ] R017: Refactor/delete `libs/st2110core/include/st2110/video_receive_capability.hpp`
+  - file responsibility:
+    - temporary compatibility shim only while receive/session model and delivery/handoff model are separated.
+  - move/refactor out of this file:
+    - media-description/common capability types -> `model/video/video_media_types.hpp`;
+    - receive-session description -> `receive/video/video_receive_description.hpp`;
+    - delivery/handoff format axis -> `delivery/video/video_handoff_format.hpp`.
+  - after refactor file must not remain as a combined:
+    - standard model;
+    - runtime receive config;
+    - storage/handoff compatibility.
+  - if after this split no declarations remain that are still uniquely owned by this file and no production code still includes it for real content, delete `libs/st2110core/include/st2110/video_receive_capability.hpp` in this same task.
+  - do not preserve this file as a legacy umbrella over the newly separated model/receive/delivery boundaries.
+
+---
+
+## Track R2 — External ingress block refactor
+
+> Это блок рефакторинга responsibility block `external ingress`.
+>
+> Ответственность блока:
+> - strict parsing of raw external input;
+> - preservation of raw external structure where needed;
+> - translation of raw external input into internal typed model.
+>
+> После рефакторинга блок должен отвечать **только** за это.
+> Блок не должен:
+> - решать runtime backend support;
+> - строить backend operational configs;
+> - знать delivery/storage limits;
+> - валидировать внутренние enum’ы как routine architecture.
+
+- [ ] R018: Refactor `libs/st2110core/include/st2110/ingress/shared/rtp.hpp`
+  - file responsibility:
+    - raw RTP header parsing / payload-span extraction only.
+  - after refactor file must answer only for:
+    - RFC3550/RFC8285-level structure parsing.
+  - file must not contain:
+    - stream payload-type admission;
+    - video/audio-specific packet policy;
+    - backend/runtime support logic.
+
+- [ ] R019: Refactor `libs/st2110core/include/st2110/ingress/shared/st2110_20.hpp`
+  - file responsibility:
+    - raw ST 2110-20 payload-header parsing and raw structural payload constraints only.
+  - after refactor file must answer only for:
+    - payload-header structure;
+    - SRD header parsing;
+    - raw wire-level field extraction.
+  - file must not contain:
+    - progressive-only runtime narrowing;
+    - placement into frame memory;
+    - backend support logic.
+
+- [ ] R020: Refactor `libs/st2110core/include/st2110/ingress/shared/packet_view.hpp`
+  - file responsibility:
+    - parsed non-owning packet view only.
+  - after refactor file must answer only for:
+    - parsed RTP + ST2110-20 raw packet representation.
+  - file must not contain:
+    - receive-pipeline behavior;
+    - reorder semantics;
+    - depacketizer mutation logic.
+
+- [ ] R021: Refactor `libs/st2110core/include/st2110/ingress/shared/packet_parse.hpp`
+  - file responsibility:
+    - staged packet parse entry points and ingress-local parse policy only.
+  - after refactor file must answer only for:
+    - parse orchestration from UDP datagram to `PacketView`;
+    - ingress-local size policy enforcement.
+  - file must not contain:
+    - payload-type admission;
+    - frame assembly;
+    - backend-specific runtime behavior.
+
+- [ ] R022: Refactor `libs/st2110core/include/st2110/ingress/video/video_sdp_media_section.hpp`
+  - file responsibility:
+    - raw video SDP media-section model and parsing only.
+  - after refactor file must answer only for:
+    - selected `m=video` section;
+    - payload-type association;
+    - raw preserved attributes/transport metadata.
+  - file must not contain:
+    - final `VideoStreamSignaling` semantics;
+    - runtime config projection;
+    - backend transport implementation.
+
+- [ ] R023: Refactor `libs/st2110core/include/st2110/ingress/video/video_sdp_fmtp.hpp`
+  - file responsibility:
+    - strict raw parsing of video `a=fmtp` only.
+  - after refactor file must answer only for:
+    - raw parsed parameter values and syntax validation.
+  - file must not contain:
+    - final enum mapping;
+    - runtime support rejection;
+    - `PixelFormat` projection.
+
+- [ ] R024: Refactor `libs/st2110core/include/st2110/ingress/video/video_sdp_rtpmap.hpp`
+  - file responsibility:
+    - strict raw parsing/binding of selected video `a=rtpmap` only.
+  - after refactor file must answer only for:
+    - payload-type-specific `rtpmap` parsing and binding.
+  - file must not contain:
+    - final video signaling validation;
+    - backend/runtime assumptions.
+
+- [ ] R025: Refactor `libs/st2110core/include/st2110/ingress/video/video_sdp_timing_attributes.hpp`
+  - file responsibility:
+    - strict raw parsing of video timing/reference-clock SDP attributes only.
+  - after refactor file must answer only for:
+    - `ts-refclk`;
+    - `mediaclk`;
+    - timing-related raw SDP attribute parsing/preservation.
+  - file must not contain:
+    - receiver timing capability checks;
+    - playout/runtime behavior;
+    - backend bootstrap assembly.
+
+- [ ] R026: Refactor `libs/st2110core/include/st2110/ingress/video/video_sdp_signaling_adapter.hpp`
+  - file responsibility:
+    - raw-video-SDP to typed-video-signaling adaptation only.
+  - after refactor file must answer only for:
+    - mapping raw parsed fields into `model/video/*` types.
+  - file must not contain:
+    - backend support checks;
+    - delivery/handoff narrowing;
+    - socket/MTL runtime config creation.
+
+- [ ] R027: Refactor `libs/st2110core/include/st2110/ingress/video/video_sdp_ingestion.hpp`
+  - file responsibility:
+    - final composition of raw video SDP parsing + raw-to-typed signaling ingestion only.
+  - after refactor file must answer only for:
+    - final video SDP -> typed signaling entry point.
+  - file must not contain:
+    - manual runtime transport overrides;
+    - backend bootstrap assembly;
+    - receive-pipeline config construction.
+
+- [ ] R028: Refactor `libs/st2110core/include/st2110/ingress/audio/audio_sdp_media_section.hpp`
+  - file responsibility:
+    - raw audio SDP media-section model and parsing only.
+  - after refactor file must answer only for:
+    - selected `m=audio` section and raw payload-bound attributes.
+  - file must not contain:
+    - final `AudioStreamSignaling` support narrowing;
+    - runtime config projection.
+
+- [ ] R029: Refactor `libs/st2110core/include/st2110/ingress/audio/audio_sdp_timing_attributes.hpp`
+  - file responsibility:
+    - strict raw parsing of audio timing/reference-clock SDP attributes only.
+  - after refactor file must answer only for:
+    - structured `ts-refclk` / media-level `mediaclk` raw parsing.
+  - move/refactor from:
+    - any current attribute-name-only presence checks buried in audio ingestion helpers.
+  - file must not contain:
+    - audio receiver baseline support checks;
+    - runtime playout behavior.
+
+- [ ] R030: Refactor `libs/st2110core/include/st2110/ingress/audio/audio_sdp_signaling_adapter.hpp`
+  - file responsibility:
+    - raw-audio-SDP to typed-audio-signaling adaptation only.
+  - after refactor file must answer only for:
+    - typed audio signaling construction from raw parsed SDP.
+  - file must not contain:
+    - Level A support narrowing;
+    - runtime `RxAudioConfig` assembly.
+
+- [ ] R031: Refactor `libs/st2110core/include/st2110/ingress/audio/audio_sdp_ingestion.hpp`
+  - file responsibility:
+    - final composition of raw audio SDP parsing + raw-to-typed signaling ingestion only.
+  - after refactor file must answer only for:
+    - final audio SDP -> typed signaling entry point.
+  - file must not contain:
+    - backend bootstrap;
+    - audio buffer/storage logic;
+    - socket/MTL support checks.
+
+---
+
+## Track R3 — Delivery and conversion block refactor
+
+> Это блок рефакторинга responsibility block `delivery and conversion`.
+>
+> Ответственность блока:
+> - project-local storage/handoff/conversion contracts;
+> - nothing about what the standard allows to receive;
+> - nothing about backend capability.
+>
+> После рефакторинга блок должен отвечать **только** за это.
+> Блок должен отделять:
+> - receive-session capability;
+> - project delivery/handoff capability.
+
+- [ ] R032: Refactor `libs/st2110core/include/st2110/delivery/video/pixel_format.hpp`
+  - file responsibility:
+    - project-local video storage/presentation pixel-format axis only.
+  - after refactor file must answer only for:
+    - formats currently representable by project-local frame/view contracts.
+  - file must not be treated as:
+    - the full standard video model;
+    - the MTL/ST20 transport truth.
+
+- [ ] R033: Refactor `libs/st2110core/include/st2110/delivery/video/video_handoff_format.hpp`
+  - file responsibility:
+    - project-local video handoff/output-format axis only.
+  - after refactor file must answer only for:
+    - what project delivery contracts can expose.
+  - move/refactor from:
+    - the handoff/output/storage part of `libs/st2110core/include/st2110/video_receive_capability.hpp`.
+  - file must not contain:
+    - standard signaling/media-description semantics;
+    - backend receive capability semantics.
+
+- [ ] R034: Refactor `libs/st2110core/include/st2110/delivery/video/video_frame.hpp`
+  - file responsibility:
+    - owning/non-owning project-local video frame storage/view contract only.
+  - after refactor file must answer only for:
+    - local frame memory layout;
+    - plane descriptions;
+    - local frame/view invariants.
+  - explicit expected cleanup:
+    - dispatch such as `fill_planes()` must be a concrete-logic dispatch over the local delivery format;
+    - unsupported local delivery formats must be localized as missing concrete logic in exact per-format branches;
+    - file must not encode “what the receiver may accept from the network”.
+  - file must not contain:
+    - ST2110 signaling validation;
+    - socket/MTL receive support logic;
+    - OBS handoff logic.
+
+- [ ] R035: Refactor `libs/st2110core/include/st2110/delivery/video/video_frame_conversion.hpp`
+  - file responsibility:
+    - video delivery-format conversion boundary only.
+  - after refactor file must answer only for:
+    - explicit conversion branches between project-local video delivery formats.
+  - move/refactor from:
+    - any local frame-format adaptation now buried in `video_frame.hpp`, `mtl_rx_video_backend.*`, or future OBS handoff code.
+  - file must not contain:
+    - receive-session admission;
+    - backend start decisions.
+
+- [ ] R036: Refactor `libs/st2110core/include/st2110/delivery/audio/audio_frame.hpp`
+  - file responsibility:
+    - owning/non-owning project-local audio storage/view contract only.
+  - after refactor file must answer only for:
+    - local audio buffer layout and view shape.
+  - file must not contain:
+    - SDP/audio signaling semantics;
+    - RTP packet interpretation;
+    - backend support logic.
+
+- [ ] R037: Refactor `libs/st2110core/include/st2110/delivery/audio/audio_frame_conversion.hpp`
+  - file responsibility:
+    - audio delivery-format conversion boundary only.
+  - after refactor file must answer only for:
+    - explicit conversion branches into current `AudioBuffer` / `AudioFrameView`-compatible representations.
+  - move/refactor from:
+    - any PCM16/PCM24/other local conversion logic currently buried in assembler/backend paths.
+  - file must not contain:
+    - RTP parsing;
+    - receiver baseline validation;
+    - MTL session projection.
+
+---
+
+## Track R4 — Receive session contracts block refactor
+
+> Это блок рефакторинга responsibility block `receive session contracts`.
+>
+> Ответственность блока:
+> - public backend/session-facing contracts;
+> - session/selection/bootstrap composition boundaries;
+> - typed cross-consistency at contract boundaries.
+>
+> После рефакторинга блок должен отвечать **только** за это.
+> Блок не должен:
+> - делать raw parsing;
+> - делать runtime packet processing;
+> - знать platform socket syscalls или MTL API internals.
+
+- [ ] R038: Refactor `libs/st2110core/include/st2110/contracts/backend/backend.hpp`
+  - file responsibility:
+    - backend-facing lifecycle/state/stats/sink interfaces only.
+  - after refactor file must answer only for:
+    - public backend contracts.
+  - file must not contain:
+    - socket-specific operational config;
+    - MTL device/session details;
+    - media parsing/runtime helpers.
+
+- [ ] R039: Refactor `libs/st2110core/include/st2110/contracts/backend/backend_factory.hpp`
+  - file responsibility:
+    - abstract backend-factory contract and public backend-kind/media-kind-facing descriptor shapes only.
+  - after refactor file must answer only for:
+    - factory contract and descriptor vocabulary.
+  - file must not contain:
+    - compiled-registry composition;
+    - support matrix logic;
+    - platform-specific branching.
+
+- [ ] R040: Refactor `libs/st2110core/include/st2110/contracts/backend/backend_factory_registry.hpp`
+  - file responsibility:
+    - declaration-only public registry API only.
+  - after refactor file must answer only for:
+    - public registry query/selection API shape.
+  - move/refactor from:
+    - declaration fragments currently mixed into `backend_factory.hpp` or old registry implementation.
+  - file must not contain:
+    - concrete compiled factory list;
+    - build/platform logic.
+
+- [ ] R041: Refactor `libs/st2110core/include/st2110/contracts/video/rx_video_session_config.hpp`
+  - file responsibility:
+    - typed backend-facing/manual video session config only.
+  - after refactor file must answer only for:
+    - session config shape consumed by backend/bootstrap layers.
+  - move/refactor from:
+    - the video runtime/session-config portion of `libs/st2110core/include/st2110/rx_config.hpp`.
+  - file must not contain:
+    - raw SDP parsing;
+    - packet/depacketize behavior;
+    - delivery conversion behavior.
+
+- [ ] R042: Refactor `libs/st2110core/include/st2110/contracts/video/video_receiver_bootstrap.hpp`
+  - file responsibility:
+    - explicit composition boundary from typed video signaling + receiver policy inputs into backend-facing/bootstrap carriers only.
+  - after refactor file must answer only for:
+    - bootstrap assembly and cross-consistency at this contract boundary.
+  - move/refactor from:
+    - bootstrap/projection logic currently spread across `libs/st2110core/include/st2110/signaling_structs.hpp`;
+    - `libs/st2110core/include/st2110/video_signaling.hpp`;
+    - `libs/st2110core/include/st2110/video_receiver_timing.hpp`;
+    - `libs/st2110core/include/st2110/video_receiver_timing_signaling.hpp`.
+  - file must not contain:
+    - raw SDP parsing;
+    - concrete packet/timestamp/runtime execution.
+
+- [ ] R043: Refactor `libs/st2110core/include/st2110/contracts/video/video_backend_selection.hpp`
+  - file responsibility:
+    - typed backend selection/support decision contract for video only.
+  - after refactor file must answer only for:
+    - backend-kind-aware video backend selection and associated typed result shape.
+  - move/refactor from:
+    - selection/support shape currently mixed across `backend_factory.hpp` and `libs/st2110core/include/st2110/video_backend_support.hpp`.
+  - file must not contain:
+    - concrete compiled registry;
+    - socket/MTL implementation bodies.
+
+- [ ] R044: Refactor `libs/st2110core/include/st2110/contracts/audio/rx_audio_session_config.hpp`
+  - file responsibility:
+    - typed backend-facing/manual audio session config only.
+  - after refactor file must answer only for:
+    - session config shape consumed by backend/bootstrap layers.
+  - move/refactor from:
+    - the audio runtime/session-config portion of `libs/st2110core/include/st2110/rx_config.hpp`.
+  - file must not contain:
+    - RTP packet parsing;
+    - audio assembly logic;
+    - storage conversion logic.
+
+- [ ] R045: Refactor `libs/st2110core/include/st2110/contracts/audio/audio_signaling_rx_config.hpp`
+  - file responsibility:
+    - typed projection boundary from audio signaling to runtime audio session config only.
+  - after refactor file must answer only for:
+    - audio signaling -> typed runtime/session config composition.
+  - file must not contain:
+    - raw SDP parsing;
+    - audio frame assembly;
+    - backend runtime code.
+
+- [ ] R046: Refactor `libs/st2110core/include/st2110/contracts/audio/audio_receiver_bootstrap.hpp`
+  - file responsibility:
+    - explicit composition boundary from typed audio signaling + receiver policy inputs into backend-facing/bootstrap carriers only.
+  - after refactor file must answer only for:
+    - audio bootstrap assembly and cross-consistency.
+  - file must not contain:
+    - raw SDP parsing;
+    - audio reorder/assembler/timestamp runtime logic.
+
+- [ ] R047: Refactor/delete `libs/st2110core/include/st2110/rx_config.hpp`
+  - file responsibility:
+    - temporary compatibility shim only while video/audio session config is split.
+  - move/refactor out of this file:
+    - video session config -> `contracts/video/rx_video_session_config.hpp`;
+    - audio session config -> `contracts/audio/rx_audio_session_config.hpp`.
+  - after refactor file must not remain as a mixed video/audio/runtime dump.
+  - if after introducing the split session-config files there are no remaining declarations uniquely owned by `libs/st2110core/include/st2110/rx_config.hpp` and no production includes still require it, delete `libs/st2110core/include/st2110/rx_config.hpp` in this same task.
+  - do not keep `rx_config.hpp` as a compatibility wrapper once the split contracts are in place.
+
+- [ ] R048: Refactor/delete `libs/st2110core/include/st2110/video_backend_support.hpp`
+  - file responsibility:
+    - temporary compatibility shim only while video backend selection/support contract is isolated.
+  - move/refactor out of this file:
+    - backend-selection vocabulary -> `contracts/video/video_backend_selection.hpp`;
+    - backend-specific concrete support logic -> exact backend-local files.
+  - after refactor file must not be a cross-block support/validation bucket.
+  - if after this redistribution no declarations/helpers remain that are still uniquely owned by this file and no production code still includes it for real content, delete `libs/st2110core/include/st2110/video_backend_support.hpp` in this same task.
+  - do not leave this file as a legacy cross-block support helper once contract-level and backend-local responsibilities are separated.
+
+- [ ] R049: Refactor/delete `libs/st2110core/include/st2110/video_receiver_timing.hpp`
+  - file responsibility:
+    - temporary compatibility shim only while receiver timing contract placement is stabilized.
+  - move/refactor out of this file:
+    - contract/bootstrap-facing timing capability/config composition -> `contracts/video/video_receiver_bootstrap.hpp`;
+    - runtime playout timing behavior -> `receive/video/video_playout_timing.hpp`.
+  - after refactor file must not mix:
+    - bootstrap contract;
+    - runtime playout behavior;
+    - signaling consistency logic.
+  - if after this split no declarations/helpers remain that are still uniquely owned by this file and no production code still includes it for real content, delete `libs/st2110core/include/st2110/video_receiver_timing.hpp` in this same task.
+  - do not keep this file as an extra timing bucket once bootstrap-facing and runtime-facing timing responsibilities are fully separated.
+
+- [ ] R050: Refactor/delete `libs/st2110core/include/st2110/video_receiver_timing_signaling.hpp`
+  - file responsibility:
+    - temporary compatibility shim only while receiver-timing/signaling consistency logic is moved.
+  - move/refactor out of this file:
+    - typed bootstrap/signaling consistency logic -> `contracts/video/video_receiver_bootstrap.hpp`.
+  - after refactor file must not remain as a side-channel validator detached from the bootstrap contract.
+  - if after this move no declarations/helpers remain that are still uniquely owned by this file and no production code still includes it for real content, delete `libs/st2110core/include/st2110/video_receiver_timing_signaling.hpp` in this same task.
+  - do not keep this file as a parallel validation path once the consistency logic is owned by the bootstrap contract boundary.
+
+---
+
+## Track R5 — Common receive processing block refactor
+
+> Это блок рефакторинга responsibility block `common receive processing`.
+>
+> Ответственность блока:
+> - backend-agnostic receive processing;
+> - packet admission after generic parsing;
+> - reorder/assembly/reconstruction/timestamp/playout boundaries;
+> - common receive semantics and common receive config carriers.
+>
+> После рефакторинга блок должен отвечать **только** за это.
+> Блок не должен:
+> - знать socket syscalls;
+> - знать MTL handles/API;
+> - знать OBS handoff;
+> - сужать standard model до текущего backend support.
+
+### Shared receive processing
+
+- [ ] R051: Refactor `libs/st2110core/include/st2110/receive/shared/packet_admission.hpp`
+  - file responsibility:
+    - stream-specific packet admission after successful raw parsing only.
+  - after refactor file must answer only for:
+    - payload-type and similar admission decisions at receive-processing layer.
+  - file must not contain:
+    - RTP parsing;
+    - backend loop code;
+    - depacketizer mutation.
+
+- [ ] R052: Refactor `libs/st2110core/include/st2110/receive/shared/reorder_buffer.hpp`
+  - file responsibility:
+    - abstract/common reorder-buffer contract only.
+  - after refactor file must answer only for:
+    - generic reorder-buffer API shape.
+  - file must not contain:
+    - media-specific packet storage;
+    - socket runtime behavior.
+
+- [ ] R053: Refactor `libs/st2110core/include/st2110/receive/shared/fixed_reorder_buffer.hpp`
+  - file responsibility:
+    - common fixed-window reorder implementation only.
+  - after refactor file must answer only for:
+    - fixed reorder behavior by sequence number.
+  - file must not contain:
+    - jitter-buffer behavior;
+    - backend receive-loop logic;
+    - video/audio-specific decode decisions.
+
+- [ ] R054: Refactor `libs/st2110core/include/st2110/receive/shared/receive_reorder_tolerance_policy.hpp`
+  - file responsibility:
+    - modeled common reorder flush/tolerance policy only.
+  - after refactor file must answer only for:
+    - explicit gap/flush/wait tolerance policy shape.
+  - move/refactor from:
+    - hidden stall/flush behavior currently implicit in backend receive paths.
+  - file must not contain:
+    - concrete socket thread logic.
+
+### Video receive processing
+
+- [ ] R055: Refactor `libs/st2110core/include/st2110/receive/video/video_receive_description.hpp`
+  - file responsibility:
+    - common typed description of what video receive session should accept only.
+  - after refactor file must answer only for:
+    - receive/session capability model separate from delivery/storage compatibility.
+  - move/refactor from:
+    - the receive/session capability part of `libs/st2110core/include/st2110/video_receive_capability.hpp`.
+  - file must not contain:
+    - `PixelFormat`/`VideoFrameView` narrowing;
+    - backend-local support matrix;
+    - MTL projection details.
+
+- [ ] R056: Refactor `libs/st2110core/include/st2110/receive/video/video_timestamp_mapping.hpp`
+  - file responsibility:
+    - common video RTP timestamp -> internal timestamp mapping only.
+  - after refactor file must answer only for:
+    - mapping semantics and invariants.
+  - file must not contain:
+    - backend loop anchoring defaults;
+    - playout delay scheduling;
+    - sink delivery behavior.
+
+- [ ] R057: Refactor `libs/st2110core/include/st2110/receive/video/video_playout_timing.hpp`
+  - file responsibility:
+    - common receiver-side video playout/release timing boundary only.
+  - after refactor file must answer only for:
+    - playout/release timing decisions above reconstructed units.
+  - file must not contain:
+    - RTP parsing;
+    - depacketizer byte placement;
+    - OBS-specific timestamp handoff.
+
+- [ ] R058: Refactor `libs/st2110core/include/st2110/receive/video/video_reorder_policy.hpp`
+  - file responsibility:
+    - video-specific reorder/runtime tolerance policy only.
+  - after refactor file must answer only for:
+    - video receive reorder policy choices above common reorder primitives.
+  - file must not contain:
+    - socket receive-loop code;
+    - assembly mutation logic.
+
+- [ ] R059: Refactor `libs/st2110core/include/st2110/receive/video/frame_write_coverage.hpp`
+  - file responsibility:
+    - local tracking of written video-unit/frame coverage only.
+  - after refactor file must answer only for:
+    - write-coverage accounting.
+  - file must not contain:
+    - packet parsing;
+    - scan-mode policy selection;
+    - backend delivery logic.
+
+- [ ] R060: Refactor `libs/st2110core/include/st2110/receive/video/frame_assembler.hpp`
+  - file responsibility:
+    - byte-oriented frame/unit assembly storage mutation only.
+  - after refactor file must answer only for:
+    - bounded writes into local assembled storage.
+  - file must not contain:
+    - ST2110 packet semantics;
+    - scan-mode grouping;
+    - backend runtime concerns.
+
+- [ ] R061: Refactor `libs/st2110core/include/st2110/receive/video/video_receive_semantics.hpp`
+  - file responsibility:
+    - modeled receive semantics and completion/grouping policy only.
+  - after refactor file must answer only for:
+    - unit/grouping/completion semantics by modeled axes.
+  - file must not contain:
+    - byte writes;
+    - socket/MTL runtime code.
+
+- [ ] R062: Refactor `libs/st2110core/include/st2110/receive/video/video_segment_constraints.hpp`
+  - file responsibility:
+    - format/mode-aware segment constraints only.
+  - after refactor file must answer only for:
+    - segment-level structural/runtime constraints that belong above raw parsing.
+  - file must not contain:
+    - frame write mutation;
+    - backend support policy.
+
+- [ ] R063: Refactor `libs/st2110core/include/st2110/receive/video/video_segment_placement.hpp`
+  - file responsibility:
+    - explicit mapping from packet segment semantics to local write operations only.
+  - after refactor file must answer only for:
+    - placement logic by modeled axes.
+  - explicit requirement:
+    - this file is a valid place for per-format/per-mode concrete logic branches;
+    - temporary `Unsupported` is acceptable only inside exact branch-local logic whose body is still missing.
+  - file must not contain:
+    - raw parser code;
+    - backend runtime code.
+
+- [ ] R064: Refactor `libs/st2110core/include/st2110/receive/video/video_packet_padding.hpp`
+  - file responsibility:
+    - padding semantics validation/handling only.
+  - after refactor file must answer only for:
+    - mode-aware/packing-aware trailing padding behavior.
+  - file must not contain:
+    - segment placement;
+    - backend delivery logic.
+
+- [ ] R065: Refactor `libs/st2110core/include/st2110/receive/video/depacketizer.hpp`
+  - file responsibility:
+    - packet-to-video-unit assembly orchestration only.
+  - after refactor file must answer only for:
+    - consuming parsed/admitted packets and producing assembled units.
+  - file must not contain:
+    - raw RTP parsing;
+    - socket receive loop;
+    - `VideoFrameView`/OBS delivery concerns.
+
+- [ ] R066: Refactor `libs/st2110core/include/st2110/receive/video/video_unit_reconstructor.hpp`
+  - file responsibility:
+    - transform assembled generic video units into reconstructed project-local frames only.
+  - after refactor file must answer only for:
+    - reconstruction layer above depacketizer.
+  - file must not contain:
+    - packet parsing;
+    - socket/MTL runtime;
+    - OBS handoff.
+
+- [ ] R067: Refactor `libs/st2110core/include/st2110/receive/video/video_receive_pipeline.hpp`
+  - file responsibility:
+    - common composition of video receive-processing layers only.
+  - after refactor file must answer only for:
+    - depacketizer + reconstructor + common timing/release composition.
+  - file must not contain:
+    - UDP receive loop;
+    - socket port lifecycle;
+    - MTL frame API handling.
+
+### Audio receive processing
+
+- [ ] R068: Refactor `libs/st2110core/include/st2110/receive/audio/audio_packet.hpp`
+  - file responsibility:
+    - common typed audio RTP packet interpretation after generic RTP parsing only.
+  - after refactor file must answer only for:
+    - audio RTP packet model and packet-local interpretation.
+  - file must not contain:
+    - socket receive loop;
+    - audio reorder runtime;
+    - audio buffer storage conversion policy beyond packet-local decode needs.
+
+- [ ] R069: Refactor `libs/st2110core/include/st2110/receive/audio/audio_reorder_buffer.hpp`
+  - file responsibility:
+    - audio-specific reorder storage/behavior only.
+  - after refactor file must answer only for:
+    - audio RTP reorder behavior.
+  - file must not contain:
+    - jitter-buffer/planned playout release;
+    - socket runtime code;
+    - audio frame delivery.
+
+- [ ] R070: Refactor `libs/st2110core/include/st2110/receive/audio/audio_frame_assembler.hpp`
+  - file responsibility:
+    - audio packet -> project-local audio block assembly only.
+  - after refactor file must answer only for:
+    - assembling current audio block representation from admitted/reordered audio packets.
+  - file must not contain:
+    - raw SDP/runtime config projection;
+    - backend thread logic;
+    - OBS handoff.
+
+- [ ] R071: Refactor `libs/st2110core/include/st2110/receive/audio/audio_timestamp_mapping.hpp`
+  - file responsibility:
+    - common audio RTP timestamp -> internal timestamp mapping and audio playout-timing boundary only.
+  - after refactor file must answer only for:
+    - timestamp mapping and playout timing semantics.
+  - file must not contain:
+    - socket receive loop;
+    - MTL frame handling;
+    - audio output API coupling.
+
+- [ ] R072: Refactor `libs/st2110core/include/st2110/receive/audio/audio_stats.hpp`
+  - file responsibility:
+    - common audio receive stats carriers/helpers only.
+  - after refactor file must answer only for:
+    - common audio receive-processing observability.
+  - file must not contain:
+    - socket runtime counters;
+    - MTL device/session counters;
+    - OBS runtime counters.
+
+---
+
+## Track R6 — Socket platform adapters block refactor
+
+> Это блок рефакторинга responsibility block `socket platform adapters`.
+>
+> Ответственность блока:
+> - OS/runtime transport details only;
+> - no media logic beyond transport contract needs.
+>
+> После рефакторинга блок должен отвечать **только** за это.
+> Блок не должен:
+> - знать SDP/media standards logic beyond transport contract inputs;
+> - знать depacketizer/assembler behavior;
+> - знать OBS or MTL concerns.
+
+- [ ] R073: Refactor `libs/st2110core/include/st2110/backends/socket/platform/socket_runtime.hpp`
+  - file responsibility:
+    - OS-neutral socket transport types/contracts only.
+  - after refactor file must answer only for:
+    - socket address family;
+    - bind endpoint;
+    - multicast membership carrier;
+    - port open/receive/close contract.
+  - file must not contain:
+    - packet parsing;
+    - backend lifecycle/state;
+    - video/audio pipeline composition.
+
+- [ ] R074: Refactor `libs/st2110core/include/st2110/backends/socket/platform/socket_stub_rx_port.hpp`
+  - file responsibility:
+    - temporary contract-conforming stub transport implementation only.
+  - after refactor file must answer only for:
+    - explicit stub/test transport behavior.
+  - file must not contain:
+    - hidden backend policy assembly;
+    - production runtime defaults.
+
+- [ ] R075: Refactor `libs/st2110core/include/st2110/backends/socket/platform/linux_socket_rx_port.hpp`
+  - file responsibility:
+    - Linux socket receive-port implementation only.
+  - after refactor file must answer only for:
+    - Linux open/bind/multicast join/receive/close through the OS-neutral socket contract.
+  - file must not contain:
+    - packet parsing;
+    - media kind branching;
+    - sink delivery.
+
+- [ ] R076: Refactor `libs/st2110core/include/st2110/backends/socket/platform/windows_socket_rx_port.hpp`
+  - file responsibility:
+    - Windows socket receive-port implementation placeholder/contract only.
+  - after refactor file must answer only for:
+    - Windows transport adaptation boundary and nothing else.
+  - file must not contain:
+    - platform-independent backend policy;
+    - media parsing;
+    - OBS/plugin logic.
+
+---
+
+## Track R7 — Socket backend block refactor
+
+> Это блок рефакторинга responsibility block `socket backend`.
+>
+> Ответственность блока:
+> - consume lower/common contracts;
+> - own socket-backend runtime composition only;
+> - not redefine media model or transport contracts.
+>
+> После рефакторинга блок должен отвечать **только** за это.
+> Блок не должен:
+> - собирать hidden defaults;
+> - заново валидировать internal enums;
+> - знать sibling block internals instead of public boundaries.
+
+- [ ] R077: Refactor `libs/st2110core/include/st2110/backends/socket/socket_rx_single_media_backend_base.hpp`
+  - file responsibility:
+    - generic socket single-media backend runtime base only.
+  - after refactor file must answer only for:
+    - socket port lifecycle;
+    - receive thread;
+    - generic datagram accounting;
+    - generic RTCP/datagram classification helpers.
+  - file must not contain:
+    - video/audio operational config assembly;
+    - media-specific parser/depacketizer policy construction.
+
+- [ ] R078: Refactor `libs/st2110core/src/backends/socket/socket_rx_single_media_backend_base.cpp`
+  - file responsibility:
+    - implementation of the media-agnostic runtime base only.
+  - after refactor file must answer only for:
+    - thread/port/datagram loop mechanics shared by socket media backends.
+  - file must not contain:
+    - video packet pipeline code;
+    - audio packet pipeline code;
+    - backend selection/build logic.
+
+- [ ] R079: Refactor `libs/st2110core/include/st2110/backends/socket/socket_rx_video_backend.hpp`
+  - file responsibility:
+    - concrete socket video backend composition only.
+  - after refactor file must answer only for:
+    - consuming prebuilt operational video config;
+    - wiring parsed/admitted datagrams into the common video receive pipeline;
+    - localized socket-video runtime state.
+  - file must not:
+    - rebuild hidden open/parse/timestamp defaults;
+    - own standard video capability truth;
+    - own delivery-conversion truth.
+
+- [ ] R080: Refactor `libs/st2110core/include/st2110/backends/socket/socket_rx_audio_backend.hpp`
+  - file responsibility:
+    - concrete socket audio backend composition only.
+  - after refactor file must answer only for:
+    - consuming prebuilt operational audio config;
+    - wiring parsed/admitted datagrams into common audio receive processing;
+    - localized socket-audio runtime state.
+  - file must not:
+    - rebuild hidden packet/reorder/assembler/timestamp defaults;
+    - collapse common audio capability to current Level-A path outside explicit support branches.
+
+---
+
+## Track R8 — MTL backend block refactor
+
+> Это блок рефакторинга responsibility block `MTL backend`.
+>
+> Ответственность блока:
+> - wrap relevant MTL APIs through backend-local logic;
+> - consume the common model instead of replacing it;
+> - keep MTL device/session projection and frame mapping localized.
+>
+> После рефакторинга блок должен отвечать **только** за это.
+> При выборе `Mtl` backend пользователь должен иметь путь ко всему in-scope ST2110 behavior, которое реально expressible/implementable через выбранный MTL API surface.
+> Если проект не может дотянуться до MTL capability из-за узкой project model / projection target / delivery model — это incompleteness of project, а не acceptable narrowing.
+
+- [ ] R081: Refactor `libs/st2110core/include/st2110/backends/mtl/mtl_rx_backend_factory.hpp`
+  - file responsibility:
+    - MTL backend factory declarations only.
+  - after refactor file must answer only for:
+    - factory contract/descriptor for MTL backends.
+  - file must not contain:
+    - device/session projection;
+    - backend runtime logic;
+    - fake unavailable-path policy except if an explicit temporary test fixture is still needed elsewhere.
+
+- [ ] R082: Refactor `libs/st2110core/src/backends/mtl/mtl_rx_backend_factory.cpp`
+  - file responsibility:
+    - MTL backend factory implementation only.
+  - after refactor file must answer only for:
+    - creating concrete MTL backends and exposing truthful descriptors.
+  - file must not contain:
+    - support matrix logic that belongs in `mtl_video_support.hpp`;
+    - session projection logic.
+
+- [ ] R083: Refactor `libs/st2110core/include/st2110/backends/mtl/mtl_video_support.hpp`
+  - file responsibility:
+    - MTL-video-specific support matrix / support-branch dispatch only.
+  - after refactor file must answer only for:
+    - deciding which common video branches currently have concrete MTL logic.
+  - move/refactor from:
+    - the support-matrix/support-helper part of `mtl_rx_video_backend.hpp/.cpp`.
+  - explicit rule:
+    - this file must not use `Unsupported` because “projection target is too narrow”;
+    - it may report `Unsupported` only from exact concrete logic branches whose bodies are not implemented yet.
+
+- [ ] R084: Refactor `libs/st2110core/include/st2110/backends/mtl/mtl_video_projection.hpp`
+  - file responsibility:
+    - typed projection from common video config + MTL runtime config into MTL ST20P structures only.
+  - after refactor file must answer only for:
+    - complete typed projection into `st20p_rx_ops`-facing data.
+  - move/refactor from:
+    - the projection/helper portion of `mtl_rx_video_backend.hpp/.cpp`.
+  - explicit rule:
+    - if a recognized value cannot be represented here, the model is incomplete and must be completed;
+    - this file must not hide incompleteness behind helper-level `Unsupported`.
+
+- [ ] R085: Refactor `libs/st2110core/include/st2110/backends/mtl/mtl_rx_video_backend.hpp`
+  - file responsibility:
+    - concrete MTL video backend declaration only.
+  - after refactor file must answer only for:
+    - backend-local state/resource ownership surface and public backend contract conformance.
+  - file must not contain:
+    - full support matrix bodies;
+    - projection helper bodies;
+    - common media-model truth.
+
+- [ ] R086: Refactor `libs/st2110core/src/backends/mtl/mtl_rx_video_backend.cpp`
+  - file responsibility:
+    - concrete MTL video backend implementation only.
+  - after refactor file must answer only for:
+    - MTL device/session lifecycle;
+    - receive-loop / blocking frame get-put flow;
+    - localized frame mapping and stats collection by calling lower explicit boundaries.
+  - file must consume:
+    - `mtl_video_support.hpp`;
+    - `mtl_video_projection.hpp`;
+    - common delivery/timestamp boundaries.
+  - file must not:
+    - re-own the support matrix;
+    - hide conversion/delivery limits as session-start failure;
+    - narrow MTL below relevant in-scope MTL capability because Socket or current handoff is narrower.
+
+---
+
+## Track R9 — OBS plugin composition block refactor
+
+> Это блок рефакторинга responsibility block `OBS plugin composition`.
+>
+> Ответственность блока:
+> - top composition of OBS/plugin-facing behavior only;
+> - OBS source/module/property/runtime/handoff wiring through public backend contracts.
+>
+> После рефакторинга блок должен отвечать **только** за это.
+> Блок не должен:
+> - знать packet parsing, depacketizing, socket syscalls, MTL session internals;
+> - превращаться в место backend/media logic duplication.
+
+### OBS plugin public include surface
+
+- [ ] R087: Refactor `plugins/obs_st2110/include/obs_st2110/plugin_api.hpp`
+  - file responsibility:
+    - small plugin-wide public include/API surface only.
+  - after refactor file must answer only for:
+    - plugin-level declarations that truly need cross-file visibility in OBS layer.
+  - move/refactor from:
+    - no current production logic exists yet; create the boundary explicitly.
+  - file must not expose:
+    - backend internals;
+    - socket/MTL handles;
+    - receive-pipeline types.
+
+- [ ] R088: Refactor `plugins/obs_st2110/include/obs_st2110/source_config.hpp`
+  - file responsibility:
+    - typed OBS source configuration model only.
+  - after refactor file must answer only for:
+    - source settings/state shape derived from OBS properties and persisted settings.
+  - move/refactor from:
+    - no current production logic exists yet; create the boundary explicitly.
+  - file must not contain:
+    - backend start/stop code;
+    - OBS source runtime/thread ownership.
+
+- [ ] R089: Refactor `plugins/obs_st2110/include/obs_st2110/source_runtime.hpp`
+  - file responsibility:
+    - typed OBS source runtime state surface only.
+  - after refactor file must answer only for:
+    - runtime state owned by one source instance.
+  - move/refactor from:
+    - no current production logic exists yet; create the boundary explicitly.
+  - file must not contain:
+    - source property building;
+    - backend-wiring logic bodies;
+    - raw media handoff helpers.
+
+### OBS plugin implementation files
+
+- [ ] R090: Refactor `plugins/obs_st2110/src/plugin_entry.cpp`
+  - file responsibility:
+    - OBS module entrypoints and plugin-global registration orchestration only.
+  - after refactor file must answer only for:
+    - `obs_module_*` entrypoints and module-level load/unload wiring.
+  - move/refactor from:
+    - no current production logic exists yet; create the boundary explicitly using the DistroAV-inspired module split.
+  - file must not contain:
+    - source property logic;
+    - per-source runtime behavior;
+    - backend-specific media logic.
+
+- [ ] R091: Refactor `plugins/obs_st2110/src/source_registration.cpp`
+  - file responsibility:
+    - `obs_source_info` descriptor creation/registration only.
+  - after refactor file must answer only for:
+    - source descriptor and callback table wiring.
+  - move/refactor from:
+    - no current production logic exists yet; create the boundary explicitly.
+  - file must not contain:
+    - backend start/stop bodies;
+    - media handoff implementation.
+
+- [ ] R092: Refactor `plugins/obs_st2110/src/source_settings_ui.cpp`
+  - file responsibility:
+    - OBS source properties/defaults/update UI logic only.
+  - after refactor file must answer only for:
+    - property list/defaults/visibility/dependency handling.
+  - move/refactor from:
+    - no current production logic exists yet; create the boundary explicitly.
+  - file must not contain:
+    - socket/MTL runtime behavior;
+    - frame/audio handoff logic.
+
+- [ ] R093: Refactor `plugins/obs_st2110/src/source_runtime.cpp`
+  - file responsibility:
+    - one-source runtime lifecycle orchestration only.
+  - after refactor file must answer only for:
+    - start/stop/reconfigure/join/reset behavior for one OBS source instance.
+  - move/refactor from:
+    - no current production logic exists yet; create the boundary explicitly.
+  - file must not contain:
+    - backend operational config construction beyond calling the dedicated wiring boundary;
+    - media handoff conversion bodies.
+
+- [ ] R094: Refactor `plugins/obs_st2110/src/backend_wiring.cpp`
+  - file responsibility:
+    - plugin-to-backend operational wiring only.
+  - after refactor file must answer only for:
+    - mapping OBS source config/runtime selection into public backend/bootstrap contracts.
+  - move/refactor from:
+    - no current production logic exists yet; create the boundary explicitly.
+  - file must not contain:
+    - source properties UI;
+    - socket/MTL internal implementation details;
+    - OBS handoff bodies.
+
+- [ ] R095: Refactor `plugins/obs_st2110/src/obs_video_handoff.cpp`
+  - file responsibility:
+    - localized video handoff from project delivery contract into OBS only.
+  - after refactor file must answer only for:
+    - `VideoFrameView` / project-local video handoff -> `obs_source_output_video(...)`.
+  - move/refactor from:
+    - no current production logic exists yet; create the boundary explicitly.
+  - file must not contain:
+    - backend receive loop;
+    - packet parsing/depacketizer logic.
+
+- [ ] R096: Refactor `plugins/obs_st2110/src/obs_audio_handoff.cpp`
+  - file responsibility:
+    - localized audio handoff from project delivery contract into OBS only.
+  - after refactor file must answer only for:
+    - `AudioFrameView` / project-local audio handoff -> `obs_source_output_audio(...)`.
+  - move/refactor from:
+    - no current production logic exists yet; create the boundary explicitly.
+  - file must not contain:
+    - backend receive loop;
+    - RTP/audio assembly logic.
+
+---
+
+## Track R10 — Support / build / entrypoints block refactor
+
+> Это блок рефакторинга responsibility block `support/build and entrypoints`.
+>
+> Ответственность блока:
+> - build wiring;
+> - compiled entrypoint composition;
+> - repository-local support shims/scripts only.
+>
+> После рефакторинга блок должен отвечать **только** за это.
+> Этот блок intentionally идет последним:
+> - он должен фиксировать уже стабилизированные file/block boundaries;
+> - он не должен диктовать архитектуру нижних блоков.
+
+- [ ] R097: Refactor `libs/st2110core/src/backend_factory_registry.cpp`
+  - file responsibility:
+    - compiled backend-factory set composition and registry implementation only.
+  - after refactor file must answer only for:
+    - wiring the actually compiled factory set into the public registry API.
+  - move/refactor from:
+    - current mixed registry implementation in this file.
+  - explicit cleanup:
+    - keep only compiled-factory composition;
+    - move selection/support semantics to contract/backend-selection files and backend-local support files.
+  - file must not contain:
+    - backend support policy logic;
+    - platform-specific application branching;
+    - app/OBS logic.
+
+- [ ] R098: Refactor/delete `libs/st2110core/src/stub.cpp`
+  - file responsibility:
+    - temporary build/link compatibility translation unit only, if still required.
+  - after refactor file must answer only for:
+    - nothing, if repository no longer needs a stub TU.
+  - if after the preceding refactoring tasks the build no longer needs this translation unit for any real linkage/build role, delete `libs/st2110core/src/stub.cpp` in this same task.
+  - file must not remain:
+    - as a hidden placeholder for missing real architecture;
+    - as a sink for mixed temporary logic;
+    - as an inert always-built compatibility TU with no remaining responsibility.
+
+- [ ] R099: Refactor `libs/st2110core/CMakeLists.txt`
+  - file responsibility:
+    - build wiring for `st2110core` only.
+  - after refactor file must answer only for:
+    - source membership;
+    - include paths;
+    - target link dependencies;
+    - platform/MTL build capability localization.
+  - file must not encode:
+    - architecture decisions that belong in code;
+    - vendoring/superbuild logic for external heavy dependencies.
+
+- [ ] R100: Refactor `plugins/obs_st2110/CMakeLists.txt`
+  - file responsibility:
+    - OBS plugin target build wiring only.
+  - after refactor file must answer only for:
+    - plugin module target structure and dependencies.
+  - move/refactor from:
+    - no current production logic exists yet; create the boundary explicitly when the plugin target is added.
+  - file must not contain:
+    - runtime/backend logic;
+    - UI/business logic.
+
+- [ ] R101: Refactor `scripts/build_and_test.sh`
+  - file responsibility:
+    - developer convenience build/test orchestration only.
+  - after refactor file must answer only for:
+    - local build/test flow for this repository.
+  - file must not become:
+    - a clean-machine installer;
+    - a hidden source of product/runtime defaults.
+
+---
+## Exit condition for Phase R
+
+- every listed file belongs clearly to exactly one responsibility block;
+- no leftover mixed “bucket” headers remain;
+- no generic enum-validation theater remains over closed internal enums;
+- `Unsupported` remains only as missing concrete logic inside exact concrete logic branches;
+- common modeled axes are no longer narrowed by Socket MVP limits or current delivery limits;
+- socket/MTL/OBS blocks consume lower/common contracts instead of importing sibling internals;
+- extending support for a new mode/format/backend path is mostly reduced to filling the already-existing concrete logic branch in the correct file.
+- all legacy compatibility files from the previous architecture are either:
+  - fully redistributed and deleted;
+  - or still present only when they retain one explicit remaining responsibility documented by the corresponding refactor task;
+- no empty compatibility headers / forwarding shims / inert stub translation units remain in the production tree without explicit justified responsibility.
+
+> Уточнение после `Phase R — Responsibility-block refactoring`:
+> - задачи этого трека выполняются уже поверх refactored responsibility blocks;
+> - они должны использовать новые block boundaries и новые файлы из `backends/mtl`, `contracts/*`, `receive/*`, `delivery/*`, `plugins/obs_st2110/*`;
+> - они не должны возвращать проект к legacy bucket-файлам или reintroduce mixed-responsibility helpers;
+> - `Unsupported` в remaining MTL tasks допустим только как отсутствие concrete logic inside exact MTL-local branch that is supposed to implement a recognized modeled value;
+> - inability to represent a recognized value in a projection target or delivery target must be treated as project incompleteness and fixed by completing the corresponding model/boundary.
+
 ### C3. MTL video RX
 - [x] 130: Add `ST2110_WITH_MTL` build option + localized MTL dependency/build guard
   - keep the existing public backend model unchanged:
@@ -1304,16 +2661,27 @@
 - [x] 131C: Add a common video backend support matrix/policy for Socket and MTL
   - introduce explicit backend-specific support policy helpers for common video receive capabilities;
   - define Socket support in terms of actual project Socket implementation status, not in terms of whether a format/mode is standard-valid;
-  - define MTL support in terms of what can be projected into MTL ST20P RX and delivered or handled through the project handoff/conversion boundary;
+  - define MTL support in terms of whether:
+    - the common model already represents the branch;
+    - the MTL-facing typed boundary already represents the branch cleanly;
+    - and the concrete MTL-local logic branch for that branch is implemented.
   - keep Socket and MTL policies consuming the same common video capability/config model;
   - avoid separate duplicated validation logic that can diverge between backends;
   - make unsupported branches named and testable:
-    - Socket unsupported because depacketizer/reconstructor/storage path is not implemented yet;
-    - MTL unsupported only when the value cannot be projected to MTL or is deliberately disabled by a named local MTL policy.
+    - Socket unsupported because the exact Socket concrete logic branch is not implemented yet;
+    - MTL unsupported only when the exact MTL-local concrete logic branch is not implemented yet after the common model and MTL-facing typed boundary already represent the branch.
+  - inability to represent a recognized value in an MTL projection target or project delivery target is not a valid support-policy outcome and must be treated as project incompleteness.
   - completion condition:
-    - backend selection checks common video capability through a shared pipeline and diverges only at backend implementation-support policy.
-- [ ] 131D: Project the common video receive config into MTL ST20P RX ops
-  - add a named projection boundary from the common video receive config plus MTL device/runtime config into MTL `st20p_rx_ops`;
+    - backend selection checks common video capability through a shared pipeline and diverges only at backend-local implementation policy / concrete logic branch availability.
+- [ ] 131D: Complete the explicit MTL video projection boundary into `st20p_rx_ops`
+  - implement the projection in the refactored MTL block through:
+    - `libs/st2110core/include/st2110/backends/mtl/mtl_video_projection.hpp`;
+    - `libs/st2110core/src/backends/mtl/mtl_rx_video_backend.cpp` where the backend consumes that projection boundary.
+  - add a named projection boundary from the common video receive/session model plus MTL device/runtime config into MTL `st20p_rx_ops`;
+  - consume the common model from the refactored boundaries, including:
+    - `contracts/video/rx_video_session_config.hpp`;
+    - `receive/video/video_receive_description.hpp`;
+    - relevant timing/delivery boundaries where needed.
   - keep MTL device/runtime fields backend-specific:
     - MTL device ports;
     - session ports `P` / `R`;
@@ -1322,7 +2690,7 @@
     - queue counts;
     - MTL flags;
     - lcores / socket / NUMA policy where consumed.
-  - project common media axes into MTL ST20P fields through explicit helpers/switches:
+  - project common media axes into MTL ST20P fields through explicit per-axis/per-branch logic:
     - payload type;
     - width / height / frame rate;
     - scan/interlace-related fields;
@@ -1331,10 +2699,14 @@
     - packing/session mode;
     - frame buffer count;
     - receive flags and session policies.
-  - do not infer MTL transport/output format only from project `PixelFormat`;
-  - do not silently coerce unknown or unsupported projection values to defaults;
+  - projection target must be complete for all in-scope branches the project routes into MTL.
+  - do not infer MTL transport/output format only from project-local `PixelFormat`.
+  - do not silently coerce unknown or unsupported projection values to defaults.
+  - generic projection helpers must not return `Unsupported` merely because the helper does not know how to continue.
+  - if some recognized branch still lacks implementation, `Unsupported` is allowed only from the exact branch-local concrete logic that is supposed to populate that part of the MTL projection.
+  - if a recognized value cannot be represented in the MTL-facing typed target, treat that as project incompleteness and complete the target model/boundary.
   - completion condition:
-    - MTL video start can consume the same common video config validated for Socket/MTL, then use a backend-local projection into `st20p_rx_ops`.
+    - MTL video start can consume the same common video config validated for Socket/MTL and obtain fully populated `st20p_rx_ops` through the explicit MTL projection boundary.
 - [ ] 131E: Keep Socket video backend on the same common video validation path
   - rewire or preserve Socket video operational assembly so it consumes the common video receive capability/config model before Socket-specific runtime construction;
   - ensure Socket limitations are expressed by Socket support policy:
@@ -1347,18 +2719,25 @@
   - completion condition:
     - Socket and MTL run through the same common video structural validation, and Socket-only failures for broader modes are localized as implementation-support failures.
 - [ ] 131F: Split project video delivery/handoff compatibility from receive-session capability
+  - implement/tighten this split through the refactored boundaries:
+    - `libs/st2110core/include/st2110/contracts/video/rx_video_session_config.hpp`;
+    - `libs/st2110core/include/st2110/receive/video/video_receive_description.hpp`;
+    - `libs/st2110core/include/st2110/delivery/video/video_handoff_format.hpp`;
+    - `libs/st2110core/include/st2110/delivery/video/video_frame_conversion.hpp`;
+    - `libs/st2110core/include/st2110/delivery/video/video_frame.hpp`.
   - introduce or tighten a common video delivery/handoff support boundary separate from backend receive-session support;
   - this boundary must decide whether an already-received frame/unit can currently be exposed through:
     - `VideoFrameView`;
     - a conversion helper;
     - OBS handoff;
     - a future native frame contract.
-  - do not reject MTL session creation or common config validation only because a particular output frame format cannot yet be represented by current `PixelFormat`;
-  - ensure `rx_video_config_from_video_stream_signaling()` preserves/builds structurally valid `RxVideoConfig::receive_capability` for recognized signaling modes without requiring immediate `VideoFrameHandoffFormat -> PixelFormat` projection; current project handoff/storage limits must fail only at the explicit delivery/handoff support boundary.
-  - Socket may still fail earlier if the depacketizer/storage implementation for a recognized mode is not implemented;
-  - MTL may receive broader MTL-supported modes and then handle project delivery limitations through localized conversion/drop/report policy;
+  - do not reject MTL session creation or common receive/session config validation only because a particular output frame format cannot yet be represented by the current project-local delivery/storage layer.
+  - ensure the signaling/bootstrap -> session-config path preserves/builds structurally complete recognized receive/session capability for known signaling modes without requiring immediate `VideoFrameHandoffFormat -> PixelFormat` collapse.
+  - current project handoff/storage limits must fail only at the explicit delivery/handoff/conversion boundary.
+  - Socket may still fail earlier if the exact Socket concrete logic branch for depacketizer/storage/handoff is not implemented for a recognized mode.
+  - MTL may receive broader MTL-supported modes and then handle project delivery limitations through localized conversion/drop/report policy.
   - completion condition:
-    - receive capability and project handoff capability are independent validation/support boundaries.
+    - receive-session capability and project delivery/handoff capability are independent boundaries, and current project-local delivery limits do not narrow the common receive model.
 - [ ] 131G: Add regression coverage for common video capability validation across Socket and MTL
   - add tests proving common structural validation accepts recognized video modes beyond current Socket MVP implementation;
   - add tests proving Socket rejects not-yet-implemented recognized modes through Socket support policy, not common structural validation;
@@ -1454,16 +2833,25 @@
 - [ ] 140B: Add a common audio backend support matrix/policy for Socket and MTL
   - introduce explicit backend-specific support policy helpers for common audio receive capabilities;
   - define Socket support in terms of actual project Socket implementation status, not in terms of whether an audio format/mode is standard-valid;
-  - define MTL support in terms of what can be projected into MTL ST30P RX and delivered or handled through the project handoff/conversion boundary;
+  - define MTL support in terms of whether:
+    - the common audio model already represents the branch;
+    - the MTL-facing typed boundary already represents the branch cleanly;
+    - and the exact MTL-local concrete logic branch is implemented.
   - keep Socket and MTL policies consuming the same common audio capability/config model;
   - avoid separate duplicated validation logic that can diverge between backends;
   - make unsupported branches named and testable:
-    - Socket unsupported because parser/reorder/assembler/storage path is not implemented yet;
-    - MTL unsupported only when the value cannot be projected to MTL or is deliberately disabled by a named local MTL policy.
+    - Socket unsupported because the exact Socket parser/reorder/assembler/storage concrete logic branch is not implemented yet;
+    - MTL unsupported only when the exact MTL-local concrete logic branch is not implemented yet after the common model and MTL-facing typed boundary already represent the branch.
+  - inability to represent a recognized value in an MTL projection target or project delivery target is not a valid support-policy outcome and must be treated as project incompleteness.
   - completion condition:
-    - backend selection checks common audio capability through a shared pipeline and diverges only at backend implementation-support policy.
-- [ ] 140C: Project the common audio receive config into MTL ST30P RX ops
-  - add a named projection boundary from the common audio receive config plus MTL device/runtime config into MTL `st30p_rx_ops`;
+    - backend selection checks common audio capability through a shared pipeline and diverges only at backend-local implementation policy / concrete logic branch availability.
+- [ ] 140C: Complete the explicit MTL audio projection boundary into `st30p_rx_ops`
+  - implement the projection in the refactored MTL/audio path through the appropriate MTL backend-local files and boundaries;
+  - add a named projection boundary from the common audio receive/session model plus MTL device/runtime config into MTL `st30p_rx_ops`;
+  - consume the common model from the refactored boundaries, including:
+    - `contracts/audio/rx_audio_session_config.hpp`;
+    - the common audio receive capability/config model introduced by tasks `140` / `140A`;
+    - delivery/conversion boundaries where needed.
   - keep MTL device/runtime fields backend-specific:
     - MTL device ports;
     - session ports `P` / `R`;
@@ -1472,7 +2860,7 @@
     - queue counts;
     - MTL flags;
     - lcores / socket / NUMA policy where consumed.
-  - project common media axes into MTL ST30P fields through explicit helpers/switches:
+  - project common media axes into MTL ST30P fields through explicit per-axis/per-branch logic:
     - payload type;
     - `st30_fmt`;
     - `st30_sampling`;
@@ -1481,11 +2869,15 @@
     - frame buffer count;
     - frame buffer size/duration policy;
     - receive flags and session policies.
-  - use MTL helper APIs or named derived-value helpers for packet/frame sizes where available;
-  - do not hardcode `48` samples, `48 kHz`, `1 ms`, stereo, or PCM24 as backend defaults except through named external adapter/default policy;
-  - do not silently map ST31/AM824 to linear PCM;
+  - use MTL helper APIs or named derived-value helpers for packet/frame sizes where available.
+  - do not hardcode `48` samples, `48 kHz`, `1 ms`, stereo, or PCM24 as backend defaults except through named explicit external adapter/default policy.
+  - do not silently map ST31/AM824 to linear PCM.
+  - projection target must be complete for all in-scope branches the project routes into MTL audio.
+  - generic projection helpers must not return `Unsupported` merely because the helper does not know how to continue.
+  - if some recognized branch still lacks implementation, `Unsupported` is allowed only from the exact branch-local concrete logic that is supposed to populate that part of the MTL projection.
+  - if a recognized value cannot be represented in the MTL-facing typed target, treat that as project incompleteness and complete the target model/boundary.
   - completion condition:
-    - MTL audio start can consume the same common audio config validated for Socket/MTL, then use a backend-local projection into `st30p_rx_ops`.
+    - MTL audio start can consume the same common audio config validated for Socket/MTL and obtain fully populated `st30p_rx_ops` through the explicit MTL projection boundary.
 - [ ] 140D: Keep Socket audio backend on the same common audio validation path
   - rewire or preserve Socket audio operational assembly so it consumes the common audio receive capability/config model before Socket-specific runtime construction;
   - ensure Socket limitations are expressed by Socket support policy:
@@ -1499,17 +2891,22 @@
     - Socket and MTL run through the same common audio structural validation, and Socket-only failures for broader modes are localized as implementation-support failures.
 - [ ] 140E: Split project audio delivery/conversion compatibility from receive-session capability
   - introduce or tighten a common audio delivery/conversion support boundary separate from backend receive-session support;
+  - implement/tighten this split through the refactored boundaries:
+    - `libs/st2110core/include/st2110/contracts/audio/rx_audio_session_config.hpp`;
+    - the common audio receive capability/config model introduced by tasks `140` / `140A`;
+    - `libs/st2110core/include/st2110/delivery/audio/audio_frame.hpp`;
+    - `libs/st2110core/include/st2110/delivery/audio/audio_frame_conversion.hpp`.
   - this boundary must decide whether an already-received audio frame/block can currently be exposed through:
     - `AudioBuffer`;
     - `AudioFrameView`;
     - a PCM conversion helper;
     - OBS handoff;
     - a future native audio contract.
-  - do not reject MTL session creation or common config validation only because a particular MTL audio frame format cannot yet be represented as current `InterleavedS32`;
-  - Socket may still fail earlier if parser/assembler implementation for a recognized mode is not implemented;
-  - MTL may receive broader MTL-supported modes and then handle project delivery/conversion limitations through localized conversion/drop/report policy;
+  - do not reject MTL session creation or common receive/session config validation only because a particular MTL audio frame format cannot yet be represented by the current project-local audio delivery layer.
+  - Socket may still fail earlier if the exact Socket parser/assembler/storage concrete logic branch for a recognized mode is not implemented.
+  - MTL may receive broader MTL-supported modes and then handle project delivery/conversion limitations through localized conversion/drop/report policy.
   - completion condition:
-    - receive capability and project audio handoff/conversion capability are independent validation/support boundaries.
+    - receive-session capability and project audio delivery/conversion capability are independent boundaries, and current project-local delivery limits do not narrow the common audio receive model.
 - [ ] 140F: Add regression coverage for common audio capability validation across Socket and MTL
   - add tests proving common structural validation accepts recognized audio modes beyond current Socket Level-A implementation;
   - add tests proving Socket rejects not-yet-implemented recognized modes through Socket support policy, not common structural validation;
@@ -1774,13 +3171,14 @@
     - underflow/loss/jitter scenarios;
     - no direct sink delivery before scheduled playout.
 
-- [ ] JB010: Протянуть jitter-buffer config через bootstrap / signaling / manual runtime config boundaries
+- [ ] JB010: Протянуть jitter-buffer config через session/bootstrap/operational boundaries
   - добавить jitter-buffer config в:
-    - manual `RxVideoConfig` / `RxAudioConfig`-driven operational composition;
+    - manual video/audio session-config-driven operational composition;
     - video receiver bootstrap composition;
     - audio receiver bootstrap composition;
     - backend operational configs.
-  - не вводить отдельный ad hoc side-channel config outside current bootstrap/runtime architecture.
+  - использовать refactored contract/bootstrapping boundaries, а не legacy side-channel config.
+  - не вводить отдельный ad hoc config path вне current session/bootstrap/runtime architecture.
   - timing-related defaults должны быть explicit at config-construction layer.
   - where signaling-derived timing inputs matter, they must be projected through existing timing/bootstrap boundaries, not bypassed.
   - tests:
@@ -1863,14 +3261,22 @@
 ## Track E — OBS plugin MVP (video + audio, basic UI)
 
 ### E0. Plugin skeleton
-- [ ] 180: Add `obs_plugin/` module target:
-  - build plugin as OBS-loadable `.so`
-  - link required `libobs`
-  - add `obs-frontend-api` linkage if frontend callbacks / Tools menu integration are used
-  - add Qt linkage only where plugin-global dialog/UI is required
-  - install/copy artifact into local OBS plugins directory
-- [ ] 181: Implement ST 2110 OBS input-source skeleton:
-  - register source from central module entrypoint
+- [ ] 180: Add `plugins/obs_st2110/` module target
+  - build the plugin from the refactored OBS plugin block layout:
+    - `plugins/obs_st2110/include/obs_st2110/*`;
+    - `plugins/obs_st2110/src/*`.
+  - build plugin as OBS-loadable `.so`;
+  - link required `libobs`;
+  - add `obs-frontend-api` linkage if frontend callbacks / Tools menu integration are used;
+  - add Qt linkage only where plugin-global dialog/UI is required;
+  - install/copy artifact into local OBS plugins directory.
+- [ ] 181: Implement ST 2110 OBS input-source skeleton through the refactored OBS plugin boundaries
+  - use the explicit OBS-plugin files/boundaries introduced by `Phase R`, including:
+    - `plugins/obs_st2110/src/plugin_entry.cpp`;
+    - `plugins/obs_st2110/src/source_registration.cpp`;
+    - `plugins/obs_st2110/include/obs_st2110/source_config.hpp`;
+    - `plugins/obs_st2110/include/obs_st2110/source_runtime.hpp`.
+  - register source from the central module entrypoint;
   - define `obs_source_info` with:
     - `get_name`
     - `get_properties`
@@ -1884,15 +3290,19 @@
     - `deactivate`
     - `get_width`
     - `get_height`
-  - define source-local runtime/state struct and nested source-config struct
-- [ ] 182: Implement minimal source properties/defaults/update flow for ST 2110 receive source:
-  - media kind
-  - backend selector
-  - source address / port / payload type
-  - video params
-  - audio params
-  - explicit no-signal / fallback policy
-  - property visibility/dependency logic where media/backend choice changes applicable fields
+  - define source-local runtime/state struct and nested source-config struct through the dedicated OBS plugin composition boundaries.
+- [ ] 182: Implement minimal source properties/defaults/update flow for ST 2110 receive source
+  - implement this in the refactored OBS plugin UI boundary, primarily through:
+    - `plugins/obs_st2110/src/source_settings_ui.cpp`;
+    - `plugins/obs_st2110/include/obs_st2110/source_config.hpp`.
+  - cover:
+    - media kind;
+    - backend selector;
+    - source address / port / payload type;
+    - video params;
+    - audio params;
+    - explicit no-signal / fallback policy;
+    - property visibility/dependency logic where media/backend choice changes applicable fields.
 - [ ] 183: Implement explicit no-network / no-signal fallback behavior:
   - startup behavior when no packets are available
   - timeout-based behavior when input disappears
@@ -1900,24 +3310,37 @@
   - silence / no-audio-output policy for audio path
 
 ### E1. Connect backends to OBS
-- [ ] 190: Wire socket backend into the OBS source runtime boundary:
-  - project source properties into socket-backend runtime config
-  - start/stop/reset socket receive path from source lifecycle
-  - keep socket-specific logic out of module/frontend layer
-- [ ] 191: Wire MTL backend into the same OBS source runtime boundary where available:
-  - project source properties into MTL runtime config
-  - use the same source contract as socket backend
-  - report unavailable/unsupported MTL cases cleanly without reshaping generic OBS source API
-- [ ] 192: Implement source-owned background runtime for receive/start/stop/reconfigure:
-  - dedicated runtime/thread ownership per source instance
-  - explicit start / stop / join / wake / reset behavior
-  - safe cleanup after partial start failure
-  - lifecycle driven by `create/update/show/hide/activate/deactivate`
-- [ ] 193: Implement backend-to-OBS media handoff boundary:
-  - choose and localize direct handoff vs explicit bounded queue policy
-  - hand off video through `obs_source_output_video(...)`
-  - hand off audio through `obs_source_output_audio(...)`
-  - keep backend-owned frame/block lifetime valid only through the handoff boundary
+- [ ] 190: Wire socket backend into the OBS source runtime boundary
+  - implement this through the refactored OBS composition boundaries, primarily:
+    - `plugins/obs_st2110/src/backend_wiring.cpp`;
+    - `plugins/obs_st2110/src/source_runtime.cpp`.
+  - project source properties into socket-backend runtime/operational config;
+  - start/stop/reset socket receive path from source lifecycle;
+  - keep socket-specific logic out of module/frontend/UI layer.
+- [ ] 191: Wire MTL backend into the same OBS source runtime boundary where available
+  - implement this through the refactored OBS composition boundaries, primarily:
+    - `plugins/obs_st2110/src/backend_wiring.cpp`;
+    - `plugins/obs_st2110/src/source_runtime.cpp`.
+  - project source properties into MTL runtime/operational config;
+  - use the same source contract as socket backend;
+  - report unavailable/unsupported MTL cases cleanly without reshaping generic OBS source API.
+- [ ] 192: Implement source-owned background runtime for receive/start/stop/reconfigure
+  - implement this in the dedicated OBS source-runtime boundary:
+    - `plugins/obs_st2110/src/source_runtime.cpp`;
+    - `plugins/obs_st2110/include/obs_st2110/source_runtime.hpp`.
+  - provide:
+    - dedicated runtime/thread ownership per source instance;
+    - explicit start / stop / join / wake / reset behavior;
+    - safe cleanup after partial start failure;
+    - lifecycle driven by `create/update/show/hide/activate/deactivate`.
+- [ ] 193: Implement backend-to-OBS media handoff boundary
+  - implement this through the dedicated handoff files:
+    - `plugins/obs_st2110/src/obs_video_handoff.cpp`;
+    - `plugins/obs_st2110/src/obs_audio_handoff.cpp`.
+  - choose and localize direct handoff vs explicit bounded queue policy;
+  - hand off video through `obs_source_output_video(...)`;
+  - hand off audio through `obs_source_output_audio(...)`;
+  - keep backend-owned frame/block lifetime valid only through the handoff boundary.
 - [ ] 194: Implement localized RTP/OBS timestamp mapping policy:
   - video timestamp mapping grounded in ST 2110 system timing rules
   - audio timestamp mapping grounded in ST 2110 / ST 2110-30 rules
