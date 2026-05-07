@@ -1,6 +1,6 @@
 ### tests/test_video_signaling.cpp
 - Роль:
-    - проверяет modeled `VideoStreamSignaling` validation and selected signaling-to-runtime policy projections.
+    - проверяет modeled `VideoStreamSignaling` validation together with the split between common validation, project delivery support, and backend-specific runtime support.
 - Покрывает:
     - valid progressive `GPM` signaling.
     - valid `BPM` signaling at the structural signaling layer.
@@ -13,17 +13,21 @@
         - width/height `0` rejected structurally;
         - width/height `32768` rejected structurally.
     - invalid frame-rate rejection.
-    - split between structural signaling and runtime support:
-        - odd-width signaling is structurally valid;
-        - projection to `RxVideoConfig` remains structurally valid;
-        - default video runtime support rejects the current UYVY storage projection as `InvalidValue`.
+    - odd-width split between signaling validity and project RX-config projection:
+        - odd-width signaling remains structurally valid;
+        - signaling-to-`RxVideoConfig` projection is rejected as `InvalidValue` for the current project mapping.
+    - explicit backend-support split using interlaced `GPM` receive config:
+        - common `validate_rx_video_config(...)` accepts the config;
+        - project delivery support accepts it;
+        - socket backend support rejects it as `Unsupported`;
+        - MTL backend support accepts it.
     - `MAXUDP` signaling policy:
         - Standard UDP Datagram Size Limit accepted;
         - Extended UDP Datagram Size Limit accepted;
         - non-boundary numeric values rejected;
         - values above Extended UDP Size Limit rejected;
         - packet-parse-policy derivation from signaling for Standard / Extended values;
-        - absent `MAXUDP` keeps empty policy override and therefore Standard-by-default behavior.
+        - absent `MAXUDP` keeps empty policy override.
     - structurally valid but runtime-unmappable sampling:
         - RGB signaling validates structurally;
         - direct current `PixelFormat` projection rejects RGB as `Unsupported`.
@@ -37,9 +41,9 @@
         - valid `KEY`/`ALPHA` remains runtime-unsupported only through pixel-format projection;
         - `TCS=ST2115LOGS3` requires `SSN=ST2110-20:2022`.
 - Фиксирует:
-    - video signaling validation remains a structural/media-description boundary, not a current runtime support gate;
-    - packet-size policy is represented through the signaling model and projected into packet-parse policy;
-    - runtime handoff/pixel-format limitations remain localized below signaling validation.
+    - video signaling validation remains a structural/media-description boundary, not a backend support gate;
+    - project delivery support and backend implementation support are separate follow-on boundaries;
+    - backend-specific differences, including socket vs MTL support for interlaced `GPM`, are checked below common signaling/config validation.
 
 ### tests/test_video_signaling_rx_match.cpp
 - Роль:
@@ -103,15 +107,35 @@
 
 ### tests/test_video_signaling_to_pipeline_config.cpp
 - Роль:
-    - проверяет projection from `VideoStreamSignaling` to runtime video receive pipeline config.
+    - проверяет projection from `VideoStreamSignaling` to depacketizer, reconstructor, and composed video receive-pipeline config.
 - Покрывает:
-    - depacketizer config projection;
-    - reconstructor config projection;
-    - composed pipeline config projection;
-    - structural preservation of interlaced scan mode in projection helpers;
-    - invalid signaling rejected before runtime projection;
-    - missing `SSN` rejected before runtime projection;
-    - structurally valid but runtime-unmappable media rejected as `Unsupported`.
+    - depacketizer config projection from valid signaling.
+    - reconstructor config projection from valid signaling.
+    - composed receive-pipeline config projection from valid signaling.
+    - projected runtime fields:
+        - width/height;
+        - `PixelFormat::UYVY`;
+        - scan mode;
+        - depacketizer packing mode;
+        - partial-frame policy.
+    - structural preservation of interlaced scan mode in receive-pipeline projection helpers.
+    - structural preservation of `BPM` in runtime projection helpers without a backend-support gate:
+        - depacketizer projection keeps `packing_mode = VideoPackingMode::Bpm`;
+        - receive-pipeline projection keeps `packing_mode = VideoPackingMode::Bpm`;
+        - reconstructor scan-mode projection remains independent from packing-mode support.
+    - invalid signaling rejected before runtime projection:
+        - depacketizer projection fails with `InvalidValue`;
+        - reconstructor projection fails with `InvalidValue`;
+        - receive-pipeline projection fails with `InvalidValue`.
+    - missing `SSN` rejected before runtime projection.
+    - structurally valid but unmappable project format rejected as `Unsupported`:
+        - 10-bit signaling fails at depacketizer projection;
+        - 10-bit signaling fails at reconstructor projection;
+        - 10-bit signaling fails at receive-pipeline projection.
+- Фиксирует:
+    - signaling-to-pipeline projection preserves already-modeled scan-mode and packing-mode axes;
+    - generic runtime projection helpers do not enforce backend-specific packing-mode support;
+    - project format/handoff limitations remain localized as `Unsupported` at projection time.
 
 ### tests/test_video_receiver_bootstrap.cpp
 - Роль:
@@ -126,12 +150,32 @@
 
 ### tests/test_video_packing_mode_runtime_projection.cpp
 - Роль:
-    - проверяет runtime projection/support boundary для `VideoPackingMode`.
+    - проверяет runtime projection boundary for `VideoPackingMode` across depacketizer, receive-pipeline, and bootstrap composition.
 - Покрывает:
-    - `GPM` projection into depacketizer / receive-pipeline / bootstrap configs;
-    - `BPM` remains structurally valid in signaling model;
-    - `BPM` remains rejected by current runtime projection/support boundaries as `Unsupported`;
-    - missing `SSN` is rejected before packing-mode runtime projection is attempted.
+    - `GPM` projection into:
+        - depacketizer config;
+        - receive-pipeline config;
+        - bootstrap config.
+    - preservation of projected runtime fields for `GPM`:
+        - width/height;
+        - `PixelFormat::UYVY`;
+        - progressive scan mode;
+        - partial-frame policy;
+        - Standard `MAXUDP` packet-parse override in bootstrap config.
+    - `BPM` remains structurally valid in the signaling model.
+    - `BPM` is preserved, not rejected, by signaling-to-runtime projection helpers:
+        - `depacketizer_config_from_video_stream_signaling(...)`;
+        - `video_receive_pipeline_config_from_video_stream_signaling(...)`;
+        - `video_receiver_bootstrap_config_from_video_stream_signaling(...)`.
+    - projected `RxVideoConfig` and depacketizer config keep `packing_mode = VideoPackingMode::Bpm` without an early backend-support gate.
+    - missing `SSN` is rejected before any runtime packing-mode projection is accepted:
+        - depacketizer projection fails with `InvalidValue`;
+        - receive-pipeline projection fails with `InvalidValue`;
+        - bootstrap projection fails with `InvalidValue`.
+- Фиксирует:
+    - packing mode is part of the common runtime projection model;
+    - signaling-to-runtime projection preserves structurally recognized `BPM` rather than collapsing it to current backend support;
+    - backend-specific support checks for packing mode must remain below these generic projection helpers.
 
 ### tests/test_video_signaled_media_properties.cpp
 - Роль:
