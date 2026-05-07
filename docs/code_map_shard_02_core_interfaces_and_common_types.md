@@ -84,10 +84,13 @@
 
 ### libs/st2110core/include/st2110/backend_factory.hpp
 - Роль:
-    - explicit backend-kind modeling and backend selection/creation boundary.
+    - explicit backend-kind modeling и общий backend selection/creation boundary.
     - отделяет выбор backend implementation (`socket` / `mtl`) от media runtime config, packet pipeline, SDP/signaling parsing и concrete backend implementation details.
     - задает extendable registration/selection layer поверх `IRxBackend`.
-    - теперь также задает public builtin-registry access boundary для default factory inventory и build-sensitive backend-kind visibility.
+    - теперь также задает video-specific config-aware support/selection boundary поверх общего factory registry:
+        - shared-first common-video support evaluation;
+        - dispatch в backend-local implementation-support policy;
+        - config-aware selection/creation helper’ы для video backend’ов.
 - Связи:
     - использует `backend.hpp` для:
         - `IRxBackend`;
@@ -95,11 +98,12 @@
         - `RxBackendCapabilities`;
         - `supports_media(...)`.
     - использует `error.hpp` для validation/result reporting.
+    - forward-declare’ит `CommonVideoBackendSupportMatrix` как shared common-video support model, не импортируя backend-local video support header прямо в public factory interface.
     - используется public factory declarations в:
         - `mtl_rx_backend_factory.hpp`;
         - `socket_rx_video_backend.hpp`;
         - `socket_rx_audio_backend.hpp`.
-    - out-of-line registry helpers реализуются в:
+    - out-of-line registry и video-aware selection helpers реализуются в:
         - `src/backend_factory_registry.cpp`.
     - должен потребляться app/bootstrap слоями при выборе backend’а.
     - concrete socket/MTL implementations expose `IRxBackendFactory` instances instead of hardcoded backend construction branches in app/plugin code.
@@ -146,7 +150,7 @@
         - out-of-line helper reporting whether the backend kind is compiled into the current build.
     - `default_rx_backend_factories() -> std::span<IRxBackendFactory *const>`
         - out-of-line helper exposing builtin registered receive backend factories.
-    - `select_rx_backend_factory(std::span<IRxBackendFactory* const>, const RxBackendSelection&) -> std::expected<IRxBackendFactory*, Error>`
+    - `select_rx_backend_factory(std::span<IRxBackendFactory *const>, const RxBackendSelection&) -> std::expected<IRxBackendFactory*, Error>`
         - validates selection request first;
         - validates every registered factory entry and every returned descriptor before selection;
         - rejects null factory entries and invalid descriptors;
@@ -155,23 +159,37 @@
             - `available==true`;
             - required media capability via `supports_media(...)`;
         - returns `Unsupported` when no matching available backend exists.
-    - `create_rx_backend(std::span<IRxBackendFactory* const>, const RxBackendSelection&) -> std::expected<std::unique_ptr<IRxBackend>, Error>`
+    - `validate_selected_rx_video_backend_support_matrix(RxBackendKind, const CommonVideoBackendSupportMatrix&) -> Error`
+        - video-specific backend-kind dispatch over already-resolved common-video support matrix;
+        - applies only selected backend implementation-support policy.
+    - `validate_rx_video_backend_selection_support(const RxBackendSelection&, const RxVideoConfig&) -> Error`
+        - validates generic backend/media selection;
+        - requires `selection.media_kind == RxMediaKind::Video`;
+        - resolves common-video backend-support matrix from `RxVideoConfig`;
+        - applies selected backend video implementation-support policy.
+    - `select_rx_video_backend_factory(std::span<IRxBackendFactory *const>, const RxBackendSelection&, const RxVideoConfig&) -> std::expected<IRxBackendFactory*, Error>`
+        - video-specific config-aware factory selection helper;
+        - first validates backend support for the selected backend kind against the provided `RxVideoConfig`;
+        - then delegates concrete factory selection to `select_rx_backend_factory(...)`.
+    - `create_rx_video_backend(std::span<IRxBackendFactory *const>, const RxBackendSelection&, const RxVideoConfig&) -> std::expected<std::unique_ptr<IRxBackend>, Error>`
+        - video-specific config-aware backend creation helper;
+        - performs support validation, config-aware factory selection, and concrete backend construction.
+    - `create_rx_backend(std::span<IRxBackendFactory *const>, const RxBackendSelection&) -> std::expected<std::unique_ptr<IRxBackend>, Error>`
+        - generic backend creation helper;
         - selects one factory through `select_rx_backend_factory(...)`;
         - creates one backend instance from the selected factory only;
         - rejects null backend results as `InvalidValue`.
 - Примечание:
-    - backend kind is a first-class architecture axis separate from media kind.
-    - descriptors advertise capabilities instead of assuming that backend kind implies a fixed media set.
-    - builtin registry access is separated from selection logic:
-        - registry inventory comes from `default_rx_backend_factories()`;
-        - selection semantics remain in `select_rx_backend_factory(...)`.
+    - backend kind remains a first-class architecture axis separate from media kind.
+    - generic registry/descriptor semantics stay separate from config-aware video support checks.
+    - shared common-video support is resolved once and then narrowed only at the selected backend implementation-support boundary.
     - localized `available=false` keeps temporary runtime/build availability explicit without reshaping the API.
     - future backend additions should mainly require:
         - adding a new `RxBackendKind` value;
         - extending kind validation/name/parser coverage;
         - providing a new concrete `IRxBackendFactory`;
         - extending builtin registry or another registration source;
-        - adding tests.
+        - optionally extending backend-specific config-aware support dispatch where relevant.
 
 ### libs/st2110core/include/st2110/bytes.hpp
 - Роль:
@@ -601,3 +619,57 @@
         - descriptors keep backend kind/name/capabilities public;
         - concrete creation is not implemented yet.
     - build-time selection between enabled and unavailable implementation files is localized in `libs/st2110core/CMakeLists.txt`.
+
+### libs/st2110core/include/st2110/video_backend_support.hpp
+- Роль:
+    - shared backend-agnostic common-video support model for backend selection and backend-local implementation-support checks.
+    - задает one-time common resolution pipeline from `RxVideoConfig` into a structurally valid common support matrix, которую затем потребляют Socket- и MTL-local support policies.
+    - explicit keeps separate:
+        - structural/common video recognition;
+        - project pixel/storage axis;
+        - backend-local implementation limits.
+    - intentionally does not encode:
+        - project-delivery support limits;
+        - Socket-specific support limits;
+        - MTL session/projection limits.
+- Связи:
+    - использует:
+        - `error.hpp` for validation/result reporting;
+        - `pixel_format.hpp` for current project pixel/storage axis;
+        - `rx_config.hpp` for:
+            - `RxVideoConfig`;
+            - `validate_rx_video_config_structure(...)`;
+            - `rx_video_config_effective_receive_capability(...)`;
+            - project pixel/handoff helpers;
+        - `video_receive_capability.hpp` for common receive-capability structure and validation.
+    - используется:
+        - `backend_factory.hpp` as the shared common-video support type forward-declaration target;
+        - `socket_rx_video_backend.hpp` for socket-local implementation-support checks;
+        - `mtl_rx_video_backend.hpp` for MTL-local implementation-support and projection checks;
+        - `src/backend_factory_registry.cpp` for backend-kind-specific dispatch over a shared common-video matrix.
+- Сущности:
+    - `CommonVideoBackendSupportMatrix`
+        - shared backend-support model:
+            - `project_pixel_format`
+            - `receive_capability`.
+    - `validate_common_video_backend_support_matrix(const CommonVideoBackendSupportMatrix&) -> Error`
+        - structural validation for the common matrix only;
+        - validates:
+            - known project pixel/storage axis through project handoff derivation;
+            - structurally valid `VideoReceiveCapability`.
+        - must not apply backend-local or project-delivery narrowing.
+    - `validate_rx_video_config_for_common_video_backend_support(const RxVideoConfig&) -> Error`
+        - structural/common validation entry point for backend support evaluation;
+        - intentionally remains equivalent to `validate_rx_video_config_structure(...)`.
+    - `common_video_backend_support_matrix_from_rx_video_config(const RxVideoConfig&) -> std::expected<CommonVideoBackendSupportMatrix, Error>`
+        - shared resolution pipeline:
+            - structural/common `RxVideoConfig` validation;
+            - effective `VideoReceiveCapability` resolution;
+            - final common matrix validation.
+        - returns the backend-agnostic support matrix consumed later by backend-local support policies.
+- Примечание:
+    - this file is intentionally small and policy-only: it models the common support input but does not choose a backend and does not apply backend-specific narrowing.
+    - shared-first support evaluation is now explicit:
+        - common matrix is resolved once;
+        - backend-specific support diverges only after that point.
+    - future video backends should consume this common matrix rather than re-deriving backend-private truth from `RxVideoConfig`.

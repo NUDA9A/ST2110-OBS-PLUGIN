@@ -49,6 +49,7 @@
     - `libs/st2110core/include/st2110/receive_reorder_tolerance_policy.hpp`
     - `libs/st2110core/include/st2110/rtp_timestamp_anchor_policy.hpp`
     - `libs/st2110core/include/st2110/mtl_rx_backend_factory.hpp`
+    - `libs/st2110core/include/st2110/video_backend_support.hpp`
 
 ### `code_map_shard_03_packet_parsing_and_reorder.md`
 - Область:

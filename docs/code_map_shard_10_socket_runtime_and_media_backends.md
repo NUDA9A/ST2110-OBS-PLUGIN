@@ -394,23 +394,29 @@
 - Роль:
     - concrete socket-based single-media video receive backend for the current ST 2110-20 receive path.
     - задает explicit video-specific operational input boundary above the common socket runtime layer.
-    - consumes the common `VideoReceiveCapability` model through socket-local support policy instead of narrowing the common media model itself.
+    - consumes the shared common-video backend-support matrix through socket-local implementation-support policy instead of narrowing the common media model itself.
     - composes:
         - socket lifecycle / receive loop;
-        - packet-parse policy enforcement;
+        - packet-parse-policy enforcement;
         - RTP/ST 2110 packet parsing;
         - configured payload-type admission;
         - fixed-window reorder;
-        - optional one-step head-gap flush via receive reorder tolerance policy;
+        - optional one-step head-gap flush via explicit receive reorder tolerance policy;
         - depacketize/reconstruct pipeline;
         - RTP timestamp to `TimestampNs` mapping;
         - final sink delivery.
 - Связи:
     - inherits from `SocketRxSingleMediaBackendBase` for common socket lifecycle, receive-thread loop, receive-buffer sizing, and common stats accounting.
-    - implements `ISocketRxVideoBackend` from `backend.hpp`.
+    - реализует `ISocketRxVideoBackend` from `backend.hpp`.
+    - использует `backend_factory.hpp` for builtin `SocketRxVideoBackendFactory`.
     - использует:
-        - `socket_runtime.hpp` for operational common config, socket-open projection/equality, and validation;
+        - `socket_runtime.hpp` for:
+            - `SocketRxOperationalCommonConfig`;
+            - socket-open projection;
+            - socket-open equality;
+            - common operational validation;
         - `rx_config.hpp` for `RxVideoConfig` and effective receive-capability resolution;
+        - `video_backend_support.hpp` for shared common-video backend-support matrix resolution;
         - `fixed_reorder_buffer.hpp` for current reorder-buffer implementation;
         - `packet_admission.hpp` and `packet_parse.hpp` for media packet admission and staged parsing;
         - `video_receive_pipeline.hpp` for depacketize + reconstruct delivery path;
@@ -427,19 +433,25 @@
             - `reorder_buffer_config`.
     - `SocketRxVideoSupportPolicy`
         - socket-local implementation-support policy:
-            - `project_delivery`
+            - `require_current_socket_receive_pipeline_storage_support`
             - `require_socket_runtime_packing_mode_support`
             - `require_progressive_scan_mode`
             - `require_single_stream_topology`
             - `require_90khz_rtp_clock`.
     - policy/support helpers:
         - `default_socket_rx_video_support_policy()`
-        - `validate_socket_rx_video_packing_mode_support(...)`
-        - `validate_socket_rx_video_receive_capability_implementation_support(...)`
-        - `validate_socket_rx_video_config_support(...)`
-            - overlays current socket implementation limits on top of common config/project-delivery validity.
-        - `validate_socket_rx_video_operational_config(...)`
-            - validates reorder config, common socket operational config, video config support, timestamp mapper config, socket-open projection equality, and pipeline/config consistency.
+        - `validate_socket_rx_video_packing_mode_implementation_support(...)`
+        - `validate_socket_rx_video_scan_mode_implementation_support(...)`
+        - `validate_socket_rx_video_topology_implementation_support(...)`
+        - `validate_socket_rx_video_rtp_clock_implementation_support(...)`
+        - `validate_socket_rx_video_receive_pipeline_storage_implementation_support(const CommonVideoBackendSupportMatrix&)`
+            - current socket receive-pipeline/storage/handoff support boundary.
+        - `validate_socket_rx_video_receive_capability_implementation_support(const VideoReceiveCapability&, const SocketRxVideoSupportPolicy&)`
+        - `validate_socket_rx_video_backend_support_matrix_implementation_support(const CommonVideoBackendSupportMatrix&, const SocketRxVideoSupportPolicy&)`
+        - `validate_socket_rx_video_config_support(const RxVideoConfig&, const SocketRxVideoSupportPolicy&)`
+            - shared-first Socket support entry point from `RxVideoConfig`.
+        - `validate_socket_rx_video_operational_config(const SocketRxVideoOperationalConfig&)`
+            - validates reorder config, common socket operational config, socket video support, timestamp mapper config, socket-open projection equality, and pipeline/config consistency.
         - `socket_rx_video_operational_config_from_video_receiver_bootstrap(...)`
         - `socket_rx_video_operational_config_from_rx_video_config(...)`.
     - `SocketRxVideoBackend`
@@ -467,14 +479,20 @@
             - `video_sink_`
             - `configured_video_payload_type_`.
     - `SocketRxVideoBackendFactory`
-        - builtin factory for `RxBackendKind::Socket` video receive backend.
+        - builtin factory for `RxBackendKind::Socket` video receive backend;
+        - advertises audio/video capabilities through `RxBackendDescriptor`;
+        - constructs one `SocketRxVideoBackend`.
 - Примечание:
     - current socket implementation support remains intentionally narrower than the common modeled capability:
         - progressive only;
         - single-stream topology only;
         - 90 kHz RTP clock only;
-        - runtime packing-mode support delegated to `validate_runtime_video_packing_mode_support(...)`.
+        - runtime packing-mode support delegated to `validate_runtime_video_packing_mode_support(...)`;
+        - current receive-pipeline storage/handoff support kept as a socket-local boundary.
     - operational config validation explicitly checks that socket-open config and projected pipeline state stay synchronized with `RxVideoConfig`, rather than allowing hidden divergence inside backend start.
+    - packet handling remains split across common socket runtime and media-specific video processing:
+        - RTCP-like/control filtering and base stats live in the shared base;
+        - full parse/admission/reorder/reconstruct/delivery stay localized here.
 
 ### libs/st2110core/include/st2110/socket_rx_audio_backend.hpp
 - Роль:
@@ -669,46 +687,70 @@
 
 ### libs/st2110core/src/backend_factory_registry.cpp
 - Роль:
-    - builtin receive backend factory registry for `st2110core`.
-    - centralizes which backend factories are compiled into the library for the current build capability set.
-    - keeps MTL factory registration behind the internal `ST2110_HAS_MTL_BACKEND` compile-time capability.
+    - out-of-line builtin receive-backend registry for the public factory layer from `backend_factory.hpp`.
+    - centralizes builtin factory singleton inventory and build-sensitive registration for Socket/MTL backend factories.
+    - задает video-specific config-aware support/selection dispatch поверх generic registry semantics:
+        - resolve shared common-video backend-support matrix;
+        - apply selected backend implementation-support policy;
+        - only then delegate to generic factory selection/creation.
 - Связи:
-    - includes socket backend factory declarations from:
-        - `st2110/socket_rx_video_backend.hpp`;
-        - `st2110/socket_rx_audio_backend.hpp`.
-    - conditionally includes `st2110/mtl_rx_backend_factory.hpp` only when `ST2110_HAS_MTL_BACKEND` is enabled.
-    - uses `backend_factory.hpp` for:
-        - `IRxBackendFactory`;
-        - `RxBackendKind`;
-        - registry-facing factory functions.
-    - factory implementations are supplied by:
-        - socket backend headers / implementation units;
-        - `src/mtl_rx_backend_factory.cpp` when MTL is built.
+    - реализует out-of-line declarations from:
+        - `backend_factory.hpp`.
+    - использует builtin factory implementations from:
+        - `socket_rx_video_backend.hpp`
+        - `socket_rx_audio_backend.hpp`.
+    - использует shared common-video support model from:
+        - `video_backend_support.hpp`.
+    - при `ST2110_HAS_MTL_BACKEND` также использует:
+        - `mtl_rx_backend_factory.hpp`
+        - `mtl_rx_video_backend.hpp`.
+    - supplies builtin registry inventory for callers using:
+        - `default_rx_backend_factories()`;
+        - `create_rx_backend(...)`;
+        - `create_rx_video_backend(...)`.
 - Сущности:
-    - builtin factory singletons:
+    - anonymous-namespace builtin factory singletons:
         - `socket_rx_video_factory`
         - `socket_rx_audio_factory`
-        - `mtl_rx_video_factory` when `ST2110_HAS_MTL_BACKEND`;
-        - `mtl_rx_audio_factory` when `ST2110_HAS_MTL_BACKEND`.
+        - and, on MTL-capable builds:
+            - `mtl_rx_video_factory`
+            - `mtl_rx_audio_factory`.
     - `builtin_rx_backend_factories`
-        - `std::array<IRxBackendFactory*, 2>` in non-MTL builds:
-            - socket video;
-            - socket audio.
-        - `std::array<IRxBackendFactory*, 4>` in MTL-capable builds:
-            - socket video;
-            - socket audio;
-            - MTL video;
-            - MTL audio.
-    - `rx_backend_kind_built(RxBackendKind kind) -> bool`
-        - returns `true` for `RxBackendKind::Socket`;
-        - returns `true` for `RxBackendKind::Mtl` only when `ST2110_HAS_MTL_BACKEND` is enabled;
-        - returns `false` for all other/default cases.
-    - `default_rx_backend_factories() -> std::span<IRxBackendFactory* const>`
-        - exposes the compiled builtin factory array without transferring ownership.
+        - compile-time builtin registry array:
+            - 2 entries on non-MTL builds;
+            - 4 entries on MTL-capable builds.
+    - `validate_selected_rx_video_backend_support_matrix(RxBackendKind, const CommonVideoBackendSupportMatrix&) -> Error`
+        - validates the already-resolved common matrix;
+        - dispatches by backend kind:
+            - `Socket` -> `validate_socket_rx_video_backend_support_matrix_implementation_support(...)`
+            - `Mtl` -> `validate_mtl_rx_video_backend_support_matrix_implementation_support(...)` when MTL is built, otherwise `Unsupported`;
+            - unknown backend kind -> `InvalidValue`.
+    - `validate_rx_video_backend_selection_support(const RxBackendSelection&, const RxVideoConfig&) -> Error`
+        - validates generic backend/media selection;
+        - requires `selection.media_kind == RxMediaKind::Video`;
+        - resolves `CommonVideoBackendSupportMatrix` from `RxVideoConfig`;
+        - applies backend-kind-specific video support dispatch.
+    - `select_rx_video_backend_factory(std::span<IRxBackendFactory *const>, const RxBackendSelection&, const RxVideoConfig&) -> std::expected<IRxBackendFactory*, Error>`
+        - config-aware video factory selection helper;
+        - runs video support validation first;
+        - then delegates final registry selection to `select_rx_backend_factory(...)`.
+    - `create_rx_video_backend(std::span<IRxBackendFactory *const>, const RxBackendSelection&, const RxVideoConfig&) -> std::expected<std::unique_ptr<IRxBackend>, Error>`
+        - video-specific config-aware backend creation helper;
+        - selects one factory through `select_rx_video_backend_factory(...)`;
+        - constructs one backend instance from the selected factory;
+        - rejects null backend creation as `InvalidValue`.
+    - `rx_backend_kind_built(RxBackendKind) -> bool`
+        - reports compile-time builtin availability by backend kind:
+            - `Socket` always built;
+            - `Mtl` only when `ST2110_HAS_MTL_BACKEND` is enabled.
+    - `default_rx_backend_factories() -> std::span<IRxBackendFactory *const>`
+        - exposes the builtin registry inventory as a span.
 - Примечание:
-    - this file models build presence, not runtime availability.
-    - MTL factories can be compiled into Linux builds while individual MTL factory descriptors still report `available = false` until their concrete runtime paths are implemented.
-    - generic backend selection code should consume this registry rather than branching directly on platform or MTL dependency details.
+    - this file now hosts both:
+        - generic builtin registry inventory;
+        - video-specific backend support dispatch over the shared common-video matrix.
+    - generic backend selection remains media-agnostic, but video backend creation now has an explicit config-aware path above it.
+    - audio backend selection still uses the generic registry path; only video currently has shared-first config-aware backend support dispatch here.
 
 ### libs/st2110core/src/mtl_rx_backend_factory.cpp
 - Роль:
@@ -750,157 +792,183 @@
 
 ### libs/st2110core/include/st2110/mtl_rx_video_backend.hpp
 - Роль:
-    - public declaration layer for the MTL-based video receive backend skeleton.
-    - задает MTL-local support/projection policy above the common `RxVideoConfig` / `VideoReceiveCapability` model.
-    - explicitly separates:
-        - MTL session support;
-        - MTL project/start projection support;
-        - current narrower `VideoFrameView` delivery support.
-    - exposes generic backend lifecycle/state/stats surface while hiding concrete MTL device/session state behind opaque context structs.
+    - public skeleton/header boundary для generic MTL video receive backend on top of `RxVideoConfig`.
+    - keeps MTL represented at the same generic backend interface level as socket backends without leaking concrete MTL headers or MTL API types into the public core surface.
+    - задает explicit split between:
+        - common-video structural/backend-support matrix resolution;
+        - MTL session/project projection implementation support;
+        - current project `VideoFrameView` delivery support.
+    - models backend-local MTL projection/start boundary even though actual MTL device/session runtime start is not implemented yet.
 - Связи:
-    - использует:
-        - `backend.hpp` для `IRxVideoBackend`, lifecycle/state/stats contracts, and sink interface;
-        - `rx_config.hpp` для common runtime video config;
-        - `video_receive_capability.hpp` для common media/handoff/topology/RTP-clock model.
+    - использует `backend.hpp` для:
+        - `IRxVideoBackend`;
+        - `RxBackendState`;
+        - `RxBackendCapabilities`;
+        - lifecycle/stats contracts.
+    - использует `rx_config.hpp` как generic start-config boundary.
+    - использует `video_backend_support.hpp` для shared `CommonVideoBackendSupportMatrix` pipeline.
+    - использует `video_receive_capability.hpp` для common receive-capability structure.
     - реализуется в:
-        - `libs/st2110core/src/mtl_rx_video_backend.cpp`.
-    - должен потребляться MTL backend factory/build selection paths as the public backend declaration.
-    - shares the same common capability model with `video_signaling.hpp` and socket backend support validation.
+        - `src/mtl_rx_video_backend.cpp`.
+    - используется MTL-aware registry/support dispatch в:
+        - `src/backend_factory_registry.cpp`.
 - Сущности:
-    - opaque runtime placeholders:
+    - placeholder runtime ownership shells:
         - `MtlRxVideoDeviceContext`
-        - `MtlRxVideoSessionContext`.
+        - `MtlRxVideoSessionContext`
+        - intentionally opaque public placeholders so header models ownership/lifecycle without importing real MTL runtime types.
     - `MtlRxVideoSupportPolicy`
-        - MTL-local support/projection policy:
-            - `project_delivery`
+        - current MTL video implementation-support policy:
             - `require_mtl_session_packing_mode_support`
             - `require_progressive_scan_mode`
             - `require_single_stream_topology`
             - `require_90khz_rtp_clock`
-            - `require_project_handoff_format_support`.
-    - public support helpers:
+            - `require_mtl_project_handoff_format_support`.
+    - support helpers:
         - `default_mtl_rx_video_support_policy()`
-        - `validate_mtl_rx_video_packing_mode_support(...)`
-        - `validate_mtl_rx_video_receive_capability_session_support(...)`
-        - `validate_mtl_rx_video_receive_capability_project_projection_support(...)`
-        - `validate_mtl_rx_video_config_support(...)`.
-    - `MtlRxVideoBackend`
-        - public lifecycle/backend surface:
-            - constructor/destructor
-            - deleted copy/move operations
+        - `validate_mtl_rx_video_session_packing_mode_implementation_support(VideoPackingMode) -> Error`
+        - `validate_mtl_rx_video_receive_capability_session_implementation_support(const VideoReceiveCapability&, const MtlRxVideoSupportPolicy&) -> Error`
+            - applies current MTL session-side implementation limits over structurally valid common video capability.
+        - `validate_mtl_rx_video_backend_support_matrix_project_projection_implementation_support(const CommonVideoBackendSupportMatrix&, const MtlRxVideoSupportPolicy&) -> Error`
+            - validates current project-to-MTL projection/handoff compatibility over the common matrix.
+        - `validate_mtl_rx_video_backend_support_matrix_implementation_support(const CommonVideoBackendSupportMatrix&, const MtlRxVideoSupportPolicy&) -> Error`
+            - combines session-side and project-projection-side MTL support checks.
+        - `validate_mtl_rx_video_config_support(const RxVideoConfig&, const MtlRxVideoSupportPolicy&) -> Error`
+            - shared-first entry point from `RxVideoConfig` into MTL backend-local support evaluation.
+    - `MtlRxVideoBackend final : IRxVideoBackend`
+        - generic MTL video backend skeleton.
+        - public methods:
+            - destructor;
             - `backend_name()`
             - `start_video(const RxVideoConfig&, IVideoFrameSink&)`
             - `stop()`
             - `state()`
             - `capabilities()`
             - `stats()`.
-        - private constants:
-            - `kDefaultFrameBufferCount`
-            - `kVideoRtpClockRate`.
-        - `ProjectedVideoStartConfig`
-            - aggregated start-projection state:
-                - `receive_capability`
-                - `width`
-                - `height`
-                - `fps_num`
-                - `fps_den`
-                - `payload_type`
-                - `local_ip`
-                - `dest_ip`
-                - `pixel_format`
-                - `handoff_format`
-                - `transport_format`
-                - `scan_mode`
-                - `packing_mode`
-                - `mtl_interlaced`
-                - `session_port_count`
-                - `frame_buffer_count`.
-        - private helpers:
-            - `validate_video_frame_view_delivery_support(...)`
-            - `validate_projected_video_start_support(...)`
-            - `scan_mode_maps_to_mtl_interlaced(...)`
-            - `session_port_count_from_receive_topology(...)`
-            - `project_video_start_config(...)`
-            - `validate_start_state_locked()`
-            - `reset_runtime_locked()`.
-        - backend state:
-            - `mutex_`
-            - `state_`
-            - `stats_`
-            - `video_sink_`
-            - `device_`
-            - `session_`.
+    - `ProjectedVideoStartConfig`
+        - backend-local projected start model produced after common-video + MTL support validation.
+        - fields:
+            - `receive_capability`
+            - `width`
+            - `height`
+            - `fps_num`
+            - `fps_den`
+            - `payload_type`
+            - `local_ip`
+            - `dest_ip`
+            - `pixel_format`
+            - `handoff_format`
+            - `transport_format`
+            - `scan_mode`
+            - `packing_mode`
+            - `mtl_interlaced`
+            - `session_port_count`
+            - `frame_buffer_count`.
+    - backend-local projection/support helpers:
+        - `validate_video_frame_view_delivery_support(const CommonVideoBackendSupportMatrix&) -> Error`
+            - current project delivery boundary only;
+            - intentionally narrower than MTL session/projection support.
+        - `validate_projected_video_start_support(const CommonVideoBackendSupportMatrix&) -> Error`
+            - applies only MTL support/projection acceptance for projected start config.
+        - `scan_mode_maps_to_mtl_interlaced(VideoScanMode) -> std::expected<bool, Error>`
+        - `session_port_count_from_receive_topology(const VideoReceiveTopology&) -> std::expected<std::uint16_t, Error>`
+        - `project_video_start_config(const RxVideoConfig&) -> std::expected<ProjectedVideoStartConfig, Error>`.
+    - lifecycle/runtime helpers:
+        - `validate_start_state_locked() const noexcept -> Error`
+        - `reset_runtime_locked() noexcept`.
+    - state/runtime members:
+        - `mutex_`
+        - `state_`
+        - `stats_`
+        - `video_sink_`
+        - `device_`
+        - `session_`.
+    - constants:
+        - `kDefaultFrameBufferCount = 3`
+        - `kVideoRtpClockRate = 90000`.
 - Примечание:
-    - declaration order of `device_` / `session_` is intentional so session state can be released before device state during teardown.
-    - this header does not expose raw MTL handles or MTL API headers; it keeps MTL runtime ownership localized behind backend-local context placeholders.
-    - current support policy is intentionally broader than the current `VideoFrameView` delivery path, so later runtime work can extend MTL start/runtime behavior without redesigning the support model.
+    - current header is still a skeleton/support-projection contract, not a full MTL runtime implementation.
+    - the support boundary is intentionally broader than current `VideoFrameView` delivery support:
+        - MTL support/payload/session projection is checked first;
+        - project handoff/delivery restrictions are applied separately and later.
+    - declaration order of `session_` and `device_` is intentional so session state can be released before device state during reset/teardown.
 
 ### libs/st2110core/src/mtl_rx_video_backend.cpp
 - Роль:
-    - out-of-line implementation of the current `MtlRxVideoBackend` skeleton.
-    - реализует MTL-local support/projection helpers, backend lifecycle/state plumbing, and start-config projection for task-131-level MTL video backend work.
-    - intentionally stops before actual MTL device/session creation and frame receive runtime.
+    - out-of-line implementation of the current MTL video backend skeleton.
+    - реализует:
+        - MTL video support-policy defaults;
+        - shared common-video matrix consumption;
+        - MTL session/project projection support checks;
+        - projected-start-config derivation;
+        - minimal lifecycle/reset/state/stats behavior.
+    - intentionally stops short of real MTL runtime startup:
+        - actual device/session creation and receive runtime are still unimplemented;
+        - `start_video(...)` currently remains a validated projection-only skeleton.
 - Связи:
-    - реализует declarations from `mtl_rx_video_backend.hpp`.
-    - использует common receive-capability validation/projection helpers and common `RxVideoConfig` project-delivery validation from the public video capability/config layers.
-    - supplies the current runtime behavior for any factory path constructing `MtlRxVideoBackend`.
+    - реализует declarations from:
+        - `mtl_rx_video_backend.hpp`.
+    - consumes shared common-video support resolution through:
+        - `common_video_backend_support_matrix_from_rx_video_config(...)`.
+    - participates in backend-kind-specific support dispatch used by:
+        - `src/backend_factory_registry.cpp`.
 - Сущности:
-    - lifecycle/basic backend implementation:
-        - destructor
-            - delegates to `stop()`.
+    - lifecycle/base methods:
+        - `MtlRxVideoBackend::~MtlRxVideoBackend()`
+            - delegates cleanup to `stop()`.
         - `backend_name()`
             - returns `"mtl"`.
-        - `start_video(...)`
-            - validates backend stopped state;
-            - projects/validates start config;
-            - currently returns `Unsupported` because actual MTL device/session runtime is not implemented yet.
+        - `start_video(const RxVideoConfig&, IVideoFrameSink&)`
+            - validates start state;
+            - projects start config through shared common-video + MTL support path;
+            - currently returns `Unsupported` after successful validation/projection because real MTL runtime creation is deferred.
         - `stop()`
-            - idempotent stopped-path when no active runtime state exists;
-            - otherwise calls `reset_runtime_locked()`.
+            - idempotent stop/reset path for the current skeleton;
+            - resets runtime state when any sink/device/session state is present.
         - `state()`
         - `capabilities()`
-            - reports video-only backend support.
         - `stats()`.
-    - support/projection helpers:
+    - MTL support-policy helpers:
         - `default_mtl_rx_video_support_policy()`
-        - `validate_mtl_rx_video_packing_mode_support(...)`
-            - delegates to current runtime packing-mode support.
-        - `validate_mtl_rx_video_receive_capability_session_support(...)`
-            - checks common capability structure plus MTL-local session limits.
-        - `validate_mtl_rx_video_receive_capability_project_projection_support(...)`
-            - checks handoff/media consistency and current project handoff support.
+        - `validate_mtl_rx_video_session_packing_mode_implementation_support(...)`
+        - `validate_mtl_rx_video_receive_capability_session_implementation_support(...)`
+            - applies MTL session-side limits over structurally valid common capability.
+        - `validate_mtl_rx_video_backend_support_matrix_project_projection_implementation_support(...)`
+            - applies current project-to-MTL projection/handoff support checks.
+        - `validate_mtl_rx_video_backend_support_matrix_implementation_support(...)`
+            - composes session-side and project-projection-side MTL support checks.
         - `validate_mtl_rx_video_config_support(...)`
-            - composes project-delivery support with MTL session/project projection support.
-    - backend-internal state/projection helpers:
+            - shared-first `RxVideoConfig` entry point into MTL support evaluation.
+    - backend-local lifecycle/projection helpers:
         - `validate_start_state_locked()`
-            - rejects non-stopped backend state or leftover sink/device/session pointers.
-        - `validate_video_frame_view_delivery_support(...)`
-            - current narrower delivery boundary for `VideoFrameView`;
-            - presently allows only:
+            - requires fully stopped/empty skeleton runtime state before a new start attempt.
+        - `validate_video_frame_view_delivery_support(const CommonVideoBackendSupportMatrix&)`
+            - current project delivery boundary only;
+            - validates project handoff/storage compatibility and narrows delivery to:
                 - `PixelFormat::UYVY`
-                - `VideoScanMode::Progressive`
+                - progressive scan only
                 - `VideoPackingMode::Gpm`.
-        - `validate_projected_video_start_support(...)`
-        - `scan_mode_maps_to_mtl_interlaced(...)`
+        - `validate_projected_video_start_support(const CommonVideoBackendSupportMatrix&)`
+            - MTL support/projection acceptance without applying current delivery limits.
+        - `scan_mode_maps_to_mtl_interlaced(VideoScanMode)`
             - maps:
                 - `Progressive` -> `false`
                 - `Interlaced` -> `true`
                 - `PsF` -> `false`.
-        - `session_port_count_from_receive_topology(...)`
-            - currently supports only single-stream topology.
-        - `project_video_start_config(...)`
-            - resolves effective common capability;
-            - projects project pixel format from handoff format;
-            - derives MTL interlace flag and session port count;
-            - fills `ProjectedVideoStartConfig`.
+        - `session_port_count_from_receive_topology(const VideoReceiveTopology&)`
+            - accepts `SingleStream` as one MTL session port;
+            - rejects redundant-stream topology as `Unsupported`.
+        - `project_video_start_config(const RxVideoConfig&)`
+            - resolves the shared common-video matrix;
+            - applies MTL support/projection support;
+            - then applies current `VideoFrameView` delivery support;
+            - projects the final backend-local `ProjectedVideoStartConfig`.
         - `reset_runtime_locked()`
-            - releases session state before device state;
-            - clears sink pointer;
-            - resets backend state and stats.
+            - releases session before device;
+            - clears sink/state/stats.
 - Примечание:
-    - current start path intentionally establishes the acceptance/projection split first:
-        - common structural validity;
-        - MTL session support;
-        - MTL project/start projection support;
-        - narrower current `VideoFrameView` delivery support.
-    - actual MTL device/session creation, receive loop, frame mapping, and delivery remain outside this file’s current implemented scope.
+    - this source explicitly separates:
+        - MTL support/projection acceptance;
+        - current project delivery acceptance.
+    - default MTL support policy currently does not force progressive-only at the MTL support boundary, but the current project delivery boundary still rejects interlaced/PsF delivery.
+    - actual MTL runtime ownership members already exist, but runtime creation/use is intentionally deferred to later implementation steps.
