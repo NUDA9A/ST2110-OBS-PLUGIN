@@ -1301,7 +1301,7 @@
   - MTL must accept/project common video modes that MTL can implement, even when Socket cannot;
   - completion condition:
     - the same structurally valid video config can pass common validation, fail Socket support validation, and pass MTL support/projection validation where MTL supports it.
-- [ ] 131C: Add a common video backend support matrix/policy for Socket and MTL
+- [x] 131C: Add a common video backend support matrix/policy for Socket and MTL
   - introduce explicit backend-specific support policy helpers for common video receive capabilities;
   - define Socket support in terms of actual project Socket implementation status, not in terms of whether a format/mode is standard-valid;
   - define MTL support in terms of what can be projected into MTL ST20P RX and delivered or handled through the project handoff/conversion boundary;

@@ -10,6 +10,8 @@
 #include <string_view>
 
 namespace st2110 {
+struct CommonVideoBackendSupportMatrix;
+
 enum class RxBackendKind { Socket, Mtl };
 
 [[nodiscard]] inline Error validate_rx_backend_kind(RxBackendKind kind) noexcept {
@@ -143,6 +145,56 @@ select_rx_backend_factory(std::span<IRxBackendFactory *const> factories, const R
 
     return std::unexpected(Error::Unsupported);
 }
+
+/*
+ * Video-specific backend-selection support boundary.
+ *
+ * This boundary is shared-first:
+ * - common video capability is resolved once from RxVideoConfig;
+ * - backend-specific support diverges only at implementation-support policy.
+ *
+ * This helper is intentionally video-specific and must not be used for audio.
+ */
+[[nodiscard]] Error
+validate_selected_rx_video_backend_support_matrix(RxBackendKind backend_kind,
+                                                  const CommonVideoBackendSupportMatrix &matrix) noexcept;
+
+/*
+ * Validates that the requested backend kind can support the given video config
+ * through the shared common-video pipeline and the selected backend's
+ * implementation-support policy.
+ *
+ * Expected call order:
+ * 1) validate generic backend/media selection;
+ * 2) resolve common video backend-support matrix from RxVideoConfig;
+ * 3) apply selected backend video implementation-support policy.
+ */
+[[nodiscard]] Error validate_rx_video_backend_selection_support(const RxBackendSelection &selection,
+                                                                const RxVideoConfig &cfg);
+
+/*
+ * Video-specific config-aware factory selection.
+ *
+ * This helper keeps generic registry/factory inventory separate from
+ * video-config support checks:
+ * - it validates video backend support for the selected backend kind;
+ * - then it selects the concrete factory from the provided registry span.
+ */
+[[nodiscard]] std::expected<IRxBackendFactory *, Error>
+select_rx_video_backend_factory(std::span<IRxBackendFactory *const> factories, const RxBackendSelection &selection,
+                                const RxVideoConfig &cfg);
+
+/*
+ * Video-specific config-aware backend creation helper.
+ *
+ * This helper performs:
+ * - shared-first video backend support validation;
+ * - config-aware factory selection;
+ * - concrete backend construction from the selected factory.
+ */
+[[nodiscard]] std::expected<std::unique_ptr<IRxBackend>, Error>
+create_rx_video_backend(std::span<IRxBackendFactory *const> factories, const RxBackendSelection &selection,
+                        const RxVideoConfig &cfg);
 
 [[nodiscard]] inline std::expected<std::unique_ptr<IRxBackend>, Error>
 create_rx_backend(std::span<IRxBackendFactory *const> factories, const RxBackendSelection &selection) {

@@ -66,6 +66,26 @@ static_assert(
                                                       std::declval<const st2110::RxBackendSelection &>())),
                    std::expected<std::unique_ptr<st2110::IRxBackend>, st2110::Error>>);
 
+static_assert(
+    std::is_same_v<decltype(st2110::validate_rx_video_backend_selection_support(
+                       std::declval<const st2110::RxBackendSelection &>(),
+                       std::declval<const st2110::RxVideoConfig &>())),
+                   st2110::Error>);
+
+static_assert(
+    std::is_same_v<decltype(st2110::select_rx_video_backend_factory(
+                       std::declval<std::span<st2110::IRxBackendFactory *const>>(),
+                       std::declval<const st2110::RxBackendSelection &>(),
+                       std::declval<const st2110::RxVideoConfig &>())),
+                   std::expected<st2110::IRxBackendFactory *, st2110::Error>>);
+
+static_assert(
+    std::is_same_v<decltype(st2110::create_rx_video_backend(
+                       std::declval<std::span<st2110::IRxBackendFactory *const>>(),
+                       std::declval<const st2110::RxBackendSelection &>(),
+                       std::declval<const st2110::RxVideoConfig &>())),
+                   std::expected<std::unique_ptr<st2110::IRxBackend>, st2110::Error>>);
+
 namespace {
 constexpr bool kExpectMtlBuilt = ST2110_TEST_EXPECT_MTL_BUILT != 0;
 
@@ -255,9 +275,10 @@ void test_selector_picks_requested_backend_and_media() {
         st2110::RxBackendDescriptor{st2110::RxBackendKind::Mtl, "mtl", video_only_capabilities(), true}};
 
     std::array<st2110::IRxBackendFactory *, 2> factories{&socket_factory, &mtl_factory};
+    const st2110::RxVideoConfig video_cfg = make_valid_video_config();
 
-    auto socket_video = st2110::select_rx_backend_factory(
-        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Socket, st2110::RxMediaKind::Video});
+    auto socket_video = st2110::select_rx_video_backend_factory(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Socket, st2110::RxMediaKind::Video}, video_cfg);
     assert(socket_video.has_value());
     assert(*socket_video == &socket_factory);
 
@@ -266,8 +287,8 @@ void test_selector_picks_requested_backend_and_media() {
     assert(socket_audio.has_value());
     assert(*socket_audio == &socket_factory);
 
-    auto mtl_video = st2110::select_rx_backend_factory(
-        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video});
+    auto mtl_video = st2110::select_rx_video_backend_factory(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video}, video_cfg);
     assert(mtl_video.has_value());
     assert(*mtl_video == &mtl_factory);
 
@@ -282,9 +303,10 @@ void test_selector_rejects_unavailable_backend() {
         st2110::RxBackendDescriptor{st2110::RxBackendKind::Mtl, "mtl", video_only_capabilities(), false}};
 
     std::array<st2110::IRxBackendFactory *, 1> factories{&unavailable_mtl_factory};
+    const st2110::RxVideoConfig video_cfg = make_valid_video_config();
 
-    auto selected = st2110::select_rx_backend_factory(
-        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video});
+    auto selected = st2110::select_rx_video_backend_factory(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video}, video_cfg);
 
     assert(!selected.has_value());
     assert(selected.error() == st2110::Error::Unsupported);
@@ -296,9 +318,10 @@ void test_selector_rejects_missing_backend_kind() {
         st2110::RxBackendDescriptor{st2110::RxBackendKind::Socket, "socket", combined_capabilities(), true}};
 
     std::array<st2110::IRxBackendFactory *, 1> factories{&socket_factory};
+    const st2110::RxVideoConfig video_cfg = make_valid_video_config();
 
-    auto selected = st2110::select_rx_backend_factory(
-        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video});
+    auto selected = st2110::select_rx_video_backend_factory(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video}, video_cfg);
 
     assert(!selected.has_value());
     assert(selected.error() == st2110::Error::Unsupported);
@@ -310,12 +333,30 @@ void test_selector_rejects_invalid_factory_entry() {
         st2110::RxBackendDescriptor{st2110::RxBackendKind::Socket, "socket", combined_capabilities(), true}};
 
     std::array<st2110::IRxBackendFactory *, 2> factories{&socket_factory, nullptr};
+    const st2110::RxVideoConfig video_cfg = make_valid_video_config();
 
-    auto selected = st2110::select_rx_backend_factory(
-        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video});
+    auto selected = st2110::select_rx_video_backend_factory(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video}, video_cfg);
 
     assert(!selected.has_value());
     assert(selected.error() == st2110::Error::InvalidValue);
+    assert(socket_factory.create_count == 0);
+}
+
+void test_video_selector_rejects_socket_unsupported_mode_before_factory_creation() {
+    FakeBackendFactory socket_factory{
+        st2110::RxBackendDescriptor{st2110::RxBackendKind::Socket, "socket", video_only_capabilities(), true}};
+
+    std::array<st2110::IRxBackendFactory *, 1> factories{&socket_factory};
+
+    st2110::RxVideoConfig cfg = make_valid_video_config();
+    cfg.scan_mode = st2110::VideoScanMode::Interlaced;
+
+    auto selected = st2110::select_rx_video_backend_factory(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Socket, st2110::RxMediaKind::Video}, cfg);
+
+    assert(!selected.has_value());
+    assert(selected.error() == st2110::Error::Unsupported);
     assert(socket_factory.create_count == 0);
 }
 
@@ -379,9 +420,10 @@ void test_default_factory_registry_shape() {
 
 void test_default_factory_registry_selects_socket_backends() {
     const auto factories = st2110::default_rx_backend_factories();
+    const st2110::RxVideoConfig video_cfg = make_valid_video_config();
 
-    auto socket_video = st2110::select_rx_backend_factory(
-        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Socket, st2110::RxMediaKind::Video});
+    auto socket_video = st2110::select_rx_video_backend_factory(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Socket, st2110::RxMediaKind::Video}, video_cfg);
     assert(socket_video.has_value());
     assert((*socket_video)->descriptor().kind == st2110::RxBackendKind::Socket);
     assert((*socket_video)->descriptor().available);
@@ -396,8 +438,8 @@ void test_default_factory_registry_selects_socket_backends() {
     assert(!(*socket_audio)->descriptor().capabilities.video_rx);
     assert((*socket_audio)->descriptor().capabilities.audio_rx);
 
-    auto video_backend = st2110::create_rx_backend(
-        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Socket, st2110::RxMediaKind::Video});
+    auto video_backend = st2110::create_rx_video_backend(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Socket, st2110::RxMediaKind::Video}, video_cfg);
     assert(video_backend.has_value());
     assert(*video_backend != nullptr);
     assert(std::string_view((*video_backend)->backend_name()) == "socket");
@@ -425,12 +467,13 @@ void test_default_factory_registry_selects_socket_backends() {
 
 void test_default_factory_registry_keeps_mtl_public_but_unavailable() {
     const auto factories = st2110::default_rx_backend_factories();
+    const st2110::RxVideoConfig video_cfg = make_valid_video_config();
 
     const bool mtl_built = st2110::rx_backend_kind_built(st2110::RxBackendKind::Mtl);
     assert(mtl_built == kExpectMtlBuilt);
 
-    auto select_video = st2110::select_rx_backend_factory(
-        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video});
+    auto select_video = st2110::select_rx_video_backend_factory(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video}, video_cfg);
     assert(!select_video.has_value());
     assert(select_video.error() == st2110::Error::Unsupported);
 
@@ -439,8 +482,8 @@ void test_default_factory_registry_keeps_mtl_public_but_unavailable() {
     assert(!select_audio.has_value());
     assert(select_audio.error() == st2110::Error::Unsupported);
 
-    auto create_video = st2110::create_rx_backend(
-        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video});
+    auto create_video = st2110::create_rx_video_backend(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video}, video_cfg);
     assert(!create_video.has_value());
     assert(create_video.error() == st2110::Error::Unsupported);
 
@@ -557,9 +600,10 @@ void test_create_backend_uses_selected_factory() {
         st2110::RxBackendDescriptor{st2110::RxBackendKind::Mtl, "mtl", video_only_capabilities(), true}};
 
     std::array<st2110::IRxBackendFactory *, 2> factories{&socket_factory, &mtl_factory};
+    const st2110::RxVideoConfig video_cfg = make_valid_video_config();
 
-    auto backend = st2110::create_rx_backend(
-        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video});
+    auto backend = st2110::create_rx_video_backend(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Mtl, st2110::RxMediaKind::Video}, video_cfg);
 
     assert(backend.has_value());
     assert(*backend != nullptr);
@@ -583,9 +627,10 @@ void test_create_backend_rejects_null_factory_result() {
         st2110::RxBackendDescriptor{st2110::RxBackendKind::Socket, "socket", combined_capabilities(), true}, true};
 
     std::array<st2110::IRxBackendFactory *, 1> factories{&null_socket_factory};
+    const st2110::RxVideoConfig video_cfg = make_valid_video_config();
 
-    auto backend = st2110::create_rx_backend(
-        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Socket, st2110::RxMediaKind::Video});
+    auto backend = st2110::create_rx_video_backend(
+        factories, st2110::RxBackendSelection{st2110::RxBackendKind::Socket, st2110::RxMediaKind::Video}, video_cfg);
 
     assert(!backend.has_value());
     assert(backend.error() == st2110::Error::InvalidValue);
@@ -602,6 +647,7 @@ int main() {
     test_selector_rejects_unavailable_backend();
     test_selector_rejects_missing_backend_kind();
     test_selector_rejects_invalid_factory_entry();
+    test_video_selector_rejects_socket_unsupported_mode_before_factory_creation();
     test_default_factory_registry_shape();
     test_default_factory_registry_selects_socket_backends();
     test_default_factory_registry_keeps_mtl_public_but_unavailable();

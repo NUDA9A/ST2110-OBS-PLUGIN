@@ -3,6 +3,7 @@
 
 #include "backend.hpp"
 #include "rx_config.hpp"
+#include "video_backend_support.hpp"
 #include "video_receive_capability.hpp"
 
 #include <cstdint>
@@ -17,24 +18,32 @@ struct MtlRxVideoDeviceContext {};
 struct MtlRxVideoSessionContext {};
 
 struct MtlRxVideoSupportPolicy {
-    VideoProjectDeliverySupportPolicy project_delivery{};
+    /*
+     * Current MTL video implementation-support boundary.
+     *
+     * These switches describe actual current support of the MTL session and
+     * current project-to-MTL projection path, not structural recognition of
+     * common video capability and not current VideoFrameView delivery limits.
+     */
     bool require_mtl_session_packing_mode_support = true;
     bool require_progressive_scan_mode = false;
     bool require_single_stream_topology = true;
     bool require_90khz_rtp_clock = true;
-    bool require_project_handoff_format_support = true;
+    bool require_mtl_project_handoff_format_support = true;
 };
 
 [[nodiscard]] MtlRxVideoSupportPolicy default_mtl_rx_video_support_policy();
 
-[[nodiscard]] Error validate_mtl_rx_video_packing_mode_support(VideoPackingMode mode) noexcept;
+[[nodiscard]] Error validate_mtl_rx_video_session_packing_mode_implementation_support(VideoPackingMode mode) noexcept;
+
+[[nodiscard]] Error validate_mtl_rx_video_receive_capability_session_implementation_support(
+    const VideoReceiveCapability &capability, const MtlRxVideoSupportPolicy &support) noexcept;
+
+[[nodiscard]] Error validate_mtl_rx_video_backend_support_matrix_project_projection_implementation_support(
+    const CommonVideoBackendSupportMatrix &matrix, const MtlRxVideoSupportPolicy &support) noexcept;
 
 [[nodiscard]] Error
-validate_mtl_rx_video_receive_capability_session_support(const VideoReceiveCapability &capability,
-                                                         const MtlRxVideoSupportPolicy &support) noexcept;
-
-[[nodiscard]] Error
-validate_mtl_rx_video_receive_capability_project_projection_support(const VideoReceiveCapability &capability,
+validate_mtl_rx_video_backend_support_matrix_implementation_support(const CommonVideoBackendSupportMatrix &matrix,
                                                                     const MtlRxVideoSupportPolicy &support) noexcept;
 
 [[nodiscard]] Error validate_mtl_rx_video_config_support(const RxVideoConfig &cfg,
@@ -86,19 +95,18 @@ class MtlRxVideoBackend final : public IRxVideoBackend {
      * and must not be used as the backend support/projection acceptance boundary.
      */
     [[nodiscard]] static Error
-    validate_video_frame_view_delivery_support(const RxVideoConfig &cfg,
-                                               const VideoReceiveCapability &capability) noexcept;
+    validate_video_frame_view_delivery_support(const CommonVideoBackendSupportMatrix &matrix) noexcept;
 
     /*
      * MTL support/projection boundary for start-config projection.
      * This covers:
-     * - MTL config support;
+     * - common-video matrix consumption;
      * - MTL session support;
      * - MTL project/start projection support.
      *
      * It must not apply current VideoFrameView delivery restrictions.
      */
-    [[nodiscard]] static Error validate_projected_video_start_support(const RxVideoConfig &cfg);
+    [[nodiscard]] static Error validate_projected_video_start_support(const CommonVideoBackendSupportMatrix &matrix);
 
     [[nodiscard]] static std::expected<bool, Error> scan_mode_maps_to_mtl_interlaced(VideoScanMode scan_mode) noexcept;
 

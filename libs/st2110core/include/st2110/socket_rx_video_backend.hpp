@@ -12,6 +12,7 @@
 #include "signaling_structs.hpp"
 #include "socket_runtime.hpp"
 #include "socket_rx_single_media_backend_base.hpp"
+#include "video_backend_support.hpp"
 #include "video_receive_pipeline.hpp"
 #include "video_reorder_policy.hpp"
 #include "video_timestamp_mapping.hpp"
@@ -31,7 +32,13 @@ struct SocketRxVideoOperationalConfig {
 };
 
 struct SocketRxVideoSupportPolicy {
-    VideoProjectDeliverySupportPolicy project_delivery{};
+    /*
+     * Current socket video implementation-support boundary.
+     *
+     * These switches describe actual current support of the project socket
+     * receive path, not structural recognition of common video capability.
+     */
+    bool require_current_socket_receive_pipeline_storage_support = true;
     bool require_socket_runtime_packing_mode_support = true;
     bool require_progressive_scan_mode = true;
     bool require_single_stream_topology = true;
@@ -40,7 +47,7 @@ struct SocketRxVideoSupportPolicy {
 
 [[nodiscard]] inline SocketRxVideoSupportPolicy default_socket_rx_video_support_policy() {
     return SocketRxVideoSupportPolicy{
-        .project_delivery = default_video_project_delivery_support_policy(),
+        .require_current_socket_receive_pipeline_storage_support = true,
         .require_socket_runtime_packing_mode_support = true,
         .require_progressive_scan_mode = true,
         .require_single_stream_topology = true,
@@ -48,8 +55,75 @@ struct SocketRxVideoSupportPolicy {
     };
 }
 
-[[nodiscard]] inline Error validate_socket_rx_video_packing_mode_support(VideoPackingMode mode) {
+[[nodiscard]] inline Error validate_socket_rx_video_packing_mode_implementation_support(VideoPackingMode mode) {
     return validate_runtime_video_packing_mode_support(mode);
+}
+
+[[nodiscard]] inline Error validate_socket_rx_video_scan_mode_implementation_support(VideoScanMode mode) noexcept {
+    if (Error err = config_validation::validate_video_scan_mode(mode); err != Error::Ok) {
+        return err;
+    }
+
+    if (mode != VideoScanMode::Progressive) {
+        return Error::Unsupported;
+    }
+
+    return Error::Ok;
+}
+
+[[nodiscard]] inline Error
+validate_socket_rx_video_topology_implementation_support(const VideoReceiveTopology &topology) noexcept {
+    if (Error err = validate_video_receive_topology(topology); err != Error::Ok) {
+        return err;
+    }
+
+    if (topology.kind != VideoReceiveTopologyKind::SingleStream || topology.stream_count != 1) {
+        return Error::Unsupported;
+    }
+
+    return Error::Ok;
+}
+
+[[nodiscard]] inline Error
+validate_socket_rx_video_rtp_clock_implementation_support(const VideoReceiveRtpClock &rtp_clock) noexcept {
+    if (Error err = validate_video_receive_rtp_clock(rtp_clock); err != Error::Ok) {
+        return err;
+    }
+
+    if (rtp_clock.rtp_clock_rate != 90000) {
+        return Error::Unsupported;
+    }
+
+    return Error::Ok;
+}
+
+/*
+ * Current socket receive-pipeline support boundary:
+ * depacketizer + reconstructor + current VideoFrame storage/handoff path.
+ *
+ * This helper is intentionally backend-local even if it reuses project frame
+ * compatibility helpers internally, because it models what the socket backend
+ * can actually deliver today.
+ */
+[[nodiscard]] inline Error validate_socket_rx_video_receive_pipeline_storage_implementation_support(
+    const CommonVideoBackendSupportMatrix &matrix) {
+    if (Error err = validate_common_video_backend_support_matrix(matrix); err != Error::Ok) {
+        return err;
+    }
+
+    if (Error err = validate_project_video_frame_handoff_format_matches_pixel_format(
+            matrix.receive_capability.handoff_format, matrix.project_pixel_format);
+        err != Error::Ok) {
+        return err;
+    }
+
+    if (Error err =
+            validate_project_video_frame_storage_compatibility(matrix.receive_capability, matrix.project_pixel_format);
+        err != Error::Ok) {
+        return err;
+    }
+
+    return Error::Ok;
 }
 
 [[nodiscard]] inline Error
@@ -59,41 +133,70 @@ validate_socket_rx_video_receive_capability_implementation_support(const VideoRe
         return err;
     }
 
-    if (support.require_progressive_scan_mode && capability.scan_mode != VideoScanMode::Progressive) {
-        return Error::Unsupported;
+    if (support.require_progressive_scan_mode) {
+        if (Error err = validate_socket_rx_video_scan_mode_implementation_support(capability.scan_mode);
+            err != Error::Ok) {
+            return err;
+        }
     }
 
-    if (support.require_single_stream_topology &&
-        (capability.topology.kind != VideoReceiveTopologyKind::SingleStream || capability.topology.stream_count != 1)) {
-        return Error::Unsupported;
+    if (support.require_single_stream_topology) {
+        if (Error err = validate_socket_rx_video_topology_implementation_support(capability.topology);
+            err != Error::Ok) {
+            return err;
+        }
     }
 
-    if (support.require_90khz_rtp_clock && capability.rtp_clock.rtp_clock_rate != 90000) {
-        return Error::Unsupported;
+    if (support.require_90khz_rtp_clock) {
+        if (Error err = validate_socket_rx_video_rtp_clock_implementation_support(capability.rtp_clock);
+            err != Error::Ok) {
+            return err;
+        }
     }
 
     return Error::Ok;
 }
 
-[[nodiscard]] inline Error validate_socket_rx_video_config_support(const RxVideoConfig &cfg,
-                                                                   const SocketRxVideoSupportPolicy &support) {
-    if (Error err = validate_rx_video_config_against_project_delivery_support(cfg, support.project_delivery);
-        err != Error::Ok) {
+[[nodiscard]] inline Error
+validate_socket_rx_video_backend_support_matrix_implementation_support(const CommonVideoBackendSupportMatrix &matrix,
+                                                                       const SocketRxVideoSupportPolicy &support) {
+    if (Error err = validate_common_video_backend_support_matrix(matrix); err != Error::Ok) {
         return err;
     }
 
-    auto capability = rx_video_config_effective_receive_capability(cfg);
-    if (!capability.has_value()) {
-        return capability.error();
-    }
-
-    if (support.require_socket_runtime_packing_mode_support) {
-        if (Error err = validate_socket_rx_video_packing_mode_support(capability->packing_mode); err != Error::Ok) {
+    if (support.require_current_socket_receive_pipeline_storage_support) {
+        if (Error err = validate_socket_rx_video_receive_pipeline_storage_implementation_support(matrix);
+            err != Error::Ok) {
             return err;
         }
     }
 
-    return validate_socket_rx_video_receive_capability_implementation_support(*capability, support);
+    if (support.require_socket_runtime_packing_mode_support) {
+        if (Error err =
+                validate_socket_rx_video_packing_mode_implementation_support(matrix.receive_capability.packing_mode);
+            err != Error::Ok) {
+            return err;
+        }
+    }
+
+    return validate_socket_rx_video_receive_capability_implementation_support(matrix.receive_capability, support);
+}
+
+/*
+ * Shared-first Socket support entry point:
+ * 1) resolve/validate the common video backend-support matrix;
+ * 2) apply only Socket-local implementation-support policy.
+ *
+ * This helper must not call project-delivery support validation directly.
+ */
+[[nodiscard]] inline Error validate_socket_rx_video_config_support(const RxVideoConfig &cfg,
+                                                                   const SocketRxVideoSupportPolicy &support) {
+    auto matrix = common_video_backend_support_matrix_from_rx_video_config(cfg);
+    if (!matrix.has_value()) {
+        return matrix.error();
+    }
+
+    return validate_socket_rx_video_backend_support_matrix_implementation_support(*matrix, support);
 }
 
 [[nodiscard]] inline Error validate_socket_rx_video_operational_config(const SocketRxVideoOperationalConfig &cfg) {
