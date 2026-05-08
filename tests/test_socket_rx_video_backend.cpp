@@ -188,7 +188,7 @@ class FakeSocketRxPort final : public st2110::ISocketRxPort {
 
         for (;;) {
             if (!state_->is_open) {
-                return std::unexpected(st2110::Error::ReceiveAborted);
+                return std::unexpected(st2110::Error::OperationAborted);
             }
 
             if (!state_->queued_datagrams.empty()) {

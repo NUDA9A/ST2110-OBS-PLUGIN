@@ -7,7 +7,7 @@
 
 #include "st2110/foundation/bytes.hpp"
 #include "st2110/foundation/error.hpp"
-#include "st2110/foundation/stats.hpp"
+#include "packet_parse_stats.hpp"
 #include "rtp.hpp"
 #include "st2110_20.hpp"
 

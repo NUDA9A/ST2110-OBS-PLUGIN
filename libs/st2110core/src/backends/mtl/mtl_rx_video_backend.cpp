@@ -126,12 +126,8 @@ std::expected<st_frame_fmt, Error> mtl_st_frame_fmt_from_video_handoff_format(Vi
 
 std::expected<st_fps, Error> mtl_st_fps_from_video_rate(std::uint32_t fps_num, std::uint32_t fps_den,
                                                         VideoScanMode scan_mode) noexcept {
-    if (const Error err = config_validation::validate_frame_rate(fps_num, fps_den); err != Error::Ok) {
-        return std::unexpected(err);
-    }
-
-    if (const Error err = config_validation::validate_video_scan_mode(scan_mode); err != Error::Ok) {
-        return std::unexpected(err);
+    if (fps_den == 0 || fps_num == 0) {
+        return std::unexpected(Error::InvalidValue);
     }
 
     double frame_rate = static_cast<double>(fps_num) / static_cast<double>(fps_den);
@@ -413,10 +409,6 @@ Error MtlRxVideoBackend::validate_projected_common_video_support(const RxVideoCo
 
 std::expected<bool, Error>
 MtlRxVideoBackend::scan_mode_maps_to_mtl_interlaced(VideoScanMode scan_mode) noexcept {
-    if (const Error err = config_validation::validate_video_scan_mode(scan_mode); err != Error::Ok) {
-        return std::unexpected(err);
-    }
-
     switch (scan_mode) {
     case VideoScanMode::Progressive:
     case VideoScanMode::PsF:
@@ -576,7 +568,7 @@ MtlRxVideoBackend::project_mtl_video_session_config(const ProjectedCommonVideoCo
         return std::unexpected(Error::InvalidValue);
     }
 
-    if (!config_validation::is_dynamic_rtp_payload_type(common.payload_type)) {
+    if (common.payload_type < 96 || common.payload_type > 127) {
         return std::unexpected(Error::InvalidValue);
     }
 
@@ -687,7 +679,7 @@ Error MtlRxVideoBackend::validate_projected_mtl_video_session_config(
         return Error::InvalidValue;
     }
 
-    if (!config_validation::is_dynamic_rtp_payload_type(cfg.common.payload_type)) {
+    if (cfg.common.payload_type < 96 || cfg.common.payload_type > 127) {
         return Error::InvalidValue;
     }
 

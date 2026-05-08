@@ -55,14 +55,15 @@ class LinuxSocketRxPort final : public ISocketRxPort {
             close_native_socket(native_socket_val);
             return err;
         }
-        if (const Error err = bind_native_socket(native_socket_val, cfg); err != Error::Ok) {
+
+        if (const auto err = bind_native_socket(native_socket_val, cfg); err.has_value()) {
             close_native_socket(native_socket_val);
-            return err;
+            return socket_port_error_to_error(*err);
         }
 
-        if (const Error err = join_multicast_membership(native_socket_val, cfg); err != Error::Ok) {
+        if (const auto err = join_multicast_membership(native_socket_val, cfg); err.has_value()) {
             close_native_socket(native_socket_val);
-            return err;
+            return socket_port_error_to_error(*err);
         }
 
         open_cfg_ = cfg;
@@ -76,8 +77,8 @@ class LinuxSocketRxPort final : public ISocketRxPort {
             return Error::Ok;
         }
 
-        if (const Error err = leave_multicast_membership(native_socket_, *open_cfg_); err != Error::Ok) {
-            return err;
+        if (const auto err = leave_multicast_membership(native_socket_, *open_cfg_); err.has_value()) {
+            return socket_port_error_to_error(*err);
         }
 
         if (const Error err = close_native_socket(native_socket_); err != Error::Ok) {
@@ -102,12 +103,12 @@ class LinuxSocketRxPort final : public ISocketRxPort {
         if (reply < 0) {
             switch (errno) {
             case EINTR:
-                return std::unexpected(Error::ReceiveInterrupted);
+                return std::unexpected(socket_port_error_to_error(SocketPortError::ReceiveInterrupted));
             case EBADF:
             case ENOTSOCK:
-                return std::unexpected(Error::ReceiveAborted);
+                return std::unexpected(socket_port_error_to_error(SocketPortError::ReceiveAborted));
             default:
-                return std::unexpected(Error::ReceiveFailed);
+                return std::unexpected(socket_port_error_to_error(SocketPortError::ReceiveFailed));
             }
         }
 
@@ -115,68 +116,72 @@ class LinuxSocketRxPort final : public ISocketRxPort {
     }
 
   private:
-    [[nodiscard]] static Error join_multicast_membership(const int native_socket, const SocketRxOpenConfig &cfg) {
+    [[nodiscard]] static std::optional<SocketPortError> join_multicast_membership(const int native_socket,
+                                                                              const SocketRxOpenConfig &cfg) {
         if (!cfg.multicast_membership) {
-            return Error::Ok;
+            return std::nullopt;
         }
 
         switch (cfg.multicast_membership->family) {
         case SocketAddressFamily::IPv4: {
             ip_mreq mreq{};
             if (::inet_pton(AF_INET, cfg.multicast_membership->group_address.c_str(), &mreq.imr_multiaddr.s_addr) != 1) {
-                return Error::MulticastJoinFailed;
+                return SocketPortError::MulticastJoinFailed;
             }
             if (cfg.multicast_membership->interface_address.empty()) {
                 mreq.imr_interface.s_addr = htonl(INADDR_ANY);
             } else {
-                if (::inet_pton(AF_INET, cfg.multicast_membership->interface_address.c_str(), &mreq.imr_interface.s_addr) != 1) {
-                    return Error::MulticastJoinFailed;
-                }
+                if (::inet_pton(AF_INET, cfg.multicast_membership->interface_address.c_str(),
+                                &mreq.imr_interface.s_addr) != 1) {
+                    return SocketPortError::MulticastJoinFailed;
+                                }
             }
 
             if (::setsockopt(native_socket, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
-                return Error::MulticastJoinFailed;
+                return SocketPortError::MulticastJoinFailed;
             }
             break;
         }
         case SocketAddressFamily::IPv6:
-            return Error::Unsupported;
+            return std::nullopt;
         default:
-            return Error::InvalidValue;
+            return std::nullopt;
         }
 
-        return Error::Ok;
+        return std::nullopt;
     }
 
-    [[nodiscard]] static Error leave_multicast_membership(const int native_socket, const SocketRxOpenConfig &cfg) noexcept {
+    [[nodiscard]] static std::optional<SocketPortError>
+leave_multicast_membership(const int native_socket, const SocketRxOpenConfig &cfg) noexcept {
         if (!cfg.multicast_membership) {
-            return Error::Ok;
+            return std::nullopt;
         }
 
         switch (cfg.multicast_membership->family) {
         case SocketAddressFamily::IPv4: {
             ip_mreq mreq{};
             if (::inet_pton(AF_INET, cfg.multicast_membership->group_address.c_str(), &mreq.imr_multiaddr.s_addr) != 1) {
-                return Error::MulticastLeaveFailed;
+                return SocketPortError::MulticastLeaveFailed;
             }
             if (cfg.multicast_membership->interface_address.empty()) {
                 mreq.imr_interface.s_addr = htonl(INADDR_ANY);
             } else {
-                if (::inet_pton(AF_INET, cfg.multicast_membership->interface_address.c_str(), &mreq.imr_interface.s_addr) != 1) {
-                    return Error::MulticastLeaveFailed;
-                }
+                if (::inet_pton(AF_INET, cfg.multicast_membership->interface_address.c_str(),
+                                &mreq.imr_interface.s_addr) != 1) {
+                    return SocketPortError::MulticastLeaveFailed;
+                                }
             }
 
             if (::setsockopt(native_socket, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
-                return Error::MulticastLeaveFailed;
+                return SocketPortError::MulticastLeaveFailed;
             }
 
-            return Error::Ok;
+            return std::nullopt;
         }
         case SocketAddressFamily::IPv6:
-            return Error::Unsupported;
+            return std::nullopt;
         default:
-            return Error::InvalidValue;
+            return std::nullopt;
         }
     }
 
@@ -237,7 +242,8 @@ class LinuxSocketRxPort final : public ISocketRxPort {
         return Error::Ok;
     }
 
-    [[nodiscard]] static Error bind_native_socket(const int native_socket, const SocketRxOpenConfig &cfg) {
+    [[nodiscard]] static std::optional<SocketPortError> bind_native_socket(const int native_socket,
+                                                                       const SocketRxOpenConfig &cfg) {
         switch (cfg.bind_endpoint.family) {
         case SocketAddressFamily::IPv4: {
             sockaddr_in addr{};
@@ -245,11 +251,11 @@ class LinuxSocketRxPort final : public ISocketRxPort {
             addr.sin_port = htons(cfg.bind_endpoint.port);
 
             if (::inet_pton(AF_INET, cfg.bind_endpoint.address.c_str(), &addr.sin_addr) != 1) {
-                return Error::InvalidValue;
+                return std::nullopt;
             }
 
             if (::bind(native_socket, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) != 0) {
-                return Error::BindFailed;
+                return SocketPortError::BindFailed;
             }
             break;
         }
@@ -258,19 +264,19 @@ class LinuxSocketRxPort final : public ISocketRxPort {
             addr.sin6_family = AF_INET6;
             addr.sin6_port = htons(cfg.bind_endpoint.port);
             if (::inet_pton(AF_INET6, cfg.bind_endpoint.address.c_str(), &addr.sin6_addr) != 1) {
-                return Error::InvalidValue;
+                return std::nullopt;
             }
 
             if (::bind(native_socket, reinterpret_cast<const sockaddr *>(&addr), sizeof(addr)) != 0) {
-                return Error::BindFailed;
+                return SocketPortError::BindFailed;
             }
             break;
         }
         default:
-            return Error::InvalidValue;
+            return std::nullopt;
         }
 
-        return Error::Ok;
+        return std::nullopt;
     }
 
     static Error close_native_socket(const int native_socket) noexcept {

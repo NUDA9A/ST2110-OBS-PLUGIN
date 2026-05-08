@@ -4,7 +4,9 @@
 #include "st2110/delivery/audio/audio_frame.hpp"
 #include "st2110/delivery/video/video_frame.hpp"
 #include "st2110/foundation/error.hpp"
-#include "st2110/foundation/stats.hpp"
+#include "st2110/ingress/shared/packet_parse_stats.hpp"
+#include "st2110/receive/shared/reorder_stats.hpp"
+#include "st2110/receive/video/depacketizer_stats.hpp"
 #include "st2110/rx_config.hpp"
 
 #include <expected>
@@ -50,6 +52,25 @@ inline bool supports_media(const RxBackendCapabilities &capabilities, RxMediaKin
 
     return false;
 }
+
+struct BackendStats {
+    uint64_t datagrams_received = 0;
+    uint64_t bytes_received = 0;
+
+    uint64_t control_datagrams_ignored = 0;
+    uint64_t nonmedia_datagrams_ignored = 0;
+
+    uint64_t packets_parsed_ok = 0;
+    uint64_t packets_rejected = 0;
+
+    uint64_t frames_delivered = 0;
+    uint64_t datagrams_dropped = 0;
+    uint64_t media_units_delivered = 0;
+
+    PacketParseStats packet_parse{};
+    ReorderBufferStats reorder{};
+    DepacketizerStats depacketizer{};
+};
 
 class IVideoFrameSink {
   public:

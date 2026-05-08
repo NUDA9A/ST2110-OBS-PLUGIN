@@ -288,7 +288,7 @@ void test_linux_socket_rx_port_maps_bind_failure() {
     st2110::LinuxSocketRxPort port_obj;
     const auto cfg = make_ipv4_unicast_open_config(port);
 
-    assert(port_obj.open(cfg) == st2110::Error::BindFailed);
+    assert(port_obj.open(cfg) == st2110::Error::SystemFailure);
     assert(!port_obj.is_open());
 }
 
@@ -300,7 +300,7 @@ void test_linux_socket_rx_port_maps_multicast_join_failure_and_cleans_up_bound_s
     st2110::LinuxSocketRxPort port_obj;
     const auto bad_cfg = make_ipv4_multicast_open_config(port, kNonLocalIpv4Interface);
 
-    assert(port_obj.open(bad_cfg) == st2110::Error::MulticastJoinFailed);
+    assert(port_obj.open(bad_cfg) == st2110::Error::SystemFailure);
     assert(!port_obj.is_open());
 
     st2110::LinuxSocketRxPort retry_port;

@@ -11,12 +11,8 @@ enum class Error {
     BadRTPVersion,
     InvalidBackendState,
     SystemFailure,
-    BindFailed,
-    MulticastJoinFailed,
-    MulticastLeaveFailed,
-    ReceiveFailed,
-    ReceiveInterrupted,
-    ReceiveAborted
+    OperationInterrupted,
+    OperationAborted,
 };
 
 inline const char *to_string(Error error) {
@@ -34,19 +30,11 @@ inline const char *to_string(Error error) {
     case Error::InvalidBackendState:
         return "ERROR: Invalid backend state!";
     case Error::SystemFailure:
-        return "ERROR: System Failure!";
-    case Error::BindFailed:
-        return "ERROR: Failed to bind!";
-    case Error::MulticastJoinFailed:
-        return "ERROR: Multicast join failed!";
-    case Error::MulticastLeaveFailed:
-        return "ERROR: Multicast leave failed!";
-    case Error::ReceiveFailed:
-        return "ERROR: Receive failed!";
-    case Error::ReceiveInterrupted:
-        return "ERROR: Receive interrupted!";
-    case Error::ReceiveAborted:
-        return "ERROR: Receive aborted!";
+        return "ERROR: System failure!";
+    case Error::OperationInterrupted:
+        return "ERROR: Operation interrupted!";
+    case Error::OperationAborted:
+        return "ERROR: Operation aborted!";
     case Error::Ok:
         return "OK";
     default:
@@ -58,12 +46,8 @@ inline bool is_backend_runtime_error(Error error) noexcept {
     switch (error) {
     case Error::InvalidBackendState:
     case Error::SystemFailure:
-    case Error::BindFailed:
-    case Error::MulticastJoinFailed:
-    case Error::MulticastLeaveFailed:
-    case Error::ReceiveFailed:
-    case Error::ReceiveInterrupted:
-    case Error::ReceiveAborted:
+    case Error::OperationInterrupted:
+    case Error::OperationAborted:
         return true;
     default:
         return false;

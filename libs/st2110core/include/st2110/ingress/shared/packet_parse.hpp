@@ -3,6 +3,7 @@
 
 #include "st2110/foundation/bytes.hpp"
 #include "st2110/foundation/error.hpp"
+#include "packet_parse_stats.hpp"
 #include "packet_view.hpp"
 
 #include <cstdint>

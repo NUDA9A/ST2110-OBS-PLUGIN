@@ -9,8 +9,8 @@
 #include "receive/video/depacketizer.hpp"
 #include "receive/video/video_unit_reconstructor.hpp"
 #include "rx_config.hpp"
-#include "video_receive_capability.hpp"
 #include "st2110/receive/video/video_receive_pipeline.hpp"
+#include "video_receive_capability.hpp"
 
 #include <array>
 #include <cstdint>
@@ -196,9 +196,6 @@ inline Error validate_video_media_description(const VideoMediaDescription &media
 
 inline Error validate_video_stream_signaling(const VideoStreamSignaling &signaling) {
     if (Error err = validate_video_media_description(signaling.media); err != Error::Ok) {
-        return err;
-    }
-    if (Error err = config_validation::validate_video_scan_mode(signaling.scan_mode); err != Error::Ok) {
         return err;
     }
     if (Error err = validate_video_media_description_cross_field_constraints(signaling.media, signaling.scan_mode);

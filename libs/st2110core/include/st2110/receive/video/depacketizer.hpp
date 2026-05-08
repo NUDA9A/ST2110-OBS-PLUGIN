@@ -1,10 +1,10 @@
 #ifndef ST2110_OBS_PLUGIN_DEPACKETIZER_HPP
 #define ST2110_OBS_PLUGIN_DEPACKETIZER_HPP
 
-#include "st2110/foundation/stats.hpp"
 #include "st2110/ingress/shared/packet_view.hpp"
 #include "st2110/model/video/video_packing_mode.hpp"
 #include "st2110/model/video/video_scan_mode.hpp"
+#include "depacketizer_stats.hpp"
 #include "frame_assembler.hpp"
 #include "video_packet_padding.hpp"
 #include "video_receive_semantics.hpp"

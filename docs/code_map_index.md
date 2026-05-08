@@ -288,13 +288,6 @@
 
 ## Ключевые распилы текущих смешанных файлов
 
-### `include/st2110/config_validation.hpp`
-Целевой статус: удалить.
-- полезные derived-value helper'ы -> `foundation/derived_values.hpp`;
-- ingress-specific checks -> ingress block;
-- session/runtime checks -> contracts/backend block;
-- enum-validator'ы удалить.
-
 ### `include/st2110/rx_config.hpp`
 Целевой статус: удалить.
 - video session config -> `contracts/video/rx_video_session_config.hpp`;

@@ -22,6 +22,50 @@ enum class SocketAddressFamily {
     IPv6,
 };
 
+enum class SocketPortError {
+    BindFailed,
+    MulticastJoinFailed,
+    MulticastLeaveFailed,
+    ReceiveFailed,
+    ReceiveInterrupted,
+    ReceiveAborted,
+};
+
+[[nodiscard]] inline std::string_view socket_port_error_name(SocketPortError error) noexcept {
+    switch (error) {
+    case SocketPortError::BindFailed:
+        return "bind_failed";
+    case SocketPortError::MulticastJoinFailed:
+        return "multicast_join_failed";
+    case SocketPortError::MulticastLeaveFailed:
+        return "multicast_leave_failed";
+    case SocketPortError::ReceiveFailed:
+        return "receive_failed";
+    case SocketPortError::ReceiveInterrupted:
+        return "receive_interrupted";
+    case SocketPortError::ReceiveAborted:
+        return "receive_aborted";
+    }
+
+    return "";
+}
+
+[[nodiscard]] inline Error socket_port_error_to_error(SocketPortError error) noexcept {
+    switch (error) {
+    case SocketPortError::BindFailed:
+    case SocketPortError::MulticastJoinFailed:
+    case SocketPortError::MulticastLeaveFailed:
+    case SocketPortError::ReceiveFailed:
+        return Error::SystemFailure;
+    case SocketPortError::ReceiveInterrupted:
+        return Error::OperationInterrupted;
+    case SocketPortError::ReceiveAborted:
+        return Error::OperationAborted;
+    }
+
+    return Error::SystemFailure;
+}
+
 [[nodiscard]] inline Error validate_socket_address_family(SocketAddressFamily family) noexcept {
     switch (family) {
     case SocketAddressFamily::IPv4:
@@ -244,8 +288,8 @@ struct SocketEndpoint {
     if (!is_valid_address(endpoint.address, endpoint.family)) {
         return Error::InvalidValue;
     }
-    if (Error err = config_validation::validate_udp_port(endpoint.port); err != Error::Ok) {
-        return err;
+    if (endpoint.port == 0) {
+        return Error::InvalidValue;
     }
 
     return Error::Ok;

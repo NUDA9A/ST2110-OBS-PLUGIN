@@ -4,7 +4,6 @@
 
 #include <st2110/foundation/bytes.hpp>
 #include <st2110/foundation/error.hpp>
-#include <st2110/foundation/stats.hpp>
 #include <st2110/ingress/shared/packet_parse.hpp>
 
 static std::vector<uint8_t> make_valid_packet() {

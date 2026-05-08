@@ -6,7 +6,7 @@
 #include <optional>
 #include <vector>
 
-#include "st2110/foundation/stats.hpp"
+#include "reorder_stats.hpp"
 #include "st2110/ingress/shared/packet_view.hpp"
 
 namespace st2110 {

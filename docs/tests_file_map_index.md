@@ -34,7 +34,6 @@
     - `tests/test_error.cpp`
     - `tests/test_bytespan.cpp`
     - `tests/test_stats.cpp`
-    - `tests/test_config_validation.cpp`
     - `tests/test_header_odr_link_main.cpp`
     - `tests/test_header_odr_link_a.cpp`
     - `tests/test_header_odr_link_b.cpp`

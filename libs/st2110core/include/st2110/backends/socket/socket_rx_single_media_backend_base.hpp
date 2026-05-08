@@ -3,7 +3,6 @@
 
 #include "st2110/contracts/backend/backend.hpp"
 #include "st2110/foundation/bytes.hpp"
-#include "st2110/foundation/stats.hpp"
 #include "st2110/ingress/shared/packet_parse.hpp"
 #include "platform/socket_runtime.hpp"
 
@@ -132,17 +131,13 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
             auto received = port_->receive(receive_buffer_);
             if (!received) {
                 switch (received.error()) {
-                case Error::ReceiveInterrupted:
+                case Error::OperationInterrupted:
                     continue;
-                case Error::ReceiveAborted:
-                case Error::ReceiveFailed:
+                case Error::OperationAborted:
                 case Error::InvalidBackendState:
                 case Error::InvalidValue:
                 case Error::SystemFailure:
                 case Error::Unsupported:
-                case Error::BindFailed:
-                case Error::MulticastJoinFailed:
-                case Error::MulticastLeaveFailed:
                 case Error::BufferTooSmall:
                 case Error::ShortPacket:
                 case Error::BadRTPVersion:

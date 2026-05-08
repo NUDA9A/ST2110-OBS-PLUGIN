@@ -3,7 +3,7 @@
 #include <type_traits>
 
 #include <st2110/foundation/error.hpp>
-#include <st2110/foundation/stats.hpp>
+#include <st2110/ingress/shared/packet_parse_stats.hpp>
 
 static_assert(std::is_standard_layout_v<st2110::ParserStats>);
 static_assert(std::is_standard_layout_v<st2110::PacketParseStats>);

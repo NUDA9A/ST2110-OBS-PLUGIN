@@ -1243,7 +1243,7 @@
 > - socket/MTL runtime;
 > - OBS/plugin concerns.
 
-- [ ] R001: Refactor `libs/st2110core/include/st2110/foundation/bytes.hpp`
+- [x] R001: Refactor `libs/st2110core/include/st2110/foundation/bytes.hpp`
   - file responsibility:
     - common byte-span / byte-view aliases and tiny byte-oriented helpers only.
   - after refactor file must answer only for:
@@ -1253,7 +1253,7 @@
     - packet validation;
     - video/audio/domain-specific helpers.
 
-- [ ] R002: Refactor `libs/st2110core/include/st2110/foundation/endian.hpp`
+- [x] R002: Refactor `libs/st2110core/include/st2110/foundation/endian.hpp`
   - file responsibility:
     - endian-aware primitive load/store helpers only.
   - after refactor file must answer only for:
@@ -1263,7 +1263,7 @@
     - payload-header semantics;
     - transport-policy logic.
 
-- [ ] R003: Refactor `libs/st2110core/include/st2110/foundation/error.hpp`
+- [x] R003: Refactor `libs/st2110core/include/st2110/foundation/error.hpp`
   - file responsibility:
     - common error codes / result helpers only.
   - after refactor file must answer only for:
@@ -1276,7 +1276,7 @@
     - subsystem-specific validation logic;
     - hidden error mapping policy for socket/MTL/OBS.
 
-- [ ] R004: Refactor `libs/st2110core/include/st2110/foundation/timestamp.hpp`
+- [x] R004: Refactor `libs/st2110core/include/st2110/foundation/timestamp.hpp`
   - file responsibility:
     - internal timestamp scalar/types only.
   - after refactor file must answer only for:
@@ -1286,7 +1286,7 @@
     - playout policy;
     - media-specific timing logic.
 
-- [ ] R005: Refactor `libs/st2110core/include/st2110/foundation/stats.hpp`
+- [x] R005: Refactor `libs/st2110core/include/st2110/foundation/stats.hpp`
   - file responsibility:
     - common backend-agnostic stats primitives and small shared stat carriers only.
   - after refactor file must answer only for:
@@ -1294,7 +1294,7 @@
   - file must not become:
     - a dump of video/audio/socket/MTL-specific counters.
 
-- [ ] R006: Refactor `libs/st2110core/include/st2110/foundation/rtp_timestamp_anchor_policy.hpp`
+- [x] R006: Refactor `libs/st2110core/include/st2110/foundation/rtp_timestamp_anchor_policy.hpp`
   - file responsibility:
     - explicit named policy for initial RTP-to-internal anchor semantics only.
   - after refactor file must answer only for:
@@ -1306,7 +1306,7 @@
     - socket runtime code;
     - synthetic fallback hidden inside constructors.
 
-- [ ] R007: Refactor `libs/st2110core/include/st2110/foundation/derived_values.hpp`
+- [x] R007: Refactor `libs/st2110core/include/st2110/foundation/derived_values.hpp`
   - file responsibility:
     - named derived-value helpers only.
   - after refactor file must answer only for:
@@ -1322,7 +1322,7 @@
     - broad self-consistency validators;
     - backend support decisions.
 
-- [ ] R008: Refactor/delete `libs/st2110core/include/st2110/config_validation.hpp`
+- [x] R008: Refactor/delete `libs/st2110core/include/st2110/config_validation.hpp`
   - file responsibility:
     - temporary compatibility shim only while logic is being redistributed.
   - move/refactor out of this file:

@@ -1,7 +1,7 @@
 #ifndef ST2110_OBS_PLUGIN_AUDIO_SIGNALING_RX_CONFIG_HPP
 #define ST2110_OBS_PLUGIN_AUDIO_SIGNALING_RX_CONFIG_HPP
 
-#include "st2110/config_validation.hpp"
+#include "st2110/foundation/derived_values.hpp"
 #include "st2110/model/audio/audio_signaling.hpp"
 #include "st2110/rx_config.hpp"
 
@@ -17,7 +17,7 @@ rx_audio_config_from_audio_stream_signaling(const AudioStreamSignaling &signalin
         return std::unexpected(err);
     }
 
-    auto samples_per_packet = config_validation::audio_samples_per_packet_from_rate_and_packet_time(
+    auto samples_per_packet = audio_samples_per_packet_from_rate_and_packet_time(
         signaling.media.sampling_rate_hz, signaling.media.packet_time_us);
 
     if (!samples_per_packet) {

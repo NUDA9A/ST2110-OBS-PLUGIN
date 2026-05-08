@@ -49,7 +49,7 @@ struct AudioRtpPacketView {
         return Error::InvalidValue;
     }
 
-    if (!config_validation::is_dynamic_rtp_payload_type(policy.payload_type)) {
+    if (policy.payload_type < 96 || policy.payload_type > 127) {
         return Error::InvalidValue;
     }
 

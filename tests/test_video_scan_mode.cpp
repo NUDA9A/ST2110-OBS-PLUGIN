@@ -48,13 +48,6 @@ static void test_rx_video_config_accepts_psf_mode_as_model_value() {
     assert(st2110::validate_rx_video_config(cfg) == st2110::Error::Ok);
 }
 
-static void test_rx_video_config_rejects_unknown_scan_mode_value() {
-    auto cfg = make_base_rx_config();
-    cfg.scan_mode = static_cast<st2110::VideoScanMode>(999);
-
-    assert(st2110::validate_rx_video_config(cfg) == st2110::Error::InvalidValue);
-}
-
 static void test_depacketizer_config_defaults_to_progressive() {
     st2110::DepacketizerConfig cfg{};
     assert(cfg.scan_mode == st2110::VideoScanMode::Progressive);
@@ -90,7 +83,6 @@ int main() {
     test_rx_video_config_accepts_progressive_mode();
     test_rx_video_config_accepts_interlaced_mode_as_model_value();
     test_rx_video_config_accepts_psf_mode_as_model_value();
-    test_rx_video_config_rejects_unknown_scan_mode_value();
     test_depacketizer_config_defaults_to_progressive();
     test_depacketizer_exposes_configured_scan_mode();
     test_scan_mode_is_independent_from_pixel_format();

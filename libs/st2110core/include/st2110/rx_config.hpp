@@ -14,6 +14,7 @@
 #include "model/video/video_packing_mode.hpp"
 #include "model/video/video_scan_mode.hpp"
 #include "video_receive_capability.hpp"
+#include "st2110/foundation/derived_values.hpp"
 
 namespace st2110 {
 struct RxVideoConfig;
@@ -94,28 +95,16 @@ struct VideoRuntimeSupportPolicy {
 }
 
 [[nodiscard]] inline Error validate_rx_video_config_common_transport_fields(const RxVideoConfig &cfg) {
-    if (Error err = config_validation::validate_video_dimensions(cfg.width, cfg.height); err != Error::Ok) {
-        return err;
-    }
-
-    if (Error err = config_validation::validate_frame_rate(cfg.fps_num, cfg.fps_den); err != Error::Ok) {
-        return err;
-    }
-
-    if (Error err = config_validation::validate_udp_port(cfg.udp_port); err != Error::Ok) {
-        return err;
-    }
-
-    if (!config_validation::is_dynamic_rtp_payload_type(cfg.payload_type)) {
+    if (cfg.fps_num == 0 || cfg.fps_den == 0 || cfg.udp_port == 0 || cfg.width == 0 || cfg.height == 0) {
         return Error::InvalidValue;
     }
 
-    if (!config_validation::is_non_empty(cfg.dest_ip)) {
+    if (cfg.payload_type < 96 || cfg.payload_type > 127) {
         return Error::InvalidValue;
     }
 
-    if (Error err = config_validation::validate_video_scan_mode(cfg.scan_mode); err != Error::Ok) {
-        return err;
+    if (cfg.dest_ip.empty()) {
+        return Error::InvalidValue;
     }
 
     if (Error err = validate_video_packing_mode(cfg.packing_mode); err != Error::Ok) {
@@ -403,21 +392,21 @@ audio_media_description_from_rx_audio_config(const RxAudioConfig &cfg) {
     }
 
     auto expected_samples_per_packet =
-        config_validation::audio_samples_per_packet_from_rate_and_packet_time(cfg.sampling_rate_hz, cfg.packet_time_us);
+        audio_samples_per_packet_from_rate_and_packet_time(cfg.sampling_rate_hz, cfg.packet_time_us);
 
     if (!expected_samples_per_packet || cfg.samples_per_packet != *expected_samples_per_packet) {
         return Error::InvalidValue;
     }
 
-    if (Error err = config_validation::validate_udp_port(cfg.udp_port); err != Error::Ok) {
-        return err;
-    }
-
-    if (!config_validation::is_dynamic_rtp_payload_type(cfg.payload_type)) {
+    if (cfg.udp_port == 0) {
         return Error::InvalidValue;
     }
 
-    if (!config_validation::is_non_empty(cfg.dest_ip)) {
+    if (cfg.payload_type < 96 || cfg.payload_type > 127) {
+        return Error::InvalidValue;
+    }
+
+    if (cfg.dest_ip.empty()) {
         return Error::InvalidValue;
     }
 

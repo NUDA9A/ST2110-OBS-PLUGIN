@@ -24,10 +24,6 @@ struct VideoRtpTimestampMapperConfig {
         return Error::InvalidValue;
     }
 
-    if (const Error err = validate_rtp_timestamp_initial_anchor_mode(cfg.initial_anchor_mode); err != Error::Ok) {
-        return err;
-    }
-
     switch (cfg.initial_anchor_mode) {
     case RtpTimestampInitialAnchorMode::ConfiguredReference:
         return Error::Ok;

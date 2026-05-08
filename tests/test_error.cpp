@@ -7,7 +7,7 @@
 namespace {
 using st2110::Error;
 
-constexpr std::array<Error, 14> kKnownErrors = {
+constexpr std::array<Error, 10> kKnownErrors = {
     Error::Ok,
     Error::BufferTooSmall,
     Error::InvalidValue,
@@ -16,12 +16,8 @@ constexpr std::array<Error, 14> kKnownErrors = {
     Error::BadRTPVersion,
     Error::InvalidBackendState,
     Error::SystemFailure,
-    Error::BindFailed,
-    Error::MulticastJoinFailed,
-    Error::MulticastLeaveFailed,
-    Error::ReceiveFailed,
-    Error::ReceiveInterrupted,
-    Error::ReceiveAborted,
+    Error::OperationInterrupted,
+    Error::OperationAborted,
 };
 
 void test_non_empty_strings_for_all_known_errors() {
@@ -52,12 +48,8 @@ void test_backend_runtime_error_classification() {
 
     assert(st2110::is_backend_runtime_error(Error::InvalidBackendState));
     assert(st2110::is_backend_runtime_error(Error::SystemFailure));
-    assert(st2110::is_backend_runtime_error(Error::BindFailed));
-    assert(st2110::is_backend_runtime_error(Error::MulticastJoinFailed));
-    assert(st2110::is_backend_runtime_error(Error::MulticastLeaveFailed));
-    assert(st2110::is_backend_runtime_error(Error::ReceiveFailed));
-    assert(st2110::is_backend_runtime_error(Error::ReceiveInterrupted));
-    assert(st2110::is_backend_runtime_error(Error::ReceiveAborted));
+    assert(st2110::is_backend_runtime_error(Error::OperationInterrupted));
+    assert(st2110::is_backend_runtime_error(Error::OperationAborted));
 }
 
 void test_unknown_error_does_not_render_as_ok() {

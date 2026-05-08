@@ -60,10 +60,6 @@ struct SocketRxVideoSupportPolicy {
 }
 
 [[nodiscard]] inline Error validate_socket_rx_video_scan_mode_implementation_support(VideoScanMode mode) noexcept {
-    if (Error err = config_validation::validate_video_scan_mode(mode); err != Error::Ok) {
-        return err;
-    }
-
     if (mode != VideoScanMode::Progressive) {
         return Error::Unsupported;
     }

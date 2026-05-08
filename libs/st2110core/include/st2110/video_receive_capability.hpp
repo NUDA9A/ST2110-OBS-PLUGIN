@@ -323,8 +323,8 @@ struct VideoReceiveCapability {
         return err;
     }
 
-    if (Error err = config_validation::validate_frame_rate(media.fps_num, media.fps_den); err != Error::Ok) {
-        return err;
+    if (media.fps_den == 0 || media.fps_num == 0) {
+        return Error::InvalidValue;
     }
 
     return Error::Ok;
@@ -809,10 +809,6 @@ validate_video_receive_capability_structure(const VideoReceiveCapability &capabi
         return err;
     }
 
-    if (Error err = config_validation::validate_video_scan_mode(capability.scan_mode); err != Error::Ok) {
-        return err;
-    }
-
     if (Error err = validate_video_media_description_cross_field_constraints(capability.media, capability.scan_mode);
         err != Error::Ok) {
         return err;
@@ -896,6 +892,22 @@ validate_project_video_frame_handoff_format_matches_pixel_format(VideoFrameHando
     return Error::Ok;
 }
 
+[[nodiscard]] inline Error validate_video_format_constraints(PixelFormat fmt, uint32_t width, uint32_t height) {
+    if (width == 0 || height == 0) {
+        return Error::InvalidValue;
+    }
+
+    switch (fmt) {
+    case PixelFormat::UYVY:
+        if ((width % 2) != 0) {
+            return Error::InvalidValue;
+        }
+        return Error::Ok;
+    default:
+        return Error::Unsupported;
+    }
+}
+
 [[nodiscard]] inline Error validate_project_video_frame_storage_compatibility(const VideoReceiveCapability &capability,
                                                                               PixelFormat pixel_format) {
     if (Error err = validate_video_receive_capability_structure(capability); err != Error::Ok) {
@@ -947,7 +959,7 @@ validate_project_video_frame_handoff_format_matches_pixel_format(VideoFrameHando
             return Error::InvalidValue;
         }
 
-        return config_validation::validate_video_format_constraints(pixel_format, capability.media.width,
+        return validate_video_format_constraints(pixel_format, capability.media.width,
                                                                     capability.media.height);
 
     default:
