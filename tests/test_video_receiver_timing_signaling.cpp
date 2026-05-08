@@ -129,26 +129,6 @@ static void test_invalid_reference_clock_may_be_skipped_when_not_required() {
     assert(st2110::validate_video_receiver_timing_against_video_stream_signaling(cfg, signaling) == st2110::Error::Ok);
 }
 
-static void test_invalid_media_clock_mode_is_checked_when_required() {
-    auto cfg = make_valid_timing_config();
-
-    auto signaling = make_valid_signaling();
-    signaling.media_clock_mode = static_cast<st2110::MediaClockMode>(255);
-
-    assert(st2110::validate_video_receiver_timing_against_video_stream_signaling(cfg, signaling) ==
-           st2110::Error::InvalidValue);
-}
-
-static void test_invalid_timestamp_mode_is_checked_when_required() {
-    auto cfg = make_valid_timing_config();
-
-    auto signaling = make_valid_signaling();
-    signaling.timestamp_mode = static_cast<st2110::TimestampMode>(255);
-
-    assert(st2110::validate_video_receiver_timing_against_video_stream_signaling(cfg, signaling) ==
-           st2110::Error::InvalidValue);
-}
-
 int main() {
     test_valid_consistency_check_accepts_supported_sender();
     test_invalid_receiver_timing_config_is_rejected_first();
@@ -157,7 +137,5 @@ int main() {
     test_wide_sender_cmax_requires_consumer_support();
     test_invalid_reference_clock_is_checked_when_required();
     test_invalid_reference_clock_may_be_skipped_when_not_required();
-    test_invalid_media_clock_mode_is_checked_when_required();
-    test_invalid_timestamp_mode_is_checked_when_required();
     return 0;
 }

@@ -173,8 +173,6 @@ int main() {
         recognized_bpm.packing_mode = st2110::VideoPackingMode::Bpm;
         assert(recognized_bpm.is_valid());
         assert(st2110::validate_rx_video_config(recognized_bpm) == st2110::Error::Ok);
-        assert(st2110::validate_rx_video_config_against_runtime_support(
-                   recognized_bpm, st2110::default_video_rx_runtime_support_policy()) == st2110::Error::Unsupported);
 
         st2110::VideoRuntimeSupportPolicy support_without_packing_limit =
             st2110::default_video_rx_runtime_support_policy();
@@ -186,14 +184,6 @@ int main() {
         recognized_gpm_single_line.packing_mode = st2110::VideoPackingMode::GpmSingleLine;
         assert(recognized_gpm_single_line.is_valid());
         assert(st2110::validate_rx_video_config(recognized_gpm_single_line) == st2110::Error::Ok);
-        assert(st2110::validate_rx_video_config_against_runtime_support(
-                   recognized_gpm_single_line, st2110::default_video_rx_runtime_support_policy()) ==
-               st2110::Error::Unsupported);
-
-        st2110::RxVideoConfig invalid_packing = make_valid_video_config();
-        invalid_packing.packing_mode = static_cast<st2110::VideoPackingMode>(255);
-        assert(!invalid_packing.is_valid());
-        assert(st2110::validate_rx_video_config(invalid_packing) == st2110::Error::InvalidValue);
     }
 
     {

@@ -23,10 +23,6 @@ namespace {
 
 std::expected<st20_fmt, Error>
 mtl_st20_transport_fmt_from_video_transport_format(VideoTransportPayloadFormat format) noexcept {
-    if (const Error err = validate_video_transport_payload_format(format); err != Error::Ok) {
-        return std::unexpected(err);
-    }
-
     switch (format) {
     case VideoTransportPayloadFormat::Rfc4175Ycbcr422_8Bit:
         return ST20_FMT_YUV_422_8BIT;
@@ -72,10 +68,6 @@ mtl_st20_transport_fmt_from_video_transport_format(VideoTransportPayloadFormat f
 }
 
 std::expected<st_frame_fmt, Error> mtl_st_frame_fmt_from_video_handoff_format(VideoFrameHandoffFormat format) noexcept {
-    if (const Error err = validate_video_frame_handoff_format(format); err != Error::Ok) {
-        return std::unexpected(err);
-    }
-
     switch (format) {
     case VideoFrameHandoffFormat::Uyvy:
         return ST_FRAME_FMT_UYVY;
@@ -153,21 +145,10 @@ std::expected<st_fps, Error> mtl_st_fps_from_video_rate(std::uint32_t fps_num, s
 
 } // namespace
 
-Error validate_mtl_rx_video_session_packing_mode_implementation_support(VideoPackingMode mode) noexcept {
-    return validate_video_packing_mode(mode);
-}
-
 Error validate_mtl_rx_video_receive_capability_session_implementation_support(
     const VideoReceiveCapability &capability, const MtlRxVideoSupportPolicy &support) noexcept {
     if (Error err = validate_video_receive_capability_structure(capability); err != Error::Ok) {
         return err;
-    }
-
-    if (support.require_mtl_session_packing_mode_support) {
-        if (Error err = validate_mtl_rx_video_session_packing_mode_implementation_support(capability.packing_mode);
-            err != Error::Ok) {
-            return err;
-        }
     }
 
     if (support.require_progressive_scan_mode && capability.scan_mode != VideoScanMode::Progressive) {

@@ -44,16 +44,6 @@ validate_video_receiver_timing_against_video_stream_signaling(const VideoReceive
             return err;
         }
     }
-    if (cfg.requirements.require_media_clock) {
-        if (Error err = validate_media_clock_mode(signaling.media_clock_mode); err != Error::Ok) {
-            return err;
-        }
-    }
-    if (cfg.requirements.require_timestamp_mode) {
-        if (Error err = validate_timestamp_mode(signaling.timestamp_mode); err != Error::Ok) {
-            return err;
-        }
-    }
     if (!video_receiver_supports_sender_type(cfg.capability, signaling.sender_type)) {
         return Error::Unsupported;
     }

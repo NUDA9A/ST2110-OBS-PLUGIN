@@ -55,10 +55,6 @@ struct SocketRxVideoSupportPolicy {
     };
 }
 
-[[nodiscard]] inline Error validate_socket_rx_video_packing_mode_implementation_support(VideoPackingMode mode) {
-    return validate_runtime_video_packing_mode_support(mode);
-}
-
 [[nodiscard]] inline Error validate_socket_rx_video_scan_mode_implementation_support(VideoScanMode mode) noexcept {
     if (mode != VideoScanMode::Progressive) {
         return Error::Unsupported;
@@ -162,14 +158,6 @@ validate_socket_rx_video_backend_support_matrix_implementation_support(const Com
 
     if (support.require_current_socket_receive_pipeline_storage_support) {
         if (Error err = validate_socket_rx_video_receive_pipeline_storage_implementation_support(matrix);
-            err != Error::Ok) {
-            return err;
-        }
-    }
-
-    if (support.require_socket_runtime_packing_mode_support) {
-        if (Error err =
-                validate_socket_rx_video_packing_mode_implementation_support(matrix.receive_capability.packing_mode);
             err != Error::Ok) {
             return err;
         }

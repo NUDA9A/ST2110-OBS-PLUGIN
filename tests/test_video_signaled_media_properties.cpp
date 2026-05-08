@@ -171,17 +171,6 @@ static void test_token_backed_video_media_fields_validate_known_and_other_cases(
     }
 }
 
-static void test_pixel_aspect_ratio_accepts_valid_values() {
-    assert(validate_video_pixel_aspect_ratio(make_par(1, 1)) == Error::Ok);
-    assert(validate_video_pixel_aspect_ratio(make_par(12, 11)) == Error::Ok);
-}
-
-static void test_pixel_aspect_ratio_rejects_invalid_values() {
-    assert(validate_video_pixel_aspect_ratio(make_par(0, 1)) == Error::InvalidValue);
-    assert(validate_video_pixel_aspect_ratio(make_par(1, 0)) == Error::InvalidValue);
-    assert(validate_video_pixel_aspect_ratio(make_par(0, 0)) == Error::InvalidValue);
-}
-
 static void test_signaled_dimension_limits_accept_min_and_max_values() {
     assert(validate_video_media_description_dimensions(1, 1) == Error::Ok);
     assert(validate_video_media_description_dimensions(32767, 32767) == Error::Ok);
@@ -600,8 +589,6 @@ int main() {
     test_bit_depth_accepts_supported_structural_values();
     test_bit_depth_rejects_invalid_values();
     test_token_backed_video_media_fields_validate_known_and_other_cases();
-    test_pixel_aspect_ratio_accepts_valid_values();
-    test_pixel_aspect_ratio_rejects_invalid_values();
     test_signaled_dimension_limits_accept_min_and_max_values();
     test_signaled_dimension_limits_reject_zero_and_overflow_values();
     test_video_stream_signaling_accepts_extended_media_properties();

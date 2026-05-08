@@ -1356,7 +1356,7 @@
 > - знать socket/MTL runtime internals;
 > - возвращать `Unsupported` как substitute for missing model.
 
-- [ ] R009: Refactor `libs/st2110core/include/st2110/model/video/video_scan_mode.hpp`
+- [x] R009: Refactor `libs/st2110core/include/st2110/model/video/video_scan_mode.hpp`
   - file responsibility:
     - modeled scan-mode axis only.
   - after refactor file must answer only for:
@@ -1366,7 +1366,7 @@
     - runtime support validation;
     - backend-specific acceptance logic.
 
-- [ ] R010: Refactor `libs/st2110core/include/st2110/model/video/video_packing_mode.hpp`
+- [x] R010: Refactor `libs/st2110core/include/st2110/model/video/video_packing_mode.hpp`
   - file responsibility:
     - modeled packing-mode axis only.
   - after refactor file must answer only for:
@@ -1376,7 +1376,7 @@
     - support matrix logic;
     - parser/runtime coupling.
 
-- [ ] R011: Refactor `libs/st2110core/include/st2110/model/video/video_media_types.hpp`
+- [x] R011: Refactor `libs/st2110core/include/st2110/model/video/video_media_types.hpp`
   - file responsibility:
     - standards-facing typed representation of signaled/recognized video media-description axes only.
   - after refactor file must answer only for:
@@ -1397,7 +1397,7 @@
     - delivery/handoff narrowing;
     - backend support checks.
 
-- [ ] R012: Refactor `libs/st2110core/include/st2110/model/video/video_signaling_types.hpp`
+- [x] R012: Refactor `libs/st2110core/include/st2110/model/video/video_signaling_types.hpp`
   - file responsibility:
     - typed video signaling structures only.
   - after refactor file must answer only for:
@@ -1411,7 +1411,7 @@
     - backend support logic;
     - runtime pipeline config assembly.
 
-- [ ] R013: Refactor `libs/st2110core/include/st2110/model/audio/audio_signaling.hpp`
+- [x] R013: Refactor `libs/st2110core/include/st2110/model/audio/audio_signaling.hpp`
   - file responsibility:
     - standards-facing typed audio signaling/media model only.
   - after refactor file must answer only for:

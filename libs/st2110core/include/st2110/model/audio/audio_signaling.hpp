@@ -1,19 +1,22 @@
 #ifndef ST2110_OBS_PLUGIN_AUDIO_SIGNALING_HPP
 #define ST2110_OBS_PLUGIN_AUDIO_SIGNALING_HPP
 
-#include "st2110/foundation/error.hpp"
+#include <st2110/foundation/error.hpp>
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 
 namespace st2110 {
+enum class AudioConformanceRole { Sender, Receiver };
+
 enum class AudioConformanceLevel { LevelA, LevelAX, LevelB, LevelBX, LevelC, LevelCX };
 
 struct AudioConformanceRange {
+    AudioConformanceRole role;
     AudioConformanceLevel level;
     uint32_t sampling_rate_hz;
     uint32_t packet_time_us;
@@ -27,16 +30,6 @@ enum class AudioPcmBitDepth {
     Bits16,
     Bits24,
 };
-
-[[nodiscard]] inline Error validate_audio_pcm_bit_depth(AudioPcmBitDepth bit_depth) {
-    switch (bit_depth) {
-    case AudioPcmBitDepth::Bits16:
-    case AudioPcmBitDepth::Bits24:
-        return Error::Ok;
-    }
-
-    return Error::InvalidValue;
-}
 
 struct AudioMediaDescription {
     AudioPcmEncoding pcm_encoding = AudioPcmEncoding::LinearPcm;
@@ -64,34 +57,70 @@ struct AudioChannelOrderDeclaredCountValidation {
     bool has_declared_channel_count = false;
 };
 
-[[nodiscard]] constexpr AudioConformanceRange audio_level_a_receiver_baseline() {
-    return {AudioConformanceLevel::LevelA, 48000, 1000, 1, 8};
+inline constexpr std::array<AudioConformanceRange, 6> st2110_30_sender_conformance_ranges{{
+    {AudioConformanceRole::Sender, AudioConformanceLevel::LevelA, 48000, 1000, 1, 8},
+    {AudioConformanceRole::Sender, AudioConformanceLevel::LevelAX, 96000, 1000, 1, 4},
+    {AudioConformanceRole::Sender, AudioConformanceLevel::LevelB, 48000, 125, 1, 8},
+    {AudioConformanceRole::Sender, AudioConformanceLevel::LevelBX, 96000, 125, 1, 8},
+    {AudioConformanceRole::Sender, AudioConformanceLevel::LevelC, 48000, 125, 9, 64},
+    {AudioConformanceRole::Sender, AudioConformanceLevel::LevelCX, 96000, 125, 9, 32},
+}};
+
+inline constexpr std::array<AudioConformanceRange, 15> st2110_30_receiver_conformance_ranges{{
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelA, 48000, 1000, 1, 8},
+
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelAX, 48000, 1000, 1, 8},
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelAX, 96000, 1000, 1, 4},
+
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelB, 48000, 1000, 1, 8},
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelB, 48000, 125, 1, 8},
+
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelBX, 48000, 1000, 1, 8},
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelBX, 48000, 125, 1, 8},
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelBX, 96000, 1000, 1, 4},
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelBX, 96000, 125, 1, 8},
+
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelC, 48000, 1000, 1, 8},
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelC, 48000, 125, 1, 64},
+
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelCX, 48000, 1000, 1, 8},
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelCX, 48000, 125, 1, 64},
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelCX, 96000, 1000, 1, 4},
+    {AudioConformanceRole::Receiver, AudioConformanceLevel::LevelCX, 96000, 125, 1, 32},
+}};
+
+[[nodiscard]] inline Error validate_audio_sampling_rate_st2110_scope(uint32_t sampling_rate_hz) {
+    switch (sampling_rate_hz) {
+    case 0:
+        return Error::InvalidValue;
+    case 44100:
+    case 48000:
+    case 96000:
+        return Error::Ok;
+    default:
+        return Error::Unsupported;
+    }
 }
 
-[[nodiscard]] constexpr Error validate_audio_conformance_range(const AudioConformanceRange &range) {
-    if (range.sampling_rate_hz == 0) {
+[[nodiscard]] inline Error validate_audio_packet_time_st2110_scope(uint32_t packet_time_us) {
+    switch (packet_time_us) {
+    case 0:
         return Error::InvalidValue;
+    case 1000:
+    case 125:
+        return Error::Ok;
+    default:
+        return Error::Unsupported;
     }
-    if (range.packet_time_us == 0) {
-        return Error::InvalidValue;
-    }
-    if (range.min_channels < 1) {
-        return Error::InvalidValue;
-    }
-    if (range.max_channels < range.min_channels) {
+}
+
+[[nodiscard]] inline Error validate_audio_channel_count_st2110_scope(uint16_t channel_count) {
+    if (channel_count < 1) {
         return Error::InvalidValue;
     }
 
-    switch (range.level) {
-    case AudioConformanceLevel::LevelA:
-    case AudioConformanceLevel::LevelB:
-    case AudioConformanceLevel::LevelC:
-    case AudioConformanceLevel::LevelAX:
-    case AudioConformanceLevel::LevelBX:
-    case AudioConformanceLevel::LevelCX:
-        break;
-    default:
-        return Error::InvalidValue;
+    if (channel_count > 64) {
+        return Error::Unsupported;
     }
 
     return Error::Ok;
@@ -113,43 +142,16 @@ struct AudioChannelOrderDeclaredCountValidation {
 }
 
 [[nodiscard]] inline Error validate_audio_media_description_structure(const AudioMediaDescription &media) {
-    switch (media.pcm_encoding) {
-    case AudioPcmEncoding::LinearPcm:
-        break;
-    default:
-        return Error::InvalidValue;
-    }
-
-    if (Error err = validate_audio_pcm_bit_depth(media.pcm_bit_depth); err != Error::Ok) {
+    if (const Error err = validate_audio_sampling_rate_st2110_scope(media.sampling_rate_hz); err != Error::Ok) {
         return err;
     }
 
-    if (media.sampling_rate_hz == 0) {
-        return Error::InvalidValue;
-    }
-    if (media.packet_time_us == 0) {
-        return Error::InvalidValue;
-    }
-    if (media.channel_count == 0) {
-        return Error::InvalidValue;
-    }
-
-    return Error::Ok;
-}
-
-[[nodiscard]] inline Error
-validate_audio_media_description_against_conformance_range(const AudioMediaDescription &media,
-                                                           const AudioConformanceRange &range) {
-    if (Error err = validate_audio_media_description_structure(media); err != Error::Ok) {
+    if (const Error err = validate_audio_packet_time_st2110_scope(media.packet_time_us); err != Error::Ok) {
         return err;
     }
 
-    if (Error err = validate_audio_conformance_range(range); err != Error::Ok) {
+    if (const Error err = validate_audio_channel_count_st2110_scope(media.channel_count); err != Error::Ok) {
         return err;
-    }
-
-    if (!audio_media_description_matches_conformance_range(media, range)) {
-        return Error::Unsupported;
     }
 
     return Error::Ok;
@@ -249,12 +251,12 @@ audio_signaling_smpte2110_channel_order_symbol_count(std::string_view symbol) {
         return result;
     }
 
-    result.error = Error::Unsupported;
+    result.error = Error::InvalidValue;
     return result;
 }
 
 [[nodiscard]] inline AudioChannelOrderDeclaredCountValidation
-validate_smpte2110_audio_channel_order_raw_value_and_count(std::string_view raw_value) {
+parse_smpte2110_audio_channel_order_raw_value_and_count(std::string_view raw_value) {
     static constexpr std::string_view prefix = "SMPTE2110.";
 
     AudioChannelOrderDeclaredCountValidation result{};
@@ -338,12 +340,6 @@ validate_smpte2110_audio_channel_order_raw_value_and_count(std::string_view raw_
             return Error::InvalidValue;
         }
 
-        auto parsed = validate_smpte2110_audio_channel_order_raw_value_and_count(channel_order.raw_value);
-
-        if (parsed.error != Error::Ok) {
-            return parsed.error;
-        }
-
         break;
     }
 
@@ -371,8 +367,7 @@ validate_smpte2110_audio_channel_order_raw_value_and_count(std::string_view raw_
         }
 
         if (signaling.channel_order->convention == AudioChannelOrderConvention::Smpte2110) {
-            auto parsed =
-                validate_smpte2110_audio_channel_order_raw_value_and_count(signaling.channel_order->raw_value);
+            auto parsed = parse_smpte2110_audio_channel_order_raw_value_and_count(signaling.channel_order->raw_value);
 
             if (parsed.error != Error::Ok) {
                 return parsed.error;
@@ -386,31 +381,6 @@ validate_smpte2110_audio_channel_order_raw_value_and_count(std::string_view raw_
 
     return Error::Ok;
 }
-
-[[nodiscard]] inline Error
-validate_audio_stream_signaling_against_conformance_ranges(const AudioStreamSignaling &signaling,
-                                                           std::span<const AudioConformanceRange> supported_ranges) {
-    if (Error err = validate_audio_stream_signaling(signaling); err != Error::Ok) {
-        return err;
-    }
-
-    if (supported_ranges.empty()) {
-        return Error::Unsupported;
-    }
-
-    for (const AudioConformanceRange &range : supported_ranges) {
-        if (Error err = validate_audio_conformance_range(range); err != Error::Ok) {
-            return err;
-        }
-
-        if (audio_media_description_matches_conformance_range(signaling.media, range)) {
-            return Error::Ok;
-        }
-    }
-
-    return Error::Unsupported;
-}
-
 } // namespace st2110
 
 #endif // ST2110_OBS_PLUGIN_AUDIO_SIGNALING_HPP

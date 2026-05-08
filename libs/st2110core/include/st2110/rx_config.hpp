@@ -106,10 +106,6 @@ struct VideoRuntimeSupportPolicy {
         return Error::InvalidValue;
     }
 
-    if (Error err = validate_video_packing_mode(cfg.packing_mode); err != Error::Ok) {
-        return err;
-    }
-
     return Error::Ok;
 }
 
@@ -286,12 +282,6 @@ validate_rx_video_config_against_project_delivery_support(const RxVideoConfig &c
     auto capability = rx_video_config_effective_receive_capability(cfg);
     if (!capability.has_value()) {
         return capability.error();
-    }
-
-    if (support.require_runtime_packing_mode_support) {
-        if (Error err = validate_runtime_video_packing_mode_support(capability->packing_mode); err != Error::Ok) {
-            return err;
-        }
     }
 
     return Error::Ok;
