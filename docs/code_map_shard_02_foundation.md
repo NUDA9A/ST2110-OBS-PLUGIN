@@ -81,7 +81,6 @@ backend-wide snapshot и subsystem-specific stats/types пока еще част
 **Ответственность файла:**
 - shared initial-anchor policy type for RTP timestamp mapping;
 - common enum `RtpTimestampInitialAnchorMode`;
-- common validation helper for that policy.
 
 **Файл используется как foundation-level policy header для:**
 - video RTP timestamp mapping;

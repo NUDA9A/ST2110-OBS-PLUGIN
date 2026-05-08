@@ -8,7 +8,6 @@
 #include <span>
 #include <string>
 
-#include "config_validation.hpp"
 #include "delivery/video/pixel_format.hpp"
 #include "model/audio/audio_signaling.hpp"
 #include "model/video/video_packing_mode.hpp"

@@ -6,7 +6,6 @@
 #include <optional>
 #include <string>
 
-#include "config_validation.hpp"
 #include "delivery/video/pixel_format.hpp"
 #include "foundation/error.hpp"
 #include "model/video/video_packing_mode.hpp"

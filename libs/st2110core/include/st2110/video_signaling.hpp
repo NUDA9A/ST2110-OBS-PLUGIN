@@ -1,7 +1,6 @@
 #ifndef ST2110_OBS_PLUGIN_VIDEO_SIGNALING_HPP
 #define ST2110_OBS_PLUGIN_VIDEO_SIGNALING_HPP
 
-#include "config_validation.hpp"
 #include "delivery/video/pixel_format.hpp"
 #include "foundation/error.hpp"
 #include "ingress/shared/packet_parse.hpp"
