@@ -10,6 +10,7 @@
 #include "st2110/receive/video/video_receive_pipeline.hpp"
 #include "video_receive_capability.hpp"
 #include <st2110/model/video/video_signaling_types.hpp>
+#include <st2110/receive/video/video_receive_description.hpp>
 
 #include <cstdint>
 #include <expected>
@@ -73,28 +74,6 @@ inline Error validate_video_media_description(const VideoMediaDescription &media
     }
 
     return validate_required_video_signal_standard(media.signal_standard);
-}
-
-inline Error validate_video_stream_signaling(const VideoStreamSignaling &signaling) {
-    if (Error err = validate_video_media_description(signaling.media); err != Error::Ok) {
-        return err;
-    }
-    if (Error err = validate_video_media_description_cross_field_constraints(signaling.media, signaling.scan_mode);
-        err != Error::Ok) {
-        return err;
-    }
-    if (Error err = validate_video_sender_signaling(signaling.sender_type, signaling.troff_us, signaling.cmax);
-        err != Error::Ok) {
-        return err;
-    }
-    if (Error err = validate_reference_clock(signaling.reference_clock); err != Error::Ok) {
-        return err;
-    }
-    if (Error err = validate_packet_parse_policy_config(PacketParsePolicy{signaling.max_udp_datagram_bytes});
-        err != Error::Ok) {
-        return err;
-    }
-    return Error::Ok;
 }
 
 [[nodiscard]] inline std::expected<VideoReceiveCapability, Error>
@@ -177,10 +156,6 @@ validate_video_receive_capability_against_video_stream_signaling(const VideoRece
 
     if (Error err = validate_video_receive_capability_structure(capability); err != Error::Ok) {
         return err;
-    }
-
-    if (!video_media_description_equal(capability.media, signaling.media)) {
-        return Error::InvalidValue;
     }
 
     if (capability.scan_mode != signaling.scan_mode) {

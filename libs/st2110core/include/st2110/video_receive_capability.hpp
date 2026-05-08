@@ -8,9 +8,8 @@
 
 #include "delivery/video/pixel_format.hpp"
 #include "foundation/error.hpp"
-#include "model/video/video_packing_mode.hpp"
-#include "model/video/video_scan_mode.hpp"
-#include "model/video/video_media_types.hpp"
+#include <st2110/model/video/video_media_types.hpp>
+#include <st2110/receive/video/video_receive_description.hpp>
 
 namespace st2110 {
 enum class VideoFrameHandoffFormat {
@@ -35,10 +34,6 @@ enum class VideoFrameHandoffFormat {
     GbrPlanar12Le,
     RgbRfc4175Pgroup4Be10,
     RgbRfc4175Pgroup2Be12,
-};
-
-struct VideoReceiveRtpClock {
-    std::uint32_t rtp_clock_rate = 90000;
 };
 
 enum class VideoReceiveTopologyKind {
