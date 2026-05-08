@@ -39,7 +39,25 @@
 
 ### tests/test_video_scan_mode.cpp
 - Роль:
-    - проверяет, что `VideoScanMode` modeled separately from `PixelFormat`.
+    - проверяет, что `VideoScanMode` modeled as an independent axis across config and depacketizer boundaries, а не как скрытое свойство pixel/storage format.
+- Покрывает:
+    - distinct enum-value contract for:
+        - `Progressive`;
+        - `Interlaced`;
+        - `PsF`.
+    - `RxVideoConfig` validation:
+        - progressive accepted;
+        - interlaced accepted as a recognized model value;
+        - PsF accepted as a recognized model value;
+        - unknown scan mode rejected as `InvalidValue`.
+    - `DepacketizerConfig` scan-mode surface:
+        - default scan mode is progressive;
+        - configured non-progressive mode is observable through `Depacketizer::scan_mode()`.
+    - independence from handoff/storage format:
+        - the same `PixelFormat::UYVY` config remains structurally valid under progressive, interlaced, and PsF scan modes.
+- Фиксирует:
+    - scan mode is a first-class modeled axis separate from `PixelFormat`;
+    - depacketizer configuration preserves scan-mode intent explicitly instead of deriving it from storage format.
 
 ### tests/test_video_receive_semantics.cpp
 - Роль:

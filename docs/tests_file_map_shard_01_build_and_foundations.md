@@ -27,20 +27,20 @@
 
 ### tests/test_error.cpp
 - Роль:
-    - проверяет общий `Error` enum / string mapping.
-    - теперь покрывает не только базовые parse/validation errors, но и new backend/runtime operational error vocabulary.
+  - проверяет общий `Error` enum / string mapping.
+  - теперь покрывает не только базовые parse/validation errors, но и backend/runtime operational error vocabulary.
 - Покрывает:
-    - non-empty string mapping for all known `Error` values;
-    - distinct string mapping for all known `Error` values;
-    - explicit backend/runtime error classification through `is_backend_runtime_error(...)`:
-        - parse/validation errors are not classified as backend/runtime errors;
-        - backend/runtime errors are classified correctly;
-        - unknown enum values are not classified as backend/runtime errors.
-    - regression for unknown enum handling:
-        - unknown `Error` value no longer renders as `"OK"`.
+  - non-empty string mapping for all known `Error` values;
+  - distinct string mapping for all known `Error` values;
+  - explicit backend/runtime error classification through `is_backend_runtime_error(...)`:
+    - parse/validation errors are not classified as backend/runtime errors;
+    - backend/runtime errors are classified correctly;
+    - unknown enum values are not classified as backend/runtime errors.
+  - regression for unknown enum handling:
+    - unknown `Error` value no longer renders as `"OK"`.
 - Фиксирует:
-    - common error vocabulary now separates parse/validation failures from backend/runtime operational failures;
-    - future backend lifecycle/runtime work can classify operational failures without overloading packet/signaling parse errors.
+  - common error vocabulary now separates parse/validation failures from backend/runtime operational failures;
+  - future backend lifecycle/runtime work can classify operational failures without overloading packet/signaling parse errors.
 
 ### tests/test_bytespan.cpp
 - Роль:
@@ -48,7 +48,30 @@
 
 ### tests/test_stats.cpp
 - Роль:
-    - проверяет базовые stats/counter structs и helper behavior.
+  - проверяет базовые foundation stats structs, zero-init contract и common parse-result accounting helpers.
+- Покрывает:
+  - standard-layout contract for:
+    - `ParserStats`;
+    - `DepacketizerStats`;
+    - `BackendStats`.
+  - zero-initialized defaults for:
+    - parser counters;
+    - depacketizer counters;
+    - backend counters.
+  - `record_parse_result(...)` behavior for:
+    - `Ok`;
+    - `ShortPacket`;
+    - `BadRTPVersion`;
+    - `InvalidValue`;
+    - `Unsupported`;
+    - `BufferTooSmall`.
+  - unknown `Error` value accounting into `other_error`.
+  - plain mutable-counter behavior for:
+    - `DepacketizerStats`;
+    - `BackendStats`.
+- Фиксирует:
+  - base stats snapshots remain POD-like mutable counter structs;
+  - generic parse-result accounting stays centralized in `record_parse_result(...)` rather than ad hoc caller-side increments.
 
 ### tests/test_header_odr_link_main.cpp
 ### tests/test_header_odr_link_a.cpp

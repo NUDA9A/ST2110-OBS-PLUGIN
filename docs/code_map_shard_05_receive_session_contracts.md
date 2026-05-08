@@ -31,15 +31,28 @@ Backend-agnostic audio session config и signaling/bootstrap projection.
 ## Файлы блока
 
 ### `include/st2110/contracts/backend/backend.hpp`
-**Источник:** текущий `include/st2110/backend.hpp`
+**Источник:** текущий `include/st2110/contracts/backend/backend.hpp`
 
 **Ответственность файла:**
-- `IRxBackend`, `IRxVideoBackend`, `IRxAudioBackend`;
-- sink interfaces;
-- backend lifecycle/state/stats contract.
+- common backend contract surface:
+  - `RxMediaKind`;
+  - backend capabilities/state;
+  - lifecycle result type;
+  - sink interfaces;
+  - generic `IRxBackend` / `IRxVideoBackend` / `IRxAudioBackend`;
+- shared backend stats snapshot type.
 
-**Файл не должен знать:**
-- concrete socket/MTL runtime implementation details.
+**Файл сейчас дополнительно содержит:**
+- socket-operational specialized interfaces:
+  - `ISocketRxVideoBackend`;
+  - `ISocketRxAudioBackend`;
+- `BackendStats` aggregation over dedicated subsystem stats:
+  - packet-parse;
+  - reorder;
+  - depacketizer.
+
+**Текущее состояние файла:**
+generic backend contracts и socket-specialized operational start surface пока еще co-located в одном header-е.
 
 ### `include/st2110/contracts/backend/backend_factory.hpp`
 **Источник:** текущий `include/st2110/backend_factory.hpp`
@@ -107,17 +120,23 @@ Backend-agnostic audio session config и signaling/bootstrap projection.
 - only backend-agnostic runtime/session inputs.
 
 ### `include/st2110/contracts/audio/audio_signaling_rx_config.hpp`
-**Источник:** текущий `include/st2110/audio_signaling_rx_config.hpp`
+**Источник:** текущий `include/st2110/contracts/audio/audio_signaling_rx_config.hpp`
 
 **Ответственность файла:**
-- projection from typed `AudioStreamSignaling` into audio session config.
+- projection from typed `AudioStreamSignaling` into `RxAudioConfig`;
+- derive `samples_per_packet` from sampling rate and packet time;
+- inject transport/session inputs:
+  - UDP port;
+  - payload type;
+  - local IP;
+  - destination IP;
+  - audio sample format;
+- final `RxAudioConfig` validation before return.
 
-### `include/st2110/contracts/audio/audio_receiver_bootstrap.hpp`
-**Источник:** текущий `include/st2110/audio_receiver_bootstrap.hpp`
-
-**Ответственность файла:**
-- final audio bootstrap aggregate;
-- collect session config, packet policy, reorder config, timestamp mapping config, channel-order result.
+**Файл не должен знать:**
+- socket runtime;
+- audio packet parsing;
+- audio block assembly.
 
 ## Файлы, которые должны быть распилены ради этого блока
 

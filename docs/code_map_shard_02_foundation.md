@@ -36,12 +36,17 @@ Foundation — это нижний слой проекта.
 - отсутствие RTP/ST2110/media semantics.
 
 ### `include/st2110/foundation/error.hpp`
-**Источник:** текущий `include/st2110/error.hpp`
+**Источник:** текущий `include/st2110/foundation/error.hpp`
 
 **Ответственность файла:**
-- единый semantic vocabulary ошибок проекта;
-- включать parse/ingress ошибки и operational/runtime ошибки;
-- не кодировать backend-specific private detail.
+- common project-wide error vocabulary;
+- co-locate ingress/parse errors and backend/runtime operational errors in one enum `Error`;
+- provide basic stringification and backend-runtime classification helpers.
+
+**Файл сейчас содержит:**
+- `Error` enum for parse, validation, backend-state, socket-bind/multicast/receive failures;
+- `to_string(...)`;
+- `is_backend_runtime_error(...)`.
 
 ### `include/st2110/foundation/timestamp.hpp`
 **Источник:** текущий `include/st2110/timestamp.hpp`
@@ -51,34 +56,52 @@ Foundation — это нижний слой проекта.
 - отсутствие mapping policy.
 
 ### `include/st2110/foundation/stats.hpp`
-**Источник:** текущий `include/st2110/stats.hpp`
+**Источник:** текущий `include/st2110/foundation/stats.hpp`
 
 **Ответственность файла:**
-- общие snapshot/counter types;
-- общие helper'ы учета результатов;
-- отсутствие media-specific receive semantics.
+- common stats/counter vocabulary used across receive backends;
+- backend-wide snapshot aggregation via `BackendStats`;
+- helper functions for recording packet-parse outcomes.
+
+**Файл сейчас дополнительно co-locates:**
+- `ReorderBufferStats`;
+- `PacketParseStage`;
+- `ParserStats`;
+- `PacketParseStats`;
+- `DepacketizerStats`;
+- `record_parse_result(...)`;
+- `record_packet_parse_result(...)`.
+
+**Это нужно отразить как текущее состояние:**
+backend-wide snapshot и subsystem-specific stats/types пока еще частично живут в одном foundation header-е, несмотря на появление более узких dedicated stats headers.
 
 ### `include/st2110/foundation/rtp_timestamp_anchor_policy.hpp`
-**Источник:** текущий `include/st2110/rtp_timestamp_anchor_policy.hpp`
+**Источник:** текущий `include/st2110/foundation/rtp_timestamp_anchor_policy.hpp`
 
 **Ответственность файла:**
-- общий policy-type initial RTP anchoring;
-- использоваться audio/video timestamp mapper'ами;
-- не выполнять mapping самостоятельно.
+- shared initial-anchor policy type for RTP timestamp mapping;
+- common enum `RtpTimestampInitialAnchorMode`;
+- common validation helper for that policy.
 
-### `include/st2110/foundation/derived_values.hpp` (`NEW`)
-**Источник:** полезная часть текущего `include/st2110/config_validation.hpp`
+**Файл используется как foundation-level policy header для:**
+- video RTP timestamp mapping;
+- audio RTP timestamp mapping.
+
+**Файл не выполняет mapping самостоятельно.**
+
+### `include/st2110/foundation/derived_values.hpp`
+**Источник:** текущий `include/st2110/foundation/derived_values.hpp`
 
 **Ответственность файла:**
-- хранить только derived-value helper'ы общего назначения;
-- пример: `audio_samples_per_packet_from_rate_and_packet_time(...)`;
-- checked arithmetic helpers, если они действительно generic.
+- reserved foundation location for generic derived-value helpers;
+- generic checked arithmetic / value-derivation helpers when they are independent of media/backend policy.
 
-**Файл не должен содержать:**
-- `validate_video_scan_mode(...)`;
-- `validate_rx_backend_kind(...)`;
-- `validate_receive_reorder_gap_policy(...)`;
-- другие enum-validator'ы ради validator'ов.
+**Текущее содержимое файла:**
+- header placeholder only;
+- public helpers are not implemented yet.
+
+**Это важно отразить в карте:**
+файл уже существует как отдельная точка расширения, но пока еще не несет фактической helper-логики.
 
 ## Файлы, которые должны исчезнуть из блока после реструктуризации
 

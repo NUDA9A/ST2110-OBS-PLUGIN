@@ -50,7 +50,7 @@
     - video transport/runtime config rejection for zero UDP port.
     - `RxAudioConfig` runtime validation:
         - default Level A-oriented valid config;
-        - 1..8 channel bounds;
+        - `1..8` channel bounds;
         - PCM16 and PCM24 bit-depth acceptance;
         - invalid PCM bit-depth enum rejection;
         - zero and out-of-range channel counts;

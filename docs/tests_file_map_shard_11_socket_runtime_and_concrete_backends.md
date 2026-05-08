@@ -34,7 +34,14 @@
     - bind failure mapping to `BindFailed`;
     - IPv4 multicast join failure mapping to `MulticastJoinFailed`;
     - cleanup after failed multicast join so the bound port can be reopened successfully;
-    - basic raw UDP receive contract and factory shape.
+    - raw UDP receive contract:
+        - receive before open returns `InvalidBackendState`;
+        - empty receive buffer rejected as `InvalidValue`;
+        - one loopback UDP datagram is received with exact payload bytes preserved.
+    - concrete factory shape:
+        - `LinuxSocketRxPortFactory`;
+        - `make_linux_socket_rx_port_factory()`;
+        - factory returns distinct initially closed port instances.
 - Фиксирует:
     - multicast join/leave is implemented in the Linux socket runtime layer, not in backend code;
     - failed multicast join remains transactional and does not leak an already-bound native socket into later opens;
@@ -73,7 +80,7 @@
         - datagrams received;
         - parsed/rejected packets;
         - delivered frames/media units;
-        - reorder pushed/popped/missing counters.
+        - reorder pushed/popped/missing and flushed-gap counters.
 - Фиксирует:
     - concrete socket video backend consumes only the operational-config boundary;
     - receive-loop behavior, timestamp mapping, and reorder tolerance remain observable through backend stats rather than sink-side side channels.
@@ -102,7 +109,7 @@
         - null created port is rejected without opening.
     - receive/delivery path:
         - one valid audio RTP datagram produces one delivered audio block;
-        - L24 payload is unpacked into delivered samples correctly;
+        - L24 payload is unpacked into delivered S32 sample values correctly;
         - first-observed RTP timestamp can map to local zero;
         - configured-reference timestamp mode can produce a non-zero delivered timestamp.
     - reorder-tolerance behavior on the socket receive path:
@@ -112,7 +119,7 @@
         - datagrams received;
         - parsed/rejected packets;
         - delivered media units;
-        - reorder pushed/popped/missing counters.
+        - reorder pushed/popped/missing and flushed-gap counters.
 - Фиксирует:
     - concrete socket audio backend consumes only the operational-config boundary;
     - audio receive behavior keeps packet policy, timestamp mapping, and reorder tolerance explicit and observable at backend level rather than through sink-side side effects.

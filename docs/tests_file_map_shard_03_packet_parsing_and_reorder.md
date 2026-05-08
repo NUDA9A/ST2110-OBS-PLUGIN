@@ -62,7 +62,28 @@
 
 ### tests/test_packet_parse_stats.cpp
 - Роль:
-    - проверяет packet parse stats structs/counters.
+    - проверяет specialized `PacketParseStats` snapshot and stage-aware counter-recording helper behavior.
+- Покрывает:
+    - standard-layout contract for:
+        - `ParserStats`;
+        - `PacketParseStats`.
+    - zero-initialized defaults for:
+        - generic parser counters;
+        - stage-specific counters:
+            - `rtp_header_fail`;
+            - `st2110_header_parse_fail`;
+            - `bad_srd`;
+            - `srd_payload_split_fail`.
+    - `record_packet_parse_result(...)` behavior for:
+        - `Ok` at RTP-header stage;
+        - `BadRTPVersion` at RTP-header stage;
+        - `ShortPacket` at ST 2110 payload-header parse stage;
+        - `InvalidValue` and `Unsupported` at ST 2110 payload-header validation stage;
+        - `ShortPacket` at SRD payload split stage.
+    - unknown `Error` value accounting into `parser_stats.other_error`.
+- Фиксирует:
+    - packet-parse accounting keeps generic parser totals and stage-local failure counters in one explicit snapshot type;
+    - caller code can record parse failures by stage without duplicating counter-routing logic.
 
 ### tests/test_packet_parse_policy.cpp
 - Роль:
@@ -82,7 +103,27 @@
 
 ### tests/test_packet_parse_integration_stats.cpp
 - Роль:
-    - проверяет integrated packet parse path with stage-specific stats recording.
+    - проверяет integrated `parse_packet_view(...)` path with `PacketParseStats` recording, включая split между generic parser totals и stage-specific failure counters.
+- Покрывает:
+    - success path:
+        - one valid packet increments `packets_total` / `packets_ok` exactly once;
+        - no stage-specific failure counter is touched.
+    - packet-policy failure path:
+        - explicit oversize-by-policy rejection;
+        - default Standard UDP Size Limit oversize rejection;
+        - invalid packet-policy config rejection;
+        - all three cases increment `packet_policy_fail` without attributing failure to RTP/ST 2110 parsing stages.
+    - RTP header failure path:
+        - bad RTP version increments `bad_rtp_version` and `rtp_header_fail`.
+    - ST 2110 payload-header parse failure path:
+        - short payload header increments `short_packet` and `st2110_header_parse_fail`.
+    - ST 2110 payload-header validation failure path:
+        - bad multi-SRD validation increments `invalid_value` and `bad_srd`.
+    - SRD payload split failure path:
+        - short SRD payload increments `short_packet` and `srd_payload_split_fail`.
+- Фиксирует:
+    - integrated packet parsing records both generic result totals and the exact failing stage;
+    - policy-layer rejection remains separate from RTP/ST 2110 structural parsing failures.
 
 ### tests/test_reorder_buffer_interface.cpp
 - Роль:
@@ -136,7 +177,7 @@
     - separation of concerns:
         - generic `PacketView` parsing still succeeds for structurally valid RTP/ST 2110-20 packets regardless of whether the payload type matches the configured stream;
         - payload-type admission remains a separate stream-specific boundary above generic packet parsing.
-    - runtime backend behavior with the new operational start boundary:
+    - runtime backend behavior with the operational socket-start boundary:
         - `SocketRxVideoBackend` is started from `SocketRxVideoOperationalConfig`, not manual `RxVideoConfig`;
         - wrong-payload-type packet is treated as non-media datagram and dropped locally;
         - wrong-PT packet does not enter reorder/depacketizer state;

@@ -111,7 +111,18 @@
   - `interaction_mode_review.md`;
   - `interaction_mode_update_code_map.md`;
   - `interaction_mode_update_tests_file_map.md`;
-  - `interaction_mode_unique.md`.
+  - `interaction_mode_unique.md`;
+  - `interaction_mode_refactoring.md`.
+
+- **Phase R** = `Phase R — Responsibility-block refactoring` from `plan.md`.
+- **Refactoring block** = one contiguous block of `Phase R` tasks that refactors one responsibility block.
+- **Refactor task** = one concrete file-level task inside the current Refactoring block.
+- **Block completion** = the state in which all Refactor tasks of the current Refactoring block are either:
+  - implemented;
+  - explicitly recognized as already implemented;
+  - or removed / merged / replaced by an updated block plan agreed in the dialog,
+    and the resulting production block satisfies its stated responsibility without losing required production logic.
+- **Phase R exit condition** = the explicit `Exit condition for Phase R` recorded in `plan.md`; it is the global architectural target that every Refactoring block MUST move the repository toward.
 
 ## 1. Rule sets and precedence
 
@@ -215,6 +226,7 @@ Valid modes are:
 - `ОБНОВЛЕНИЕ code_map.md`
 - `ОБНОВЛЕНИЕ tests_file_map.md`
 - `УНИКАЛЬНЫЙ`
+- `РЕФАКТОРИНГ`
 
 Mode activation rules:
 - a new workflow MUST start only after the user explicitly names the mode;
@@ -229,6 +241,10 @@ If no Current mode exists and the user message does not explicitly set one, Assi
 Assistant MUST NOT silently reinterpret:
 - `ЗАДАЧА` as `ПРОВЕРКА`;
 - `ПРОВЕРКА` as `УНИКАЛЬНЫЙ`;
+- `РЕФАКТОРИНГ` as `ЗАДАЧА`;
+- `РЕФАКТОРИНГ` as `ПРОВЕРКА`;
+- `ЗАДАЧА` as `РЕФАКТОРИНГ`;
+- `ПРОВЕРКА` as `РЕФАКТОРИНГ`;
 - map-update modes as implementation modes.
 
 ## 4. Sharded map workflow

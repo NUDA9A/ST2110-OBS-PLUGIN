@@ -56,19 +56,44 @@ Raw SDP/audio attribute parsing и mapping в typed audio signaling.
 - runtime support policy.
 
 ### `include/st2110/ingress/shared/packet_view.hpp`
-**Источник:** текущий `include/st2110/packet_view.hpp`
+**Источник:** текущий `include/st2110/ingress/shared/packet_view.hpp`
 
 **Ответственность файла:**
-- normalized parsed packet view поверх raw datagram bytes;
-- staged parse failure localization.
+- normalized parsed packet view over RTP + ST 2110-20 payload header;
+- staged parse failure model with precise failing stage;
+- SRD segment view construction;
+- payload/trailing-padding split.
+
+**Файл сейчас содержит:**
+- `SrdSegmentView`;
+- `PacketViewParseFailure`;
+- `PacketView`;
+- `parse_packet_view_staged(...)`;
+- `PacketView::from_udp_datagram(...)`.
+
+**Граница файла:**
+- structural parsing only;
+- no depacketizer policy;
+- no backend runtime logic.
 
 ### `include/st2110/ingress/shared/packet_parse.hpp`
-**Источник:** текущий `include/st2110/packet_parse.hpp`
+**Источник:** текущий `include/st2110/ingress/shared/packet_parse.hpp`
 
 **Ответственность файла:**
-- final raw packet parse entrypoint;
-- packet-size policy for ingress layer;
-- packet parse stats integration.
+- packet-parse policy model for UDP datagram size admission;
+- effective max-UDP derivation;
+- ingress-level packet-size validation;
+- final packet-parse entrypoints returning `PacketView`.
+
+**Файл сейчас содержит:**
+- standard/extended UDP datagram size constants;
+- `PacketParsePolicy`;
+- config-validation helper for that policy;
+- overload without stats;
+- overload with `PacketParseStats` recording.
+
+**Файл не выполняет RTP/ST 2110 structural parse сам по себе:**
+staged structural parse lives in `packet_view.hpp`.
 
 ### `include/st2110/ingress/video/video_sdp_media_section.hpp`
 **Источник:** текущий `include/st2110/video_sdp_media_section.hpp`
@@ -138,3 +163,17 @@ Raw SDP/audio attribute parsing и mapping в typed audio signaling.
 **Ответственность файла:**
 - final audio SDP ingress entrypoint;
 - orchestration raw selection + timing parse + typed signaling mapping.
+
+### `include/st2110/ingress/shared/packet_parse_stats.hpp`
+**Источник:** текущий `include/st2110/ingress/shared/packet_parse_stats.hpp`
+
+**Ответственность файла:**
+- staged packet-parse observability vocabulary;
+- parse-stage taxonomy via `PacketParseStage`;
+- aggregate parser counters via `ParserStats` and `PacketParseStats`;
+- helper functions for recording parse outcomes.
+
+**Файл сейчас используется как dedicated stats boundary для:**
+- `packet_view.hpp`;
+- `packet_parse.hpp`;
+- backend-level stats aggregation.

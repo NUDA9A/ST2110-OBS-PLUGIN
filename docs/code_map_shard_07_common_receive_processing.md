@@ -43,12 +43,24 @@ Backend-independent ST 2110-30 RTP packet -> audio block processing.
 - убрать пустые proxy wrappers, которые только переименовывают generic helper без новой ответственности.
 
 ### `include/st2110/receive/shared/reorder_buffer.hpp`
-**Источник:** текущий `include/st2110/reorder_buffer.hpp`
+**Источник:** текущий `include/st2110/receive/shared/reorder_buffer.hpp`
 
 **Ответственность файла:**
-- generic reorder interface;
-- owning stored-packet representation;
-- no concrete window policy.
+- generic reorder-buffer interface;
+- owning stored-packet representation independent from backend transport lifetime;
+- reconstruction of `PacketView` from stored packet data.
+
+**Файл сейчас содержит:**
+- `StoredPacket` with copied RTP header, extended sequence, SRD headers, and payload bytes;
+- `StoredPacket::view()` for rebuilding a transient `PacketView`;
+- `IReorderBuffer` interface:
+  - `push(...)`;
+  - `pop_next()`;
+  - `flush_missing_once()`;
+  - `reset()`;
+  - `stats()`.
+
+**Файл не задает concrete reorder-window policy.**
 
 ### `include/st2110/receive/shared/fixed_reorder_buffer.hpp`
 **Источник:** текущий `include/st2110/fixed_reorder_buffer.hpp`
@@ -82,10 +94,26 @@ Backend-independent ST 2110-30 RTP packet -> audio block processing.
 - current `PixelFormat`.
 
 ### `include/st2110/receive/video/video_timestamp_mapping.hpp`
-**Источник:** текущий `include/st2110/video_timestamp_mapping.hpp`
+**Источник:** текущий `include/st2110/receive/video/video_timestamp_mapping.hpp`
 
 **Ответственность файла:**
-- stateful RTP timestamp -> `TimestampNs` mapping for video receive path.
+- stateful video RTP timestamp -> `TimestampNs` mapping;
+- anchor-policy application for video RTP timestamps;
+- checked arithmetic helpers used by video timestamp conversion;
+- synthetic video timestamp mapping from unit index and frame rate.
+
+**Файл сейчас содержит:**
+- `VideoRtpTimestampMapperConfig`;
+- `VideoRtpTimestampMapper`;
+- checked add/mul helpers for timestamp arithmetic;
+- forward RTP delta helper with ambiguous-half-range rejection;
+- RTP ticks -> nanoseconds conversion;
+- `SyntheticVideoTimestampMapperConfig`;
+- `SyntheticVideoTimestampMapper`.
+
+**Файл объединяет два соседних helper-domain:**
+- real RTP-based timestamp mapping;
+- synthetic frame-index-based timestamp generation.
 
 ### `include/st2110/receive/video/video_playout_timing.hpp`
 **Источник:** текущий `include/st2110/video_playout_timing.hpp`
@@ -143,10 +171,27 @@ Backend-independent ST 2110-30 RTP packet -> audio block processing.
 - trailing padding policy per packing/scan-mode branch.
 
 ### `include/st2110/receive/video/depacketizer.hpp`
-**Источник:** текущий `include/st2110/depacketizer.hpp`
+**Источник:** текущий `include/st2110/receive/video/depacketizer.hpp`
 
 **Ответственность файла:**
-- packet-to-video-unit assembly over parsed packet views.
+- packet-to-video-unit assembly over parsed ST 2110-20 packets;
+- coordinate current assembly key / cursor / completion policy;
+- integrate segment placement, padding validation, and frame-assembler writes;
+- emit completed or partial assembled video units.
+
+**Файл сейчас содержит:**
+- `DepacketizerConfig`;
+- `DepacketizerAssemblyState`;
+- `Depacketizer`;
+- per-packet assembly-key and completion-policy handling;
+- key-transition termination path;
+- write-op derivation from segment placement;
+- cursor validation for cross-packet ordering;
+- stats accounting via `DepacketizerStats`.
+
+**Ошибочная и нереализованная логика локализована через исключения:**
+- `std::invalid_argument` for invalid packet/placement/order input;
+- `std::logic_error` for unsupported-yet branches in current mode/placement semantics.
 
 ### `include/st2110/receive/video/video_unit_reconstructor.hpp`
 **Источник:** текущий `include/st2110/video_unit_reconstructor.hpp`
@@ -162,12 +207,27 @@ Backend-independent ST 2110-30 RTP packet -> audio block processing.
 - absence of backend/runtime transport concerns.
 
 ### `include/st2110/receive/audio/audio_packet.hpp`
-**Источник:** текущий `include/st2110/audio_packet.hpp`
+**Источник:** текущий `include/st2110/receive/audio/audio_packet.hpp`
 
 **Ответственность файла:**
 - normalized typed audio RTP packet model;
-- packet policy derived from session config;
-- exact payload-size admission.
+- wire-format axis for current PCM payload handling;
+- packet policy derived from `RxAudioConfig`;
+- exact payload-size admission for audio RTP packets.
+
+**Файл сейчас содержит:**
+- `AudioPcmWireFormat`;
+- `AudioRtpPacketPolicy`;
+- `AudioRtpPacketView`;
+- wire-sample-size helper;
+- projection from `AudioPcmBitDepth` / `RxAudioConfig` into packet policy;
+- payload-size calculation;
+- packet-view construction and RTP parse entrypoint.
+
+**Файл не отвечает за:**
+- reorder/jitter buffering;
+- block assembly into owning audio storage;
+- playout timing.
 
 ### `include/st2110/receive/audio/audio_reorder_buffer.hpp`
 **Источник:** текущий `include/st2110/audio_reorder_buffer.hpp`
@@ -183,14 +243,45 @@ Backend-independent ST 2110-30 RTP packet -> audio block processing.
 - PCM wire decode into internal audio storage.
 
 ### `include/st2110/receive/audio/audio_timestamp_mapping.hpp`
-**Источник:** текущий `include/st2110/audio_timestamp_mapping.hpp`
+**Источник:** текущий `include/st2110/receive/audio/audio_timestamp_mapping.hpp`
 
 **Ответственность файла:**
-- audio RTP timestamp mapping;
-- audio playout timing helpers.
+- stateful audio RTP timestamp -> `TimestampNs` mapping;
+- audio anchor-policy application;
+- audio playout timing helpers above mapped media timestamps.
+
+**Файл сейчас содержит:**
+- `AudioRtpTimestampMapperConfig`;
+- `AudioRtpTimestampMapper`;
+- forward-delta helper with ambiguous-half-range rejection;
+- RTP-ticks -> nanoseconds conversion;
+- playout timing config/decision helpers;
+- `AudioBlockTiming` construction.
+
+**Файл объединяет:**
+- RTP timestamp mapping;
+- simple audio playout timing / block-timing helpers.
 
 ### `include/st2110/receive/audio/audio_stats.hpp`
 **Источник:** текущий `include/st2110/audio_stats.hpp`
 
 **Ответственность файла:**
 - audio-specific observability vocabulary.
+
+### `include/st2110/receive/shared/reorder_stats.hpp`
+**Источник:** текущий `include/st2110/receive/shared/reorder_stats.hpp`
+
+**Ответственность файла:**
+- dedicated stats vocabulary for reorder-buffer behavior;
+- counters for push/store/pop, duplicates, out-of-window, late packets, and flushed missing sequence numbers.
+
+**Файл содержит только typed counters и не содержит reorder logic.**
+
+### `include/st2110/receive/video/depacketizer_stats.hpp`
+**Источник:** текущий `include/st2110/receive/video/depacketizer_stats.hpp`
+
+**Ответственность файла:**
+- dedicated counter vocabulary for depacketizer throughput and unit outcomes;
+- counters for packets in/use and for complete/partial/dropped assembled units.
+
+**Файл содержит только stats-type и не содержит depacketizer logic.**
