@@ -2,10 +2,7 @@
 #define ST2110_OBS_PLUGIN_VIDEO_SDP_SIGNALING_ADAPTER_HPP
 
 #include "st2110/foundation/error.hpp"
-#include "st2110/model/video/video_packing_mode.hpp"
-#include "st2110/model/video/video_scan_mode.hpp"
-#include "st2110/signaling_structs.hpp"
-#include "st2110/video_signaling.hpp"
+#include "st2110/model/video/video_signaling_types.hpp"
 #include "video_sdp_fmtp.hpp"
 
 #include <expected>
@@ -197,10 +194,6 @@ video_stream_signaling_from_raw_video_sdp_fmtp(const RawVideoSdpFmtpParameters &
 
     if (raw.max_udp_datagram_bytes.has_value()) {
         res.max_udp_datagram_bytes = *raw.max_udp_datagram_bytes;
-    }
-
-    if (Error err = validate_video_media_description(res.media); err != Error::Ok) {
-        return std::unexpected(err);
     }
 
     if (Error err = validate_video_media_description_cross_field_constraints(res.media, res.scan_mode);

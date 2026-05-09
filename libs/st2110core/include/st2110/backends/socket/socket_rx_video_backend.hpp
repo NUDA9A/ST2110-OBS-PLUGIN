@@ -11,7 +11,7 @@
 #include "st2110/receive/video/video_reorder_policy.hpp"
 #include "st2110/receive/video/video_timestamp_mapping.hpp"
 #include "st2110/rx_config.hpp"
-#include "st2110/signaling_structs.hpp"
+#include "st2110/contracts/video/video_receiver_bootstrap.hpp"
 #include "socket_rx_single_media_backend_base.hpp"
 #include "st2110/video_backend_support.hpp"
 #include "platform/socket_runtime.hpp"

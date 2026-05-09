@@ -1436,7 +1436,7 @@
     - audio buffer layout policy;
     - backend-specific adaptation behavior.
 
-- [ ] R015: Refactor/delete `libs/st2110core/include/st2110/signaling_structs.hpp`
+- [x] R015: Refactor/delete `libs/st2110core/include/st2110/signaling_structs.hpp`
   - file responsibility:
     - temporary compatibility shim only while typed signaling structures are moved out.
   - move/refactor out of this file:
@@ -1446,7 +1446,7 @@
   - if after this move no declarations remain that are still uniquely owned by this file and no production code still includes it for real responsibility-bearing content, delete `libs/st2110core/include/st2110/signaling_structs.hpp` in this same task.
   - do not keep this file as a compatibility umbrella once all real content has been redistributed.
 
-- [ ] R016: Refactor/delete `libs/st2110core/include/st2110/video_signaling.hpp`
+- [x] R016: Refactor/delete `libs/st2110core/include/st2110/video_signaling.hpp`
   - file responsibility:
     - temporary compatibility shim only while pure model and bootstrap/projection logic are split.
   - move/refactor out of this file:

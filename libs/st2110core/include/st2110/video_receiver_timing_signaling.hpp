@@ -4,14 +4,9 @@
 #include <expected>
 
 #include "foundation/error.hpp"
-#include "ingress/shared/packet_parse.hpp"
-#include "receive/video/depacketizer.hpp"
-#include "receive/video/video_unit_reconstructor.hpp"
-#include "rx_config.hpp"
-#include "signaling_structs.hpp"
-#include "st2110/receive/video/video_receive_pipeline.hpp"
+#include "st2110/contracts/video/video_receiver_bootstrap.hpp"
+#include "st2110/model/video/video_signaling_types.hpp"
 #include "video_receiver_timing.hpp"
-#include "video_signaling.hpp"
 
 namespace st2110 {
 [[nodiscard]] inline bool video_receiver_supports_sender_type(const VideoReceiverTimingCapability &capability,

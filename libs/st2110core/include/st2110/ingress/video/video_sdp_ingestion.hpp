@@ -2,8 +2,7 @@
 #define ST2110_OBS_PLUGIN_VIDEO_SDP_INGESTION_HPP
 
 #include "st2110/foundation/error.hpp"
-#include "st2110/signaling_structs.hpp"
-#include "st2110/video_signaling.hpp"
+#include "st2110/model/video/video_signaling_types.hpp"
 #include "video_sdp_fmtp.hpp"
 #include "video_sdp_media_section.hpp"
 #include "video_sdp_rtpmap.hpp"
