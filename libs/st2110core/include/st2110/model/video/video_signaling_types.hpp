@@ -14,7 +14,17 @@ struct VideoRtpClockSignaling {
     std::uint32_t rtp_clock_rate = 90000;
 };
 
-enum class MediaClockMode { Direct, Sender };
+enum class MediaClockKind { Direct, Sender, Other };
+
+struct DirectMediaClock {
+    std::uint32_t rtp_clock_offset = 0;
+};
+
+struct MediaClockSignaling {
+    MediaClockKind kind = MediaClockKind::Direct;
+    std::optional<DirectMediaClock> direct{};
+    std::optional<std::string> raw_token{};
+};
 
 enum class TimestampMode { Samp, New, Pres };
 
@@ -62,11 +72,11 @@ struct VideoStreamSignaling {
     VideoRtpClockSignaling rtp_clock{};
     std::optional<std::size_t> max_udp_datagram_bytes{};
 
-    MediaClockMode media_clock_mode = MediaClockMode::Direct;
+    MediaClockSignaling media_clock{};
     TimestampMode timestamp_mode = TimestampMode::New;
     ReferenceClock reference_clock{};
 
-    uint32_t ts_delay_sender_ticks = 0;
+    std::optional<std::uint32_t> ts_delay_us{};
 
     VideoSenderType sender_type = VideoSenderType::Narrow;
     std::optional<uint32_t> troff_us{};
@@ -89,6 +99,38 @@ inline Error validate_video_duplicate_stream_group(const VideoDuplicateStreamGro
     return Error::Ok;
 }
 
+inline Error validate_media_clock_signaling(const MediaClockSignaling &clock) {
+    switch (clock.kind) {
+    case MediaClockKind::Direct:
+        if (!clock.direct.has_value() || clock.raw_token.has_value()) {
+            return Error::InvalidValue;
+        }
+
+        if (clock.direct->rtp_clock_offset != 0) {
+            return Error::InvalidValue;
+        }
+
+        return Error::Ok;
+
+    case MediaClockKind::Sender:
+        if (clock.direct.has_value() || clock.raw_token.has_value()) {
+            return Error::InvalidValue;
+        }
+
+        return Error::Ok;
+
+    case MediaClockKind::Other:
+        if (clock.direct.has_value() || !clock.raw_token.has_value() || clock.raw_token->empty()) {
+            return Error::InvalidValue;
+        }
+
+        return Error::Ok;
+
+    default:
+        return Error::InvalidValue;
+    }
+}
+
 inline Error validate_reference_clock(const ReferenceClock &clock) {
     switch (clock.kind) {
     case ReferenceClockKind::Ptp: {
@@ -106,8 +148,14 @@ inline Error validate_reference_clock(const ReferenceClock &clock) {
             }
         }
 
-        if (!ptp.traceable && all_zero) {
-            return Error::InvalidValue;
+        if (ptp.traceable) {
+            if (!all_zero) {
+                return Error::InvalidValue;
+            }
+        } else {
+            if (all_zero) {
+                return Error::InvalidValue;
+            }
         }
 
         return Error::Ok;
@@ -161,26 +209,15 @@ inline Error validate_video_sender_signaling(VideoSenderType sender_type, const 
     return Error::Ok;
 }
 
-inline Error validate_required_video_signal_standard(const std::optional<VideoSignalStandard> &ssn) {
-    if (!ssn.has_value()) {
-        return Error::InvalidValue;
+inline Error validate_video_max_udp_datagram_bytes(const std::optional<std::size_t> &max_udp_datagram_bytes,
+                                                   VideoPackingMode packing_mode) {
+    const std::size_t effective_max_udp = max_udp_datagram_bytes.value_or(1460);
+
+    if (packing_mode == VideoPackingMode::Bpm) {
+        return effective_max_udp <= 1460 ? Error::Ok : Error::InvalidValue;
     }
 
-    return validate_video_signal_standard(*ssn);
-}
-
-inline Error validate_video_max_udp_datagram_bytes(const std::optional<std::size_t> &max_udp_datagram_bytes) {
-    if (!max_udp_datagram_bytes.has_value()) {
-        return Error::Ok;
-    }
-
-    switch (*max_udp_datagram_bytes) {
-    case 1460:
-    case 8960:
-        return Error::Ok;
-    default:
-        return Error::InvalidValue;
-    }
+    return Error::Ok;
 }
 
 inline Error validate_video_stream_signaling(const VideoStreamSignaling &signaling) {
@@ -196,11 +233,16 @@ inline Error validate_video_stream_signaling(const VideoStreamSignaling &signali
     if (const Error err = validate_reference_clock(signaling.reference_clock); err != Error::Ok) {
         return err;
     }
-    if (const Error err = validate_video_max_udp_datagram_bytes(signaling.max_udp_datagram_bytes); err != Error::Ok) {
+    if (const Error err = validate_media_clock_signaling(signaling.media_clock); err != Error::Ok) {
+        return err;
+    }
+    if (const Error err =
+            validate_video_max_udp_datagram_bytes(signaling.max_udp_datagram_bytes, signaling.packing_mode);
+        err != Error::Ok) {
         return err;
     }
 
-    if (signaling.rtp_clock.rtp_clock_rate == 0) {
+    if (signaling.rtp_clock.rtp_clock_rate != 90000) {
         return Error::InvalidValue;
     }
 

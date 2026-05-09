@@ -1426,7 +1426,7 @@
     - assembler/reorder logic;
     - Level-A-only support narrowing.
 
-- [ ] R014: Refactor `libs/st2110core/include/st2110/model/audio/audio_channel_order.hpp`
+- [x] R014: Refactor `libs/st2110core/include/st2110/model/audio/audio_channel_order.hpp`
   - file responsibility:
     - modeled channel-order convention and parsed channel-group representation only.
   - after refactor file must answer only for:
@@ -1556,6 +1556,7 @@
     - final enum mapping;
     - runtime support rejection;
     - `PixelFormat` projection.
+  - Additionally validate 0 < MAXUDP <= 8960.
 
 - [ ] R024: Refactor `libs/st2110core/include/st2110/ingress/video/video_sdp_rtpmap.hpp`
   - file responsibility:
