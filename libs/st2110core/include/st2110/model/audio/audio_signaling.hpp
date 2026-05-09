@@ -3,6 +3,7 @@
 
 #include <st2110/foundation/error.hpp>
 #include <st2110/model/audio/audio_channel_order.hpp>
+#include <st2110/model/common_sdp_parameters.hpp>
 
 #include <cstdint>
 #include <expected>
@@ -28,6 +29,9 @@ struct AudioMediaDescription {
 struct AudioStreamSignaling {
     AudioMediaDescription media{};
     std::optional<AudioChannelOrder> channel_order{};
+
+    StreamTimingSignaling timing{};
+    StreamTransportSignaling transport{};
 };
 
 [[nodiscard]] inline Error validate_audio_sampling_rate_st2110_scope(uint32_t sampling_rate_hz) {
@@ -116,6 +120,18 @@ audio_samples_per_packet_from_media_description(const AudioMediaDescription &med
 
 [[nodiscard]] inline Error validate_audio_stream_signaling(const AudioStreamSignaling &signaling) {
     if (const Error err = validate_audio_media_description_structure(signaling.media); err != Error::Ok) {
+        return err;
+    }
+
+    if (const Error err = validate_stream_timing_signaling(signaling.timing); err != Error::Ok) {
+        return err;
+    }
+
+    if (signaling.timing.rtp_clock_rate != signaling.media.sampling_rate_hz) {
+        return Error::InvalidValue;
+    }
+
+    if (const Error err = validate_stream_transport_signaling(signaling.transport); err != Error::Ok) {
         return err;
     }
 

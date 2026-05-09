@@ -1492,7 +1492,7 @@
 > - знать delivery/storage limits;
 > - валидировать внутренние enum’ы как routine architecture.
 
-- [ ] R018: Refactor `libs/st2110core/include/st2110/ingress/shared/rtp.hpp`
+- [x] R018: Refactor `libs/st2110core/include/st2110/ingress/shared/rtp.hpp`
   - file responsibility:
     - raw RTP header parsing / payload-span extraction only.
   - after refactor file must answer only for:
@@ -1502,7 +1502,7 @@
     - video/audio-specific packet policy;
     - backend/runtime support logic.
 
-- [ ] R019: Refactor `libs/st2110core/include/st2110/ingress/shared/st2110_20.hpp`
+- [x] R019: Refactor `libs/st2110core/include/st2110/ingress/shared/st2110_20.hpp`
   - file responsibility:
     - raw ST 2110-20 payload-header parsing and raw structural payload constraints only.
   - after refactor file must answer only for:
@@ -1514,7 +1514,7 @@
     - placement into frame memory;
     - backend support logic.
 
-- [ ] R020: Refactor `libs/st2110core/include/st2110/ingress/shared/packet_view.hpp`
+- [x] R020: Refactor `libs/st2110core/include/st2110/ingress/shared/packet_view.hpp`
   - file responsibility:
     - parsed non-owning packet view only.
   - after refactor file must answer only for:
@@ -1546,6 +1546,7 @@
     - final `VideoStreamSignaling` semantics;
     - runtime config projection;
     - backend transport implementation.
+  - Do not forget to add/keep source-filter address and other fields correctness validation right in this file.
 
 - [ ] R023: Refactor `libs/st2110core/include/st2110/ingress/video/video_sdp_fmtp.hpp`
   - file responsibility:
@@ -1578,6 +1579,7 @@
     - receiver timing capability checks;
     - playout/runtime behavior;
     - backend bootstrap assembly.
+  - add/keep correctness validation for parameters if such not present in model validation, otherwise do not duplicate
 
 - [ ] R026: Refactor `libs/st2110core/include/st2110/ingress/video/video_sdp_signaling_adapter.hpp`
   - file responsibility:
@@ -1627,6 +1629,7 @@
   - file must not contain:
     - Level A support narrowing;
     - runtime `RxAudioConfig` assembly.
+  - Parser must normalize channel-order to full stream length. Discuss if such behaviour is correct. Also this file may be not a correct file for that.
 
 - [ ] R031: Refactor `libs/st2110core/include/st2110/ingress/audio/audio_sdp_ingestion.hpp`
   - file responsibility:
@@ -1796,6 +1799,7 @@
   - file must not contain:
     - raw SDP parsing;
     - concrete packet/timestamp/runtime execution.
+  - Probably here must be full sender/receiver timing compability validation described in ST2110-21:2022, if not here, need to specify correct file
 
 - [ ] R043: Refactor `libs/st2110core/include/st2110/contracts/video/video_backend_selection.hpp`
   - file responsibility:

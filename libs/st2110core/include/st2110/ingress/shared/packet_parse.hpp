@@ -1,16 +1,21 @@
 #ifndef ST2110_OBS_PLUGIN_PACKET_PARSE_HPP
 #define ST2110_OBS_PLUGIN_PACKET_PARSE_HPP
 
-#include "st2110/foundation/bytes.hpp"
-#include "st2110/foundation/error.hpp"
-#include "packet_parse_stats.hpp"
-#include "packet_view.hpp"
+#include <st2110/foundation/bytes.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/packet_parse_stats.hpp>
+#include <st2110/ingress/shared/packet_view.hpp>
 
-#include <cstdint>
+#include <cstddef>
 #include <expected>
 #include <optional>
 
 namespace st2110 {
+struct PacketViewParseFailure {
+    Error error = Error::Ok;
+    PacketParseStage stage = PacketParseStage::RtpHeader;
+};
+
 inline constexpr std::size_t udpHeaderBytes = 8;
 inline constexpr std::size_t standardUdpDatagramSizeLimitBytes = 1460;
 inline constexpr std::size_t extendedUdpDatagramSizeLimitBytes = 8960;
@@ -18,57 +23,92 @@ inline constexpr std::size_t minRtpHeaderBytes = 12;
 inline constexpr std::size_t minParsableUdpDatagramBytes = udpHeaderBytes + minRtpHeaderBytes;
 
 struct PacketParsePolicy {
-    std::optional<std::size_t> max_udp_datagram_bytes{};
+    std::size_t max_udp_datagram_bytes = standardUdpDatagramSizeLimitBytes;
 };
 
 [[nodiscard]] inline std::size_t udp_datagram_size_bytes(ByteSpan udp_payload) {
     return udp_payload.size() + udpHeaderBytes;
 }
 
-[[nodiscard]] inline std::size_t effective_max_udp_datagram_bytes(const PacketParsePolicy &policy) {
-    return policy.max_udp_datagram_bytes.value_or(standardUdpDatagramSizeLimitBytes);
-}
-
-[[nodiscard]] inline Error validate_packet_parse_policy_config(const PacketParsePolicy &policy) {
-    if (!policy.max_udp_datagram_bytes.has_value()) {
-        return Error::Ok;
-    }
-
-    const std::size_t bytes = *policy.max_udp_datagram_bytes;
-    if (bytes != standardUdpDatagramSizeLimitBytes &&
-        bytes != extendedUdpDatagramSizeLimitBytes) {
-        return Error::InvalidValue;
-        }
-
-    return Error::Ok;
-}
-
 [[nodiscard]] inline Error validate_packet_parse_policy(ByteSpan udp_payload, const PacketParsePolicy &policy) {
-    if (udp_datagram_size_bytes(udp_payload) > effective_max_udp_datagram_bytes(policy)) {
+    if (udp_datagram_size_bytes(udp_payload) > policy.max_udp_datagram_bytes) {
         return Error::InvalidValue;
     }
 
     return Error::Ok;
+}
+
+[[nodiscard]] inline std::expected<PacketView, PacketViewParseFailure> parse_packet_view_staged(ByteSpan udp_payload) {
+    PacketView res{};
+
+    std::expected<RtpHeaderView, Error> rtp_header = parse_rtp_header(udp_payload);
+    if (!rtp_header.has_value()) {
+        return std::unexpected(PacketViewParseFailure{rtp_header.error(), PacketParseStage::RtpHeader});
+    }
+    res.rtp = *rtp_header;
+
+    const ByteSpan rtp_payload = rtp_payload_span(udp_payload, *rtp_header);
+
+    std::expected<St2110PayloadHeaderView, Error> st2110_20_payload_header =
+        parse_st2110_20_payload_header(rtp_payload);
+    if (!st2110_20_payload_header.has_value()) {
+        return std::unexpected(
+            PacketViewParseFailure{st2110_20_payload_header.error(), PacketParseStage::St2110PayloadHeaderParse});
+    }
+
+    if (const Error err = validate_st2110_20_payload_header(*st2110_20_payload_header); err != Error::Ok) {
+        return std::unexpected(PacketViewParseFailure{err, PacketParseStage::St2110PayloadHeaderValidate});
+    }
+
+    res.extended_seq = combine_extended_seq(st2110_20_payload_header->ext_seq, rtp_header->seq_number);
+    res.payload_data = rtp_payload.subspan(st2110_20_payload_header->header_bytes);
+
+    std::size_t sum_length = 0;
+
+    for (std::size_t i = 0; i < st2110_20_payload_header->srd_count; ++i) {
+        res.segments[i].header = st2110_20_payload_header->srd[i];
+        sum_length += st2110_20_payload_header->srd[i].length;
+    }
+
+    if (st2110_20_payload_header->srd_count == 1 && st2110_20_payload_header->srd[0].length == 0) {
+        if (!res.payload_data.empty()) {
+            return std::unexpected(PacketViewParseFailure{Error::InvalidValue, PacketParseStage::SrdPayloadSplit});
+        }
+    }
+
+    if (res.payload_data.size() < sum_length) {
+        return std::unexpected(PacketViewParseFailure{Error::ShortPacket, PacketParseStage::SrdPayloadSplit});
+    }
+
+    res.trailing_padding = res.payload_data.subspan(sum_length);
+
+    std::size_t segment_size = 0;
+
+    for (std::size_t i = 0; i < st2110_20_payload_header->srd_count; ++i) {
+        res.segments[i].data = res.payload_data.subspan(segment_size, st2110_20_payload_header->srd[i].length);
+        segment_size += st2110_20_payload_header->srd[i].length;
+    }
+
+    res.segment_count = st2110_20_payload_header->srd_count;
+
+    return res;
 }
 
 [[nodiscard]] inline std::expected<PacketView, Error> parse_packet_view(ByteSpan udp_payload,
                                                                         const PacketParsePolicy &policy = {}) {
-    if (Error err = validate_packet_parse_policy_config(policy); err != Error::Ok) {
-        return std::unexpected(err);
-    }
     if (Error err = validate_packet_parse_policy(udp_payload, policy); err != Error::Ok) {
         return std::unexpected(err);
     }
 
-    return PacketView::from_udp_datagram(udp_payload);
+    auto staged = parse_packet_view_staged(udp_payload);
+    if (!staged.has_value()) {
+        return std::unexpected(staged.error().error);
+    }
+    return *staged;
 }
 
 [[nodiscard]] inline std::expected<PacketView, Error> parse_packet_view(ByteSpan udp_payload, PacketParseStats &stats,
                                                                         const PacketParsePolicy &policy = {}) {
-    if (Error err = validate_packet_parse_policy_config(policy); err != Error::Ok) {
-        record_packet_parse_result(stats, err, PacketParseStage::PacketPolicy);
-        return std::unexpected(err);
-    }
     if (Error err = validate_packet_parse_policy(udp_payload, policy); err != Error::Ok) {
         record_packet_parse_result(stats, err, PacketParseStage::PacketPolicy);
         return std::unexpected(err);
@@ -81,6 +121,7 @@ struct PacketParsePolicy {
     }
 
     record_packet_parse_result(stats, Error::Ok, PacketParseStage::RtpHeader);
+
     return *res;
 }
 

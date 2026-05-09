@@ -1,21 +1,23 @@
 #ifndef ST2110_OBS_PLUGIN_ST2110_20_HPP
 #define ST2110_OBS_PLUGIN_ST2110_20_HPP
 
-#include "st2110/foundation/bytes.hpp"
-#include "st2110/foundation/endian.hpp"
-#include "st2110/foundation/error.hpp"
+#include <st2110/foundation/bytes.hpp>
+#include <st2110/foundation/endian.hpp>
+#include <st2110/foundation/error.hpp>
+
+#include <cstddef>
 #include <cstdint>
 #include <expected>
 
 namespace st2110 {
 struct ExtendedSequenceNumber {
-    uint16_t hi16;
+    std::uint16_t hi16;
 };
 
 struct SrdHeader {
-    uint16_t length;
-    uint16_t row_number;
-    uint16_t offset;
+    std::uint16_t length;
+    std::uint16_t row_number;
+    std::uint16_t offset;
     bool field_id;
     bool continuation;
 };
@@ -23,7 +25,7 @@ struct SrdHeader {
 struct St2110PayloadHeaderView {
     ExtendedSequenceNumber ext_seq;
     SrdHeader srd[3];
-    uint8_t srd_count;
+    std::uint8_t srd_count;
     std::size_t header_bytes;
 };
 
@@ -37,7 +39,7 @@ inline std::expected<St2110PayloadHeaderView, Error> parse_st2110_20_payload_hea
     offset += 2;
     St2110PayloadHeaderView res{};
     res.ext_seq = ext_seq;
-    uint8_t srd_count = 0;
+    std::uint8_t srd_count = 0;
     while (true) {
         if (payload.size() - offset < 6) {
             return std::unexpected(Error::ShortPacket);
@@ -46,11 +48,11 @@ inline std::expected<St2110PayloadHeaderView, Error> parse_st2110_20_payload_hea
 
         srdHeader.length = endian::read_be16(payload.subspan(offset, 2));
 
-        uint16_t F_and_row_number = endian::read_be16(payload.subspan(offset + 2, 2));
+        const std::uint16_t F_and_row_number = endian::read_be16(payload.subspan(offset + 2, 2));
         srdHeader.field_id = F_and_row_number >> 15;
         srdHeader.row_number = F_and_row_number & 0x7FFF;
 
-        uint16_t C_and_offset = endian::read_be16(payload.subspan(offset + 4, 2));
+        const std::uint16_t C_and_offset = endian::read_be16(payload.subspan(offset + 4, 2));
         srdHeader.continuation = C_and_offset >> 15;
         srdHeader.offset = C_and_offset & 0x7FFF;
 
@@ -109,7 +111,7 @@ inline Error validate_st2110_20_payload_header(const St2110PayloadHeaderView &h)
         }
     }
 
-    if (auto err = validate_st2110_20_srd_ordering(h); err != Error::Ok) {
+    if (const auto err = validate_st2110_20_srd_ordering(h); err != Error::Ok) {
         return err;
     }
 
@@ -120,8 +122,8 @@ inline Error validate_st2110_20_payload_header(const St2110PayloadHeaderView &h)
     return Error::Ok;
 }
 
-inline uint32_t combine_extended_seq(const ExtendedSequenceNumber &ext, uint16_t lo16) {
-    return (static_cast<uint32_t>(ext.hi16) << 16) | static_cast<uint32_t>(lo16);
+inline std::uint32_t combine_extended_seq(const ExtendedSequenceNumber &ext, std::uint16_t lo16) {
+    return (static_cast<std::uint32_t>(ext.hi16) << 16) | static_cast<std::uint32_t>(lo16);
 }
 } // namespace st2110
 #endif // ST2110_OBS_PLUGIN_ST2110_20_HPP
