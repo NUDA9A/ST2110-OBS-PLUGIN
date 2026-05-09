@@ -11,8 +11,9 @@
 #include <st2110/receive/video/video_timestamp_mapping.hpp>
 #include <st2110/receive/video/video_unit_reconstructor.hpp>
 #include <st2110/rx_config.hpp>
-#include <st2110/video_receive_capability.hpp>
 #include <st2110/video_receiver_timing.hpp>
+#include <st2110/delivery/video/video_handoff_format.hpp>
+#include <st2110/receive/video/video_receive_description.hpp>
 
 #include <cstdint>
 #include <expected>

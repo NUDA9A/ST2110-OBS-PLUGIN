@@ -1460,7 +1460,7 @@
   - if after this split no declarations/helpers remain that are still uniquely owned by this file and no production code still depends on it for non-forwarding content, delete `libs/st2110core/include/st2110/video_signaling.hpp` in this same task.
   - do not leave this file as a broad transitional façade after the split is complete.
 
-- [ ] R017: Refactor/delete `libs/st2110core/include/st2110/video_receive_capability.hpp`
+- [x] R017: Refactor/delete `libs/st2110core/include/st2110/video_receive_capability.hpp`
   - file responsibility:
     - temporary compatibility shim only while receive/session model and delivery/handoff model are separated.
   - move/refactor out of this file:

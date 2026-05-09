@@ -8,12 +8,12 @@
 #include <span>
 #include <string>
 
-#include "delivery/video/pixel_format.hpp"
-#include "model/audio/audio_signaling.hpp"
-#include "model/video/video_packing_mode.hpp"
-#include "model/video/video_scan_mode.hpp"
-#include "video_receive_capability.hpp"
-#include "st2110/foundation/derived_values.hpp"
+#include <st2110/delivery/video/pixel_format.hpp>
+#include <st2110/delivery/video/video_handoff_format.hpp>
+#include <st2110/model/audio/audio_signaling.hpp>
+#include <st2110/model/video/video_media_types.hpp>
+#include <st2110/receive/video/video_receive_description.hpp>
+#include <st2110/foundation/derived_values.hpp>
 
 namespace st2110 {
 struct RxVideoConfig;
