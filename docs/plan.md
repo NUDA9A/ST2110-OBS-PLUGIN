@@ -1524,7 +1524,7 @@
     - reorder semantics;
     - depacketizer mutation logic.
 
-- [ ] R021: Refactor `libs/st2110core/include/st2110/ingress/shared/packet_parse.hpp`
+- [x] R021: Refactor `libs/st2110core/include/st2110/ingress/shared/packet_parse.hpp`
   - file responsibility:
     - staged packet parse entry points and ingress-local parse policy only.
   - after refactor file must answer only for:
@@ -1535,7 +1535,7 @@
     - frame assembly;
     - backend-specific runtime behavior.
 
-- [ ] R022: Refactor `libs/st2110core/include/st2110/ingress/video/video_sdp_media_section.hpp`
+- [x] R022: Refactor `libs/st2110core/include/st2110/ingress/video/video_sdp_media_section.hpp`
   - file responsibility:
     - raw video SDP media-section model and parsing only.
   - after refactor file must answer only for:

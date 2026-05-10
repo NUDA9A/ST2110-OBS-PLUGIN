@@ -8,7 +8,6 @@
 
 #include <cstddef>
 #include <expected>
-#include <optional>
 
 namespace st2110 {
 struct PacketViewParseFailure {
