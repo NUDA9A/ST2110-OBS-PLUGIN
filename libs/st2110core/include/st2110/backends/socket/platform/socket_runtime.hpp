@@ -4,8 +4,8 @@
 #include "st2110/foundation/error.hpp"
 #include "st2110/ingress/shared/packet_parse.hpp"
 #include "st2110/rx_config.hpp"
+#include <st2110/backends/receive_local_policy.hpp>
 
-#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -16,11 +16,6 @@
 #include <string_view>
 
 namespace st2110 {
-enum class SocketAddressFamily {
-    IPv4,
-    IPv6,
-};
-
 enum class SocketPortError {
     BindFailed,
     MulticastJoinFailed,
@@ -65,16 +60,6 @@ enum class SocketPortError {
     return Error::SystemFailure;
 }
 
-[[nodiscard]] inline Error validate_socket_address_family(SocketAddressFamily family) noexcept {
-    switch (family) {
-    case SocketAddressFamily::IPv4:
-    case SocketAddressFamily::IPv6:
-        return Error::Ok;
-    }
-
-    return Error::InvalidValue;
-}
-
 [[nodiscard]] inline std::string_view socket_address_family_name(SocketAddressFamily family) noexcept {
     switch (family) {
     case SocketAddressFamily::IPv4:
@@ -86,62 +71,11 @@ enum class SocketPortError {
     return "";
 }
 
-[[nodiscard]] inline std::expected<uint8_t, Error> parse_ipv4_block(std::string_view block) {
-    if (block.empty() || block.size() > 3) {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    unsigned int value = 0;
-
-    const char *first = block.data();
-    const char *last = block.data() + block.size();
-
-    const auto [ptr, ec] = std::from_chars(first, last, value);
-
-    if (ec != std::errc{} || ptr != last || value > 255) {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    return static_cast<uint8_t>(value);
-}
-
-[[nodiscard]] inline bool is_ascii_hex_digit(char c) noexcept {
-    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-}
-
 [[nodiscard]] inline char ascii_to_lower(char c) noexcept {
     if (c >= 'A' && c <= 'Z') {
         return static_cast<char>(c - 'A' + 'a');
     }
     return c;
-}
-
-[[nodiscard]] inline bool is_valid_ipv4_address(std::string_view address) noexcept {
-    int part_count = 0;
-
-    while (true) {
-        if (part_count == 4) {
-            return false;
-        }
-
-        const std::size_t dot = address.find('.');
-        const std::string_view block = (dot == std::string_view::npos) ? address : address.substr(0, dot);
-
-        const auto parsed = parse_ipv4_block(block);
-        if (!parsed) {
-            return false;
-        }
-
-        ++part_count;
-
-        if (dot == std::string_view::npos) {
-            break;
-        }
-
-        address.remove_prefix(dot + 1);
-    }
-
-    return part_count == 4;
 }
 
 [[nodiscard]] inline bool is_ipv4_multicast_address(std::string_view address) noexcept {
@@ -155,103 +89,6 @@ enum class SocketPortError {
     return first_block && *first_block >= 224 && *first_block <= 239;
 }
 
-[[nodiscard]] inline bool is_valid_ipv6_hextet(std::string_view hextet) noexcept {
-    if (hextet.empty() || hextet.size() > 4) {
-        return false;
-    }
-
-    for (char c : hextet) {
-        if (!is_ascii_hex_digit(c)) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-[[nodiscard]] inline bool parse_ipv6_side(std::string_view side, bool allow_ipv4_tail, int &group_count) noexcept {
-    group_count = 0;
-
-    if (side.empty()) {
-        return true;
-    }
-
-    while (!side.empty()) {
-        const std::size_t colon = side.find(':');
-        const std::string_view token = (colon == std::string_view::npos) ? side : side.substr(0, colon);
-
-        if (token.empty()) {
-            return false;
-        }
-
-        if (allow_ipv4_tail && colon == std::string_view::npos && token.find('.') != std::string_view::npos) {
-            if (!is_valid_ipv4_address(token)) {
-                return false;
-            }
-
-            group_count += 2;
-            return true;
-        }
-
-        if (!is_valid_ipv6_hextet(token)) {
-            return false;
-        }
-
-        ++group_count;
-
-        if (colon == std::string_view::npos) {
-            return true;
-        }
-
-        if (colon + 1 >= side.size()) {
-            return false;
-        }
-
-        side.remove_prefix(colon + 1);
-    }
-
-    return true;
-}
-
-[[nodiscard]] inline bool is_valid_ipv6_address(std::string_view address) noexcept {
-    if (address.empty()) {
-        return false;
-    }
-
-    // zone id вида "%eth0" здесь специально не поддерживается
-    if (address.find('%') != std::string_view::npos) {
-        return false;
-    }
-
-    const std::size_t double_colon = address.find("::");
-
-    if (double_colon == std::string_view::npos) {
-        int groups = 0;
-        return parse_ipv6_side(address, true, groups) && groups == 8;
-    }
-
-    if (address.find("::", double_colon + 2) != std::string_view::npos) {
-        return false;
-    }
-
-    const std::string_view left = address.substr(0, double_colon);
-    const std::string_view right = address.substr(double_colon + 2);
-
-    int left_groups = 0;
-    int right_groups = 0;
-
-    if (!parse_ipv6_side(left, false, left_groups)) {
-        return false;
-    }
-
-    if (!parse_ipv6_side(right, true, right_groups)) {
-        return false;
-    }
-
-    // "::" должно заменять хотя бы одну группу
-    return (left_groups + right_groups) < 8;
-}
-
 [[nodiscard]] inline bool is_ipv6_multicast_address(std::string_view address) noexcept {
     if (!is_valid_ipv6_address(address)) {
         return false;
@@ -263,17 +100,6 @@ enum class SocketPortError {
     return first_hextet.size() >= 2 && ascii_to_lower(first_hextet[0]) == 'f' && ascii_to_lower(first_hextet[1]) == 'f';
 }
 
-[[nodiscard]] inline bool is_valid_address(std::string_view address, SocketAddressFamily family) noexcept {
-    switch (family) {
-    case SocketAddressFamily::IPv4:
-        return is_valid_ipv4_address(address);
-    case SocketAddressFamily::IPv6:
-        return is_valid_ipv6_address(address);
-    }
-
-    return false;
-}
-
 struct SocketEndpoint {
     SocketAddressFamily family = SocketAddressFamily::IPv4;
     std::string address{};
@@ -281,9 +107,6 @@ struct SocketEndpoint {
 };
 
 [[nodiscard]] inline Error validate_socket_endpoint(const SocketEndpoint &endpoint) {
-    if (Error err = validate_socket_address_family(endpoint.family); err != Error::Ok) {
-        return err;
-    }
     if (!is_valid_address(endpoint.address, endpoint.family)) {
         return Error::InvalidValue;
     }
@@ -301,9 +124,6 @@ struct SocketMulticastMembership {
 };
 
 [[nodiscard]] inline Error validate_socket_multicast_membership(const SocketMulticastMembership &membership) {
-    if (const Error err = validate_socket_address_family(membership.family); err != Error::Ok) {
-        return err;
-    }
     if (!is_valid_address(membership.group_address, membership.family)) {
         return Error::InvalidValue;
     }
@@ -386,10 +206,6 @@ socket_multicast_membership_equal(const SocketMulticastMembership &lhs,
 [[nodiscard]] inline Error
 validate_socket_rx_operational_common_config(const SocketRxOperationalCommonConfig &cfg) {
     if (const Error err = validate_socket_rx_open_config(cfg.open_config); err != Error::Ok) {
-        return err;
-    }
-
-    if (const Error err = validate_packet_parse_policy_config(cfg.packet_parse_policy); err != Error::Ok) {
         return err;
     }
 
