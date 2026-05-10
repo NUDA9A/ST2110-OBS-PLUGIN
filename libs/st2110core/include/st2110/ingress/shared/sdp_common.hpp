@@ -19,26 +19,22 @@
 namespace st2110 {
 
 struct RawSdpSessionLines {
-    std::vector<std::string> connection{};
-    std::vector<std::string> ts_refclk{};
-    std::vector<std::string> mediaclk{};
-    std::vector<std::string> source_filter{};
-    std::vector<std::string> group{};
-    std::vector<std::string> unknown_attributes{};
+    std::optional<std::string> group{};
 };
 
 struct RawSdpMediaSectionLines {
     std::string media_value{};
 
-    std::vector<std::string> connection{};
-    std::vector<std::string> source_filter{};
-    std::vector<std::string> mid{};
-    std::vector<std::string> rtpmap{};
+    std::string connection{};
+    std::string ts_refclk{};
+    std::string mediaclk{};
+    std::string source_filter{};
+    std::optional<std::string> mid{};
+    std::optional<std::string> ptime{};
+    std::string rtpmap{};
 
     std::vector<std::string> fmtp_common_parameters{};
     std::vector<std::string> fmtp_media_specific_parameters{};
-
-    std::vector<std::string> unknown_attributes{};
 };
 
 struct RawSdpDocument {
@@ -70,9 +66,7 @@ struct RawSdpDocument {
     return text;
 }
 
-[[nodiscard]] inline std::string_view trim_ws(std::string_view text) {
-    return trim_right_ws(trim_left_ws(text));
-}
+[[nodiscard]] inline std::string_view trim_ws(std::string_view text) { return trim_right_ws(trim_left_ws(text)); }
 
 [[nodiscard]] inline std::optional<std::string_view> parse_attribute_value(std::string_view line,
                                                                            const std::string_view prefix) {
@@ -240,16 +234,34 @@ template <typename T>
     return Error::Ok;
 }
 
-[[nodiscard]] inline void append_unknown_attribute(std::vector<std::string> &unknown_attributes,
-                                                   std::string_view line) {
-    line = strip_cr(line);
+[[nodiscard]] inline Error set_single_line(std::optional<std::string> &field, std::string_view value) {
+    value = trim_ws(strip_cr(value));
 
-    if (line.starts_with("a=")) {
-        unknown_attributes.emplace_back(line.substr(2));
-        return;
+    if (value.empty()) {
+        return Error::InvalidValue;
     }
 
-    unknown_attributes.emplace_back(line);
+    if (field.has_value()) {
+        return Error::InvalidValue;
+    }
+
+    field = std::string(value);
+    return Error::Ok;
+}
+
+[[nodiscard]] inline Error set_required_single_line(std::string &field, std::string_view value) {
+    value = trim_ws(strip_cr(value));
+
+    if (value.empty()) {
+        return Error::InvalidValue;
+    }
+
+    if (!field.empty()) {
+        return Error::InvalidValue;
+    }
+
+    field = std::string(value);
+    return Error::Ok;
 }
 
 [[nodiscard]] inline std::expected<RawSdpDocument, Error> parse_raw_sdp_document(std::string_view sdp) {
@@ -277,105 +289,50 @@ template <typename T>
 
                 res.media_sections.push_back(RawSdpMediaSectionLines{.media_value = std::string(media_value)});
                 current_media = &res.media_sections.back();
-            } else if (line.starts_with("c=")) {
-                const std::string value(trim_ws(line.substr(2)));
-
-                if (value.empty()) {
-                    return std::unexpected(Error::InvalidValue);
+            } else if (current_media == nullptr) {
+                if (const auto value = parse_attribute_value(line, "a=group:"); value.has_value()) {
+                    if (const Error err = set_single_line(res.session.group, *value); err != Error::Ok) {
+                        return std::unexpected(err);
+                    }
                 }
-
-                if (current_media != nullptr) {
-                    current_media->connection.push_back(value);
-                } else {
-                    res.session.connection.push_back(value);
-                }
-            } else if (const auto value = parse_attribute_value(line, "a=ts-refclk:"); value.has_value()) {
-                const std::string stored(trim_ws(*value));
-
-                if (stored.empty()) {
-                    return std::unexpected(Error::InvalidValue);
-                }
-
-                if (current_media != nullptr) {
-                    append_unknown_attribute(current_media->unknown_attributes, line);
-                } else {
-                    res.session.ts_refclk.push_back(stored);
-                }
-            } else if (const auto value = parse_attribute_value(line, "a=mediaclk:"); value.has_value()) {
-                const std::string stored(trim_ws(*value));
-
-                if (stored.empty()) {
-                    return std::unexpected(Error::InvalidValue);
-                }
-
-                if (current_media != nullptr) {
-                    append_unknown_attribute(current_media->unknown_attributes, line);
-                } else {
-                    res.session.mediaclk.push_back(stored);
-                }
-            } else if (const auto value = parse_attribute_value(line, "a=source-filter:"); value.has_value()) {
-                const std::string stored(trim_ws(*value));
-
-                if (stored.empty()) {
-                    return std::unexpected(Error::InvalidValue);
-                }
-
-                if (current_media != nullptr) {
-                    current_media->source_filter.push_back(stored);
-                } else {
-                    res.session.source_filter.push_back(stored);
-                }
-            } else if (const auto value = parse_attribute_value(line, "a=group:"); value.has_value()) {
-                const std::string stored(trim_ws(*value));
-
-                if (stored.empty()) {
-                    return std::unexpected(Error::InvalidValue);
-                }
-
-                if (current_media != nullptr) {
-                    append_unknown_attribute(current_media->unknown_attributes, line);
-                } else {
-                    res.session.group.push_back(stored);
-                }
-            } else if (const auto value = parse_attribute_value(line, "a=mid:"); value.has_value()) {
-                const std::string stored(trim_ws(*value));
-
-                if (stored.empty()) {
-                    return std::unexpected(Error::InvalidValue);
-                }
-
-                if (current_media != nullptr) {
-                    current_media->mid.push_back(stored);
-                } else {
-                    append_unknown_attribute(res.session.unknown_attributes, line);
-                }
-            } else if (const auto value = parse_attribute_value(line, "a=rtpmap:"); value.has_value()) {
-                const std::string stored(trim_ws(*value));
-
-                if (stored.empty()) {
-                    return std::unexpected(Error::InvalidValue);
-                }
-
-                if (current_media != nullptr) {
-                    current_media->rtpmap.push_back(stored);
-                } else {
-                    append_unknown_attribute(res.session.unknown_attributes, line);
-                }
-            } else if (const auto value = parse_attribute_value(line, "a=fmtp:"); value.has_value()) {
-                if (current_media == nullptr) {
-                    append_unknown_attribute(res.session.unknown_attributes, line);
-                } else {
+            } else {
+                if (line.starts_with("c=")) {
+                    if (const Error err = set_required_single_line(current_media->connection, line.substr(2));
+                        err != Error::Ok) {
+                        return std::unexpected(err);
+                    }
+                } else if (const auto value = parse_attribute_value(line, "a=ts-refclk:"); value.has_value()) {
+                    if (const Error err = set_required_single_line(current_media->ts_refclk, *value);
+                        err != Error::Ok) {
+                        return std::unexpected(err);
+                    }
+                } else if (const auto value = parse_attribute_value(line, "a=mediaclk:"); value.has_value()) {
+                    if (const Error err = set_required_single_line(current_media->mediaclk, *value); err != Error::Ok) {
+                        return std::unexpected(err);
+                    }
+                } else if (const auto value = parse_attribute_value(line, "a=source-filter:"); value.has_value()) {
+                    if (const Error err = set_required_single_line(current_media->source_filter, *value);
+                        err != Error::Ok) {
+                        return std::unexpected(err);
+                    }
+                } else if (const auto value = parse_attribute_value(line, "a=mid:"); value.has_value()) {
+                    if (const Error err = set_single_line(current_media->mid, *value); err != Error::Ok) {
+                        return std::unexpected(err);
+                    }
+                } else if (const auto value = parse_attribute_value(line, "a=rtpmap:"); value.has_value()) {
+                    if (const Error err = set_required_single_line(current_media->rtpmap, *value); err != Error::Ok) {
+                        return std::unexpected(err);
+                    }
+                } else if (const auto value = parse_attribute_value(line, "a=fmtp:"); value.has_value()) {
                     if (const Error err = split_fmtp_parameters(*value, current_media->fmtp_common_parameters,
                                                                 current_media->fmtp_media_specific_parameters);
                         err != Error::Ok) {
                         return std::unexpected(err);
                     }
-                }
-            } else if (line.starts_with("a=")) {
-                if (current_media != nullptr) {
-                    append_unknown_attribute(current_media->unknown_attributes, line);
-                } else {
-                    append_unknown_attribute(res.session.unknown_attributes, line);
+                } else if (const auto value = parse_attribute_value(line, "a=ptime:"); value.has_value()) {
+                    if (const Error err = set_single_line(current_media->ptime, *value); err != Error::Ok) {
+                        return std::unexpected(err);
+                    }
                 }
             }
         }
@@ -429,26 +386,6 @@ parse_dash_separated_hex_bytes(const std::string_view text) {
     return out;
 }
 
-[[nodiscard]] inline Error parse_single_optional_line_value(const std::vector<std::string> &lines,
-                                                            std::optional<std::string_view> &out) {
-    if (lines.empty()) {
-        out.reset();
-        return Error::Ok;
-    }
-
-    if (lines.size() != 1) {
-        return Error::InvalidValue;
-    }
-
-    const std::string_view value = trim_ws(lines[0]);
-    if (value.empty()) {
-        return Error::InvalidValue;
-    }
-
-    out = value;
-    return Error::Ok;
-}
-
 [[nodiscard]] inline Error parse_single_fmtp_parameter_value(const std::vector<std::string> &parameters,
                                                              const std::string_view expected_key,
                                                              std::optional<std::string_view> &out) {
@@ -457,12 +394,12 @@ parse_dash_separated_hex_bytes(const std::string_view text) {
     for (const std::string &parameter_text : parameters) {
         std::string_view parameter = trim_ws(parameter_text);
         if (parameter.empty()) {
-            return Error::InvalidValue;
+            continue;
         }
 
         const std::size_t eq_pos = parameter.find('=');
         if (eq_pos == std::string_view::npos) {
-            return Error::InvalidValue;
+            continue;
         }
 
         const std::string_view key = trim_ws(parameter.substr(0, eq_pos));
@@ -484,121 +421,6 @@ parse_dash_separated_hex_bytes(const std::string_view text) {
     }
 
     return Error::Ok;
-}
-
-[[nodiscard]] inline bool source_filter_address_token_is_structurally_clean(const std::string_view token) {
-    if (token.empty()) {
-        return false;
-    }
-
-    for (const char c : token) {
-        if (c == ' ' || c == '\t' || c == ',' || c == ';' || c == '/') {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-[[nodiscard]] inline bool is_ascii_hex_digit(const char c) {
-    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-}
-
-[[nodiscard]] inline std::expected<std::array<std::uint8_t, 4>, Error>
-parse_ipv4_address_octets(std::string_view address) {
-    std::array<std::uint8_t, 4> out{};
-
-    std::size_t part_start = 0;
-
-    for (std::size_t i = 0; i < 4; ++i) {
-        const std::size_t dot_pos = address.find('.', part_start);
-
-        const std::string_view part =
-            (i == 3) ? address.substr(part_start)
-                     : (dot_pos == std::string_view::npos ? std::string_view{}
-                                                          : address.substr(part_start, dot_pos - part_start));
-
-        if (part.empty()) {
-            return std::unexpected(Error::InvalidValue);
-        }
-
-        auto parsed = parse_sdp_numeric_value<std::uint8_t>(trim_ws(part));
-        if (!parsed.has_value()) {
-            return std::unexpected(parsed.error());
-        }
-
-        out[i] = *parsed;
-
-        if (i < 3) {
-            if (dot_pos == std::string_view::npos) {
-                return std::unexpected(Error::InvalidValue);
-            }
-
-            part_start = dot_pos + 1;
-        }
-    }
-
-    return out;
-}
-
-[[nodiscard]] inline Error validate_ipv6_address_token_structure(const std::string_view address) {
-    if (!source_filter_address_token_is_structurally_clean(address)) {
-        return Error::InvalidValue;
-    }
-
-    if (address.find(':') == std::string_view::npos) {
-        return Error::InvalidValue;
-    }
-
-    if (address.front() == ':' && !address.starts_with("::")) {
-        return Error::InvalidValue;
-    }
-
-    if (address.back() == ':' && !address.ends_with("::")) {
-        return Error::InvalidValue;
-    }
-
-    const std::size_t first_double_colon = address.find("::");
-    if (first_double_colon != std::string_view::npos &&
-        address.find("::", first_double_colon + 2) != std::string_view::npos) {
-        return Error::InvalidValue;
-    }
-
-    if (address.find(":::") != std::string_view::npos) {
-        return Error::InvalidValue;
-    }
-
-    for (const char c : address) {
-        if (c == ':' || c == '.' || is_ascii_hex_digit(c)) {
-            continue;
-        }
-
-        return Error::InvalidValue;
-    }
-
-    return Error::Ok;
-}
-
-[[nodiscard]] inline Error validate_source_filter_address_token(const std::string_view address_type,
-                                                                const std::string_view address) {
-    if (!source_filter_address_token_is_structurally_clean(address)) {
-        return Error::InvalidValue;
-    }
-
-    if (address_type == "IP4") {
-        const auto parsed = parse_ipv4_address_octets(address);
-        return parsed.has_value() ? Error::Ok : Error::InvalidValue;
-    }
-
-    if (address_type == "IP6") {
-        return validate_ipv6_address_token_structure(address);
-    }
-
-    return Error::InvalidValue;
-}
-
-[[nodiscard]] inline bool is_known_source_filter_mode(const std::string_view mode) {
-    return mode == "incl" || mode == "excl";
 }
 
 [[nodiscard]] inline std::expected<MediaClockSignaling, Error>
@@ -733,6 +555,10 @@ parse_media_clock_signaling_value(std::string_view raw_value) {
     return std::unexpected(Error::InvalidValue);
 }
 
+[[nodiscard]] inline bool is_known_source_filter_mode(const std::string_view mode) {
+    return mode == "incl" || mode == "excl";
+}
+
 [[nodiscard]] inline std::expected<SourceFilterSignaling, Error>
 parse_source_filter_signaling_value(std::string_view raw_value, const SourceFilterSignaling::Scope scope) {
     raw_value = trim_ws(raw_value);
@@ -749,16 +575,8 @@ parse_source_filter_signaling_value(std::string_view raw_value, const SourceFilt
         return std::unexpected(Error::InvalidValue);
     }
 
-    if (tokens[1] != "IN") {
+    if (tokens[1].empty() || tokens[2].empty() || tokens[3].empty()) {
         return std::unexpected(Error::InvalidValue);
-    }
-
-    if (tokens[2] != "IP4" && tokens[2] != "IP6") {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    if (const Error err = validate_source_filter_address_token(tokens[2], tokens[3]); err != Error::Ok) {
-        return std::unexpected(err);
     }
 
     SourceFilterSignaling filter{};
@@ -769,10 +587,9 @@ parse_source_filter_signaling_value(std::string_view raw_value, const SourceFilt
     filter.address_type = std::string(tokens[2]);
     filter.destination_address = std::string(tokens[3]);
 
-    filter.source_addresses.reserve(tokens.size() - 4);
     for (std::size_t i = 4; i < tokens.size(); ++i) {
-        if (const Error err = validate_source_filter_address_token(tokens[2], tokens[i]); err != Error::Ok) {
-            return std::unexpected(err);
+        if (tokens[i].empty()) {
+            return std::unexpected(Error::InvalidValue);
         }
 
         filter.source_addresses.emplace_back(tokens[i]);
@@ -782,23 +599,21 @@ parse_source_filter_signaling_value(std::string_view raw_value, const SourceFilt
 }
 
 [[nodiscard]] inline std::expected<StreamTimingSignaling, Error>
-parse_stream_timing_signaling(const RawSdpSessionLines &session, const RawSdpMediaSectionLines &media,
+parse_stream_timing_signaling(const RawSdpSessionLines & /*session*/, const RawSdpMediaSectionLines &media,
                               const std::uint32_t rtp_clock_rate) {
     StreamTimingSignaling timing{};
     timing.rtp_clock_rate = rtp_clock_rate;
 
-    std::optional<std::string_view> session_ts_refclk{};
-    std::optional<std::string_view> session_mediaclk{};
+    if (media.ts_refclk.empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (media.mediaclk.empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
     std::optional<std::string_view> fmtp_tsmode{};
     std::optional<std::string_view> fmtp_tsdelay{};
-
-    if (const Error err = parse_single_optional_line_value(session.ts_refclk, session_ts_refclk); err != Error::Ok) {
-        return std::unexpected(err);
-    }
-
-    if (const Error err = parse_single_optional_line_value(session.mediaclk, session_mediaclk); err != Error::Ok) {
-        return std::unexpected(err);
-    }
 
     if (const Error err = parse_single_fmtp_parameter_value(media.fmtp_common_parameters, "TSMODE", fmtp_tsmode);
         err != Error::Ok) {
@@ -810,8 +625,8 @@ parse_stream_timing_signaling(const RawSdpSessionLines &session, const RawSdpMed
         return std::unexpected(err);
     }
 
-    if (session_ts_refclk.has_value()) {
-        auto parsed = parse_reference_clock_value(*session_ts_refclk);
+    {
+        auto parsed = parse_reference_clock_value(media.ts_refclk);
         if (!parsed.has_value()) {
             return std::unexpected(parsed.error());
         }
@@ -819,8 +634,8 @@ parse_stream_timing_signaling(const RawSdpSessionLines &session, const RawSdpMed
         timing.reference_clock = std::move(*parsed);
     }
 
-    if (session_mediaclk.has_value()) {
-        auto parsed = parse_media_clock_signaling_value(*session_mediaclk);
+    {
+        auto parsed = parse_media_clock_signaling_value(media.mediaclk);
         if (!parsed.has_value()) {
             return std::unexpected(parsed.error());
         }
@@ -853,20 +668,18 @@ parse_stream_timing_signaling(const RawSdpSessionLines &session, const RawSdpMed
 parse_stream_transport_signaling(const RawSdpSessionLines &session, const RawSdpMediaSectionLines &media) {
     StreamTransportSignaling transport{};
 
-    std::optional<std::string_view> media_mid{};
-    std::optional<std::string_view> maxudp_value{};
-
-    if (const Error err = parse_single_optional_line_value(media.mid, media_mid); err != Error::Ok) {
-        return std::unexpected(err);
+    if (media.source_filter.empty()) {
+        return std::unexpected(Error::InvalidValue);
     }
 
+    if (media.mid.has_value()) {
+        transport.mid = *media.mid;
+    }
+
+    std::optional<std::string_view> maxudp_value{};
     if (const Error err = parse_single_fmtp_parameter_value(media.fmtp_common_parameters, "MAXUDP", maxudp_value);
         err != Error::Ok) {
         return std::unexpected(err);
-    }
-
-    if (media_mid.has_value()) {
-        transport.mid = std::string(*media_mid);
     }
 
     if (maxudp_value.has_value()) {
@@ -882,10 +695,8 @@ parse_stream_transport_signaling(const RawSdpSessionLines &session, const RawSdp
         transport.max_udp_datagram_bytes = *parsed;
     }
 
-    transport.source_filters.reserve(session.source_filter.size() + media.source_filter.size());
-
-    for (const std::string &raw_filter : session.source_filter) {
-        auto parsed = parse_source_filter_signaling_value(raw_filter, SourceFilterSignaling::Scope::Session);
+    {
+        auto parsed = parse_source_filter_signaling_value(media.source_filter, SourceFilterSignaling::Scope::Media);
         if (!parsed.has_value()) {
             return std::unexpected(parsed.error());
         }
@@ -893,62 +704,26 @@ parse_stream_transport_signaling(const RawSdpSessionLines &session, const RawSdp
         transport.source_filters.push_back(std::move(*parsed));
     }
 
-    for (const std::string &raw_filter : media.source_filter) {
-        auto parsed = parse_source_filter_signaling_value(raw_filter, SourceFilterSignaling::Scope::Media);
-        if (!parsed.has_value()) {
-            return std::unexpected(parsed.error());
-        }
+    if (transport.mid.has_value() && session.group.has_value()) {
+        const auto tokens = split_ws(*session.group);
 
-        transport.source_filters.push_back(std::move(*parsed));
-    }
-
-    if (transport.mid.has_value()) {
-        std::optional<DuplicateStreamGroup> duplicate_group{};
-
-        for (const std::string &group_line : session.group) {
-            const auto tokens = split_ws(group_line);
-            if (tokens.empty()) {
-                continue;
-            }
-
-            if (!ascii_iequals(tokens[0], "DUP")) {
-                continue;
-            }
-
-            bool contains_current_mid = false;
-            for (std::size_t i = 1; i < tokens.size(); ++i) {
-                if (tokens[i] == *transport.mid) {
-                    contains_current_mid = true;
-                    break;
-                }
-            }
-
-            if (!contains_current_mid) {
-                continue;
-            }
-
+        if (!tokens.empty() && ascii_iequals(tokens[0], "DUP")) {
             if (tokens.size() != 3) {
                 return std::unexpected(Error::InvalidValue);
             }
 
-            DuplicateStreamGroup parsed_group{
+            DuplicateStreamGroup duplicate_group{
                 .first_mid = std::string(tokens[1]),
                 .second_mid = std::string(tokens[2]),
             };
 
-            if (parsed_group.first_mid.empty() || parsed_group.second_mid.empty()) {
+            if (duplicate_group.first_mid.empty() || duplicate_group.second_mid.empty()) {
                 return std::unexpected(Error::InvalidValue);
             }
 
-            if (duplicate_group.has_value()) {
-                return std::unexpected(Error::InvalidValue);
+            if (*transport.mid == duplicate_group.first_mid || *transport.mid == duplicate_group.second_mid) {
+                transport.duplicate_group = std::move(duplicate_group);
             }
-
-            duplicate_group = std::move(parsed_group);
-        }
-
-        if (duplicate_group.has_value()) {
-            transport.duplicate_group = std::move(*duplicate_group);
         }
     }
 
