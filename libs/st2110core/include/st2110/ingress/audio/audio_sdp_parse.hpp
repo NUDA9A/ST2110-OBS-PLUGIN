@@ -1,9 +1,10 @@
 #ifndef ST2110_OBS_PLUGIN_AUDIO_SDP_PARSE_HPP
 #define ST2110_OBS_PLUGIN_AUDIO_SDP_PARSE_HPP
 
-#include "st2110/foundation/error.hpp"
-#include "st2110/ingress/shared/sdp_common.hpp"
-#include "st2110/model/audio/audio_signaling.hpp"
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/parsed_sdp.hpp>
+#include <st2110/ingress/shared/sdp_common.hpp>
+#include <st2110/model/audio/audio_signaling.hpp>
 
 #include <cstdint>
 #include <expected>
@@ -20,76 +21,13 @@ struct RawAudioSdpParseRtpMap {
     std::uint8_t payload_type = 0;
     std::string encoding_name{};
     std::uint32_t sampling_rate_hz = 0;
-    std::optional<std::uint16_t> channel_count{};
+    std::uint16_t channel_count = 1;
 };
 
 struct RawAudioSdpParseFmtpToken {
     std::string_view name{};
     std::optional<std::string_view> value{};
 };
-
-[[nodiscard]] inline std::expected<std::vector<std::uint8_t>, Error>
-parse_audio_sdp_parse_media_line_payload_types(std::string_view media_value) {
-    media_value = trim_ws(strip_cr(media_value));
-
-    const auto tokens = split_ws(media_value);
-    if (tokens.size() < 4) {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    if (tokens[0] != "audio") {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    if (tokens[2] != "RTP/AVP") {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    std::vector<std::uint8_t> payload_types{};
-    payload_types.reserve(tokens.size() - 3);
-
-    for (std::size_t i = 3; i < tokens.size(); ++i) {
-        const auto payload_type = parse_payload_type(tokens[i]);
-        if (!payload_type.has_value()) {
-            return std::unexpected(Error::InvalidValue);
-        }
-
-        if (*payload_type < 96 || *payload_type > 127) {
-            return std::unexpected(Error::InvalidValue);
-        }
-
-        payload_types.push_back(*payload_type);
-    }
-
-    return payload_types;
-}
-
-[[nodiscard]] inline bool audio_sdp_parse_media_line_contains_payload_type(
-    const std::vector<std::uint8_t> &payload_types, const std::uint8_t expected_payload_type) {
-    for (const std::uint8_t payload_type : payload_types) {
-        if (payload_type == expected_payload_type) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-[[nodiscard]] inline std::expected<const RawSdpMediaSectionLines *, Error>
-select_raw_audio_sdp_parse_media_section(const RawSdpDocument &raw_sdp, const std::uint8_t expected_payload_type) {
-    for (const RawSdpMediaSectionLines &media : raw_sdp.media_sections) {
-        auto payload_types = parse_audio_sdp_parse_media_line_payload_types(media.media_value);
-        if (!payload_types.has_value()) {
-            continue;
-        }
-
-        if (audio_sdp_parse_media_line_contains_payload_type(*payload_types, expected_payload_type)) {
-            return &media;
-        }
-    }
-
-    return std::unexpected(Error::InvalidValue);
-}
 
 [[nodiscard]] inline std::expected<RawAudioSdpParseRtpMap, Error>
 parse_audio_sdp_parse_rtpmap_payload(std::string_view raw_rtpmap) {
@@ -158,8 +96,7 @@ parse_audio_sdp_parse_rtpmap_payload(std::string_view raw_rtpmap) {
     return out;
 }
 
-[[nodiscard]] inline std::expected<std::uint32_t, Error>
-parse_audio_sdp_parse_ptime_us(std::string_view value) {
+[[nodiscard]] inline std::expected<std::uint32_t, Error> parse_audio_sdp_parse_ptime_us(std::string_view value) {
     value = trim_ws(strip_cr(value));
     if (value.empty()) {
         return std::unexpected(Error::InvalidValue);
@@ -253,9 +190,7 @@ parse_audio_sdp_parse_fmtp_token(std::string_view parameter) {
     };
 }
 
-[[nodiscard]] inline bool is_audio_sdp_parse_channel_order_digit(const char c) {
-    return c >= '0' && c <= '9';
-}
+[[nodiscard]] inline bool is_audio_sdp_parse_channel_order_digit(const char c) { return c >= '0' && c <= '9'; }
 
 [[nodiscard]] inline bool audio_sdp_parse_channel_order_token_contains_ws(std::string_view token) {
     for (const char c : token) {
@@ -274,9 +209,8 @@ parse_audio_sdp_parse_channel_order_u_two_digit_count(std::string_view symbol) {
         return std::unexpected(Error::InvalidValue);
     }
 
-    const std::uint16_t value =
-        static_cast<std::uint16_t>((static_cast<std::uint16_t>(symbol[1] - '0') * 10U) +
-                                   static_cast<std::uint16_t>(symbol[2] - '0'));
+    const std::uint16_t value = static_cast<std::uint16_t>((static_cast<std::uint16_t>(symbol[1] - '0') * 10U) +
+                                                           static_cast<std::uint16_t>(symbol[2] - '0'));
 
     if (value == 0 || value > 64) {
         return std::unexpected(Error::InvalidValue);
@@ -415,8 +349,8 @@ parse_audio_sdp_parse_smpte2110_channel_order(std::string_view raw_value) {
             return std::unexpected(group.error());
         }
 
-        const std::uint32_t next_declared_count =
-            static_cast<std::uint32_t>(parsed.declared_channel_count) + static_cast<std::uint32_t>(group->channel_count);
+        const std::uint32_t next_declared_count = static_cast<std::uint32_t>(parsed.declared_channel_count) +
+                                                  static_cast<std::uint32_t>(group->channel_count);
 
         if (next_declared_count > std::numeric_limits<std::uint16_t>::max()) {
             return std::unexpected(Error::InvalidValue);
@@ -509,17 +443,15 @@ audio_pcm_encoding_from_raw_audio_sdp_parse_rtpmap_encoding_name(std::string_vie
         return std::unexpected(Error::InvalidValue);
     }
 
-    if (audio_sdp_parse_ascii_iequals(encoding_name, "L16") ||
-        audio_sdp_parse_ascii_iequals(encoding_name, "L24")) {
+    if (audio_sdp_parse_ascii_iequals(encoding_name, "L16") || audio_sdp_parse_ascii_iequals(encoding_name, "L24")) {
         return AudioPcmEncoding::LinearPcm;
     }
 
     return std::unexpected(Error::Unsupported);
 }
 
-[[nodiscard]] inline Error
-apply_audio_media_specific_fmtp_to_signaling(const std::vector<std::string> &parameters,
-                                             AudioStreamSignaling &signaling) {
+[[nodiscard]] inline Error apply_audio_media_specific_fmtp_to_signaling(const std::vector<std::string> &parameters,
+                                                                        AudioStreamSignaling &signaling) {
     bool have_channel_order = false;
 
     for (const std::string &parameter_text : parameters) {
@@ -549,14 +481,24 @@ apply_audio_media_specific_fmtp_to_signaling(const std::vector<std::string> &par
     return Error::Ok;
 }
 
-[[nodiscard]] inline std::expected<AudioStreamSignaling, Error>
-parse_audio_stream_signaling(const RawSdpDocument &raw_sdp, const std::uint8_t expected_payload_type) {
-    auto selected_media = select_raw_audio_sdp_parse_media_section(raw_sdp, expected_payload_type);
-    if (!selected_media.has_value()) {
-        return std::unexpected(selected_media.error());
+[[nodiscard]] inline std::expected<ParsedSdpStreamLeg, Error>
+parse_audio_stream_signaling_leg(const RawSdpSessionLines &session, const RawSdpMediaSectionLines &media) {
+    auto parsed_media_line = parse_raw_sdp_media_line_single_payload_type(media.media_value);
+    if (!parsed_media_line.has_value()) {
+        return std::unexpected(parsed_media_line.error());
     }
 
-    const RawSdpMediaSectionLines &media = **selected_media;
+    if (!ascii_iequals(parsed_media_line->media_type, "audio")) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (!ascii_iequals(parsed_media_line->protocol, "RTP/AVP")) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (media.connection.empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
 
     if (media.rtpmap.empty()) {
         return std::unexpected(Error::InvalidValue);
@@ -566,9 +508,18 @@ parse_audio_stream_signaling(const RawSdpDocument &raw_sdp, const std::uint8_t e
         return std::unexpected(Error::InvalidValue);
     }
 
+    auto parsed_connection = parse_sdp_connection_endpoint_value(media.connection);
+    if (!parsed_connection.has_value()) {
+        return std::unexpected(parsed_connection.error());
+    }
+
     auto raw_rtpmap = parse_audio_sdp_parse_rtpmap_payload(media.rtpmap);
     if (!raw_rtpmap.has_value()) {
         return std::unexpected(raw_rtpmap.error());
+    }
+
+    if (raw_rtpmap->payload_type != parsed_media_line->payload_type) {
+        return std::unexpected(Error::InvalidValue);
     }
 
     auto parsed_ptime_us = parse_audio_sdp_parse_ptime_us(*media.ptime);
@@ -576,18 +527,17 @@ parse_audio_stream_signaling(const RawSdpDocument &raw_sdp, const std::uint8_t e
         return std::unexpected(parsed_ptime_us.error());
     }
 
-    auto parsed_timing = parse_stream_timing_signaling(raw_sdp.session, media, raw_rtpmap->sampling_rate_hz);
+    auto parsed_timing = parse_stream_timing_signaling(session, media, raw_rtpmap->sampling_rate_hz);
     if (!parsed_timing.has_value()) {
         return std::unexpected(parsed_timing.error());
     }
 
-    auto parsed_transport = parse_stream_transport_signaling(raw_sdp.session, media);
+    auto parsed_transport = parse_stream_transport_signaling(session, media);
     if (!parsed_transport.has_value()) {
         return std::unexpected(parsed_transport.error());
     }
 
-    auto parsed_encoding =
-        audio_pcm_encoding_from_raw_audio_sdp_parse_rtpmap_encoding_name(raw_rtpmap->encoding_name);
+    auto parsed_encoding = audio_pcm_encoding_from_raw_audio_sdp_parse_rtpmap_encoding_name(raw_rtpmap->encoding_name);
     if (!parsed_encoding.has_value()) {
         return std::unexpected(parsed_encoding.error());
     }
@@ -603,12 +553,11 @@ parse_audio_stream_signaling(const RawSdpDocument &raw_sdp, const std::uint8_t e
     signaling.media.pcm_bit_depth = *parsed_bit_depth;
     signaling.media.sampling_rate_hz = raw_rtpmap->sampling_rate_hz;
     signaling.media.packet_time_us = *parsed_ptime_us;
-    signaling.media.channel_count = *raw_rtpmap->channel_count;
+    signaling.media.channel_count = raw_rtpmap->channel_count;
     signaling.timing = std::move(*parsed_timing);
     signaling.transport = std::move(*parsed_transport);
 
-    if (const Error err =
-            apply_audio_media_specific_fmtp_to_signaling(media.fmtp_media_specific_parameters, signaling);
+    if (const Error err = apply_audio_media_specific_fmtp_to_signaling(media.fmtp_media_specific_parameters, signaling);
         err != Error::Ok) {
         return std::unexpected(err);
     }
@@ -617,17 +566,50 @@ parse_audio_stream_signaling(const RawSdpDocument &raw_sdp, const std::uint8_t e
         return std::unexpected(err);
     }
 
-    return signaling;
+    ParsedSdpStreamLeg leg{};
+    leg.expected_payload_type = parsed_media_line->payload_type;
+    leg.udp_port = parsed_media_line->udp_port;
+    leg.connection = std::move(*parsed_connection);
+    leg.audio_stream_signaling = std::move(signaling);
+
+    return leg;
 }
 
-[[nodiscard]] inline std::expected<AudioStreamSignaling, Error>
-parse_audio_stream_signaling(std::string_view sdp, const std::uint8_t expected_payload_type) {
+[[nodiscard]] inline std::expected<ParsedSdpStreamSet, Error>
+parse_audio_stream_signaling(const RawSdpDocument &raw_sdp) {
+    if (const Error err = validate_sdp_document_media_sections_for_single_stream_profile(raw_sdp, "audio");
+        err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
+    ParsedSdpStreamSet parsed{};
+    parsed.legs.reserve(raw_sdp.media_sections.size());
+
+    for (const RawSdpMediaSectionLines &media : raw_sdp.media_sections) {
+        auto parsed_leg = parse_audio_stream_signaling_leg(raw_sdp.session, media);
+        if (!parsed_leg.has_value()) {
+            return std::unexpected(parsed_leg.error());
+        }
+
+        parsed.legs.push_back(std::move(*parsed_leg));
+    }
+
+    if (parsed.is_duplicated()) {
+        if (parsed.legs[0].expected_payload_type != parsed.legs[1].expected_payload_type) {
+            return std::unexpected(Error::InvalidValue);
+        }
+    }
+
+    return parsed;
+}
+
+[[nodiscard]] inline std::expected<ParsedSdpStreamSet, Error> parse_audio_stream_signaling(const std::string_view sdp) {
     auto raw_sdp = parse_raw_sdp_document(sdp);
     if (!raw_sdp.has_value()) {
         return std::unexpected(raw_sdp.error());
     }
 
-    return parse_audio_stream_signaling(*raw_sdp, expected_payload_type);
+    return parse_audio_stream_signaling(*raw_sdp);
 }
 
 } // namespace st2110

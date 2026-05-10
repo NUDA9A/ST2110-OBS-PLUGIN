@@ -2,6 +2,7 @@
 #define ST2110_OBS_SDP_COMMON_HPP
 
 #include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/parsed_sdp.hpp>
 #include <st2110/model/common_sdp_parameters.hpp>
 
 #include <array>
@@ -40,6 +41,13 @@ struct RawSdpMediaSectionLines {
 struct RawSdpDocument {
     RawSdpSessionLines session{};
     std::vector<RawSdpMediaSectionLines> media_sections{};
+};
+
+struct RawSdpParsedMediaLine {
+    std::string media_type{};
+    std::uint16_t udp_port = 0;
+    std::string protocol{};
+    std::uint8_t payload_type = 0;
 };
 
 [[nodiscard]] inline std::string_view strip_cr(std::string_view line) {
@@ -175,6 +183,33 @@ template <typename T>
     }
 
     return *res;
+}
+
+[[nodiscard]] inline std::expected<RawSdpParsedMediaLine, Error>
+parse_raw_sdp_media_line_single_payload_type(std::string_view media_value) {
+    media_value = trim_ws(strip_cr(media_value));
+
+    const auto tokens = split_ws(media_value);
+    if (tokens.size() != 4) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    auto parsed_port = parse_sdp_numeric_value<std::uint16_t>(tokens[1]);
+    if (!parsed_port.has_value() || *parsed_port == 0) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    const auto payload_type = parse_payload_type(tokens[3]);
+    if (!payload_type.has_value() || *payload_type < 96 || *payload_type > 127) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return RawSdpParsedMediaLine{
+        .media_type = std::string(tokens[0]),
+        .udp_port = *parsed_port,
+        .protocol = std::string(tokens[2]),
+        .payload_type = *payload_type,
+    };
 }
 
 [[nodiscard]] inline bool is_common_fmtp_parameter_name(const std::string_view key) {
@@ -455,6 +490,73 @@ parse_media_clock_signaling_value(std::string_view raw_value) {
     return signaling;
 }
 
+[[nodiscard]] inline std::expected<ParsedSdpConnectionEndpoint, Error>
+parse_sdp_connection_endpoint_value(std::string_view raw_value) {
+    raw_value = trim_ws(strip_cr(raw_value));
+    if (raw_value.empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    const auto tokens = split_ws(raw_value);
+    if (tokens.size() != 3) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    const auto address_parts = split_char(tokens[2], '/');
+    if (address_parts.empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    const std::string_view base_address = trim_ws(address_parts[0]);
+    if (base_address.empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    ParsedSdpConnectionEndpoint endpoint{};
+    endpoint.network_type = std::string(tokens[0]);
+    endpoint.address_type = std::string(tokens[1]);
+    endpoint.destination_address = std::string(base_address);
+
+    if (ascii_iequals(tokens[1], "IP4")) {
+        if (address_parts.size() == 2 || address_parts.size() == 3) {
+            auto parsed_ttl = parse_sdp_numeric_value<std::uint8_t>(trim_ws(address_parts[1]));
+            if (!parsed_ttl.has_value()) {
+                return std::unexpected(parsed_ttl.error());
+            }
+
+            endpoint.ttl = *parsed_ttl;
+        } else if (address_parts.size() != 1) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        if (address_parts.size() == 3) {
+            auto parsed_count = parse_sdp_numeric_value<std::uint16_t>(trim_ws(address_parts[2]));
+            if (!parsed_count.has_value() || *parsed_count == 0) {
+                return std::unexpected(Error::InvalidValue);
+            }
+
+            endpoint.address_count = *parsed_count;
+        }
+    } else if (ascii_iequals(tokens[1], "IP6")) {
+        if (address_parts.size() == 2) {
+            auto parsed_count = parse_sdp_numeric_value<std::uint16_t>(trim_ws(address_parts[1]));
+            if (!parsed_count.has_value() || *parsed_count == 0) {
+                return std::unexpected(Error::InvalidValue);
+            }
+
+            endpoint.address_count = *parsed_count;
+        } else if (address_parts.size() != 1) {
+            return std::unexpected(Error::InvalidValue);
+        }
+    } else {
+        if (address_parts.size() != 1) {
+            return std::unexpected(Error::InvalidValue);
+        }
+    }
+
+    return endpoint;
+}
+
 [[nodiscard]] inline std::expected<ReferenceClock, Error> parse_reference_clock_value(std::string_view raw_value) {
     raw_value = trim_ws(raw_value);
     if (raw_value.empty()) {
@@ -596,6 +698,90 @@ parse_source_filter_signaling_value(std::string_view raw_value, const SourceFilt
     }
 
     return filter;
+}
+
+[[nodiscard]] inline std::expected<std::optional<DuplicateStreamGroup>, Error>
+parse_session_duplicate_stream_group(const RawSdpSessionLines &session) {
+    if (!session.group.has_value()) {
+        return std::optional<DuplicateStreamGroup>{};
+    }
+
+    const auto tokens = split_ws(*session.group);
+    if (tokens.size() != 3) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (!ascii_iequals(tokens[0], "DUP")) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    DuplicateStreamGroup group{
+        .first_mid = std::string(tokens[1]),
+        .second_mid = std::string(tokens[2]),
+    };
+
+    if (group.first_mid.empty() || group.second_mid.empty() || group.first_mid == group.second_mid) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return std::optional<DuplicateStreamGroup>{std::move(group)};
+}
+
+[[nodiscard]] inline Error
+validate_sdp_document_media_sections_for_single_stream_profile(const RawSdpDocument &raw_sdp,
+                                                               const std::string_view expected_media_type) {
+    if (raw_sdp.media_sections.empty() || raw_sdp.media_sections.size() > 2) {
+        return Error::InvalidValue;
+    }
+
+    for (const RawSdpMediaSectionLines &media : raw_sdp.media_sections) {
+        auto parsed_media_line = parse_raw_sdp_media_line_single_payload_type(media.media_value);
+        if (!parsed_media_line.has_value()) {
+            return parsed_media_line.error();
+        }
+
+        if (!ascii_iequals(parsed_media_line->media_type, expected_media_type)) {
+            return Error::InvalidValue;
+        }
+    }
+
+    auto duplicate_group = parse_session_duplicate_stream_group(raw_sdp.session);
+    if (!duplicate_group.has_value()) {
+        return duplicate_group.error();
+    }
+
+    if (raw_sdp.media_sections.size() == 1) {
+        if (duplicate_group->has_value()) {
+            return Error::InvalidValue;
+        }
+
+        return Error::Ok;
+    }
+
+    if (!duplicate_group->has_value()) {
+        return Error::InvalidValue;
+    }
+
+    const auto &first = raw_sdp.media_sections[0];
+    const auto &second = raw_sdp.media_sections[1];
+
+    if (!first.mid.has_value() || !second.mid.has_value()) {
+        return Error::InvalidValue;
+    }
+
+    if (*first.mid == *second.mid) {
+        return Error::InvalidValue;
+    }
+
+    const bool mids_match_group =
+        ((*first.mid == duplicate_group->value().first_mid && *second.mid == duplicate_group->value().second_mid) ||
+         (*first.mid == duplicate_group->value().second_mid && *second.mid == duplicate_group->value().first_mid));
+
+    if (!mids_match_group) {
+        return Error::InvalidValue;
+    }
+
+    return Error::Ok;
 }
 
 [[nodiscard]] inline std::expected<StreamTimingSignaling, Error>

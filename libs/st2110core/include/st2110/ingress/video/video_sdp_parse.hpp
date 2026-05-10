@@ -1,9 +1,10 @@
 #ifndef ST2110_OBS_PLUGIN_VIDEO_SDP_PARSE_HPP
 #define ST2110_OBS_PLUGIN_VIDEO_SDP_PARSE_HPP
 
-#include "st2110/foundation/error.hpp"
-#include "st2110/ingress/shared/sdp_common.hpp"
-#include "st2110/model/video/video_signaling_types.hpp"
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/parsed_sdp.hpp>
+#include <st2110/ingress/shared/sdp_common.hpp>
+#include <st2110/model/video/video_signaling_types.hpp>
 
 #include <cstdint>
 #include <expected>
@@ -32,61 +33,6 @@ struct RawVideoSdpParseRtpMap {
     std::uint32_t clock_rate = 0;
     std::optional<std::string> encoding_parameters{};
 };
-
-[[nodiscard]] inline std::expected<std::vector<std::uint8_t>, Error>
-parse_video_media_line_payload_types(std::string_view media_value) {
-    media_value = trim_ws(strip_cr(media_value));
-
-    const auto tokens = split_ws(media_value);
-    if (tokens.size() < 4) {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    if (tokens[0] != "video") {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    std::vector<std::uint8_t> payload_types{};
-    payload_types.reserve(tokens.size() - 3);
-
-    for (std::size_t i = 3; i < tokens.size(); ++i) {
-        const auto payload_type = parse_payload_type(tokens[i]);
-        if (!payload_type.has_value()) {
-            return std::unexpected(Error::InvalidValue);
-        }
-
-        payload_types.push_back(*payload_type);
-    }
-
-    return payload_types;
-}
-
-[[nodiscard]] inline bool video_media_line_contains_payload_type(const std::vector<std::uint8_t> &payload_types,
-                                                                 const std::uint8_t expected_payload_type) {
-    for (const std::uint8_t payload_type : payload_types) {
-        if (payload_type == expected_payload_type) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-[[nodiscard]] inline std::expected<const RawSdpMediaSectionLines *, Error>
-select_raw_video_sdp_media_section(const RawSdpDocument &raw_sdp, const std::uint8_t expected_payload_type) {
-    for (const RawSdpMediaSectionLines &media : raw_sdp.media_sections) {
-        auto payload_types = parse_video_media_line_payload_types(media.media_value);
-        if (!payload_types.has_value()) {
-            continue;
-        }
-
-        if (video_media_line_contains_payload_type(*payload_types, expected_payload_type)) {
-            return &media;
-        }
-    }
-
-    return std::unexpected(Error::InvalidValue);
-}
 
 [[nodiscard]] inline std::expected<RawVideoSdpParseRtpMap, Error>
 parse_video_sdp_parse_rtpmap_payload(std::string_view raw_rtpmap) {
@@ -690,14 +636,24 @@ parse_video_sender_type_from_raw_value(const std::string_view raw_value) {
     return Error::Ok;
 }
 
-[[nodiscard]] inline std::expected<VideoStreamSignaling, Error>
-parse_video_stream_signaling(const RawSdpDocument &raw_sdp, const std::uint8_t expected_payload_type) {
-    auto selected_media = select_raw_video_sdp_media_section(raw_sdp, expected_payload_type);
-    if (!selected_media.has_value()) {
-        return std::unexpected(selected_media.error());
+[[nodiscard]] inline std::expected<ParsedSdpStreamLeg, Error>
+parse_video_stream_signaling_leg(const RawSdpSessionLines &session, const RawSdpMediaSectionLines &media) {
+    auto parsed_media_line = parse_raw_sdp_media_line_single_payload_type(media.media_value);
+    if (!parsed_media_line.has_value()) {
+        return std::unexpected(parsed_media_line.error());
     }
 
-    const RawSdpMediaSectionLines &media = **selected_media;
+    if (!ascii_iequals(parsed_media_line->media_type, "video")) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (!ascii_iequals(parsed_media_line->protocol, "RTP/AVP")) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (media.connection.empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
 
     if (media.rtpmap.empty()) {
         return std::unexpected(Error::InvalidValue);
@@ -707,17 +663,26 @@ parse_video_stream_signaling(const RawSdpDocument &raw_sdp, const std::uint8_t e
         return std::unexpected(Error::InvalidValue);
     }
 
+    auto parsed_connection = parse_sdp_connection_endpoint_value(media.connection);
+    if (!parsed_connection.has_value()) {
+        return std::unexpected(parsed_connection.error());
+    }
+
     auto raw_rtpmap = parse_video_sdp_parse_rtpmap_payload(media.rtpmap);
     if (!raw_rtpmap.has_value()) {
         return std::unexpected(raw_rtpmap.error());
     }
 
-    auto parsed_timing = parse_stream_timing_signaling(raw_sdp.session, media, raw_rtpmap->clock_rate);
+    if (raw_rtpmap->payload_type != parsed_media_line->payload_type) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    auto parsed_timing = parse_stream_timing_signaling(session, media, raw_rtpmap->clock_rate);
     if (!parsed_timing.has_value()) {
         return std::unexpected(parsed_timing.error());
     }
 
-    auto parsed_transport = parse_stream_transport_signaling(raw_sdp.session, media);
+    auto parsed_transport = parse_stream_transport_signaling(session, media);
     if (!parsed_transport.has_value()) {
         return std::unexpected(parsed_transport.error());
     }
@@ -736,17 +701,50 @@ parse_video_stream_signaling(const RawSdpDocument &raw_sdp, const std::uint8_t e
         return std::unexpected(err);
     }
 
-    return signaling;
+    ParsedSdpStreamLeg leg{};
+    leg.expected_payload_type = parsed_media_line->payload_type;
+    leg.udp_port = parsed_media_line->udp_port;
+    leg.connection = std::move(*parsed_connection);
+    leg.video_stream_signaling = std::move(signaling);
+
+    return leg;
 }
 
-[[nodiscard]] inline std::expected<VideoStreamSignaling, Error>
-parse_video_stream_signaling(std::string_view sdp, const std::uint8_t expected_payload_type) {
+[[nodiscard]] inline std::expected<ParsedSdpStreamSet, Error>
+parse_video_stream_signaling(const RawSdpDocument &raw_sdp) {
+    if (const Error err = validate_sdp_document_media_sections_for_single_stream_profile(raw_sdp, "video");
+        err != Error::Ok) {
+        return std::unexpected(err);
+    }
+
+    ParsedSdpStreamSet parsed{};
+    parsed.legs.reserve(raw_sdp.media_sections.size());
+
+    for (const RawSdpMediaSectionLines &media : raw_sdp.media_sections) {
+        auto parsed_leg = parse_video_stream_signaling_leg(raw_sdp.session, media);
+        if (!parsed_leg.has_value()) {
+            return std::unexpected(parsed_leg.error());
+        }
+
+        parsed.legs.push_back(std::move(*parsed_leg));
+    }
+
+    if (parsed.is_duplicated()) {
+        if (parsed.legs[0].expected_payload_type != parsed.legs[1].expected_payload_type) {
+            return std::unexpected(Error::InvalidValue);
+        }
+    }
+
+    return parsed;
+}
+
+[[nodiscard]] inline std::expected<ParsedSdpStreamSet, Error> parse_video_stream_signaling(const std::string_view sdp) {
     auto raw_sdp = parse_raw_sdp_document(sdp);
     if (!raw_sdp.has_value()) {
         return std::unexpected(raw_sdp.error());
     }
 
-    return parse_video_stream_signaling(*raw_sdp, expected_payload_type);
+    return parse_video_stream_signaling(*raw_sdp);
 }
 
 } // namespace st2110
