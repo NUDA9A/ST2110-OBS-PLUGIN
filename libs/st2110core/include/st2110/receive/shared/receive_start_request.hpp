@@ -8,11 +8,6 @@
 #include <variant>
 
 namespace st2110 {
-enum class ReceiveBackendKind {
-    Socket,
-    Mtl,
-};
-
 using ReceiveMediaBootstrap = std::variant<VideoReceiveBootstrap, AudioReceiveBootstrap>;
 
 struct ReceiveStartRequest {

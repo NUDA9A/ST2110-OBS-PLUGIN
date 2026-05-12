@@ -5,9 +5,15 @@
 #include <st2110/contracts/video/partial_unit_policy.hpp>
 
 namespace st2110 {
+enum class ReceiveBackendKind {
+    Socket,
+    Mtl,
+};
+
 struct Settings {
     ReorderBufferConfig reorder_buffer_config{};
     PartialUnitPolicy partial_unit_policy{};
+    ReceiveBackendKind backend_kind = ReceiveBackendKind::Socket;
 };
 }
 
