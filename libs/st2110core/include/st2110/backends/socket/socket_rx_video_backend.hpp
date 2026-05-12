@@ -14,76 +14,34 @@
 #include <st2110/delivery/video/socket_video_start_config.hpp>
 
 #include <memory>
-#include <optional>
 #include <utility>
 #include <vector>
 
 namespace st2110 {
 class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public IRxVideoBackend {
   public:
-    explicit SocketRxVideoBackend(SocketVideoStartConfig cfg)
-        : SocketRxSingleMediaBackendBase(make_default_port_factory()), cfg_(std::move(cfg)) {}
+    explicit SocketRxVideoBackend(const SocketVideoStartConfig &cfg)
+        : SocketRxSingleMediaBackendBase(make_default_port_factory(), cfg.legs[0].max_udp_datagram_bytes,
+                                         cfg.reorder_buffer_config, collect_open_configs(cfg),
+                                         cfg.stream.expected_payload_type),
+          video_receive_pipeline_(cfg.video_receive_pipeline_config),
+          video_timestamp_mapper_(cfg.rtp_timestamp_mapper_config) {}
 
-    RxBackendLifecycleResult start_video(IVideoFrameSink &sink) override {
-        auto port = create_port();
-        if (port == nullptr) {
-            return std::unexpected(Error::InvalidValue);
-        }
+    RxBackendLifecycleResult start_video(IVideoFrameSink &sink) override { return start_video_runtime(sink); }
 
-        return start_video_runtime(sink, std::move(port));
-    }
+    ~SocketRxVideoBackend() override { (void)SocketRxSingleMediaBackendBase::stop(); }
 
   protected:
-    void clear_media_runtime_objects() noexcept override {
-        clear_common_runtime_objects();
+    std::expected<std::unique_ptr<PacketView>, Error> parse_packet(const std::size_t leg_index,
+                                                                   const ByteSpan udp_payload) override {
+        (void)leg_index;
 
-        reorder_buffer_.reset();
-        video_receive_pipeline_.reset();
-        video_timestamp_mapper_.reset();
-        maxudp_ = 0;
-        reorder_tolerance_policy_ = {};
-        video_sink_ = nullptr;
-    }
-
-    void process_received_datagram(ByteSpan udp_payload) noexcept override {
-        if (reorder_buffer_ == nullptr || video_receive_pipeline_ == nullptr) {
-            return;
-        }
-
-        if (is_rtcp_like_datagram(udp_payload)) {
-            record_ignored_control_datagram();
-            return;
-        }
-
-        if (const Error err = validate_packet_parse_policy(udp_payload, maxudp_); err != Error::Ok) {
-            record_rejected_packet(err, PacketParseStage::PacketPolicy);
-            return;
-        }
-
-        auto packet = parse_packet_view_staged(udp_payload);
+        auto packet = parse_packet_view(udp_payload, maxudp_);
         if (!packet) {
-            record_rejected_packet(packet.error().error, packet.error().stage);
-            return;
+            return std::unexpected(packet.error());
         }
 
-        if (packet->rtp.payload_type != cfg_.stream.expected_payload_type) {
-            record_ignored_nonmedia_datagram();
-            return;
-        }
-
-        record_parsed_packet_ok();
-        reorder_buffer_->push(*packet);
-        drain_reorder_buffer_to_sink();
-    }
-
-    void augment_stats_snapshot_locked(BackendStats &snapshot) const noexcept override {
-        if (reorder_buffer_ != nullptr) {
-            snapshot.reorder = reorder_buffer_->stats();
-        }
-
-        if (video_receive_pipeline_ != nullptr) {
-            snapshot.depacketizer = video_receive_pipeline_->depacketizer_stats();
-        }
+        return std::make_unique<VideoPacketView>(*packet);
     }
 
     [[nodiscard]] std::unique_ptr<IReorderBuffer> make_reorder_buffer(const ReorderBufferConfig &cfg) override {
@@ -94,32 +52,29 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public
         auto base = packet->view();
         auto video_packet = std::unique_ptr<VideoPacketView>(static_cast<VideoPacketView *>(base.release()));
 
-        auto frames = video_receive_pipeline_->push(std::move(video_packet));
+        auto frames = video_receive_pipeline_.push(std::move(video_packet));
         for (auto &frame : frames) {
             deliver_reconstructed_frame(std::move(frame));
         }
     }
 
   private:
-    RxBackendLifecycleResult start_video_runtime(IVideoFrameSink &sink, std::unique_ptr<ISocketRxPort> port) {
-        auto reorder_buffer = make_reorder_buffer(cfg_.reorder_buffer_config);
-        auto receive_buffer = make_receive_buffer(cfg_.legs[0].max_udp_datagram_bytes);
+    static std::vector<SocketRxOpenConfig> collect_open_configs(const SocketVideoStartConfig &cfg) {
+        std::vector<SocketRxOpenConfig> open_configs;
+        open_configs.reserve(cfg.legs.size());
+        for (const auto &leg : cfg.legs) {
+            open_configs.emplace_back(leg.open_config);
+        }
 
-        std::unique_ptr<VideoReceivePipeline> video_receive_pipeline =
-            std::make_unique<VideoReceivePipeline>(cfg_.video_receive_pipeline_config);
-        std::optional<VideoRtpTimestampMapper> video_timestamp_mapper;
-        video_timestamp_mapper.emplace(cfg_.rtp_timestamp_mapper_config);
+        return open_configs;
+    }
 
-        maxudp_ = cfg_.legs[0].max_udp_datagram_bytes;
-        reorder_tolerance_policy_ = cfg_.reorder_buffer_config.reorder_tolerance_policy;
-        reorder_buffer_ = std::move(reorder_buffer);
-        video_receive_pipeline_ = std::move(video_receive_pipeline);
-        video_timestamp_mapper_ = std::move(video_timestamp_mapper);
+    RxBackendLifecycleResult start_video_runtime(IVideoFrameSink &sink) {
+        reorder_buffer_ = make_reorder_buffer(reorder_buffer_config_);
         video_sink_ = &sink;
 
-        auto started = start_common_runtime(std::move(port), cfg_.open_config, std::move(receive_buffer));
+        auto started = start_common_runtime();
         if (!started) {
-            clear_media_runtime_objects();
             return std::unexpected(started.error());
         }
 
@@ -127,25 +82,12 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public
     }
 
     void deliver_reconstructed_frame(ReconstructedVideoFrame &&frame) noexcept {
-        if (video_sink_ == nullptr || frame.partial()) {
-            return;
-        }
-
         const TimestampNs timestamp_ns = map_frame_timestamp_ns(frame.rtp_timestamp);
         video_sink_->on_video_frame(frame.frame.view(timestamp_ns));
-        {
-            std::lock_guard lock(stats_mutex_);
-            ++stats_.frames_delivered;
-        }
-        record_delivered_media_unit();
     }
 
     [[nodiscard]] TimestampNs map_frame_timestamp_ns(const std::uint32_t rtp_timestamp) noexcept {
-        if (!video_timestamp_mapper_.has_value()) {
-            return 0;
-        }
-
-        const auto mapped = video_timestamp_mapper_->map(rtp_timestamp);
+        const auto mapped = video_timestamp_mapper_.map(rtp_timestamp);
         if (!mapped.has_value()) {
             return 0;
         }
@@ -153,10 +95,8 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase, public
         return *mapped;
     }
 
-    SocketVideoStartConfig cfg_;
-    std::unique_ptr<VideoReceivePipeline> video_receive_pipeline_{};
-    std::optional<VideoRtpTimestampMapper> video_timestamp_mapper_{};
-    std::size_t maxudp_{};
+    VideoReceivePipeline video_receive_pipeline_;
+    VideoRtpTimestampMapper video_timestamp_mapper_;
     IVideoFrameSink *video_sink_ = nullptr;
 };
 } // namespace st2110

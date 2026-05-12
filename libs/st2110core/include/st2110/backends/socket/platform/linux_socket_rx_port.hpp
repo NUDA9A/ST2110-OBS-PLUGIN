@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstdint>
+#include <cstring>
 #include <expected>
 #include <memory>
 #include <netinet/in.h>
@@ -77,17 +78,18 @@ class LinuxSocketRxPort final : public ISocketRxPort {
             return Error::Ok;
         }
 
+        Error result = Error::Ok;
+
         if (const auto err = leave_multicast_membership(native_socket_, *open_cfg_); err.has_value()) {
-            return socket_port_error_to_error(*err);
+            result = socket_port_error_to_error(*err);
         }
 
-        if (const Error err = close_native_socket(native_socket_); err != Error::Ok) {
-            return err;
+        if (const Error err = close_native_socket(native_socket_); err != Error::Ok && result == Error::Ok) {
+            result = err;
         }
 
         clear_open_state();
-
-        return Error::Ok;
+        return result;
     }
 
     [[nodiscard]] std::expected<SocketReceiveResult, Error> receive(std::span<std::uint8_t> buffer) override {
@@ -99,43 +101,77 @@ class LinuxSocketRxPort final : public ISocketRxPort {
             return std::unexpected(Error::InvalidValue);
         }
 
-        const auto reply = ::recv(native_socket_, buffer.data(), buffer.size(), 0);
-        if (reply < 0) {
-            switch (errno) {
-            case EINTR:
-                return std::unexpected(socket_port_error_to_error(SocketPortError::ReceiveInterrupted));
-            case EBADF:
-            case ENOTSOCK:
-                return std::unexpected(socket_port_error_to_error(SocketPortError::ReceiveAborted));
-            default:
-                return std::unexpected(socket_port_error_to_error(SocketPortError::ReceiveFailed));
-            }
-        }
+        while (true) {
+            sockaddr_storage sender_addr{};
+            socklen_t sender_addr_len = sizeof(sender_addr);
 
-        return SocketReceiveResult{static_cast<std::size_t>(reply)};
+            const auto reply = ::recvfrom(native_socket_, buffer.data(), buffer.size(), 0,
+                                          reinterpret_cast<sockaddr *>(&sender_addr), &sender_addr_len);
+            if (reply < 0) {
+                switch (errno) {
+                case EINTR:
+                    return std::unexpected(socket_port_error_to_error(SocketPortError::ReceiveInterrupted));
+                case EBADF:
+                case ENOTSOCK:
+                    return std::unexpected(socket_port_error_to_error(SocketPortError::ReceiveAborted));
+                default:
+                    return std::unexpected(socket_port_error_to_error(SocketPortError::ReceiveFailed));
+                }
+            }
+
+            if (!sender_matches_source_filter(sender_addr, sender_addr_len, *open_cfg_)) {
+                continue;
+            }
+
+            return SocketReceiveResult{static_cast<std::size_t>(reply)};
+        }
     }
 
   private:
     [[nodiscard]] static std::optional<SocketPortError> join_multicast_membership(const int native_socket,
-                                                                              const SocketRxOpenConfig &cfg) {
+                                                                                  const SocketRxOpenConfig &cfg) {
         if (!cfg.multicast_membership) {
             return std::nullopt;
         }
 
         switch (cfg.multicast_membership->family) {
         case SocketAddressFamily::IPv4: {
-            ip_mreq mreq{};
-            if (::inet_pton(AF_INET, cfg.multicast_membership->group_address.c_str(), &mreq.imr_multiaddr.s_addr) != 1) {
+            in_addr interface_addr{};
+            if (cfg.multicast_membership->interface_address.empty()) {
+                interface_addr.s_addr = htonl(INADDR_ANY);
+            } else {
+                if (::inet_pton(AF_INET, cfg.multicast_membership->interface_address.c_str(), &interface_addr.s_addr) !=
+                    1) {
+                    return SocketPortError::MulticastJoinFailed;
+                }
+            }
+
+            in_addr group_addr{};
+            if (::inet_pton(AF_INET, cfg.multicast_membership->group_address.c_str(), &group_addr.s_addr) != 1) {
                 return SocketPortError::MulticastJoinFailed;
             }
-            if (cfg.multicast_membership->interface_address.empty()) {
-                mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-            } else {
-                if (::inet_pton(AF_INET, cfg.multicast_membership->interface_address.c_str(),
-                                &mreq.imr_interface.s_addr) != 1) {
-                    return SocketPortError::MulticastJoinFailed;
-                                }
+
+            if (cfg.source_filter && !cfg.source_filter->source_addresses.empty()) {
+                for (const std::string &source_address : cfg.source_filter->source_addresses) {
+                    ip_mreq_source mreq{};
+                    mreq.imr_multiaddr = group_addr;
+                    mreq.imr_interface = interface_addr;
+
+                    if (::inet_pton(AF_INET, source_address.c_str(), &mreq.imr_sourceaddr.s_addr) != 1) {
+                        return SocketPortError::MulticastJoinFailed;
+                    }
+
+                    if (::setsockopt(native_socket, IPPROTO_IP, IP_ADD_SOURCE_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
+                        return SocketPortError::MulticastJoinFailed;
+                    }
+                }
+
+                return std::nullopt;
             }
+
+            ip_mreq mreq{};
+            mreq.imr_multiaddr = group_addr;
+            mreq.imr_interface = interface_addr;
 
             if (::setsockopt(native_socket, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
                 return SocketPortError::MulticastJoinFailed;
@@ -152,25 +188,49 @@ class LinuxSocketRxPort final : public ISocketRxPort {
     }
 
     [[nodiscard]] static std::optional<SocketPortError>
-leave_multicast_membership(const int native_socket, const SocketRxOpenConfig &cfg) noexcept {
+    leave_multicast_membership(const int native_socket, const SocketRxOpenConfig &cfg) noexcept {
         if (!cfg.multicast_membership) {
             return std::nullopt;
         }
 
         switch (cfg.multicast_membership->family) {
         case SocketAddressFamily::IPv4: {
-            ip_mreq mreq{};
-            if (::inet_pton(AF_INET, cfg.multicast_membership->group_address.c_str(), &mreq.imr_multiaddr.s_addr) != 1) {
+            in_addr interface_addr{};
+            if (cfg.multicast_membership->interface_address.empty()) {
+                interface_addr.s_addr = htonl(INADDR_ANY);
+            } else {
+                if (::inet_pton(AF_INET, cfg.multicast_membership->interface_address.c_str(), &interface_addr.s_addr) !=
+                    1) {
+                    return SocketPortError::MulticastLeaveFailed;
+                }
+            }
+
+            in_addr group_addr{};
+            if (::inet_pton(AF_INET, cfg.multicast_membership->group_address.c_str(), &group_addr.s_addr) != 1) {
                 return SocketPortError::MulticastLeaveFailed;
             }
-            if (cfg.multicast_membership->interface_address.empty()) {
-                mreq.imr_interface.s_addr = htonl(INADDR_ANY);
-            } else {
-                if (::inet_pton(AF_INET, cfg.multicast_membership->interface_address.c_str(),
-                                &mreq.imr_interface.s_addr) != 1) {
-                    return SocketPortError::MulticastLeaveFailed;
-                                }
+
+            if (cfg.source_filter && !cfg.source_filter->source_addresses.empty()) {
+                for (const std::string &source_address : cfg.source_filter->source_addresses) {
+                    ip_mreq_source mreq{};
+                    mreq.imr_multiaddr = group_addr;
+                    mreq.imr_interface = interface_addr;
+
+                    if (::inet_pton(AF_INET, source_address.c_str(), &mreq.imr_sourceaddr.s_addr) != 1) {
+                        return SocketPortError::MulticastLeaveFailed;
+                    }
+
+                    if (::setsockopt(native_socket, IPPROTO_IP, IP_DROP_SOURCE_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
+                        return SocketPortError::MulticastLeaveFailed;
+                    }
+                }
+
+                return std::nullopt;
             }
+
+            ip_mreq mreq{};
+            mreq.imr_multiaddr = group_addr;
+            mreq.imr_interface = interface_addr;
 
             if (::setsockopt(native_socket, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mreq, sizeof(mreq)) != 0) {
                 return SocketPortError::MulticastLeaveFailed;
@@ -183,6 +243,64 @@ leave_multicast_membership(const int native_socket, const SocketRxOpenConfig &cf
         default:
             return std::nullopt;
         }
+    }
+
+    [[nodiscard]] static bool ipv4_sender_matches_source_filter(const sockaddr_in &sender_addr,
+                                                                const SocketSourceFilter &source_filter) noexcept {
+        for (const std::string &source_address : source_filter.source_addresses) {
+            in_addr allowed_addr{};
+            if (::inet_pton(AF_INET, source_address.c_str(), &allowed_addr.s_addr) != 1) {
+                continue;
+            }
+
+            if (sender_addr.sin_addr.s_addr == allowed_addr.s_addr) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    [[nodiscard]] static bool ipv6_sender_matches_source_filter(const sockaddr_in6 &sender_addr,
+                                                                const SocketSourceFilter &source_filter) noexcept {
+        for (const std::string &source_address : source_filter.source_addresses) {
+            in6_addr allowed_addr{};
+            if (::inet_pton(AF_INET6, source_address.c_str(), &allowed_addr) != 1) {
+                continue;
+            }
+
+            if (std::memcmp(&sender_addr.sin6_addr, &allowed_addr, sizeof(in6_addr)) == 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    [[nodiscard]] static bool sender_matches_source_filter(const sockaddr_storage &sender_addr,
+                                                           const socklen_t sender_addr_len,
+                                                           const SocketRxOpenConfig &cfg) noexcept {
+        if (!cfg.source_filter.has_value()) {
+            return true;
+        }
+
+        switch (cfg.source_filter->family) {
+        case SocketAddressFamily::IPv4:
+            if (sender_addr.ss_family != AF_INET || sender_addr_len < sizeof(sockaddr_in)) {
+                return false;
+            }
+            return ipv4_sender_matches_source_filter(*reinterpret_cast<const sockaddr_in *>(&sender_addr),
+                                                     *cfg.source_filter);
+
+        case SocketAddressFamily::IPv6:
+            if (sender_addr.ss_family != AF_INET6 || sender_addr_len < sizeof(sockaddr_in6)) {
+                return false;
+            }
+            return ipv6_sender_matches_source_filter(*reinterpret_cast<const sockaddr_in6 *>(&sender_addr),
+                                                     *cfg.source_filter);
+        }
+
+        return false;
     }
 
     [[nodiscard]] static Error validate_open_request(const SocketRxOpenConfig &cfg) {
@@ -243,7 +361,7 @@ leave_multicast_membership(const int native_socket, const SocketRxOpenConfig &cf
     }
 
     [[nodiscard]] static std::optional<SocketPortError> bind_native_socket(const int native_socket,
-                                                                       const SocketRxOpenConfig &cfg) {
+                                                                           const SocketRxOpenConfig &cfg) {
         switch (cfg.bind_endpoint.family) {
         case SocketAddressFamily::IPv4: {
             sockaddr_in addr{};

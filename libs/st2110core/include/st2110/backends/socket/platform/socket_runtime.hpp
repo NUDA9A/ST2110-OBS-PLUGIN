@@ -3,7 +3,6 @@
 
 #include "st2110/foundation/error.hpp"
 #include "st2110/ingress/shared/packet_parse.hpp"
-#include "st2110/rx_config.hpp"
 #include <st2110/backends/receive_local_policy.hpp>
 
 #include <cstddef>
@@ -14,6 +13,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace st2110 {
 enum class SocketPortError {
@@ -147,9 +147,29 @@ struct SocketMulticastMembership {
     return Error::Ok;
 }
 
+struct SocketSourceFilter {
+    SocketAddressFamily family = SocketAddressFamily::IPv4;
+    std::vector<std::string> source_addresses{};
+};
+
+[[nodiscard]] inline Error validate_socket_source_filter(const SocketSourceFilter &source_filter) {
+    if (source_filter.source_addresses.empty()) {
+        return Error::InvalidValue;
+    }
+
+    for (const std::string &source_address : source_filter.source_addresses) {
+        if (!is_valid_address(source_address, source_filter.family)) {
+            return Error::InvalidValue;
+        }
+    }
+
+    return Error::Ok;
+}
+
 struct SocketRxOpenConfig {
     SocketEndpoint bind_endpoint{};
     std::optional<SocketMulticastMembership> multicast_membership{};
+    std::optional<SocketSourceFilter> source_filter{};
     bool reuse_address = true;
 };
 
@@ -166,23 +186,31 @@ struct SocketRxOpenConfig {
         }
     }
 
+    if (cfg.source_filter) {
+        if (const Error err = validate_socket_source_filter(*cfg.source_filter); err != Error::Ok) {
+            return err;
+        }
+        if (cfg.source_filter->family != cfg.bind_endpoint.family) {
+            return Error::InvalidValue;
+        }
+    }
+
     return Error::Ok;
 }
 
-struct SocketRxOperationalCommonConfig {
-    SocketRxOpenConfig open_config{};
-    PacketParsePolicy packet_parse_policy{};
-};
+[[nodiscard]] inline bool socket_multicast_membership_equal(const SocketMulticastMembership &lhs,
+                                                            const SocketMulticastMembership &rhs) noexcept {
+    return lhs.family == rhs.family && lhs.group_address == rhs.group_address &&
+           lhs.interface_address == rhs.interface_address;
+}
+
+[[nodiscard]] inline bool socket_source_filter_equal(const SocketSourceFilter &lhs,
+                                                     const SocketSourceFilter &rhs) noexcept {
+    return lhs.family == rhs.family && lhs.source_addresses == rhs.source_addresses;
+}
 
 [[nodiscard]] inline bool bind_endpoint_equal(const SocketEndpoint &lhs, const SocketEndpoint &rhs) noexcept {
     return lhs.family == rhs.family && lhs.address == rhs.address && lhs.port == rhs.port;
-}
-
-[[nodiscard]] inline bool
-socket_multicast_membership_equal(const SocketMulticastMembership &lhs,
-                                  const SocketMulticastMembership &rhs) noexcept {
-    return lhs.family == rhs.family && lhs.group_address == rhs.group_address &&
-           lhs.interface_address == rhs.interface_address;
 }
 
 [[nodiscard]] inline bool socket_rx_open_config_equal(const SocketRxOpenConfig &lhs,
@@ -198,18 +226,17 @@ socket_multicast_membership_equal(const SocketMulticastMembership &lhs,
     if (lhs.multicast_membership.has_value() &&
         !socket_multicast_membership_equal(*lhs.multicast_membership, *rhs.multicast_membership)) {
         return false;
-        }
-
-    return lhs.reuse_address == rhs.reuse_address;
-}
-
-[[nodiscard]] inline Error
-validate_socket_rx_operational_common_config(const SocketRxOperationalCommonConfig &cfg) {
-    if (const Error err = validate_socket_rx_open_config(cfg.open_config); err != Error::Ok) {
-        return err;
     }
 
-    return Error::Ok;
+    if (lhs.source_filter.has_value() != rhs.source_filter.has_value()) {
+        return false;
+    }
+
+    if (lhs.source_filter.has_value() && !socket_source_filter_equal(*lhs.source_filter, *rhs.source_filter)) {
+        return false;
+    }
+
+    return lhs.reuse_address == rhs.reuse_address;
 }
 
 [[nodiscard]] inline bool socket_rx_uses_multicast(const SocketRxOpenConfig &cfg) noexcept {
@@ -217,7 +244,8 @@ validate_socket_rx_operational_common_config(const SocketRxOperationalCommonConf
 }
 
 [[nodiscard]] inline std::expected<SocketRxOpenConfig, Error>
-build_socket_rx_open_config(uint16_t udp_port, const std::string& local_ip, const std::string& dest_ip) noexcept {
+build_socket_rx_open_config(const std::uint16_t udp_port, const std::string &local_ip, const std::string &dest_ip,
+                            const std::optional<SocketSourceFilter> &source_filter) noexcept {
     SocketRxOpenConfig res{};
     res.bind_endpoint.port = udp_port;
 
@@ -271,29 +299,15 @@ build_socket_rx_open_config(uint16_t udp_port, const std::string& local_ip, cons
         }
     }
 
+    if (source_filter) {
+        res.source_filter = source_filter;
+    }
+
     if (Error err = validate_socket_rx_open_config(res); err != Error::Ok) {
         return std::unexpected(err);
     }
 
     return res;
-}
-
-[[nodiscard]] inline std::expected<SocketRxOpenConfig, Error>
-socket_rx_open_config_from_video_config(const RxVideoConfig &cfg) {
-    if (Error err = validate_rx_video_config(cfg); err != Error::Ok) {
-        return std::unexpected(err);
-    }
-
-    return build_socket_rx_open_config(cfg.udp_port, cfg.local_ip, cfg.dest_ip);
-}
-
-[[nodiscard]] inline std::expected<SocketRxOpenConfig, Error>
-socket_rx_open_config_from_audio_config(const RxAudioConfig &cfg) {
-    if (Error err = validate_rx_audio_config(cfg); err != Error::Ok) {
-        return std::unexpected(err);
-    }
-
-    return build_socket_rx_open_config(cfg.udp_port, cfg.local_ip, cfg.dest_ip);
 }
 
 struct SocketReceiveResult {

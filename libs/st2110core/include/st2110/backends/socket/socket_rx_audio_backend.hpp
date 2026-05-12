@@ -235,7 +235,6 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase, public
         }
 
         if (Error err = reorder_buffer_->push(*packet); err != Error::Ok) {
-            (void)err;
             record_rejected_media_packet();
             return;
         }

@@ -7,7 +7,6 @@
 #include "st2110/ingress/shared/packet_parse_stats.hpp"
 #include "st2110/receive/shared/reorder_stats.hpp"
 #include "st2110/receive/video/depacketizer_stats.hpp"
-#include "st2110/rx_config.hpp"
 
 #include <expected>
 
@@ -52,8 +51,6 @@ class IRxBackend {
     virtual RxBackendLifecycleResult stop() = 0;
 
     virtual ~IRxBackend() = default;
-
-    [[nodiscard]] virtual BackendStats stats() const = 0;
 };
 
 class IRxVideoBackend : public virtual IRxBackend {

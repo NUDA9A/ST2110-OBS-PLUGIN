@@ -1,95 +1,159 @@
 #ifndef ST2110_OBS_SOCKET_RX_SINGLE_MEDIA_BACKEND_BASE_HPP
 #define ST2110_OBS_SOCKET_RX_SINGLE_MEDIA_BACKEND_BASE_HPP
 
+#include "platform/socket_runtime.hpp"
 #include "st2110/contracts/backend/backend.hpp"
 #include "st2110/foundation/bytes.hpp"
 #include "st2110/ingress/shared/packet_parse.hpp"
-#include "platform/socket_runtime.hpp"
-#include <st2110/receive/shared/reorder_buffer.hpp>
 #include <st2110/receive/shared/receive_reorder_tolerance_policy.hpp>
+#include <st2110/receive/shared/reorder_buffer.hpp>
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <span>
+#include <stdexcept>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 namespace st2110 {
+struct DuplicateMergeHistory {
+    std::deque<std::uint32_t> ordered_sequences{};
+    std::unordered_set<std::uint32_t> sequence_set{};
+
+    [[nodiscard]] bool contains(const std::uint32_t sequence) const { return sequence_set.contains(sequence); }
+
+    void remember(const std::uint32_t sequence, const std::size_t capacity) {
+        ordered_sequences.push_back(sequence);
+        sequence_set.insert(sequence);
+
+        while (ordered_sequences.size() > capacity) {
+            sequence_set.erase(ordered_sequences.front());
+            ordered_sequences.pop_front();
+        }
+    }
+
+    void clear() noexcept {
+        ordered_sequences.clear();
+        sequence_set.clear();
+    }
+};
+
+struct SocketRxRuntimeLeg {
+    std::jthread thread{};
+    std::unique_ptr<ISocketRxPort> port{};
+    std::vector<std::uint8_t> receive_buffer{};
+
+    void shutdown_nothrow() noexcept {
+        if (port) {
+            port->close();
+        }
+        thread = {};
+        port.reset();
+        receive_buffer.clear();
+    }
+
+    SocketRxRuntimeLeg() = default;
+
+    SocketRxRuntimeLeg(const SocketRxRuntimeLeg &) = delete;
+    SocketRxRuntimeLeg &operator=(const SocketRxRuntimeLeg &) = delete;
+
+    SocketRxRuntimeLeg(SocketRxRuntimeLeg &&) noexcept = default;
+    SocketRxRuntimeLeg &operator=(SocketRxRuntimeLeg &&) noexcept = default;
+
+    ~SocketRxRuntimeLeg() { shutdown_nothrow(); }
+};
 
 class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
   public:
     ~SocketRxSingleMediaBackendBase() override = default;
 
-    [[nodiscard]] BackendStats stats() const override {
-        std::lock_guard lock(stats_mutex_);
-        BackendStats snapshot = build_base_stats_snapshot_locked();
-        augment_stats_snapshot_locked(snapshot);
-        return snapshot;
-    }
-
     RxBackendLifecycleResult stop() override {
-        if (!is_active && port_ == nullptr) {
-            return is_active;
-        }
+        auto first_err = Error::Ok;
 
-        if (port_ != nullptr && port_->is_open()) {
-            if (Error err = port_->close(); err != Error::Ok) {
-                return std::unexpected(err);
+        for (const auto &leg : runtime_legs_) {
+            if (!leg.port) {
+                continue;
+            }
+
+            const Error err = leg.port->close();
+            if (err != Error::Ok && first_err == Error::Ok) {
+                first_err = err;
             }
         }
 
-        clear_media_runtime_objects();
+        runtime_legs_.clear();
 
-        return is_active;
+        {
+            std::lock_guard lock(downstream_mutex_);
+            duplicate_merge_history_.clear();
+        }
+
+        if (first_err != Error::Ok) {
+            return std::unexpected(first_err);
+        }
+
+        return true;
     }
 
   protected:
-    explicit SocketRxSingleMediaBackendBase(std::unique_ptr<ISocketRxPortFactory> port_factory)
-        : port_factory_{std::move(port_factory)} {}
+    explicit SocketRxSingleMediaBackendBase(std::unique_ptr<ISocketRxPortFactory> port_factory,
+                                            const std::size_t maxudp, const ReorderBufferConfig &reorder_buffer_config,
+                                            const std::vector<SocketRxOpenConfig> &open_configs,
+                                            const std::uint8_t expected_payload_type)
+        : open_configs_(open_configs), port_factory_{std::move(port_factory)}, maxudp_(maxudp),
+          expected_payload_type_(expected_payload_type),
+          reorder_tolerance_policy_(reorder_buffer_config.reorder_tolerance_policy),
+          reorder_buffer_config_(reorder_buffer_config) {}
+
+    [[nodiscard]] bool duplicate_merge_enabled() const noexcept { return runtime_legs_.size() > 1; }
+
+    [[nodiscard]] std::size_t duplicate_history_capacity() const noexcept {
+        return reorder_buffer_config_.window_size_packets;
+    }
 
     [[nodiscard]] static std::unique_ptr<ISocketRxPortFactory> make_default_port_factory();
 
     [[nodiscard]] std::unique_ptr<ISocketRxPort> create_port() const { return port_factory_->create_port(); }
 
-    [[nodiscard]] RxBackendLifecycleResult start_common_runtime(std::unique_ptr<ISocketRxPort> port,
-                                                                const SocketRxOpenConfig &open_cfg,
-                                                                std::vector<std::uint8_t> receive_buffer) {
-        if (Error err = port->open(open_cfg); err != Error::Ok) {
-            return std::unexpected(err);
-        }
+    [[nodiscard]] RxBackendLifecycleResult start_common_runtime() {
+        duplicate_merge_history_.clear();
+        std::vector<SocketRxRuntimeLeg> staged;
+        staged.reserve(open_configs_.size());
 
-        port_ = std::move(port);
-        receive_buffer_ = std::move(receive_buffer);
-
-        {
-            std::lock_guard lock(stats_mutex_);
-            stats_ = {};
-        }
-
-        try {
-            receive_thread_ = std::jthread([this](std::stop_token stop_token) { run_receive_loop(stop_token); });
-        } catch (...) {
-            if (port_ && port_->is_open()) {
-                (void)port_->close();
+        for (const auto &open_config : open_configs_) {
+            SocketRxRuntimeLeg leg{};
+            leg.port = create_port();
+            if (!leg.port) {
+                return std::unexpected(Error::SystemFailure);
             }
-            clear_media_runtime_objects();
-            return std::unexpected(Error::SystemFailure);
+
+            if (const Error err = leg.port->open(open_config); err != Error::Ok) {
+                return std::unexpected(err);
+            }
+
+            leg.receive_buffer = make_receive_buffer(maxudp_);
+            staged.emplace_back(std::move(leg));
         }
 
-        is_active = true;
-        return is_active;
+        runtime_legs_ = std::move(staged);
+
+        for (std::size_t i = 0; i < runtime_legs_.size(); ++i) {
+            runtime_legs_[i].thread =
+                std::jthread([this, i](std::stop_token stop_token) { run_receive_loop(i, stop_token); });
+        }
+
+        return true;
     }
 
-    void run_receive_loop(std::stop_token stop_token) noexcept {
-        if (port_ == nullptr || receive_buffer_.empty()) {
-            return;
-        }
-
+    void run_receive_loop(const std::size_t leg_index, std::stop_token stop_token) noexcept {
+        auto &leg = runtime_legs_[leg_index];
         while (!stop_token.stop_requested()) {
-            auto received = port_->receive(receive_buffer_);
+            auto received = leg.port->receive(leg.receive_buffer);
             if (!received) {
                 switch (received.error()) {
                 case Error::OperationInterrupted:
@@ -108,72 +172,9 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
                 }
             }
 
-            record_received_datagram(received->size_bytes);
-
-            process_received_datagram(ByteSpan(receive_buffer_.data(), received->size_bytes));
+            process_received_datagram(leg_index, ByteSpan(leg.receive_buffer.data(), received->size_bytes));
         }
     }
-
-    void clear_common_runtime_objects() noexcept {
-        receive_thread_ = std::jthread{};
-        port_.reset();
-        receive_buffer_.clear();
-        is_active = false;
-        reset_stats();
-    }
-
-    void reset_stats() noexcept {
-        std::lock_guard lock(stats_mutex_);
-        stats_ = {};
-    }
-
-    void record_received_datagram(std::size_t size_bytes) noexcept {
-        std::lock_guard lock(stats_mutex_);
-        ++stats_.datagrams_received;
-        stats_.bytes_received += size_bytes;
-    }
-
-    void record_ignored_control_datagram() noexcept {
-        std::lock_guard lock(stats_mutex_);
-        ++stats_.control_datagrams_ignored;
-        ++stats_.datagrams_dropped;
-    }
-
-    void record_ignored_nonmedia_datagram() noexcept {
-        std::lock_guard lock(stats_mutex_);
-        ++stats_.nonmedia_datagrams_ignored;
-        ++stats_.datagrams_dropped;
-    }
-
-    void record_rejected_packet(Error err, PacketParseStage stage) noexcept {
-        record_rejected_media_packet();
-        std::lock_guard lock(stats_mutex_);
-        record_packet_parse_result(stats_.packet_parse, err, stage);
-    }
-
-    void record_accepted_media_packet() noexcept {
-        std::lock_guard lock(stats_mutex_);
-        ++stats_.packets_parsed_ok;
-    }
-
-    void record_rejected_media_packet() noexcept {
-        std::lock_guard lock(stats_mutex_);
-        ++stats_.packets_rejected;
-        ++stats_.datagrams_dropped;
-    }
-
-    void record_parsed_packet_ok() noexcept {
-        std::lock_guard lock(stats_mutex_);
-        ++stats_.packets_parsed_ok;
-        record_packet_parse_result(stats_.packet_parse, Error::Ok, PacketParseStage::RtpHeader);
-    }
-
-    void record_delivered_media_unit() noexcept {
-        std::lock_guard lock(stats_mutex_);
-        ++stats_.media_units_delivered;
-    }
-
-    [[nodiscard]] BackendStats build_base_stats_snapshot_locked() const noexcept { return stats_; }
 
     [[nodiscard]] static std::vector<std::uint8_t> make_receive_buffer(const std::size_t maxudp) {
         return std::vector<std::uint8_t>(maxudp - udpHeaderBytes);
@@ -193,26 +194,11 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
         return payload_type >= 192u && payload_type <= 223u;
     }
 
-    [[nodiscard]] static bool datagram_matches_configured_payload_type(ByteSpan udp_payload,
-                                                                       std::uint8_t configured_payload_type) noexcept {
-        if (udp_payload.size() < 2) {
-            return false;
-        }
-
-        const auto version = static_cast<std::uint8_t>((udp_payload[0] >> 6) & 0x03u);
-        if (version != 2u) {
-            return false;
-        }
-
-        const auto payload_type = static_cast<std::uint8_t>(udp_payload[1] & 0x7Fu);
-        return payload_type == configured_payload_type;
-    }
-
-    virtual void process_received_datagram(ByteSpan udp_payload) noexcept = 0;
-    virtual void clear_media_runtime_objects() noexcept = 0;
+    virtual std::expected<std::unique_ptr<PacketView>, Error> parse_packet(std::size_t leg_index,
+                                                                           ByteSpan udp_payload) = 0;
     virtual std::unique_ptr<IReorderBuffer> make_reorder_buffer(const ReorderBufferConfig &cfg) = 0;
     virtual void deliver_media(std::unique_ptr<StoredPacket> packet) = 0;
-    void apply_reorder_buffer_policy(bool& gap_flush_used) const {
+    void apply_reorder_buffer_policy(bool &gap_flush_used) const {
         switch (reorder_tolerance_policy_) {
         case ReceiveReorderGapPolicy::WaitForMissing:
             return;
@@ -245,19 +231,49 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
             deliver_media(std::move(stored_packet));
         }
     }
-    virtual void augment_stats_snapshot_locked(BackendStats &snapshot) const noexcept {}
 
-  protected:
+    void process_received_datagram(const std::size_t leg_index, ByteSpan udp_payload) noexcept {
+        if (is_rtcp_like_datagram(udp_payload)) {
+            return;
+        }
+
+        auto packet = parse_packet(leg_index, udp_payload);
+        if (!packet) {
+            return;
+        }
+
+        if ((*packet)->rtp.payload_type != expected_payload_type_) {
+            return;
+        }
+
+        std::lock_guard lock(downstream_mutex_);
+
+        const std::uint32_t reorder_sequence = (*packet)->reorder_sequence();
+        if (duplicate_merge_enabled() && duplicate_merge_history_.contains(reorder_sequence)) {
+            return;
+        }
+
+        if (const Error err = reorder_buffer_->push(*(*packet)); err != Error::Ok) {
+            return;
+        }
+
+        if (duplicate_merge_enabled()) {
+            duplicate_merge_history_.remember(reorder_sequence, duplicate_history_capacity());
+        }
+
+        drain_reorder_buffer_to_sink();
+    }
+
+    std::vector<SocketRxOpenConfig> open_configs_{};
     std::unique_ptr<ISocketRxPortFactory> port_factory_{};
-    std::unique_ptr<ISocketRxPort> port_{};
-    std::vector<std::uint8_t> receive_buffer_{};
+    std::size_t maxudp_{};
+    std::uint8_t expected_payload_type_{};
     std::unique_ptr<IReorderBuffer> reorder_buffer_{};
-    std::jthread receive_thread_{};
     ReceiveReorderGapPolicy reorder_tolerance_policy_ = ReceiveReorderGapPolicy::WaitForMissing;
-
-    bool is_active = false;
-    mutable std::mutex stats_mutex_{};
-    BackendStats stats_{};
+    ReorderBufferConfig reorder_buffer_config_;
+    DuplicateMergeHistory duplicate_merge_history_{};
+    std::mutex downstream_mutex_{};
+    std::vector<SocketRxRuntimeLeg> runtime_legs_{};
 };
 
 } // namespace st2110

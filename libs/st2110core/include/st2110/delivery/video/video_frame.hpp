@@ -38,7 +38,7 @@ class VideoFrame {
         frame_data.resize(total_size);
     }
 
-    VideoFrameView view(TimestampNs timestamp_ns = 0) const {
+    [[nodiscard]] VideoFrameView view(TimestampNs timestamp_ns = 0) const {
         VideoFrameView res{.format = fmt_,
                            .width = width_,
                            .height = height_,
