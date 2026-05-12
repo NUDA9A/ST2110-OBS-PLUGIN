@@ -1,165 +1,145 @@
 #ifndef ST2110_OBS_PLUGIN_DEPACKETIZER_HPP
 #define ST2110_OBS_PLUGIN_DEPACKETIZER_HPP
 
-#include "st2110/ingress/shared/packet_view.hpp"
-#include "st2110/model/video/video_packing_mode.hpp"
-#include "st2110/model/video/video_scan_mode.hpp"
-#include "depacketizer_stats.hpp"
-#include "frame_assembler.hpp"
-#include "video_packet_padding.hpp"
-#include "video_receive_semantics.hpp"
-#include "video_segment_placement.hpp"
+#include <st2110/contracts/video/depacketizer_config.hpp>
+#include <st2110/ingress/shared/packet_view.hpp>
+#include <st2110/receive/video/depacketizer_stats.hpp>
+#include <st2110/receive/video/frame_assembler.hpp>
 
 #include <cstdint>
 #include <optional>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 
 namespace st2110 {
+struct VideoFrameWriteOp {
+    std::size_t plane = 0;
+    std::uint32_t row = 0;
+    std::size_t byte_offset = 0;
+    ByteSpan bytes{};
+};
 
-struct DepacketizerConfig {
-    uint32_t width = 0;
-    uint32_t height = 0;
-    PixelFormat format = PixelFormat::UYVY;
-    PartialFramePolicy partial_frame_policy = PartialFramePolicy::EmitWithFlag;
-    VideoScanMode scan_mode = VideoScanMode::Progressive;
-    VideoPackingMode packing_mode = VideoPackingMode::Gpm;
+struct VideoAssemblyKey {
+    VideoAssemblyUnitKind unit_kind = VideoAssemblyUnitKind::Frame;
+    std::uint32_t rtp_timestamp = 0;
+    std::uint8_t sub_unit_index = 0;
+
+    bool operator==(const VideoAssemblyKey &) const = default;
 };
 
 struct DepacketizerAssemblyState {
     std::optional<VideoAssemblyKey> current_key{};
-    std::optional<VideoAssemblyCursor> write_cursor{};
 };
 
 class Depacketizer {
   public:
     explicit Depacketizer(const DepacketizerConfig &cfg)
-        : cfg_(cfg), assembler_(cfg_.width, cfg_.height, cfg_.format, cfg_.partial_frame_policy) {}
+        : cfg_(cfg), assembler_(cfg_.width, cfg_.height, cfg_.format, cfg_.policy) {}
 
-    [[nodiscard]] std::vector<AssembledVideoUnit> push(const PacketView &packet) {
+    [[nodiscard]] std::vector<AssembledVideoUnit> push(std::unique_ptr<VideoPacketView> packet) {
+        const VideoPacketView &pkt = *packet;
+
         ++stats_.packets_in;
-        if (Error err = validate_video_packet_scan_mode_semantics(cfg_.scan_mode, packet); err != Error::Ok) {
-            throw std::invalid_argument("Invalid packet scan-mode semantics for current video scan mode");
-        }
 
-        const auto policy = configured_completion_policy();
-        const auto packet_key_expected = video_packet_assembly_key(cfg_.scan_mode, packet);
-        if (!packet_key_expected.has_value()) {
-            throw std::logic_error("Current scan mode packet-to-unit grouping is not implemented yet");
-        }
-        const VideoAssemblyKey &packet_key = *packet_key_expected;
-
-        if (packet_key.unit_kind != policy.unit_kind) {
-            throw std::logic_error("Inconsistent video receive semantics: packet assembly key unit kind does not match "
-                                   "completion policy unit kind");
-        }
+        const auto packet_key = video_packet_assembly_key(cfg_.scan_mode, pkt);
 
         std::vector<AssembledVideoUnit> res;
 
         if (!has_unit_in_progress()) {
-            validate_padding(packet);
             begin_unit(packet_key);
-            write_packet_segments(packet);
+            write_packet_segments(pkt);
             ++stats_.packets_used;
 
-            if (packet.rtp.marker && policy.marker_terminates_current_unit) {
-                auto end_res = assembler_.end(true);
-                handle_end_result(std::move(end_res), res);
+            if (pkt.rtp.marker && cfg_.video_receive_completion_policy.marker_terminates_current_unit) {
+                end_current_unit(true, res);
             }
             return res;
         }
 
-        if (same_video_assembly_key(*assembly_state_.current_key, packet_key)) {
-            validate_padding(packet);
-            write_packet_segments(packet);
-            ++stats_.packets_used;
-
-            if (packet.rtp.marker && policy.marker_terminates_current_unit) {
-                auto end_res = assembler_.end(true);
-                handle_end_result(std::move(end_res), res);
-            }
-            return res;
+        if (*assembly_state_.current_key != packet_key) {
+            end_current_unit(false, res);
+            begin_unit(packet_key);
         }
 
-        if (!policy.key_change_terminates_previous_unit) {
-            throw std::logic_error("Current completion policy does not support assembly-key transition yet");
-        }
-
-        validate_padding(packet);
-
-        {
-            auto end_res = assembler_.end(false);
-            handle_end_result(std::move(end_res), res);
-        }
-
-        begin_unit(packet_key);
-        write_packet_segments(packet);
+        write_packet_segments(pkt);
         ++stats_.packets_used;
 
-        if (packet.rtp.marker && policy.marker_terminates_current_unit) {
-            auto end_res = assembler_.end(true);
-            handle_end_result(std::move(end_res), res);
+        if (pkt.rtp.marker && cfg_.video_receive_completion_policy.marker_terminates_current_unit) {
+            end_current_unit(true, res);
         }
+
         return res;
     }
 
     void reset() {
-        assembler_ = FrameAssembler(cfg_.width, cfg_.height, cfg_.format, cfg_.partial_frame_policy);
+        assembler_ = FrameAssembler(cfg_.width, cfg_.height, cfg_.format, cfg_.policy);
         assembly_state_ = {};
         stats_ = {};
     }
 
     [[nodiscard]] const DepacketizerStats &stats() const { return stats_; }
 
-    [[nodiscard]] VideoScanMode scan_mode() const { return cfg_.scan_mode; }
-
     [[nodiscard]] bool has_unit_in_progress() const { return assembly_state_.current_key.has_value(); }
 
-    [[nodiscard]] std::optional<uint32_t> current_unit_rtp_timestamp() const {
-        if (!has_unit_in_progress()) {
-            return std::nullopt;
-        }
-        return assembly_state_.current_key->rtp_timestamp;
-    }
-
-    [[nodiscard]] VideoAssemblyUnitKind assembly_unit_kind() const {
-        auto kind = video_assembly_unit_kind(cfg_.scan_mode);
-        if (!kind.has_value()) {
-            throw std::logic_error("Invalid scan mode for depacketizer assembly unit kind");
-        }
-        return *kind;
-    }
-
-    [[nodiscard]] std::optional<VideoAssemblyKey> current_unit_key() const { return assembly_state_.current_key; }
-
   private:
-    void validate_padding(const PacketView &packet) {
-        Error err = validate_video_packet_trailing_padding(cfg_.packing_mode, cfg_.scan_mode, packet);
-        if (err == Error::InvalidValue) {
-            throw std::invalid_argument("Invalid trailing payload padding for current video scan mode");
-        }
-        if (err == Error::Unsupported) {
-            throw std::logic_error(
-                "Trailing payload padding validation is not implemented for current video scan mode");
-        }
+    void end_current_unit(bool marker_seen, std::vector<AssembledVideoUnit> &out) {
+        auto end_res = assembler_.end(marker_seen, true);
+        handle_end_result(std::move(end_res), out);
     }
 
-    [[nodiscard]] VideoReceiveCompletionPolicy configured_completion_policy() const {
-        // MVP runtime currently implements only Progressive completion behavior.
-        // Interlaced and PsF are modeled through VideoScanMode / VideoAssemblyUnitKind
-        // but remain rejected here until their mode-specific policies are implemented.
-        auto policy = video_receive_completion_policy(cfg_.scan_mode);
-        if (!policy.has_value()) {
-            throw std::logic_error("Current scan mode is not implemented in depacketizer yet");
+    [[nodiscard]] static std::uint32_t unit_height_for_key(VideoScanMode scan_mode, std::uint32_t full_height,
+                                                           std::uint8_t sub_unit_index) noexcept {
+        switch (scan_mode) {
+        case VideoScanMode::Progressive:
+            return full_height;
+        case VideoScanMode::Interlaced:
+        case VideoScanMode::PsF:
+            return (sub_unit_index == 0) ? ((full_height + 1) / 2) : (full_height / 2);
         }
-        return *policy;
+
+        return full_height;
+    }
+
+    [[nodiscard]] static VideoAssemblyKey video_packet_assembly_key(VideoScanMode mode,
+                                                                    const VideoPacketView &packet) noexcept {
+        switch (mode) {
+        case VideoScanMode::Progressive:
+            return VideoAssemblyKey{
+                .unit_kind = VideoAssemblyUnitKind::Frame,
+                .rtp_timestamp = packet.rtp.timestamp,
+                .sub_unit_index = 0,
+            };
+
+        case VideoScanMode::Interlaced: {
+            std::uint8_t sub_index = 0;
+            if (packet.segments[0].header.field_id) {
+                sub_index = 1;
+            }
+            return VideoAssemblyKey{.unit_kind = VideoAssemblyUnitKind::Field,
+                                    .rtp_timestamp = packet.rtp.timestamp,
+                                    .sub_unit_index = sub_index};
+        }
+
+        case VideoScanMode::PsF: {
+            std::uint8_t sub_index = 0;
+            if (packet.segments[0].header.field_id) {
+                sub_index = 1;
+            }
+
+            return VideoAssemblyKey{.unit_kind = VideoAssemblyUnitKind::Segment,
+                                    .rtp_timestamp = packet.rtp.timestamp,
+                                    .sub_unit_index = sub_index};
+        }
+        }
+
+        return {};
     }
 
     void begin_unit(const VideoAssemblyKey &key) {
+        assembler_ = FrameAssembler(cfg_.width, unit_height_for_key(cfg_.scan_mode, cfg_.height, key.sub_unit_index),
+                                    cfg_.format, cfg_.policy);
         assembler_.begin(key.rtp_timestamp);
         assembly_state_.current_key = key;
-        assembly_state_.write_cursor.reset();
     }
 
     void handle_end_result(FrameAssemblerEndResult &&end_res, std::vector<AssembledVideoUnit> &out) {
@@ -179,6 +159,7 @@ class Depacketizer {
         if (end_res.unit.has_value()) {
             if (assembly_state_.current_key.has_value()) {
                 end_res.unit->unit_kind = assembly_state_.current_key->unit_kind;
+                end_res.unit->sub_unit_index = assembly_state_.current_key->sub_unit_index;
             }
             out.push_back(std::move(*end_res.unit));
         }
@@ -186,40 +167,73 @@ class Depacketizer {
         assembly_state_ = {};
     }
 
-    void write_packet_segments(const PacketView &packet) {
-        std::vector<VideoFrameWriteOp> write_ops{};
-        write_ops.reserve(packet.segment_count);
+    [[nodiscard]] static std::size_t pgroup_byte_offset(std::uint16_t sample_offset, std::size_t samples_per_pgroup,
+                                                        std::size_t bytes_per_pgroup) noexcept {
+        return (static_cast<std::size_t>(sample_offset) / samples_per_pgroup) * bytes_per_pgroup;
+    }
 
-        auto cursor = assembly_state_.write_cursor;
+    [[nodiscard]] static VideoFrameWriteOp map_segment_to_unit_local_write(PixelFormat target_format,
+                                                                           const SrdSegmentView &segment) noexcept {
+        switch (target_format) {
+        case PixelFormat::UYVY:
+            return VideoFrameWriteOp{
+                .plane = 0,
+                .row = segment.header.row_number,
+                .byte_offset = static_cast<std::size_t>(segment.header.offset) * 2uz,
+                .bytes = segment.data,
+            };
 
-        for (std::size_t i = 0; i < packet.segment_count; ++i) {
-            auto expected_op =
-                map_video_segment_to_frame_write(cfg_.packing_mode, cfg_.format, cfg_.scan_mode, packet.segments[i]);
-            if (!expected_op.has_value()) {
-                Error err = expected_op.error();
-                if (err == Error::InvalidValue) {
-                    throw std::invalid_argument("Invalid video segment placement for current format/scan mode");
-                }
-                throw std::logic_error("Unsupported video segment placement for current format/scan mode");
-            }
+        case PixelFormat::RGB8:
+            return VideoFrameWriteOp{
+                .plane = 0,
+                .row = segment.header.row_number,
+                .byte_offset = static_cast<std::size_t>(segment.header.offset) * 3uz,
+                .bytes = segment.data,
+            };
 
-            if (Error err =
-                    validate_and_advance_video_assembly_cursor(cfg_.scan_mode, cursor, packet.segments[i], *expected_op);
-                err != Error::Ok) {
-                if (err == Error::InvalidValue) {
-                    throw std::invalid_argument("Invalid cross-packet video segment order for current assembly unit");
-                }
-                throw std::logic_error("Unsupported cross-packet video segment order for current video scan mode");
-                }
+        case PixelFormat::YUV422RFC4175PG2BE10:
+            return VideoFrameWriteOp{
+                .plane = 0,
+                .row = segment.header.row_number,
+                .byte_offset = pgroup_byte_offset(segment.header.offset, 2uz, 5uz),
+                .bytes = segment.data,
+            };
 
-            write_ops.push_back(*expected_op);
+        case PixelFormat::YUV422RFC4175PG2BE12:
+            return VideoFrameWriteOp{
+                .plane = 0,
+                .row = segment.header.row_number,
+                .byte_offset = pgroup_byte_offset(segment.header.offset, 2uz, 6uz),
+                .bytes = segment.data,
+            };
+
+        case PixelFormat::YUV444RFC4175PG4BE10:
+        case PixelFormat::RGBRFC4175PG4BE10:
+            return VideoFrameWriteOp{
+                .plane = 0,
+                .row = segment.header.row_number,
+                .byte_offset = pgroup_byte_offset(segment.header.offset, 4uz, 15uz),
+                .bytes = segment.data,
+            };
+
+        case PixelFormat::YUV444RFC4175PG2BE12:
+        case PixelFormat::RGBRFC4175PG2BE12:
+            return VideoFrameWriteOp{
+                .plane = 0,
+                .row = segment.header.row_number,
+                .byte_offset = pgroup_byte_offset(segment.header.offset, 2uz, 9uz),
+                .bytes = segment.data,
+            };
         }
 
-        for (const auto &op : write_ops) {
+        std::unreachable();
+    }
+
+    void write_packet_segments(const VideoPacketView &packet) {
+        for (std::size_t i = 0; i < packet.segment_count; ++i) {
+            auto op = map_segment_to_unit_local_write(cfg_.format, packet.segments[i]);
             assembler_.write_segment(op.plane, op.row, op.byte_offset, op.bytes);
         }
-
-        assembly_state_.write_cursor = std::move(cursor);
     }
 
     DepacketizerConfig cfg_;

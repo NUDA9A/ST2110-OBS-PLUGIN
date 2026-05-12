@@ -3,8 +3,7 @@
 
 #include "st2110/foundation/bytes.hpp"
 #include "st2110/foundation/error.hpp"
-#include "st2110/ingress/shared/rtp.hpp"
-#include "st2110/rx_config.hpp"
+#include "st2110/ingress/shared/packet_view.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -24,13 +23,16 @@ struct AudioRtpPacketPolicy {
     AudioPcmWireFormat wire_format = AudioPcmWireFormat::L24;
 };
 
-struct AudioRtpPacketView {
-    RtpHeaderView rtp{};
-    ByteSpan payload{};
+struct AudioPacketView final : PacketView {
     uint32_t sampling_rate_hz = 0;
     uint16_t channel_count = 0;
     uint32_t samples_per_channel = 0;
     AudioPcmWireFormat wire_format = AudioPcmWireFormat::L24;
+
+    [[nodiscard]] std::unique_ptr<StoredPacket> store() const override;
+    [[nodiscard]] std::uint32_t reorder_sequence() const override {
+        return rtp.seq_number;
+    }
 };
 
 [[nodiscard]] inline std::expected<std::size_t, Error> audio_pcm_wire_sample_bytes(AudioPcmWireFormat wire_format) {
@@ -102,8 +104,9 @@ audio_rtp_packet_payload_size_bytes(const AudioRtpPacketPolicy &policy) {
            (*bytes_per_sample);
 }
 
-[[nodiscard]] inline std::expected<AudioRtpPacketView, Error>
+[[nodiscard]] inline std::expected<AudioPacketView, Error>
 make_audio_rtp_packet_view(const RtpHeaderView &rtp, ByteSpan payload, const AudioRtpPacketPolicy &policy) {
+    AudioPacketView res{};
     if (rtp.payload_type != policy.payload_type) {
         return std::unexpected(Error::InvalidValue);
     }
@@ -117,11 +120,17 @@ make_audio_rtp_packet_view(const RtpHeaderView &rtp, ByteSpan payload, const Aud
         return std::unexpected(Error::InvalidValue);
     }
 
-    return AudioRtpPacketView{
-        rtp, payload, policy.sampling_rate_hz, policy.channel_count, policy.samples_per_packet, policy.wire_format};
+    res.rtp = rtp;
+    res.payload_data = payload;
+    res.sampling_rate_hz = policy.sampling_rate_hz;
+    res.channel_count = policy.channel_count;
+    res.samples_per_channel = policy.samples_per_packet;
+    res.wire_format = policy.wire_format;
+
+    return res;
 }
 
-[[nodiscard]] inline std::expected<AudioRtpPacketView, Error>
+[[nodiscard]] inline std::expected<AudioPacketView, Error>
 parse_audio_rtp_packet_view(ByteSpan rtp_datagram, const AudioRtpPacketPolicy &policy) {
     auto rtp_header = parse_rtp_header(rtp_datagram);
     if (!rtp_header) {

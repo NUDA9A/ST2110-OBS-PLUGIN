@@ -1,60 +1,30 @@
 #ifndef ST2110_OBS_PLUGIN_REORDER_BUFFER_HPP
 #define ST2110_OBS_PLUGIN_REORDER_BUFFER_HPP
 
-#include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <vector>
 
-#include "reorder_stats.hpp"
-#include "st2110/ingress/shared/packet_view.hpp"
+#include <st2110/receive/shared/reorder_stats.hpp>
+#include <st2110/ingress/shared/packet_view.hpp>
+#include <st2110/foundation/error.hpp>
 
 namespace st2110 {
 struct StoredPacket {
-    RtpHeaderView rtp{};
-    uint32_t extended_seq = 0;
-
-    SrdHeader segment_headers[maxPacketSrdSegments]{};
-    uint8_t segment_count = 0;
-
+    RtpHeaderView rtp_{};
     std::vector<uint8_t> payload_data{};
+    std::uint32_t extended_seq = 0;
 
-    [[nodiscard]] PacketView view() const {
-        PacketView pkt{};
-        pkt.rtp = rtp;
-        pkt.extended_seq = extended_seq;
-        pkt.segment_count = segment_count;
-        pkt.payload_data = ByteSpan(payload_data.data(), payload_data.size());
-
-        std::size_t offset = 0;
-        for (std::size_t i = 0; i < segment_count; ++i) {
-            pkt.segments[i].header = segment_headers[i];
-            pkt.segments[i].data = pkt.payload_data.subspan(offset, segment_headers[i].length);
-            offset += segment_headers[i].length;
-        }
-
-        pkt.trailing_padding = pkt.payload_data.subspan(offset);
-
-        return pkt;
-    }
-
-    StoredPacket() = default;
-
-    explicit StoredPacket(const PacketView &packetView)
-        : rtp(packetView.rtp), extended_seq(packetView.extended_seq), segment_count(packetView.segment_count) {
-        for (std::size_t i = 0; i < segment_count; ++i) {
-            segment_headers[i] = packetView.segments[i].header;
-        }
-        auto src = packetView.payload_data;
-        payload_data.assign(src.begin(), src.end());
-    }
+    explicit StoredPacket(const RtpHeaderView& rtp, ByteSpan payload, const std::uint32_t seq) : rtp_(rtp), payload_data(payload.begin(), payload.end()), extended_seq(seq) {}
+    [[nodiscard]] std::uint32_t reorder_sequence() const { return extended_seq; }
+    [[nodiscard]] virtual std::unique_ptr<PacketView> view() const = 0;
+    virtual ~StoredPacket() = default;
 };
 
 class IReorderBuffer {
 public:
-    virtual void push(const PacketView &packet) = 0;
+    virtual Error push(const PacketView &packet) = 0;
 
-    [[nodiscard]] virtual std::optional<StoredPacket> pop_next() = 0;
+    [[nodiscard]] virtual std::unique_ptr<StoredPacket> pop_next() = 0;
 
     [[nodiscard]] virtual bool flush_missing_once() = 0;
 

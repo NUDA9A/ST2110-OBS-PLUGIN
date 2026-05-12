@@ -6,26 +6,20 @@
 
 #include <st2110/foundation/bytes.hpp>
 #include <st2110/ingress/shared/rtp.hpp>
-#include <st2110/ingress/shared/st2110_20.hpp>
+
+#include <memory>
 
 namespace st2110 {
-
-inline constexpr std::size_t maxPacketSrdSegments = 3;
-
-struct SrdSegmentView {
-    SrdHeader header{};
-    ByteSpan data{};
-};
+struct StoredPacket;
 
 struct PacketView {
     RtpHeaderView rtp{};
-    std::uint32_t extended_seq = 0;
-
-    SrdSegmentView segments[maxPacketSrdSegments]{};
-    std::uint8_t segment_count = 0;
-
     ByteSpan payload_data{};
-    ByteSpan trailing_padding{};
+
+    [[nodiscard]] virtual std::uint32_t reorder_sequence() const = 0;
+    [[nodiscard]] virtual std::unique_ptr<StoredPacket> store() const = 0;
+
+    virtual ~PacketView() = default;
 };
 } // namespace st2110
 

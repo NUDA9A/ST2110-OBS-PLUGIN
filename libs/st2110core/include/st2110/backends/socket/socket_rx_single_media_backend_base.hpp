@@ -5,6 +5,8 @@
 #include "st2110/foundation/bytes.hpp"
 #include "st2110/ingress/shared/packet_parse.hpp"
 #include "platform/socket_runtime.hpp"
+#include <st2110/receive/shared/reorder_buffer.hpp>
+#include <st2110/receive/shared/receive_reorder_tolerance_policy.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -21,12 +23,6 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
   public:
     ~SocketRxSingleMediaBackendBase() override = default;
 
-    [[nodiscard]] const char *backend_name() const override { return "socket"; }
-
-    [[nodiscard]] RxBackendCapabilities capabilities() const override { return capabilities_; }
-
-    [[nodiscard]] RxBackendState state() const override { return state_; }
-
     [[nodiscard]] BackendStats stats() const override {
         std::lock_guard lock(stats_mutex_);
         BackendStats snapshot = build_base_stats_snapshot_locked();
@@ -35,8 +31,8 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
     }
 
     RxBackendLifecycleResult stop() override {
-        if (!state_.audio_active && !state_.video_active && port_ == nullptr) {
-            return state_;
+        if (!is_active && port_ == nullptr) {
+            return is_active;
         }
 
         if (port_ != nullptr && port_->is_open()) {
@@ -47,51 +43,16 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
 
         clear_media_runtime_objects();
 
-        return state_;
+        return is_active;
     }
 
   protected:
-    SocketRxSingleMediaBackendBase(RxMediaKind media_kind, RxBackendCapabilities capabilities,
-                                   std::unique_ptr<ISocketRxPortFactory> port_factory)
-        : port_factory_{std::move(port_factory)}, media_kind_(media_kind), capabilities_(capabilities) {}
+    explicit SocketRxSingleMediaBackendBase(std::unique_ptr<ISocketRxPortFactory> port_factory)
+        : port_factory_{std::move(port_factory)} {}
 
     [[nodiscard]] static std::unique_ptr<ISocketRxPortFactory> make_default_port_factory();
 
-    [[nodiscard]] Error validate_common_start_preconditions() const noexcept {
-        if (!media_active() && port_factory_ != nullptr) {
-            return Error::Ok;
-        }
-
-        if (media_active()) {
-            return Error::InvalidBackendState;
-        }
-
-        return Error::InvalidValue;
-    }
-
     [[nodiscard]] std::unique_ptr<ISocketRxPort> create_port() const { return port_factory_->create_port(); }
-
-    [[nodiscard]] bool media_active() const noexcept {
-        switch (media_kind_) {
-        case RxMediaKind::Audio:
-            return state_.audio_active;
-        case RxMediaKind::Video:
-            return state_.video_active;
-        }
-
-        return false;
-    }
-
-    void set_media_active(bool active) noexcept {
-        switch (media_kind_) {
-        case RxMediaKind::Audio:
-            state_.audio_active = active;
-            break;
-        case RxMediaKind::Video:
-            state_.video_active = active;
-            break;
-        }
-    }
 
     [[nodiscard]] RxBackendLifecycleResult start_common_runtime(std::unique_ptr<ISocketRxPort> port,
                                                                 const SocketRxOpenConfig &open_cfg,
@@ -118,8 +79,8 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
             return std::unexpected(Error::SystemFailure);
         }
 
-        set_media_active(true);
-        return state_;
+        is_active = true;
+        return is_active;
     }
 
     void run_receive_loop(std::stop_token stop_token) noexcept {
@@ -157,7 +118,7 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
         receive_thread_ = std::jthread{};
         port_.reset();
         receive_buffer_.clear();
-        set_media_active(false);
+        is_active = false;
         reset_stats();
     }
 
@@ -214,9 +175,8 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
 
     [[nodiscard]] BackendStats build_base_stats_snapshot_locked() const noexcept { return stats_; }
 
-    [[nodiscard]] static std::vector<std::uint8_t> make_receive_buffer(const PacketParsePolicy &policy) {
-        const std::size_t size_bytes = effective_max_udp_datagram_bytes(policy) - udpHeaderBytes;
-        return std::vector<std::uint8_t>(size_bytes);
+    [[nodiscard]] static std::vector<std::uint8_t> make_receive_buffer(const std::size_t maxudp) {
+        return std::vector<std::uint8_t>(maxudp - udpHeaderBytes);
     }
 
     [[nodiscard]] static bool is_rtcp_like_datagram(ByteSpan udp_payload) noexcept {
@@ -250,21 +210,54 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
 
     virtual void process_received_datagram(ByteSpan udp_payload) noexcept = 0;
     virtual void clear_media_runtime_objects() noexcept = 0;
+    virtual std::unique_ptr<IReorderBuffer> make_reorder_buffer(const ReorderBufferConfig &cfg) = 0;
+    virtual void deliver_media(std::unique_ptr<StoredPacket> packet) = 0;
+    void apply_reorder_buffer_policy(bool& gap_flush_used) const {
+        switch (reorder_tolerance_policy_) {
+        case ReceiveReorderGapPolicy::WaitForMissing:
+            return;
+        case ReceiveReorderGapPolicy::FlushGapOnce:
+            gap_flush_used = reorder_buffer_->flush_missing_once();
+            return;
+        default:
+            throw std::runtime_error("Such reorder policy is not implemented yet");
+        }
+    }
+    void drain_reorder_buffer_to_sink() {
+        bool gap_flush_used = false;
+
+        while (true) {
+            auto stored_packet = reorder_buffer_->pop_next();
+            if (!stored_packet) {
+                if (gap_flush_used) {
+                    return;
+                }
+
+                apply_reorder_buffer_policy(gap_flush_used);
+
+                if (!gap_flush_used) {
+                    return;
+                }
+
+                continue;
+            }
+
+            deliver_media(std::move(stored_packet));
+        }
+    }
     virtual void augment_stats_snapshot_locked(BackendStats &snapshot) const noexcept {}
 
   protected:
     std::unique_ptr<ISocketRxPortFactory> port_factory_{};
     std::unique_ptr<ISocketRxPort> port_{};
     std::vector<std::uint8_t> receive_buffer_{};
+    std::unique_ptr<IReorderBuffer> reorder_buffer_{};
     std::jthread receive_thread_{};
+    ReceiveReorderGapPolicy reorder_tolerance_policy_ = ReceiveReorderGapPolicy::WaitForMissing;
 
-    RxBackendState state_{};
+    bool is_active = false;
     mutable std::mutex stats_mutex_{};
     BackendStats stats_{};
-
-  private:
-    RxMediaKind media_kind_;
-    RxBackendCapabilities capabilities_;
 };
 
 } // namespace st2110

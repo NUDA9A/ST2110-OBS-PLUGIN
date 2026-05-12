@@ -16,7 +16,6 @@ enum class ReceiveBackendKind {
 using ReceiveMediaBootstrap = std::variant<VideoReceiveBootstrap, AudioReceiveBootstrap>;
 
 struct ReceiveStartRequest {
-    ReceiveBackendKind backend_kind = ReceiveBackendKind::Socket;
     ReceiveMediaBootstrap media{};
     ReceiveLocalPolicy local{};
 };

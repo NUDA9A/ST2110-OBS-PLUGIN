@@ -1,5 +1,5 @@
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    set(ST2110_HAS_MTL_BACKEND ON)
+    set(ST2110_HAS_MTL_BACKEND OFF)
 else()
     set(ST2110_HAS_MTL_BACKEND OFF)
 endif()
@@ -18,14 +18,10 @@ endif()
 set(ST2110CORE_SOURCES
         src/stub.cpp
         src/backends/socket/socket_rx_single_media_backend_base.cpp
-        src/backend_factory_registry.cpp
 )
 
 if(ST2110_HAS_MTL_BACKEND)
-    list(APPEND ST2110CORE_SOURCES
-            src/backends/mtl/mtl_rx_backend_factory.cpp
-            src/backends/mtl/mtl_rx_video_backend.cpp
-    )
+    list(APPEND ST2110CORE_SOURCES)
 endif()
 
 add_library(st2110core STATIC

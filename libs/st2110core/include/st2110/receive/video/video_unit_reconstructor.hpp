@@ -1,16 +1,14 @@
 #ifndef ST2110_OBS_PLUGIN_VIDEO_UNIT_RECONSTRUCTOR_HPP
 #define ST2110_OBS_PLUGIN_VIDEO_UNIT_RECONSTRUCTOR_HPP
 
-#include "st2110/delivery/video/pixel_format.hpp"
-#include "st2110/delivery/video/video_frame.hpp"
-#include "st2110/foundation/error.hpp"
-#include "st2110/model/video/video_scan_mode.hpp"
-#include "frame_assembler.hpp"
+#include <st2110/contracts/video/depacketizer_config.hpp>
+#include <st2110/contracts/video/video_unit_reconstructor_config.hpp>
+#include <st2110/delivery/video/video_frame.hpp>
+#include <st2110/receive/video/frame_assembler.hpp>
 
-#include <expected>
+#include <cstring>
 #include <memory>
-#include <stdexcept>
-#include <vector>
+#include <optional>
 
 namespace st2110 {
 struct ReconstructedVideoFrame {
@@ -21,48 +19,82 @@ struct ReconstructedVideoFrame {
     [[nodiscard]] bool partial() const { return !complete; }
 };
 
-struct VideoUnitReconstructorConfig {
-    PixelFormat format = PixelFormat::UYVY;
-    VideoScanMode scan_mode = VideoScanMode::Progressive;
+struct PendingUnitPair {
+    std::optional<AssembledVideoUnit> first{};
+    std::optional<AssembledVideoUnit> second{};
 };
 
-class IVideoUnitReconstructor {
+class VideoUnitReconstructor {
   public:
-    virtual std::vector<ReconstructedVideoFrame> push(AssembledVideoUnit unit) = 0;
-    virtual void reset() = 0;
-    virtual ~IVideoUnitReconstructor() = default;
-};
+    explicit VideoUnitReconstructor(const VideoUnitReconstructorConfig cfg) : cfg_(cfg) {}
+    std::optional<ReconstructedVideoFrame> push(AssembledVideoUnit unit) {
+        switch (unit.unit_kind) {
+        case VideoAssemblyUnitKind::Frame:
+            return ReconstructedVideoFrame{
+                .frame = std::move(unit.frame), .rtp_timestamp = unit.rtp_timestamp, .complete = unit.complete};
+        case VideoAssemblyUnitKind::Field:
+            if (unit.sub_unit_index == 0) {
+                unit_pair_.first = std::move(unit);
+            } else {
+                unit_pair_.second = std::move(unit);
+            }
 
-class ProgressiveVideoUnitReconstructor : public IVideoUnitReconstructor {
-  public:
-    ProgressiveVideoUnitReconstructor() = default;
-    std::vector<ReconstructedVideoFrame> push(AssembledVideoUnit unit) override {
-        if (unit.unit_kind != VideoAssemblyUnitKind::Frame) {
-            throw std::logic_error("Unsupported");
+            if (unit_pair_.first && unit_pair_.second) {
+                VideoFrame frame(cfg_.width, cfg_.height, cfg_.format);
+                copy_sub_unit_rows(frame, unit_pair_.first->frame, 0);
+                copy_sub_unit_rows(frame, unit_pair_.second->frame, 1);
+                ReconstructedVideoFrame res{.frame = std::move(frame),
+                                            .rtp_timestamp = unit_pair_.first->rtp_timestamp,
+                                            .complete = unit_pair_.first->complete && unit_pair_.second->complete};
+                unit_pair_ = {};
+                return res;
+            }
+            return std::nullopt;
+        case VideoAssemblyUnitKind::Segment:
+            if (unit.sub_unit_index == 0) {
+                if (unit_pair_.second && unit_pair_.second->rtp_timestamp != unit.rtp_timestamp) {
+                    unit_pair_.second = {};
+                }
+                unit_pair_.first = std::move(unit);
+            } else {
+                if (unit_pair_.first && unit_pair_.first->rtp_timestamp != unit.rtp_timestamp) {
+                    unit_pair_.first = {};
+                }
+                unit_pair_.second = std::move(unit);
+            }
+
+            if (unit_pair_.first && unit_pair_.second) {
+                VideoFrame frame(cfg_.width, cfg_.height, cfg_.format);
+                copy_sub_unit_rows(frame, unit_pair_.first->frame, 0);
+                copy_sub_unit_rows(frame, unit_pair_.second->frame, 1);
+                ReconstructedVideoFrame res{.frame = std::move(frame),
+                                            .rtp_timestamp = unit_pair_.first->rtp_timestamp,
+                                            .complete = unit_pair_.first->complete && unit_pair_.second->complete};
+                unit_pair_ = {};
+                return res;
+            }
+            return std::nullopt;
+        default:
+            std::unreachable();
         }
-        return {ReconstructedVideoFrame{
-            .frame = std::move(unit.frame), .rtp_timestamp = unit.rtp_timestamp, .complete = unit.complete}};
     }
 
-    void reset() override {}
+  private:
+    static void copy_sub_unit_rows(VideoFrame &dst, const VideoFrame &src, std::uint8_t sub_unit_index) {
+        for (std::size_t plane = 0; plane < dst.plane_count(); ++plane) {
+            const std::size_t row_bytes = dst.active_row_bytes(plane);
 
-    ~ProgressiveVideoUnitReconstructor() override = default;
+            for (std::uint32_t src_row = 0; src_row < src.plane_height_rows(plane); ++src_row) {
+                const std::uint32_t dst_row = src_row * 2 + sub_unit_index;
+
+                std::memcpy(dst.row_data(dst_row, plane), src.row_data(src_row, plane), row_bytes);
+            }
+        }
+    }
+
+    VideoUnitReconstructorConfig cfg_;
+    PendingUnitPair unit_pair_{};
 };
-
-[[nodiscard]] inline std::expected<std::unique_ptr<IVideoUnitReconstructor>, Error>
-make_video_unit_reconstructor(const VideoUnitReconstructorConfig &cfg) {
-    switch (cfg.scan_mode) {
-    case VideoScanMode::Progressive: {
-        std::unique_ptr<IVideoUnitReconstructor> ptr = std::make_unique<ProgressiveVideoUnitReconstructor>();
-        return ptr;
-    }
-    case VideoScanMode::Interlaced:
-    case VideoScanMode::PsF:
-        return std::unexpected(Error::Unsupported);
-    default:
-        return std::unexpected(Error::InvalidValue);
-    }
-}
 } // namespace st2110
 
 #endif // ST2110_OBS_PLUGIN_VIDEO_UNIT_RECONSTRUCTOR_HPP

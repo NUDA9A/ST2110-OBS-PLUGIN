@@ -49,8 +49,8 @@ checked_audio_assembler_payload_size_bytes(uint32_t samples_per_channel, uint16_
 
     constexpr std::size_t max = std::numeric_limits<std::size_t>::max();
 
-    const std::size_t samples = static_cast<std::size_t>(samples_per_channel);
-    const std::size_t channels = static_cast<std::size_t>(channel_count);
+    const auto samples = static_cast<std::size_t>(samples_per_channel);
+    const auto channels = static_cast<std::size_t>(channel_count);
 
     if (samples > max / channels) {
         return std::unexpected(Error::InvalidValue);
