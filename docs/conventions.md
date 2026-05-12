@@ -4,72 +4,87 @@
 
 - Project copy of this file = authoritative runtime copy.
 - If this file conflicts with `plan_rules.md`, `plan_rules.md` wins.
-- If this file conflicts with the current mode file, the current mode file wins.
-- Terms such as **MUST**, **MUST NOT**, **Actually read**, **Copy-ready**, **MTL task**, **Production-file selection path**, and **Test-file selection path** inherit the meanings defined in `plan_rules.md`.
+- If this file conflicts with `architecture_rules.md` on architecture meaning, `architecture_rules.md` wins.
+- If this file conflicts with `interaction_mode_update_code_map.md` during an explicit code-map update request, the mode file wins for that request.
+- Terms such as **MUST**, **MUST NOT**, **Actually read**, **Copy-ready**, and **Fully grounded** inherit the meanings defined in `plan_rules.md`.
 
-## 1. Copy-ready output
+## 1. Copy-ready repository output
 
 All repository-facing output MUST be copy-ready.
 
-Rules:
-- new production file → full file unless the current mode explicitly says otherwise;
-- existing production header / source → only the blocks required by the current mode;
-- unchanged declarations MUST NOT be resent unless the current mode explicitly requires a full structure or full file;
-- existing inline bodies MUST NOT be resent unless the current mode explicitly requests implementation changes;
-- file path MUST be stated for every returned code/document block;
-- inserted/replaced blocks MUST be grouped by file, not scattered.
-
-## 2. API/output formatting
-
-Unless the current mode defines a stricter format, Assistant SHOULD:
-
-- group output by file;
-- explicitly label each block as:
-  - add;
-  - replace;
-  - update;
-  - insert into existing class / struct;
-- keep declarations copyable without reconstruction;
-- keep comments concise and architecture-facing rather than explanatory prose inside code blocks.
-
-Declarations intended for user implementation SHOULD end with `;`.
-
-Required helper declarations MUST NOT be omitted when they are part of the intended architecture.
-
-## 3. Replaceable documentation blocks
-
-For repository `.md` updates, Assistant MUST provide replaceable blocks rather than scattered line fragments unless the user explicitly asks for a diff.
-
 Default rules:
-- map entries → full entry block;
-- shard updates → full new/updated shard entry blocks;
-- `plan.md` task/subsection updates → full replaceable block in the current file’s established format;
-- full-file replacement only when:
-  - explicitly requested by the user;
-  - or when the file behavior/rule set is globally reshaped.
+- new production file → full file;
+- existing production file → only the necessary updated blocks unless the user explicitly asked for the full file or the whole file behavior is being reshaped;
+- repository `.md` rewrite with global rule changes → full-file replacement is appropriate;
+- unchanged declarations MUST NOT be resent unless a full updated structure is required;
+- unchanged inline bodies MUST NOT be resent unless the user explicitly asked for implementation changes;
+- file path MUST be stated for every returned repository block.
 
-## 4. Test-file output
+## 2. Grouping and labeling
 
-When the current mode requires a full test file, Assistant MUST send the full `.cpp`.
+Assistant SHOULD group repository-facing output by file.
 
-When a new test target is actually required, Assistant MUST provide the exact `add_st2110_test(...)` line in the same style as the existing file.
+For each returned block Assistant SHOULD label it clearly, for example:
+- add;
+- replace;
+- update;
+- insert into existing file;
+- full-file replacement.
 
-Assistant SHOULD prefer updating an existing test file over creating a new one unless the current mode or subsystem split clearly requires a separate file.
+Assistant MUST NOT scatter one file’s required changes across disconnected fragments without making the insertion/replacement location explicit.
 
-## 5. Plan/status hygiene
+## 3. Documentation updates
 
-Default `plan.md` workflow:
-- completed task → `[x]` where declared;
-- no default move to `## Done`;
-- no duplicate completion marking.
+For repository `.md` updates, Assistant SHOULD return replaceable blocks by default.
 
-Assistant MUST NOT assume a `## Done` workflow unless the user explicitly wants it.
+However, when the file’s meaning or rule set is globally reshaped, Assistant SHOULD return the full new file.
 
-## 6. Response discipline
+Typical cases:
+- rule files rewritten from scratch → full-file replacement;
+- one code-map entry → one full entry block;
+- one plan subsection → one replaceable subsection block.
 
-Assistant MUST keep architectural obligations, workflow obligations, and formatting obligations separate in the response.
+## 4. Response discipline
+
+Assistant MUST keep these things separate in the response:
+- confirmed file-grounded facts;
+- design recommendations;
+- unresolved questions or missing material;
+- repository-ready blocks.
 
 Assistant MUST NOT:
-- hide missing required reading;
-- imply a full check when only maps or snippets were read;
-- merge unrelated files into one oversized replacement unless the user explicitly requests that style.
+- hide missing reading;
+- imply a full check when only partial material was read;
+- present code-map descriptions as if they were code;
+- merge unrelated files into one oversized pseudo-patch unless the user explicitly asked for that style.
+
+## 5. Expected shape for code/design answers
+
+Unless the user asks for a different format, Assistant SHOULD provide:
+- a short architectural reading of the issue;
+- exact scope of affected files;
+- the recommended change shape;
+- copy-ready code or document blocks when repository-facing output is requested.
+
+## 6. Expected shape for review answers
+
+When reviewing code or architecture, Assistant SHOULD separate:
+- what is already correct;
+- what is missing or wrong;
+- what file(s) own the fix;
+- whether the problem is ingress-validation, modeling, projection, conversion, backend logic, delivery logic, or OBS composition.
+
+## 7. Tests
+
+Assistant MUST NOT assume a tests workflow when tests are absent.
+
+If tests are requested and exist:
+- updating an existing test file is preferred over creating a new one, unless the subsystem split clearly requires a new file;
+- a new test target, when truly required, MUST be provided as the exact build-system line plus the full new test file.
+
+## 8. Large rule rewrites
+
+When the user asks to fully reshape project rules, Assistant SHOULD:
+- propose the new rule surface first if useful;
+- return full replacement files for the affected rule documents;
+- explicitly say which old rule files should be deleted or retired if they are no longer part of the active workflow.
