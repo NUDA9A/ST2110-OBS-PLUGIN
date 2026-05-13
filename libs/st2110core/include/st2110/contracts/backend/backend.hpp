@@ -32,39 +32,20 @@ struct BackendStats {
     DepacketizerStats depacketizer{};
 };
 
-class IVideoFrameSink {
+class IFrameSink {
   public:
-    virtual void on_video_frame(const VideoFrameView &frame) = 0;
+    virtual void on_video_frame(VideoFrame frame, TimestampNs timestamp_ns) = 0;
+    virtual void on_audio_frame(AudioBuffer frame, TimestampNs timestamp_ns) = 0;
 
-    virtual ~IVideoFrameSink() = default;
-};
-
-class IAudioFrameSink {
-  public:
-    virtual void on_audio_frame(const AudioFrameView &frame) = 0;
-
-    virtual ~IAudioFrameSink() = default;
+    virtual ~IFrameSink() = default;
 };
 
 class IRxBackend {
   public:
     virtual RxBackendLifecycleResult stop() = 0;
+    virtual RxBackendLifecycleResult start(IFrameSink* sink) = 0;
 
     virtual ~IRxBackend() = default;
-};
-
-class IRxVideoBackend : public virtual IRxBackend {
-  public:
-    virtual RxBackendLifecycleResult start_video(IVideoFrameSink &sink) = 0;
-
-    ~IRxVideoBackend() override = default;
-};
-
-class IRxAudioBackend : public virtual IRxBackend {
-  public:
-    virtual RxBackendLifecycleResult start_audio(IAudioFrameSink &sink) = 0;
-
-    ~IRxAudioBackend() override = default;
 };
 } // namespace st2110
 

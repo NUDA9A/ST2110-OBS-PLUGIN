@@ -2,7 +2,7 @@
 #define ST2110_OBS_PLUGIN_DEPACKETIZER_HPP
 
 #include <st2110/contracts/video/depacketizer_config.hpp>
-#include <st2110/ingress/shared/packet_view.hpp>
+#include <st2110/receive/video/video_packet_view.hpp>
 #include <st2110/receive/video/depacketizer_stats.hpp>
 #include <st2110/receive/video/frame_assembler.hpp>
 

@@ -2,7 +2,6 @@
 #define ST2110_OBS_PLUGIN_AUDIO_FRAME_HPP
 
 #include "st2110/foundation/timestamp.hpp"
-#include "st2110/rx_config.hpp"
 
 #include <cstddef>
 #include <cstdint>

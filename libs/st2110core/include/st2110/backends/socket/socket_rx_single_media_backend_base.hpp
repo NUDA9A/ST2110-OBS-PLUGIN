@@ -120,7 +120,8 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
 
     [[nodiscard]] std::unique_ptr<ISocketRxPort> create_port() const { return port_factory_->create_port(); }
 
-    [[nodiscard]] RxBackendLifecycleResult start_common_runtime() {
+    [[nodiscard]] RxBackendLifecycleResult start_common_runtime(IFrameSink* sink) {
+        sink_ = sink;
         duplicate_merge_history_.clear();
         std::vector<SocketRxRuntimeLeg> staged;
         staged.reserve(open_configs_.size());
@@ -264,6 +265,7 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
         drain_reorder_buffer_to_sink();
     }
 
+    IFrameSink* sink_ = nullptr;
     std::vector<SocketRxOpenConfig> open_configs_{};
     std::unique_ptr<ISocketRxPortFactory> port_factory_{};
     std::size_t maxudp_{};

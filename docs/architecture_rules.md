@@ -249,16 +249,73 @@ A receive path being valid does not automatically mean that the current delivery
 
 That gap MUST be represented as delivery/handoff/conversion scope, not as proof that the receive/session model is invalid.
 
-## 10. Jitter-buffer placement rule
+## 10. Jitter-buffer and shared AV playout boundary
 
-A future jitter buffer SHOULD be treated as a playout/synchronization boundary, not as packet-ingress logic.
+A future jitter buffer MUST be treated as a playout/synchronization boundary after media reconstruction, not as packet-ingress logic.
 
 Preferred architectural direction:
+
 - packet-level recovery/reorder stays in the packet path where appropriate;
 - jitter/pll/playout smoothing lives after media reconstruction, on the final delivery side;
-- if audio and video are both present, the architecture SHOULD remain open to one shared synchronization/playout boundary rather than two permanently unrelated playout paths.
+- if audio and video are both present, the architecture SHOULD remain open to one shared synchronization/playout boundary rather than two permanently unrelated playout paths;
+- the architecture MUST degrade cleanly when only one media type is present.
 
-The architecture also MUST degrade cleanly when only one media type is present.
+### 10.1 Delivery into the playout boundary
+
+The boundary between reconstructed media and future synchronized playout SHOULD be explicit.
+
+The project MAY use one common sink contract for downstream reconstructed-media delivery, provided that:
+- media-specific reconstruction remains media-specific;
+- the common sink contract does not collapse video and audio into one fake common media type;
+- the common sink is only a downstream delivery boundary, not a justification to merge media-specific packet/reconstruction logic.
+
+A common sink contract for this boundary SHOULD expose separate media-specific callbacks such as:
+- `on_video_frame(...)`;
+- `on_audio_frame(...)`.
+
+### 10.2 Ownership at the playout boundary
+
+The synchronized playout/jitter boundary MUST receive owning media objects or equivalent owned payload wrappers.
+
+It MUST NOT store non-owning delivery views such as `VideoFrameView` or `AudioFrameView` beyond the callback scope.
+
+If a non-owning view is used at an earlier local boundary, any downstream jitter/synchronization/playout component that retains media for later release MUST first copy or otherwise take ownership of the media.
+
+### 10.3 Common timebase versus one-to-one pairing
+
+A common timestamp anchor policy MAY map reconstructed audio and video into one shared presentation timebase.
+
+However, a shared anchor MUST NOT be interpreted as proof that there is a one-to-one correspondence between one video frame timestamp and one audio block timestamp.
+
+The architecture MUST remain correct for differing media cadences, including common cases where:
+- video frames are less frequent;
+- audio blocks are more frequent;
+- multiple audio blocks correspond to the presentation interval surrounding one video frame.
+
+Therefore the synchronized playout boundary MUST be modeled as a shared playout timeline, not as an assumption that one timestamp key always holds exactly one video object and exactly one audio object.
+
+### 10.4 Preferred shared-playout model
+
+The preferred future model is:
+- one shared AV synchronization/playout component after reconstruction;
+- media arrives into that component from media-specific backend/runtime threads;
+- the component stores owned reconstructed media keyed by presentation/playout time;
+- the component schedules release according to playout timing policy;
+- the component supports both AV and single-media operation.
+
+The exact internal container shape is not fixed yet, but the architecture MUST remain open to multiple audio blocks over the interval of one video frame.
+
+### 10.5 Responsibility split
+
+Backends and backend-common runtime layers MAY:
+- reconstruct media;
+- map RTP/media timestamps into the configured project timebase;
+- deliver reconstructed media into the shared downstream sink boundary.
+
+Backends and backend-common runtime layers MUST NOT:
+- become the permanent home of cross-media AV synchronization policy;
+- assume that current delivery timestamps imply one-to-one AV pairing;
+- hardwire OBS handoff directly into packet-path logic in a way that prevents insertion of the future shared playout boundary.
 
 ## 11. OBS and DistroAV rules
 

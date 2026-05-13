@@ -2,6 +2,9 @@
 #define ST2110_OBS_VIDEO_TIMESTAMP_MAPPER_CONFIG_HPP
 
 #include <st2110/foundation/rtp_timestamp_anchor_policy.hpp>
+#include <st2110/foundation/timestamp.hpp>
+
+#include <cstdint>
 
 namespace st2110 {
 inline constexpr std::uint64_t videoTimestampNanosecondsPerSecond = 1000000000ULL;

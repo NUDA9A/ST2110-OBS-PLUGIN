@@ -10,21 +10,9 @@
 #include <st2110/receive/shared/receive_reorder_tolerance_policy.hpp>
 #include <st2110/receive/shared/receive_start_request.hpp>
 #include <st2110/receive/video/video_receive_bootstrap.hpp>
+#include <st2110/delivery/socket_start_config.hpp>
 
 namespace st2110 {
-struct SocketVideoLegConfig {
-    SocketAddressFamily family;
-    std::string local_ip;
-
-    std::string dest_ip;
-    std::uint16_t udp_port;
-
-    SourceFilterSignaling source_filter{};
-    std::size_t max_udp_datagram_bytes = 1460;
-
-    SocketRxOpenConfig open_config{};
-};
-
 struct SocketVideoStreamConfig {
     std::uint8_t expected_payload_type = 0;
 
@@ -33,14 +21,10 @@ struct SocketVideoStreamConfig {
     VideoPackingMode packing_mode = VideoPackingMode::Gpm;
 };
 
-struct SocketVideoStartConfig {
-    ReceiveTopologyKind topology = ReceiveTopologyKind::SingleStream;
+struct SocketVideoStartConfig : SocketStartConfig {
     SocketVideoStreamConfig stream{};
-    ReorderBufferConfig reorder_buffer_config{};
     VideoReceivePipelineConfig video_receive_pipeline_config{};
     VideoRtpTimestampMapperConfig rtp_timestamp_mapper_config{};
-
-    std::vector<SocketVideoLegConfig> legs{};
 };
 
 inline SocketVideoStartConfig project_receive_start_request_to_socket_video_start(const ReceiveStartRequest &request,

@@ -304,9 +304,6 @@ class LinuxSocketRxPort final : public ISocketRxPort {
     }
 
     [[nodiscard]] static Error validate_open_request(const SocketRxOpenConfig &cfg) {
-        if (const Error err = validate_socket_rx_open_config(cfg); err != Error::Ok) {
-            return err;
-        }
         if (const Error err = validate_current_platform_support(cfg); err != Error::Ok) {
             return err;
         }
