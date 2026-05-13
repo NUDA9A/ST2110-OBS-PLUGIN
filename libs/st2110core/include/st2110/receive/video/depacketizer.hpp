@@ -2,9 +2,9 @@
 #define ST2110_OBS_PLUGIN_DEPACKETIZER_HPP
 
 #include <st2110/contracts/video/depacketizer_config.hpp>
-#include <st2110/receive/video/video_packet_view.hpp>
 #include <st2110/receive/video/depacketizer_stats.hpp>
 #include <st2110/receive/video/frame_assembler.hpp>
+#include <st2110/receive/video/video_packet_view.hpp>
 
 #include <cstdint>
 #include <optional>
@@ -46,7 +46,7 @@ class Depacketizer {
         std::vector<AssembledVideoUnit> res;
 
         if (!has_unit_in_progress()) {
-            begin_unit(packet_key);
+            begin_unit(packet_key, pkt.receive_timestamp_ns);
             write_packet_segments(pkt);
             ++stats_.packets_used;
 
@@ -58,7 +58,7 @@ class Depacketizer {
 
         if (*assembly_state_.current_key != packet_key) {
             end_current_unit(false, res);
-            begin_unit(packet_key);
+            begin_unit(packet_key, pkt.receive_timestamp_ns);
         }
 
         write_packet_segments(pkt);
@@ -135,10 +135,10 @@ class Depacketizer {
         return {};
     }
 
-    void begin_unit(const VideoAssemblyKey &key) {
+    void begin_unit(const VideoAssemblyKey &key, const TimestampNs receive_timestamp_ns) {
         assembler_ = FrameAssembler(cfg_.width, unit_height_for_key(cfg_.scan_mode, cfg_.height, key.sub_unit_index),
                                     cfg_.format, cfg_.policy);
-        assembler_.begin(key.rtp_timestamp);
+        assembler_.begin(key.rtp_timestamp, receive_timestamp_ns);
         assembly_state_.current_key = key;
     }
 

@@ -17,11 +17,11 @@ struct PacketViewParseFailure {
 
 inline constexpr std::size_t udpHeaderBytes = 8;
 
-[[nodiscard]] inline std::size_t udp_datagram_size_bytes(ByteSpan udp_payload) {
+[[nodiscard]] inline std::size_t udp_datagram_size_bytes(const ByteSpan udp_payload) {
     return udp_payload.size() + udpHeaderBytes;
 }
 
-[[nodiscard]] inline Error validate_packet_parse_policy(ByteSpan udp_payload, const std::size_t maxudp) {
+[[nodiscard]] inline Error validate_packet_parse_policy(const ByteSpan udp_payload, const std::size_t maxudp) {
     if (udp_datagram_size_bytes(udp_payload) > maxudp) {
         return Error::InvalidValue;
     }
@@ -29,7 +29,8 @@ inline constexpr std::size_t udpHeaderBytes = 8;
     return Error::Ok;
 }
 
-[[nodiscard]] inline std::expected<VideoPacketView, PacketViewParseFailure> parse_packet_view_staged(ByteSpan udp_payload) {
+[[nodiscard]] inline std::expected<VideoPacketView, PacketViewParseFailure>
+parse_packet_view_staged(const ByteSpan udp_payload) {
     VideoPacketView res{};
 
     std::expected<RtpHeaderView, Error> rtp_header = parse_rtp_header(udp_payload);
@@ -85,12 +86,7 @@ inline constexpr std::size_t udpHeaderBytes = 8;
     return res;
 }
 
-[[nodiscard]] inline std::expected<VideoPacketView, Error> parse_packet_view(ByteSpan udp_payload,
-                                                                        const std::size_t maxudp) {
-    if (Error err = validate_packet_parse_policy(udp_payload, maxudp); err != Error::Ok) {
-        return std::unexpected(err);
-    }
-
+[[nodiscard]] inline std::expected<VideoPacketView, Error> parse_packet_view(const ByteSpan udp_payload) {
     auto staged = parse_packet_view_staged(udp_payload);
     if (!staged.has_value()) {
         return std::unexpected(staged.error().error);
@@ -98,8 +94,8 @@ inline constexpr std::size_t udpHeaderBytes = 8;
     return *staged;
 }
 
-[[nodiscard]] inline std::expected<VideoPacketView, Error> parse_packet_view(ByteSpan udp_payload, PacketParseStats &stats,
-                                                                        const std::size_t maxudp) {
+[[nodiscard]] inline std::expected<VideoPacketView, Error>
+parse_packet_view(const ByteSpan udp_payload, PacketParseStats &stats, const std::size_t maxudp) {
     if (Error err = validate_packet_parse_policy(udp_payload, maxudp); err != Error::Ok) {
         record_packet_parse_result(stats, err, PacketParseStage::PacketPolicy);
         return std::unexpected(err);

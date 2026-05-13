@@ -5,6 +5,7 @@
 #include <st2110/contracts/video/partial_unit_policy.hpp>
 #include <st2110/delivery/video/video_frame.hpp>
 #include <st2110/foundation/bytes.hpp>
+#include <st2110/foundation/timestamp.hpp>
 #include <st2110/receive/video/frame_write_coverage.hpp>
 
 #include <cstdint>
@@ -19,6 +20,7 @@ struct AssembledVideoUnit {
     VideoFrame frame;
     VideoAssemblyUnitKind unit_kind = VideoAssemblyUnitKind::Frame;
     std::uint32_t rtp_timestamp = 0;
+    TimestampNs receive_timestamp_ns = 0;
     std::uint8_t sub_unit_index = 0;
     bool marker_seen = false;
     bool can_emit = false;
@@ -39,8 +41,9 @@ class FrameAssembler {
         : width_(width), height_(height), format_(format), current_frame_(width_, height_, format_),
           coverage_(current_frame_), partial_policy_(partial_policy) {}
 
-    void begin(std::uint32_t rtp_timestamp) {
+    void begin(std::uint32_t rtp_timestamp, TimestampNs receive_timestamp_ns) {
         current_rtp_timestamp_ = rtp_timestamp;
+        current_receive_timestamp_ns_ = receive_timestamp_ns;
         coverage_.reset_from(current_frame_);
     }
 
@@ -66,6 +69,7 @@ class FrameAssembler {
 
         AssembledVideoUnit res{.frame = std::move(current_frame_),
                                .rtp_timestamp = current_rtp_timestamp_,
+                               .receive_timestamp_ns = current_receive_timestamp_ns_,
                                .marker_seen = marker,
                                .can_emit = true,
                                .complete = fully_written};
@@ -78,11 +82,12 @@ class FrameAssembler {
     }
 
   private:
-    uint32_t width_;
-    uint32_t height_;
+    std::uint32_t width_;
+    std::uint32_t height_;
     PixelFormat format_;
 
-    uint32_t current_rtp_timestamp_ = 0;
+    std::uint32_t current_rtp_timestamp_ = 0;
+    TimestampNs current_receive_timestamp_ns_ = 0;
     VideoFrame current_frame_;
     FrameWriteCoverage coverage_;
     PartialUnitPolicy partial_policy_;

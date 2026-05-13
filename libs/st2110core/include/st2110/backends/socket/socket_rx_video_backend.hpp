@@ -10,7 +10,6 @@
 #include "st2110/receive/shared/packet_admission.hpp"
 #include "st2110/receive/shared/receive_reorder_tolerance_policy.hpp"
 #include "st2110/receive/video/video_receive_pipeline.hpp"
-#include "st2110/receive/video/video_timestamp_mapping.hpp"
 #include <st2110/delivery/video/socket_video_start_config.hpp>
 
 #include <memory>
@@ -24,8 +23,7 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase {
         : SocketRxSingleMediaBackendBase(make_default_port_factory(), cfg.legs[0].max_udp_datagram_bytes,
                                          cfg.reorder_buffer_config, collect_open_configs(cfg),
                                          cfg.stream.expected_payload_type),
-          video_receive_pipeline_(cfg.video_receive_pipeline_config),
-          video_timestamp_mapper_(cfg.rtp_timestamp_mapper_config) {}
+          video_receive_pipeline_(cfg.video_receive_pipeline_config) {}
 
     RxBackendLifecycleResult start(IFrameSink *sink) override {
         reorder_buffer_ = make_reorder_buffer(reorder_buffer_config_);
@@ -39,7 +37,7 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase {
                                                                    const ByteSpan udp_payload) override {
         (void)leg_index;
 
-        auto packet = parse_packet_view(udp_payload, maxudp_);
+        auto packet = parse_packet_view(udp_payload);
         if (!packet) {
             return std::unexpected(packet.error());
         }
@@ -51,7 +49,7 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase {
         return std::make_unique<FixedWindowReorderBuffer<true>>(cfg.window_size_packets);
     }
 
-    void deliver_media(const std::unique_ptr<StoredPacket> packet) override {
+    void deliver_media(std::unique_ptr<StoredPacket> packet) override {
         auto base = packet->view();
         auto video_packet = std::unique_ptr<VideoPacketView>(static_cast<VideoPacketView *>(base.release()));
 
@@ -72,22 +70,13 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase {
         return open_configs;
     }
 
-    void deliver_reconstructed_frame(ReconstructedVideoFrame &&frame) noexcept {
-        const TimestampNs timestamp_ns = map_frame_timestamp_ns(frame.rtp_timestamp);
-        sink_->on_video_frame(frame.frame, timestamp_ns);
-    }
-
-    [[nodiscard]] TimestampNs map_frame_timestamp_ns(const std::uint32_t rtp_timestamp) noexcept {
-        const auto mapped = video_timestamp_mapper_.map(rtp_timestamp);
-        if (!mapped.has_value()) {
-            return 0;
-        }
-
-        return *mapped;
+    void deliver_reconstructed_frame(ReconstructedVideoFrame &&frame) const noexcept {
+        sink_->on_video_frame(std::move(frame.frame),
+                              FrameTimingMetadata{.rtp_timestamp = frame.rtp_timestamp,
+                                                  .receive_timestamp_ns = frame.receive_timestamp_ns});
     }
 
     VideoReceivePipeline video_receive_pipeline_;
-    VideoRtpTimestampMapper video_timestamp_mapper_;
 };
 } // namespace st2110
 

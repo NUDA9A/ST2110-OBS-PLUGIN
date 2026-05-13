@@ -2,12 +2,12 @@
 #define ST2110_OBS_PLUGIN_FIXED_REORDER_BUFFER_HPP
 
 #include "reorder_buffer.hpp"
-#include <st2110/receive/video/video_packet_view.hpp>
 #include <st2110/receive/audio/audio_packet.hpp>
+#include <st2110/receive/video/video_packet_view.hpp>
 
+#include <cstdint>
 #include <map>
 #include <stdexcept>
-#include <cstdint>
 
 namespace st2110 {
 struct VideoStoredPacket final : StoredPacket {
@@ -15,7 +15,9 @@ struct VideoStoredPacket final : StoredPacket {
     std::uint8_t segment_count = 0;
 
     explicit VideoStoredPacket(const VideoPacketView &packetView)
-        : StoredPacket(packetView.rtp, packetView.payload_data, packetView.extended_seq), segment_count(packetView.segment_count) {
+        : StoredPacket(packetView.rtp, packetView.payload_data, packetView.extended_seq,
+                       packetView.receive_timestamp_ns),
+          segment_count(packetView.segment_count) {
         for (std::size_t i = 0; i < segment_count; ++i) {
             segment_headers[i] = packetView.segments[i].header;
         }
@@ -27,6 +29,7 @@ struct VideoStoredPacket final : StoredPacket {
         pkt.extended_seq = extended_seq;
         pkt.segment_count = segment_count;
         pkt.payload_data = ByteSpan(payload_data.data(), payload_data.size());
+        pkt.receive_timestamp_ns = receive_timestamp_ns;
 
         std::size_t offset = 0;
         for (std::size_t i = 0; i < segment_count; ++i) {
@@ -47,11 +50,12 @@ struct AudioStoredPacket final : StoredPacket {
     uint32_t sampling_rate_hz = 0;
     uint16_t channel_count = 0;
     uint32_t samples_per_channel = 0;
-    AudioPcmWireFormat wire_format = AudioPcmWireFormat::L24;
+    AudioPcmBitDepth bit_depth = AudioPcmBitDepth::Bits24;
 
     explicit AudioStoredPacket(const AudioPacketView &packet)
-        : StoredPacket(packet.rtp, packet.payload_data, packet.reorder_sequence()), sampling_rate_hz(packet.sampling_rate_hz), channel_count(packet.channel_count),
-          samples_per_channel(packet.samples_per_channel), wire_format(packet.wire_format) {}
+        : StoredPacket(packet.rtp, packet.payload_data, packet.reorder_sequence(), packet.receive_timestamp_ns),
+          sampling_rate_hz(packet.sampling_rate_hz), channel_count(packet.channel_count),
+          samples_per_channel(packet.samples_per_channel), bit_depth(packet.pcm_bit_depth) {}
     [[nodiscard]] std::unique_ptr<PacketView> view() const override {
         auto pkt = std::make_unique<AudioPacketView>();
         pkt->rtp = rtp_;
@@ -59,13 +63,13 @@ struct AudioStoredPacket final : StoredPacket {
         pkt->sampling_rate_hz = sampling_rate_hz;
         pkt->channel_count = channel_count;
         pkt->samples_per_channel = samples_per_channel;
-        pkt->wire_format = wire_format;
+        pkt->pcm_bit_depth = bit_depth;
+        pkt->receive_timestamp_ns = receive_timestamp_ns;
         return pkt;
     }
 };
 
-template <bool is_video_ = false>
-class FixedWindowReorderBuffer final : public IReorderBuffer {
+template <bool is_video_ = false> class FixedWindowReorderBuffer final : public IReorderBuffer {
   public:
     explicit FixedWindowReorderBuffer(const std::uint32_t window_size) : window_size_(window_size) {
         if (window_size_ == 0) {
@@ -73,18 +77,12 @@ class FixedWindowReorderBuffer final : public IReorderBuffer {
         }
     }
 
-    Error push(const PacketView &packet) override {
-        auto err = Error::Ok;
+    Error push(std::unique_ptr<StoredPacket> packet) override {
         if constexpr (is_video_) {
-            err = push_video(packet);
+            return push_video(std::move(packet));
         } else {
-            err = push_audio(packet);
+            return push_audio(std::move(packet));
         }
-        if (err != Error::Ok) {
-            return err;
-        }
-
-        return Error::Ok;
     }
 
     [[nodiscard]] std::unique_ptr<StoredPacket> pop_next() override {
@@ -151,63 +149,57 @@ class FixedWindowReorderBuffer final : public IReorderBuffer {
     }
 
   private:
-    [[nodiscard]] Error push_audio(const PacketView &packet) {
-        auto seq = static_cast<std::uint16_t>(packet.reorder_sequence());
+    [[nodiscard]] Error push_audio(std::unique_ptr<StoredPacket> packet) {
+        const auto seq = static_cast<std::uint16_t>(packet->reorder_sequence());
         if (!initialized_) {
             initialized_ = true;
             next_expected_audio_seq_ = seq;
         }
 
         ++stats_.packets_pushed;
-        std::uint16_t dist = seq - next_expected_audio_seq_;
+        const std::uint16_t dist = seq - next_expected_audio_seq_;
         if (dist >= window_size_) {
             if (dist > 0x8000) {
                 ++stats_.late_packets;
-                return Error::InvalidValue;
             } else {
                 ++stats_.out_of_window;
-                return Error::InvalidValue;
             }
-            return Error::Ok;
+            return Error::InvalidValue;
         }
 
         if (packets_.contains(seq)) {
             ++stats_.duplicates;
             return Error::InvalidValue;
         }
-        auto stored = packet.store();
-        packets_.emplace(seq, std::move(stored));
+        packets_.emplace(seq, std::move(packet));
         ++stats_.packets_stored;
 
         return Error::Ok;
     }
 
-    [[nodiscard]] Error push_video(const PacketView &packet) {
-        auto seq = packet.reorder_sequence();
+    [[nodiscard]] Error push_video(std::unique_ptr<StoredPacket> packet) {
+        const auto seq = packet->reorder_sequence();
         if (!initialized_) {
             initialized_ = true;
             next_expected_seq_ = seq;
         }
 
         ++stats_.packets_pushed;
-        auto dist = seq - next_expected_seq_;
+        const auto dist = seq - next_expected_seq_;
         if (dist >= window_size_) {
             if (dist > 0x7FFFFFFFu) {
                 ++stats_.late_packets;
-                return Error::InvalidValue;
             } else {
                 ++stats_.out_of_window;
-                return Error::InvalidValue;
             }
-            return Error::Ok;
+            return Error::InvalidValue;
         }
 
         if (packets_.contains(seq)) {
             ++stats_.duplicates;
             return Error::InvalidValue;
         }
-        auto stored = packet.store();
-        packets_.emplace(seq, std::move(stored));
+        packets_.emplace(seq, std::move(packet));
         ++stats_.packets_stored;
 
         return Error::Ok;
@@ -220,7 +212,7 @@ class FixedWindowReorderBuffer final : public IReorderBuffer {
     ReorderBufferStats stats_{};
     bool initialized_ = false;
     bool missing_head_accounted_ = false;
-    //bool is_video_ = false;
+    // bool is_video_ = false;
 };
 
 inline std::unique_ptr<StoredPacket> AudioPacketView::store() const {

@@ -1,8 +1,9 @@
 #ifndef ST2110_OBS_PLUGIN_VIDEO_FRAME_HPP
 #define ST2110_OBS_PLUGIN_VIDEO_FRAME_HPP
 
-#include "st2110/foundation/timestamp.hpp"
-#include "pixel_format.hpp"
+#include <st2110/delivery/video/pixel_format.hpp>
+#include <st2110/foundation/timestamp.hpp>
+
 #include <algorithm>
 #include <cstdint>
 #include <stdexcept>
@@ -11,9 +12,9 @@
 namespace st2110 {
 struct VideoFrameView {
     PixelFormat format;
-    uint32_t width;
-    uint32_t height;
-    const uint8_t *data[4];
+    std::uint32_t width;
+    std::uint32_t height;
+    const std::uint8_t *data[4];
     std::size_t stride[4];
     TimestampNs timestamp_ns;
 };
@@ -27,7 +28,7 @@ struct Plane {
 
 class VideoFrame {
   public:
-    VideoFrame(uint32_t w, uint32_t h, PixelFormat fmt) : width_(w), height_(h), fmt_(fmt) {
+    VideoFrame(std::uint32_t w, std::uint32_t h, PixelFormat fmt) : width_(w), height_(h), fmt_(fmt) {
         fill_planes();
         std::size_t total_size = 0;
         for (std::size_t i = 0; i < planes_count_; ++i) {
@@ -55,9 +56,9 @@ class VideoFrame {
 
     [[nodiscard]] std::size_t size_bytes() const { return frame_data.size(); }
 
-    [[nodiscard]] uint32_t width() const { return width_; }
+    [[nodiscard]] std::uint32_t width() const { return width_; }
 
-    [[nodiscard]] uint32_t height() const { return height_; }
+    [[nodiscard]] std::uint32_t height() const { return height_; }
 
     [[nodiscard]] PixelFormat format() const { return fmt_; }
 
@@ -68,21 +69,21 @@ class VideoFrame {
         return planes_[plane].stride_bytes;
     }
 
-    [[nodiscard]] uint8_t *data(std::size_t plane = 0) {
+    [[nodiscard]] std::uint8_t *data(std::size_t plane = 0) {
         if (plane >= planes_count_) {
             throw std::out_of_range("invalid plane value");
         }
         return frame_data.data() + planes_[plane].offset_bytes;
     }
 
-    [[nodiscard]] const uint8_t *data(std::size_t plane = 0) const {
+    [[nodiscard]] const std::uint8_t *data(std::size_t plane = 0) const {
         if (plane >= planes_count_) {
             throw std::out_of_range("invalid plane value");
         }
         return frame_data.data() + planes_[plane].offset_bytes;
     }
 
-    [[nodiscard]] uint8_t *row_data(uint32_t row, std::size_t plane = 0) {
+    [[nodiscard]] std::uint8_t *row_data(std::uint32_t row, std::size_t plane = 0) {
         if (plane >= planes_count_) {
             throw std::out_of_range("invalid plane value");
         }
@@ -93,7 +94,7 @@ class VideoFrame {
         return data(plane) + row * planes_[plane].stride_bytes;
     }
 
-    [[nodiscard]] const uint8_t *row_data(uint32_t row, std::size_t plane = 0) const {
+    [[nodiscard]] const std::uint8_t *row_data(std::uint32_t row, std::size_t plane = 0) const {
         if (plane >= planes_count_) {
             throw std::out_of_range("invalid plane value");
         }
@@ -122,31 +123,84 @@ class VideoFrame {
 
   private:
     void fill_planes() {
-        switch (fmt_) {
-        case PixelFormat::UYVY: {
-            if (width_ % 2 != 0 || width_ == 0 || height_ == 0) {
-                throw std::invalid_argument("Invalid width/height value");
-            }
+        const auto configure_single_plane = [this](const std::size_t active_row_bytes) {
             planes_count_ = 1;
             planes_[0].offset_bytes = 0;
-            planes_[0].active_row_bytes = width_ * 2;
-            planes_[0].stride_bytes = planes_[0].active_row_bytes;
+            planes_[0].active_row_bytes = active_row_bytes;
+            planes_[0].stride_bytes = active_row_bytes;
             planes_[0].height_rows = height_;
+        };
+
+        if (width_ == 0 || height_ == 0) {
+            throw std::invalid_argument("Invalid width/height value");
+        }
+
+        switch (fmt_) {
+        case PixelFormat::UYVY: {
+            if (width_ % 2 != 0) {
+                throw std::invalid_argument("Invalid width value for UYVY");
+            }
+
+            configure_single_plane(static_cast<std::size_t>(width_) * 2uz);
             break;
         }
+
+        case PixelFormat::RGB8: {
+            configure_single_plane(static_cast<std::size_t>(width_) * 3uz);
+            break;
+        }
+
+        case PixelFormat::YUV422RFC4175PG2BE10: {
+            if (width_ % 2 != 0) {
+                throw std::invalid_argument("Invalid width value for YUV422RFC4175PG2BE10");
+            }
+
+            configure_single_plane((static_cast<std::size_t>(width_) / 2uz) * 5uz);
+            break;
+        }
+
+        case PixelFormat::YUV422RFC4175PG2BE12: {
+            if (width_ % 2 != 0) {
+                throw std::invalid_argument("Invalid width value for YUV422RFC4175PG2BE12");
+            }
+
+            configure_single_plane((static_cast<std::size_t>(width_) / 2uz) * 6uz);
+            break;
+        }
+
+        case PixelFormat::YUV444RFC4175PG4BE10:
+        case PixelFormat::RGBRFC4175PG4BE10: {
+            if (width_ % 4 != 0) {
+                throw std::invalid_argument("Invalid width value for RFC4175PG4BE10");
+            }
+
+            configure_single_plane((static_cast<std::size_t>(width_) / 4uz) * 15uz);
+            break;
+        }
+
+        case PixelFormat::YUV444RFC4175PG2BE12:
+        case PixelFormat::RGBRFC4175PG2BE12: {
+            if (width_ % 2 != 0) {
+                throw std::invalid_argument("Invalid width value for RFC4175PG2BE12");
+            }
+
+            configure_single_plane((static_cast<std::size_t>(width_) / 2uz) * 9uz);
+            break;
+        }
+
         default:
             throw std::invalid_argument("Unknown format");
         }
     }
 
-    uint32_t width_;
-    uint32_t height_;
+    std::uint32_t width_;
+    std::uint32_t height_;
     PixelFormat fmt_;
 
-    std::vector<uint8_t> frame_data;
+    std::vector<std::uint8_t> frame_data;
 
     Plane planes_[4]{};
-    uint8_t planes_count_{};
+    std::uint8_t planes_count_{};
 };
 } // namespace st2110
 

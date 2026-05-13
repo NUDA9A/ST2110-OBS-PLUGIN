@@ -4,6 +4,7 @@
 #include "st2110/foundation/error.hpp"
 #include "st2110/ingress/shared/packet_parse.hpp"
 #include <st2110/backends/receive_local_policy.hpp>
+#include <st2110/foundation/timestamp.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -312,6 +313,7 @@ build_socket_rx_open_config(const std::uint16_t udp_port, const std::string &loc
 
 struct SocketReceiveResult {
     std::size_t size_bytes = 0;
+    TimestampNs receive_timestamp_ns = 0;
 };
 
 class ISocketRxPort {

@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include <st2110/foundation/bytes.hpp>
+#include <st2110/foundation/timestamp.hpp>
 #include <st2110/ingress/shared/rtp.hpp>
 
 #include <memory>
@@ -15,6 +16,7 @@ struct StoredPacket;
 struct PacketView {
     RtpHeaderView rtp{};
     ByteSpan payload_data{};
+    TimestampNs receive_timestamp_ns = 0;
 
     [[nodiscard]] virtual std::uint32_t reorder_sequence() const = 0;
     [[nodiscard]] virtual std::unique_ptr<StoredPacket> store() const = 0;

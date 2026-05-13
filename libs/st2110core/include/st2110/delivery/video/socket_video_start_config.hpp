@@ -5,7 +5,6 @@
 #include <st2110/backends/socket/platform/socket_runtime.hpp>
 #include <st2110/contracts/settings.hpp>
 #include <st2110/contracts/video/video_receice_pipeline_config.hpp>
-#include <st2110/contracts/video/video_timestamp_mapper_config.hpp>
 #include <st2110/receive/shared/receive_bootstrap.hpp>
 #include <st2110/receive/shared/receive_reorder_tolerance_policy.hpp>
 #include <st2110/receive/shared/receive_start_request.hpp>
@@ -24,7 +23,6 @@ struct SocketVideoStreamConfig {
 struct SocketVideoStartConfig : SocketStartConfig {
     SocketVideoStreamConfig stream{};
     VideoReceivePipelineConfig video_receive_pipeline_config{};
-    VideoRtpTimestampMapperConfig rtp_timestamp_mapper_config{};
 };
 
 inline SocketVideoStartConfig project_receive_start_request_to_socket_video_start(const ReceiveStartRequest &request,
@@ -40,13 +38,12 @@ inline SocketVideoStartConfig project_receive_start_request_to_socket_video_star
     res.reorder_buffer_config = settings.reorder_buffer_config;
     res.video_receive_pipeline_config =
         make_video_receive_pipeline_config(res.stream.scan_mode, res.stream.media, settings.partial_unit_policy);
-    res.rtp_timestamp_mapper_config = make_video_rtp_timestamp_mapper_config();
 
     for (std::size_t i = 0; i < bootstrap.receive_bootstrap.legs.size(); ++i) {
         SocketSourceFilter filter{.family = request.local.legs[i].family,
                                   .source_addresses =
                                       bootstrap.receive_bootstrap.legs[i].source_filter.source_addresses};
-        const auto &open_config =
+        const auto open_config =
             build_socket_rx_open_config(bootstrap.receive_bootstrap.legs[i].udp_port, request.local.legs[i].local_ip,
                                         bootstrap.receive_bootstrap.legs[i].destination.destination_address, filter);
         if (!open_config) {

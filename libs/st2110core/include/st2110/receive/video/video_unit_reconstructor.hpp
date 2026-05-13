@@ -4,6 +4,7 @@
 #include <st2110/contracts/video/depacketizer_config.hpp>
 #include <st2110/contracts/video/video_unit_reconstructor_config.hpp>
 #include <st2110/delivery/video/video_frame.hpp>
+#include <st2110/foundation/timestamp.hpp>
 #include <st2110/receive/video/frame_assembler.hpp>
 
 #include <cstring>
@@ -13,7 +14,8 @@
 namespace st2110 {
 struct ReconstructedVideoFrame {
     VideoFrame frame;
-    uint32_t rtp_timestamp = 0;
+    std::uint32_t rtp_timestamp = 0;
+    TimestampNs receive_timestamp_ns = 0;
     bool complete = false;
 
     [[nodiscard]] bool partial() const { return !complete; }
@@ -30,8 +32,10 @@ class VideoUnitReconstructor {
     std::optional<ReconstructedVideoFrame> push(AssembledVideoUnit unit) {
         switch (unit.unit_kind) {
         case VideoAssemblyUnitKind::Frame:
-            return ReconstructedVideoFrame{
-                .frame = std::move(unit.frame), .rtp_timestamp = unit.rtp_timestamp, .complete = unit.complete};
+            return ReconstructedVideoFrame{.frame = std::move(unit.frame),
+                                           .rtp_timestamp = unit.rtp_timestamp,
+                                           .receive_timestamp_ns = unit.receive_timestamp_ns,
+                                           .complete = unit.complete};
         case VideoAssemblyUnitKind::Field:
             if (unit.sub_unit_index == 0) {
                 unit_pair_.first = std::move(unit);
@@ -45,6 +49,7 @@ class VideoUnitReconstructor {
                 copy_sub_unit_rows(frame, unit_pair_.second->frame, 1);
                 ReconstructedVideoFrame res{.frame = std::move(frame),
                                             .rtp_timestamp = unit_pair_.first->rtp_timestamp,
+                                            .receive_timestamp_ns = unit_pair_.first->receive_timestamp_ns,
                                             .complete = unit_pair_.first->complete && unit_pair_.second->complete};
                 unit_pair_ = {};
                 return res;
@@ -69,6 +74,7 @@ class VideoUnitReconstructor {
                 copy_sub_unit_rows(frame, unit_pair_.second->frame, 1);
                 ReconstructedVideoFrame res{.frame = std::move(frame),
                                             .rtp_timestamp = unit_pair_.first->rtp_timestamp,
+                                            .receive_timestamp_ns = unit_pair_.first->receive_timestamp_ns,
                                             .complete = unit_pair_.first->complete && unit_pair_.second->complete};
                 unit_pair_ = {};
                 return res;

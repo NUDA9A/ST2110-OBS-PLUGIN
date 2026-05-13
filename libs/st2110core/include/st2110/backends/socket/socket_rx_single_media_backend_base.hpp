@@ -8,6 +8,7 @@
 #include <st2110/receive/shared/receive_reorder_tolerance_policy.hpp>
 #include <st2110/receive/shared/reorder_buffer.hpp>
 
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -68,6 +69,64 @@ struct SocketRxRuntimeLeg {
     ~SocketRxRuntimeLeg() { shutdown_nothrow(); }
 };
 
+class SocketRxStoredPacketQueue {
+  public:
+    void reset() {
+        {
+            std::lock_guard lock(mutex_);
+            closed_ = false;
+            packets_.clear();
+        }
+        cv_.notify_all();
+    }
+
+    void close() {
+        {
+            std::lock_guard lock(mutex_);
+            closed_ = true;
+        }
+        cv_.notify_all();
+    }
+
+    [[nodiscard]] bool push(std::unique_ptr<StoredPacket> packet) {
+        if (!packet) {
+            return false;
+        }
+
+        {
+            std::lock_guard lock(mutex_);
+            if (closed_) {
+                return false;
+            }
+
+            packets_.push_back(std::move(packet));
+        }
+
+        cv_.notify_one();
+        return true;
+    }
+
+    [[nodiscard]] std::unique_ptr<StoredPacket> wait_pop(std::stop_token stop_token) {
+        std::unique_lock lock(mutex_);
+
+        const bool ready = cv_.wait(lock, stop_token, [this] { return closed_ || !packets_.empty(); });
+
+        if (!ready || packets_.empty()) {
+            return nullptr;
+        }
+
+        auto packet = std::move(packets_.front());
+        packets_.pop_front();
+        return packet;
+    }
+
+  private:
+    std::mutex mutex_{};
+    std::condition_variable_any cv_{};
+    std::deque<std::unique_ptr<StoredPacket>> packets_{};
+    bool closed_ = true;
+};
+
 class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
   public:
     ~SocketRxSingleMediaBackendBase() override = default;
@@ -88,10 +147,16 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
 
         runtime_legs_.clear();
 
-        {
-            std::lock_guard lock(downstream_mutex_);
-            duplicate_merge_history_.clear();
+        packet_queue_.close();
+        downstream_thread_ = {};
+
+        duplicate_merge_history_.clear();
+
+        if (reorder_buffer_) {
+            reorder_buffer_->reset();
         }
+
+        duplicate_merge_enabled_ = false;
 
         if (first_err != Error::Ok) {
             return std::unexpected(first_err);
@@ -110,7 +175,7 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
           reorder_tolerance_policy_(reorder_buffer_config.reorder_tolerance_policy),
           reorder_buffer_config_(reorder_buffer_config) {}
 
-    [[nodiscard]] bool duplicate_merge_enabled() const noexcept { return runtime_legs_.size() > 1; }
+    [[nodiscard]] bool duplicate_merge_enabled() const noexcept { return duplicate_merge_enabled_; }
 
     [[nodiscard]] std::size_t duplicate_history_capacity() const noexcept {
         return reorder_buffer_config_.window_size_packets;
@@ -120,7 +185,7 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
 
     [[nodiscard]] std::unique_ptr<ISocketRxPort> create_port() const { return port_factory_->create_port(); }
 
-    [[nodiscard]] RxBackendLifecycleResult start_common_runtime(IFrameSink* sink) {
+    [[nodiscard]] RxBackendLifecycleResult start_common_runtime(IFrameSink *sink) {
         sink_ = sink;
         duplicate_merge_history_.clear();
         std::vector<SocketRxRuntimeLeg> staged;
@@ -141,7 +206,14 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
             staged.emplace_back(std::move(leg));
         }
 
+        packet_queue_.reset();
+        duplicate_merge_history_.clear();
+
+        duplicate_merge_enabled_ = staged.size() > 1;
+
         runtime_legs_ = std::move(staged);
+
+        downstream_thread_ = std::jthread([this](std::stop_token stop_token) { run_downstream_loop(stop_token); });
 
         for (std::size_t i = 0; i < runtime_legs_.size(); ++i) {
             runtime_legs_[i].thread =
@@ -173,7 +245,8 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
                 }
             }
 
-            process_received_datagram(leg_index, ByteSpan(leg.receive_buffer.data(), received->size_bytes));
+            process_received_datagram(leg_index, ByteSpan(leg.receive_buffer.data(), received->size_bytes),
+                                      received->receive_timestamp_ns);
         }
     }
 
@@ -233,28 +306,35 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
         }
     }
 
-    void process_received_datagram(const std::size_t leg_index, ByteSpan udp_payload) noexcept {
+    void process_received_datagram(const std::size_t leg_index, ByteSpan udp_payload,
+                                   const TimestampNs receive_timestamp_ns) noexcept {
         if (is_rtcp_like_datagram(udp_payload)) {
             return;
         }
 
+        if (Error err = validate_packet_parse_policy(udp_payload, maxudp_); err != Error::Ok) {
+            return;
+        }
+
         auto packet = parse_packet(leg_index, udp_payload);
-        if (!packet) {
+        if (!packet || (*packet)->rtp.payload_type != expected_payload_type_) {
             return;
         }
 
-        if ((*packet)->rtp.payload_type != expected_payload_type_) {
-            return;
-        }
+        (*packet)->receive_timestamp_ns = receive_timestamp_ns;
 
-        std::lock_guard lock(downstream_mutex_);
+        auto stored_packet = (*packet)->store();
+        (void)packet_queue_.push(std::move(stored_packet));
+    }
 
-        const std::uint32_t reorder_sequence = (*packet)->reorder_sequence();
+    void process_stored_packet_downstream(std::unique_ptr<StoredPacket> packet) noexcept {
+        const std::uint32_t reorder_sequence = packet->reorder_sequence();
+
         if (duplicate_merge_enabled() && duplicate_merge_history_.contains(reorder_sequence)) {
             return;
         }
 
-        if (const Error err = reorder_buffer_->push(*(*packet)); err != Error::Ok) {
+        if (const Error err = reorder_buffer_->push(std::move(packet)); err != Error::Ok) {
             return;
         }
 
@@ -265,7 +345,19 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
         drain_reorder_buffer_to_sink();
     }
 
-    IFrameSink* sink_ = nullptr;
+    void run_downstream_loop(std::stop_token stop_token) noexcept {
+        while (!stop_token.stop_requested()) {
+            auto packet = packet_queue_.wait_pop(stop_token);
+            if (!packet) {
+                return;
+            }
+
+            process_stored_packet_downstream(std::move(packet));
+        }
+    }
+
+    bool duplicate_merge_enabled_ = false;
+    IFrameSink *sink_ = nullptr;
     std::vector<SocketRxOpenConfig> open_configs_{};
     std::unique_ptr<ISocketRxPortFactory> port_factory_{};
     std::size_t maxudp_{};
@@ -274,7 +366,8 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
     ReceiveReorderGapPolicy reorder_tolerance_policy_ = ReceiveReorderGapPolicy::WaitForMissing;
     ReorderBufferConfig reorder_buffer_config_;
     DuplicateMergeHistory duplicate_merge_history_{};
-    std::mutex downstream_mutex_{};
+    SocketRxStoredPacketQueue packet_queue_{};
+    std::jthread downstream_thread_{};
     std::vector<SocketRxRuntimeLeg> runtime_legs_{};
 };
 

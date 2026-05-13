@@ -5,6 +5,7 @@
 
 #include <arpa/inet.h>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <expected>
@@ -119,15 +120,29 @@ class LinuxSocketRxPort final : public ISocketRxPort {
                 }
             }
 
+            const TimestampNs receive_timestamp_ns = local_monotonic_timestamp_ns();
+
             if (!sender_matches_source_filter(sender_addr, sender_addr_len, *open_cfg_)) {
                 continue;
             }
 
-            return SocketReceiveResult{static_cast<std::size_t>(reply)};
+            return SocketReceiveResult{.size_bytes = static_cast<std::size_t>(reply),
+                                       .receive_timestamp_ns = receive_timestamp_ns};
         }
     }
 
   private:
+    [[nodiscard]] static TimestampNs local_monotonic_timestamp_ns() noexcept {
+        const auto now = std::chrono::steady_clock::now().time_since_epoch();
+        const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+
+        if (ns <= 0) {
+            return 0;
+        }
+
+        return static_cast<TimestampNs>(ns);
+    }
+
     [[nodiscard]] static std::optional<SocketPortError> join_multicast_membership(const int native_socket,
                                                                                   const SocketRxOpenConfig &cfg) {
         if (!cfg.multicast_membership) {

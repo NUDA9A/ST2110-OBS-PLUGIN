@@ -7,6 +7,7 @@
 #include "st2110/ingress/shared/packet_parse_stats.hpp"
 #include "st2110/receive/shared/reorder_stats.hpp"
 #include "st2110/receive/video/depacketizer_stats.hpp"
+#include <st2110/foundation/timestamp.hpp>
 
 #include <expected>
 
@@ -32,18 +33,22 @@ struct BackendStats {
     DepacketizerStats depacketizer{};
 };
 
+struct FrameTimingMetadata {
+    std::uint32_t rtp_timestamp = 0;
+    TimestampNs receive_timestamp_ns = 0;
+};
+
 class IFrameSink {
   public:
-    virtual void on_video_frame(VideoFrame frame, TimestampNs timestamp_ns) = 0;
-    virtual void on_audio_frame(AudioBuffer frame, TimestampNs timestamp_ns) = 0;
-
+    virtual void on_video_frame(VideoFrame frame, FrameTimingMetadata timing_metadata) = 0;
+    virtual void on_audio_frame(AudioBuffer frame, FrameTimingMetadata timing_metadata) = 0;
     virtual ~IFrameSink() = default;
 };
 
 class IRxBackend {
   public:
     virtual RxBackendLifecycleResult stop() = 0;
-    virtual RxBackendLifecycleResult start(IFrameSink* sink) = 0;
+    virtual RxBackendLifecycleResult start(IFrameSink *sink) = 0;
 
     virtual ~IRxBackend() = default;
 };

@@ -6,7 +6,7 @@
 #include <st2110/receive/shared/receive_reorder_tolerance_policy.hpp>
 
 namespace st2110 {
-struct SocketVideoLegConfig {
+struct SocketMediaLegConfig {
     SocketAddressFamily family;
     std::string local_ip;
 
@@ -23,8 +23,8 @@ struct SocketStartConfig {
     ReceiveTopologyKind topology = ReceiveTopologyKind::SingleStream;
     ReorderBufferConfig reorder_buffer_config{};
 
-    std::vector<SocketVideoLegConfig> legs{};
+    std::vector<SocketMediaLegConfig> legs{};
 };
-}
+} // namespace st2110
 
 #endif // ST2110_OBS_SOCKET_START_CONFIG_HPP

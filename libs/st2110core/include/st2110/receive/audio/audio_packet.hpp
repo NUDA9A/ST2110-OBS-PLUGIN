@@ -4,147 +4,72 @@
 #include "st2110/foundation/bytes.hpp"
 #include "st2110/foundation/error.hpp"
 #include "st2110/ingress/shared/packet_view.hpp"
+#include "st2110/model/audio/audio_signaling.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <utility>
 
 namespace st2110 {
-enum class AudioPcmWireFormat {
-    L16,
-    L24,
-};
-
-struct AudioRtpPacketPolicy {
-    uint32_t sampling_rate_hz = 0;
-    uint16_t channel_count = 0;
-    uint32_t samples_per_packet = 0;
-    uint8_t payload_type = 0;
-    AudioPcmWireFormat wire_format = AudioPcmWireFormat::L24;
-};
-
 struct AudioPacketView final : PacketView {
-    uint32_t sampling_rate_hz = 0;
-    uint16_t channel_count = 0;
-    uint32_t samples_per_channel = 0;
-    AudioPcmWireFormat wire_format = AudioPcmWireFormat::L24;
+    std::uint32_t sampling_rate_hz = 0;
+    std::uint16_t channel_count = 0;
+    std::uint32_t samples_per_channel = 0;
+    AudioPcmBitDepth pcm_bit_depth = AudioPcmBitDepth::Bits24;
 
     [[nodiscard]] std::unique_ptr<StoredPacket> store() const override;
-    [[nodiscard]] std::uint32_t reorder_sequence() const override {
-        return rtp.seq_number;
-    }
+    [[nodiscard]] std::uint32_t reorder_sequence() const override { return rtp.seq_number; }
 };
 
-[[nodiscard]] inline std::expected<std::size_t, Error> audio_pcm_wire_sample_bytes(AudioPcmWireFormat wire_format) {
-    switch (wire_format) {
-    case AudioPcmWireFormat::L16:
-        return 2;
-    case AudioPcmWireFormat::L24:
-        return 3;
-    default:
-        return std::unexpected(Error::InvalidValue);
-    }
-}
-
-[[nodiscard]] inline Error validate_audio_rtp_packet_policy(const AudioRtpPacketPolicy &policy) {
-    if (policy.sampling_rate_hz == 0 || policy.channel_count == 0 || policy.samples_per_packet == 0) {
-        return Error::InvalidValue;
-    }
-
-    if (policy.payload_type < 96 || policy.payload_type > 127) {
-        return Error::InvalidValue;
-    }
-
-    if (!audio_pcm_wire_sample_bytes(policy.wire_format).has_value()) {
-        return Error::InvalidValue;
-    }
-
-    return Error::Ok;
-}
-
-[[nodiscard]] inline std::expected<AudioPcmWireFormat, Error>
-audio_pcm_wire_format_from_bit_depth(AudioPcmBitDepth bit_depth) {
+[[nodiscard]] inline std::size_t audio_pcm_wire_sample_bytes(const AudioPcmBitDepth bit_depth) {
     switch (bit_depth) {
     case AudioPcmBitDepth::Bits16:
-        return AudioPcmWireFormat::L16;
+        return 2;
     case AudioPcmBitDepth::Bits24:
-        return AudioPcmWireFormat::L24;
+        return 3;
+    default:
+        std::unreachable();
     }
-
-    return std::unexpected(Error::InvalidValue);
 }
 
-[[nodiscard]] inline std::expected<AudioRtpPacketPolicy, Error>
-audio_rtp_packet_policy_from_rx_audio_config(const RxAudioConfig &cfg) {
-    if (Error err = validate_rx_audio_config(cfg); err != Error::Ok) {
-        return std::unexpected(err);
-    }
-
-    auto wire_format = audio_pcm_wire_format_from_bit_depth(cfg.pcm_bit_depth);
-    if (!wire_format) {
-        return std::unexpected(wire_format.error());
-    }
-
-    return AudioRtpPacketPolicy{
-        .sampling_rate_hz = cfg.sampling_rate_hz,
-        .channel_count = cfg.channel_count,
-        .samples_per_packet = cfg.samples_per_packet,
-        .payload_type = cfg.payload_type,
-        .wire_format = *wire_format,
-    };
+[[nodiscard]] inline std::size_t audio_rtp_packet_payload_size_bytes(const AudioPcmBitDepth bit_depth,
+                                                                     const std::uint32_t samples_per_packet,
+                                                                     const std::uint16_t channel_count) {
+    const auto bytes_per_sample = audio_pcm_wire_sample_bytes(bit_depth);
+    return static_cast<std::size_t>(samples_per_packet) * static_cast<std::size_t>(channel_count) * bytes_per_sample;
 }
 
-[[nodiscard]] inline std::expected<std::size_t, Error>
-audio_rtp_packet_payload_size_bytes(const AudioRtpPacketPolicy &policy) {
-    auto bytes_per_sample = audio_pcm_wire_sample_bytes(policy.wire_format);
-    if (!bytes_per_sample) {
-        return std::unexpected(bytes_per_sample.error());
-    }
-    return static_cast<std::size_t>(policy.samples_per_packet) * static_cast<std::size_t>(policy.channel_count) *
-           (*bytes_per_sample);
-}
-
-[[nodiscard]] inline std::expected<AudioPacketView, Error>
-make_audio_rtp_packet_view(const RtpHeaderView &rtp, ByteSpan payload, const AudioRtpPacketPolicy &policy) {
+[[nodiscard]] inline AudioPacketView make_audio_rtp_packet_view(const RtpHeaderView &rtp, const ByteSpan payload,
+                                                                const AudioMediaDescription &media,
+                                                                const std::uint32_t samples_per_packet) {
     AudioPacketView res{};
-    if (rtp.payload_type != policy.payload_type) {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    auto expected_payload_size = audio_rtp_packet_payload_size_bytes(policy);
-    if (!expected_payload_size) {
-        return std::unexpected(expected_payload_size.error());
-    }
-
-    if (payload.size() != *expected_payload_size) {
-        return std::unexpected(Error::InvalidValue);
-    }
-
     res.rtp = rtp;
     res.payload_data = payload;
-    res.sampling_rate_hz = policy.sampling_rate_hz;
-    res.channel_count = policy.channel_count;
-    res.samples_per_channel = policy.samples_per_packet;
-    res.wire_format = policy.wire_format;
+    res.sampling_rate_hz = media.sampling_rate_hz;
+    res.channel_count = media.channel_count;
+    res.samples_per_channel = samples_per_packet;
+    res.pcm_bit_depth = media.pcm_bit_depth;
 
     return res;
 }
 
 [[nodiscard]] inline std::expected<AudioPacketView, Error>
-parse_audio_rtp_packet_view(ByteSpan rtp_datagram, const AudioRtpPacketPolicy &policy) {
-    auto rtp_header = parse_rtp_header(rtp_datagram);
+parse_audio_rtp_packet_view(const ByteSpan udp_payload, const AudioMediaDescription &media,
+                            const std::uint32_t samples_per_packet) {
+    auto rtp_header = parse_rtp_header(udp_payload);
     if (!rtp_header) {
         return std::unexpected(rtp_header.error());
     }
 
-    auto payload = rtp_payload_span(rtp_datagram, *rtp_header);
+    const auto payload = rtp_payload_span(udp_payload, *rtp_header);
 
-    auto rtp_packet_view = make_audio_rtp_packet_view(*rtp_header, payload, policy);
-    if (!rtp_packet_view) {
-        return std::unexpected(rtp_packet_view.error());
+    if (payload.size() !=
+        audio_rtp_packet_payload_size_bytes(media.pcm_bit_depth, samples_per_packet, media.channel_count)) {
+        return std::unexpected(Error::InvalidValue);
     }
 
-    return *rtp_packet_view;
+    return make_audio_rtp_packet_view(*rtp_header, payload, media, samples_per_packet);
 }
 } // namespace st2110
 
