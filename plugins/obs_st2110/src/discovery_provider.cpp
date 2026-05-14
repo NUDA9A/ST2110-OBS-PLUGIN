@@ -232,8 +232,6 @@ class NdiLibrary final {
         paths.emplace_back("/usr/lib64/libndi.so");
         paths.emplace_back("/usr/local/lib/libndi.so.6");
         paths.emplace_back("/usr/local/lib/libndi.so");
-        paths.emplace_back("/app/plugins/DistroAV/extra/lib/libndi.so.6");
-        paths.emplace_back("/app/plugins/DistroAV/extra/lib/libndi.so");
 
         return paths;
     }
