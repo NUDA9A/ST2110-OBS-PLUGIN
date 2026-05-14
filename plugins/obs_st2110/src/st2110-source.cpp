@@ -11,6 +11,10 @@
 #include <memory>
 #include <string_view>
 
+#ifndef ST2110_HAS_MTL_BACKEND
+#define ST2110_HAS_MTL_BACKEND 0
+#endif
+
 namespace {
 struct St2110Source {
     std::unique_ptr<obs_st2110::SourceRuntime> runtime{};
@@ -23,6 +27,35 @@ struct St2110Source {
     return *provider;
 }
 
+[[nodiscard]] st2110::ReceiveBackendKind read_receive_backend_kind(obs_data_t *settings) {
+    const char *backend_text = obs_data_get_string(settings, obs_st2110::sourceBackendPropertyId);
+    const std::string_view backend = backend_text ? std::string_view(backend_text) : std::string_view{};
+
+    if (backend == obs_st2110::sourceBackendMtlValue) {
+        return st2110::ReceiveBackendKind::Mtl;
+    }
+
+    return st2110::ReceiveBackendKind::Socket;
+}
+
+[[nodiscard]] st2110::TimestampNs read_playout_delay_ns(obs_data_t *settings) {
+    const long long delay_ms = obs_data_get_int(settings, obs_st2110::sourcePlayoutDelayMsPropertyId);
+    if (delay_ms <= 0) {
+        return 0;
+    }
+
+    return static_cast<st2110::TimestampNs>(delay_ms) * 1'000'000ULL;
+}
+
+[[nodiscard]] std::uint32_t read_reorder_window_packets(obs_data_t *settings) {
+    const long long value = obs_data_get_int(settings, obs_st2110::sourceReorderWindowPacketsPropertyId);
+    if (value <= 0) {
+        return st2110::defaultReorderWindowPackets;
+    }
+
+    return static_cast<std::uint32_t>(value);
+}
+
 [[nodiscard]] obs_st2110::SourceConfig read_source_config(obs_data_t *settings) {
     obs_st2110::SourceConfig config{};
 
@@ -30,12 +63,18 @@ struct St2110Source {
         return config;
     }
 
+    config.start_when_active = obs_data_get_bool(settings, obs_st2110::sourceStartWhenActivePropertyId);
+
     const char *selection_key_text = obs_data_get_string(settings, obs_st2110::sourceSelectionPropertyId);
     const std::string_view selection_key = selection_key_text ? std::string_view(selection_key_text) : std::string_view{};
 
     if (!selection_key.empty()) {
         config.selected_source = discovery_provider().resolve_source(selection_key);
     }
+
+    config.receive_settings.backend_kind = read_receive_backend_kind(settings);
+    config.receive_settings.reorder_buffer_config.window_size_packets = read_reorder_window_packets(settings);
+    config.playout_delay_ns = read_playout_delay_ns(settings);
 
     return config;
 }
@@ -121,11 +160,33 @@ obs_properties_t *st2110_source_get_properties(void *data) {
         obs_property_list_add_string(source_list, item.display_name.c_str(), item.selection_key.c_str());
     }
 
+    obs_properties_add_bool(properties, obs_st2110::sourceStartWhenActivePropertyId, "Start when active");
+
+    obs_property_t *backend_list =
+        obs_properties_add_list(properties, obs_st2110::sourceBackendPropertyId, "Receive backend", OBS_COMBO_TYPE_LIST,
+                                OBS_COMBO_FORMAT_STRING);
+
+    obs_property_list_add_string(backend_list, "Socket", obs_st2110::sourceBackendSocketValue);
+
+#if ST2110_HAS_MTL_BACKEND
+    obs_property_list_add_string(backend_list, "MTL", obs_st2110::sourceBackendMtlValue);
+#endif
+
+    obs_properties_add_int(properties, obs_st2110::sourcePlayoutDelayMsPropertyId, "Playout delay (ms)", 0, 5000, 1);
+
+    obs_properties_add_int(properties, obs_st2110::sourceReorderWindowPacketsPropertyId, "Socket reorder window packets",
+                           1, 4096, 1);
+
     return properties;
 }
 
 void st2110_source_get_defaults(obs_data_t *settings) {
     obs_data_set_default_string(settings, obs_st2110::sourceSelectionPropertyId, "");
+    obs_data_set_default_bool(settings, obs_st2110::sourceStartWhenActivePropertyId, true);
+    obs_data_set_default_string(settings, obs_st2110::sourceBackendPropertyId, obs_st2110::sourceBackendSocketValue);
+    obs_data_set_default_int(settings, obs_st2110::sourcePlayoutDelayMsPropertyId, 0);
+    obs_data_set_default_int(settings, obs_st2110::sourceReorderWindowPacketsPropertyId,
+                             st2110::defaultReorderWindowPackets);
 }
 
 std::uint32_t st2110_source_get_width(void *data) {

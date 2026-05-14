@@ -32,7 +32,7 @@ target_include_directories(st2110core PUBLIC
 
 target_compile_features(st2110core PUBLIC cxx_std_23)
 
-target_compile_definitions(st2110core PRIVATE
+target_compile_definitions(st2110core PUBLIC
         ST2110_HAS_MTL_BACKEND=$<BOOL:${ST2110_HAS_MTL_BACKEND}>
 )
 

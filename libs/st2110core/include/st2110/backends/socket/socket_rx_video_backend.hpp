@@ -7,7 +7,6 @@
 #include "st2110/foundation/bytes.hpp"
 #include "st2110/ingress/shared/packet_parse.hpp"
 #include "st2110/receive/shared/fixed_reorder_buffer.hpp"
-#include "st2110/receive/shared/packet_admission.hpp"
 #include "st2110/receive/shared/receive_reorder_tolerance_policy.hpp"
 #include "st2110/receive/video/video_receive_pipeline.hpp"
 #include <st2110/delivery/video/socket_video_start_config.hpp>

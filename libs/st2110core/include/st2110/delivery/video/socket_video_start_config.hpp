@@ -2,7 +2,7 @@
 #define ST2110_OBS_SOCKET_VIDEO_START_CONFIG_HPP
 
 #include <st2110/contracts/settings.hpp>
-#include <st2110/contracts/video/video_receice_pipeline_config.hpp>
+#include <st2110/contracts/video/video_receive_pipeline_config.hpp>
 #include <st2110/delivery/socket_start_config.hpp>
 #include <st2110/receive/shared/receive_start_request.hpp>
 #include <st2110/receive/video/video_receive_bootstrap.hpp>
