@@ -1,0 +1,38 @@
+[
+{
+  "directory": "/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build-obs/libs/st2110core",
+  "command": "/usr/bin/c++ -DST2110_HAS_MTL_BACKEND=0 -I/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/libs/st2110core/include -std=c++23 -o CMakeFiles/st2110core.dir/src/stub.cpp.o -c /home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/libs/st2110core/src/stub.cpp",
+  "file": "/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/libs/st2110core/src/stub.cpp",
+  "output": "libs/st2110core/CMakeFiles/st2110core.dir/src/stub.cpp.o"
+},
+{
+  "directory": "/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build-obs/libs/st2110core",
+  "command": "/usr/bin/c++ -DST2110_HAS_MTL_BACKEND=0 -I/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/libs/st2110core/include -std=c++23 -o CMakeFiles/st2110core.dir/src/backends/socket/socket_rx_single_media_backend_base.cpp.o -c /home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/libs/st2110core/src/backends/socket/socket_rx_single_media_backend_base.cpp",
+  "file": "/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/libs/st2110core/src/backends/socket/socket_rx_single_media_backend_base.cpp",
+  "output": "libs/st2110core/CMakeFiles/st2110core.dir/src/backends/socket/socket_rx_single_media_backend_base.cpp.o"
+},
+{
+  "directory": "/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build-obs/apps/st2110_rx_dump",
+  "command": "/usr/bin/c++  -I/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/libs/st2110core/include -std=c++23 -o CMakeFiles/st2110_rx_dump.dir/main.cpp.o -c /home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/apps/st2110_rx_dump/main.cpp",
+  "file": "/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/apps/st2110_rx_dump/main.cpp",
+  "output": "apps/st2110_rx_dump/CMakeFiles/st2110_rx_dump.dir/main.cpp.o"
+},
+{
+  "directory": "/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build-obs/plugins/obs_st2110",
+  "command": "/usr/bin/c++ -DHAVE_OBSCONFIG_H -Dst2110_obs_EXPORTS -I/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/plugins/obs_st2110/src -I/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/plugins/obs_st2110/include -I/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/libs/st2110core/include -isystem /usr/include/obs -std=c++23 -fPIC -mmmx -msse -msse2 -o CMakeFiles/st2110_obs.dir/src/plugin-main.cpp.o -c /home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/plugins/obs_st2110/src/plugin-main.cpp",
+  "file": "/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/plugins/obs_st2110/src/plugin-main.cpp",
+  "output": "plugins/obs_st2110/CMakeFiles/st2110_obs.dir/src/plugin-main.cpp.o"
+},
+{
+  "directory": "/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build-obs/plugins/obs_st2110",
+  "command": "/usr/bin/c++ -DHAVE_OBSCONFIG_H -Dst2110_obs_EXPORTS -I/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/plugins/obs_st2110/src -I/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/plugins/obs_st2110/include -I/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/libs/st2110core/include -isystem /usr/include/obs -std=c++23 -fPIC -mmmx -msse -msse2 -o CMakeFiles/st2110_obs.dir/src/st2110-source.cpp.o -c /home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/plugins/obs_st2110/src/st2110-source.cpp",
+  "file": "/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/plugins/obs_st2110/src/st2110-source.cpp",
+  "output": "plugins/obs_st2110/CMakeFiles/st2110_obs.dir/src/st2110-source.cpp.o"
+},
+{
+  "directory": "/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/build-obs/plugins/obs_st2110",
+  "command": "/usr/bin/c++ -DHAVE_OBSCONFIG_H -Dst2110_obs_EXPORTS -I/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/plugins/obs_st2110/src -I/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/plugins/obs_st2110/include -I/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/libs/st2110core/include -isystem /usr/include/obs -std=c++23 -fPIC -mmmx -msse -msse2 -o CMakeFiles/st2110_obs.dir/src/obs-synchronized-frame-sink.cpp.o -c /home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/plugins/obs_st2110/src/obs-synchronized-frame-sink.cpp",
+  "file": "/home/nuda9a/st2110-obs-plugin/ST2110-OBS-PLUGIN/plugins/obs_st2110/src/obs-synchronized-frame-sink.cpp",
+  "output": "plugins/obs_st2110/CMakeFiles/st2110_obs.dir/src/obs-synchronized-frame-sink.cpp.o"
+}
+]
