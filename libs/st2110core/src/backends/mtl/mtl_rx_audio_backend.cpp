@@ -21,8 +21,20 @@
 #include <thread>
 #include <utility>
 
+#ifndef ST2110_MTL_DEV_KERNEL_SOCKET
+#define ST2110_MTL_DEV_KERNEL_SOCKET 0
+#endif
+
 namespace st2110 {
 namespace {
+
+[[nodiscard]] constexpr mtl_pmd_type default_mtl_pmd() noexcept {
+#if ST2110_MTL_DEV_KERNEL_SOCKET
+    return MTL_PMD_KERNEL_SOCKET;
+#else
+    return MTL_PMD_DPDK_USER;
+#endif
+}
 
 [[nodiscard]] std::expected<st30_fmt, Error> map_mtl_audio_pcm_format(const MtlAudioPcmFormat fmt) noexcept {
     switch (fmt) {
@@ -62,7 +74,7 @@ namespace {
                               const MtlRuntimePortConfig &port_cfg) {
         std::snprintf(params.port[port_index], MTL_PORT_MAX_LEN, "%s", port_cfg.port_name.c_str());
 
-        params.pmd[port_index] = MTL_PMD_DPDK_USER;
+        params.pmd[port_index] = default_mtl_pmd();
         params.net_proto[port_index] = MTL_PROTO_STATIC;
 
         /*

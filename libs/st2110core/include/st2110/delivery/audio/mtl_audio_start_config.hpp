@@ -15,6 +15,11 @@
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <string>
+
+#ifndef ST2110_MTL_DEV_KERNEL_SOCKET
+#define ST2110_MTL_DEV_KERNEL_SOCKET 0
+#endif
 
 namespace st2110 {
 
@@ -187,6 +192,25 @@ project_receive_local_leg_to_mtl_audio_runtime_port(const ReceiveLocalLegPolicy 
         return std::unexpected(Error::Unsupported);
     }
 
+    auto sip_addr = parse_mtl_audio_ipv4_address(local_leg.local_ip);
+    if (!sip_addr.has_value()) {
+        return std::unexpected(sip_addr.error());
+    }
+
+#if ST2110_MTL_DEV_KERNEL_SOCKET
+    if (!local_leg.local_interface_name.has_value()) {
+        return std::unexpected(Error::Unsupported);
+    }
+
+    if (local_leg.local_interface_name->empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return MtlRuntimePortConfig{
+        .port_name = std::string("kernel:") + *local_leg.local_interface_name,
+        .sip_addr = *sip_addr,
+    };
+#else
     if (!local_leg.local_pci_bdf.has_value()) {
         return std::unexpected(Error::Unsupported);
     }
@@ -195,15 +219,11 @@ project_receive_local_leg_to_mtl_audio_runtime_port(const ReceiveLocalLegPolicy 
         return std::unexpected(Error::InvalidValue);
     }
 
-    auto sip_addr = parse_mtl_audio_ipv4_address(local_leg.local_ip);
-    if (!sip_addr.has_value()) {
-        return std::unexpected(sip_addr.error());
-    }
-
     return MtlRuntimePortConfig{
         .port_name = *local_leg.local_pci_bdf,
         .sip_addr = *sip_addr,
     };
+#endif
 }
 
 [[nodiscard]] inline std::expected<MtlAudioPcmFormat, Error>

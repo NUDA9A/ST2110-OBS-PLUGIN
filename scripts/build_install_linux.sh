@@ -18,6 +18,7 @@ BUILD_PLUGIN=1
 BUILD_SEND_APP=1
 INSTALL_PLUGIN=1
 INSTALL_SEND_APP=1
+MTL_DEV_KERNEL_SOCKET=0
 
 REQUIRE_NDI=1
 START_AVAHI=1
@@ -77,6 +78,9 @@ MTL / DPDK:
   --no-install-mtl                Do not clone/build/install DPDK/MTL; require existing pkg-config mtl.
   --force-rebuild-dpdk            Rebuild/reinstall DPDK even if libdpdk.pc is visible.
   --force-rebuild-mtl             Rebuild/reinstall MTL even if mtl.pc is visible.
+  --mtl-dev-kernel-socket      Build project MTL RX backend with MTL_PMD_KERNEL_SOCKET
+                               and kernel:<ifname> port projection for local VM/dev tests.
+                               MTL/DPDK libraries are still required.
 
 System runtime:
   --hugepages N                   Set vm.nr_hugepages. Default: 2048
@@ -314,6 +318,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --allow-no-ndi)
             REQUIRE_NDI=0
+            shift
+            ;;
+        --mtl-dev-kernel-socket)
+            MTL_DEV_KERNEL_SOCKET=1
             shift
             ;;
         -h|--help)
@@ -849,6 +857,7 @@ Install MTL manually or provide --mtl-pkg-config-dir."
 configure_and_build_project() {
     local build_plugin_flag="OFF"
     local build_send_app_flag="OFF"
+    local mtl_dev_kernel_socket_flag="OFF"
 
     if [[ "$BUILD_PLUGIN" -eq 1 ]]; then
         build_plugin_flag="ON"
@@ -858,11 +867,16 @@ configure_and_build_project() {
         build_send_app_flag="ON"
     fi
 
+    if [[ "$MTL_DEV_KERNEL_SOCKET" -eq 1 ]]; then
+        mtl_dev_kernel_socket_flag="ON"
+    fi
+
     log "Configuring project CMake"
     run cmake -S "$REPO_DIR" -B "$BUILD_DIR" -G Ninja \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
         -DST2110_BUILD_OBS_PLUGIN="$build_plugin_flag" \
-        -DST2110_BUILD_MTL_SEND_TEST_APP="$build_send_app_flag"
+        -DST2110_BUILD_MTL_SEND_TEST_APP="$build_send_app_flag" \
+        -DST2110_MTL_DEV_KERNEL_SOCKET="$mtl_dev_kernel_socket_flag"
 
     local targets=()
 
@@ -935,6 +949,7 @@ Environment used:
   PKG_CONFIG_PATH=${PKG_CONFIG_PATH:-}
   CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH:-}
   LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}
+  ST2110_MTL_DEV_KERNEL_SOCKET=${MTL_DEV_KERNEL_SOCKET}
 
 Installed:
   OBS plugin dir: ${OBS_PLUGIN_DIR}

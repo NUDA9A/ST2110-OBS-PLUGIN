@@ -22,6 +22,14 @@ if(ST2110_HAS_MTL_BACKEND)
     )
 endif()
 
+option(ST2110_MTL_DEV_KERNEL_SOCKET
+        "Use MTL kernel-socket PMD for local VM/dev testing"
+        OFF)
+
+if(ST2110_MTL_DEV_KERNEL_SOCKET AND NOT ST2110_HAS_MTL_BACKEND)
+    message(FATAL_ERROR "ST2110_MTL_DEV_KERNEL_SOCKET requires ST2110_HAS_MTL_BACKEND")
+endif()
+
 add_library(st2110core STATIC
         ${ST2110CORE_SOURCES}
 )
@@ -34,6 +42,7 @@ target_compile_features(st2110core PUBLIC cxx_std_23)
 
 target_compile_definitions(st2110core PUBLIC
         ST2110_HAS_MTL_BACKEND=$<BOOL:${ST2110_HAS_MTL_BACKEND}>
+        ST2110_MTL_DEV_KERNEL_SOCKET=$<BOOL:${ST2110_MTL_DEV_KERNEL_SOCKET}>
 )
 
 if(ST2110_HAS_MTL_BACKEND)
