@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -173,7 +174,7 @@ class Depacketizer {
     }
 
     [[nodiscard]] static VideoFrameWriteOp map_segment_to_unit_local_write(PixelFormat target_format,
-                                                                           const SrdSegmentView &segment) noexcept {
+                                                                           const SrdSegmentView &segment) {
         switch (target_format) {
         case PixelFormat::UYVY:
             return VideoFrameWriteOp{
@@ -224,9 +225,9 @@ class Depacketizer {
                 .byte_offset = pgroup_byte_offset(segment.header.offset, 2uz, 9uz),
                 .bytes = segment.data,
             };
+        default:
+            throw std::runtime_error("Unsupported pixel format");
         }
-
-        std::unreachable();
     }
 
     void write_packet_segments(const VideoPacketView &packet) {

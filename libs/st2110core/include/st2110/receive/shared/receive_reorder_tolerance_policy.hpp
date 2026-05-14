@@ -1,6 +1,8 @@
 #ifndef ST2110_OBS_PLUGIN_RECEIVE_REORDER_TOLERANCE_POLICY_HPP
 #define ST2110_OBS_PLUGIN_RECEIVE_REORDER_TOLERANCE_POLICY_HPP
 
+#include <cstdint>
+
 namespace st2110 {
 enum class ReceiveReorderGapPolicy {
     WaitForMissing,

@@ -123,6 +123,25 @@ class VideoFrame {
 
   private:
     void fill_planes() {
+        const auto reset_planes = [this]() {
+            planes_count_ = 0;
+            for (auto &plane : planes_) {
+                plane = Plane{};
+            }
+        };
+
+        const auto require_width_multiple = [this](const std::uint32_t divisor, const char *format_name) {
+            if (width_ % divisor != 0) {
+                throw std::invalid_argument(format_name);
+            }
+        };
+
+        const auto require_height_multiple = [this](const std::uint32_t divisor, const char *format_name) {
+            if (height_ % divisor != 0) {
+                throw std::invalid_argument(format_name);
+            }
+        };
+
         const auto configure_single_plane = [this](const std::size_t active_row_bytes) {
             planes_count_ = 1;
             planes_[0].offset_bytes = 0;
@@ -131,60 +150,117 @@ class VideoFrame {
             planes_[0].height_rows = height_;
         };
 
+        const auto configure_three_planes =
+            [this](const std::size_t plane0_active_row_bytes, const std::size_t plane1_active_row_bytes,
+                   const std::size_t plane2_active_row_bytes, const std::size_t plane0_height_rows,
+                   const std::size_t plane1_height_rows, const std::size_t plane2_height_rows) {
+                planes_count_ = 3;
+
+                planes_[0].offset_bytes = 0;
+                planes_[0].active_row_bytes = plane0_active_row_bytes;
+                planes_[0].stride_bytes = plane0_active_row_bytes;
+                planes_[0].height_rows = plane0_height_rows;
+
+                planes_[1].offset_bytes = planes_[0].offset_bytes + planes_[0].stride_bytes * planes_[0].height_rows;
+                planes_[1].active_row_bytes = plane1_active_row_bytes;
+                planes_[1].stride_bytes = plane1_active_row_bytes;
+                planes_[1].height_rows = plane1_height_rows;
+
+                planes_[2].offset_bytes = planes_[1].offset_bytes + planes_[1].stride_bytes * planes_[1].height_rows;
+                planes_[2].active_row_bytes = plane2_active_row_bytes;
+                planes_[2].stride_bytes = plane2_active_row_bytes;
+                planes_[2].height_rows = plane2_height_rows;
+            };
+
         if (width_ == 0 || height_ == 0) {
             throw std::invalid_argument("Invalid width/height value");
         }
 
+        reset_planes();
+
+        const auto width = static_cast<std::size_t>(width_);
+        const auto height = static_cast<std::size_t>(height_);
+
         switch (fmt_) {
         case PixelFormat::UYVY: {
-            if (width_ % 2 != 0) {
-                throw std::invalid_argument("Invalid width value for UYVY");
-            }
-
-            configure_single_plane(static_cast<std::size_t>(width_) * 2uz);
+            require_width_multiple(2, "Invalid width value for UYVY");
+            configure_single_plane(width * 2uz);
             break;
         }
 
         case PixelFormat::RGB8: {
-            configure_single_plane(static_cast<std::size_t>(width_) * 3uz);
+            configure_single_plane(width * 3uz);
+            break;
+        }
+
+        case PixelFormat::BGRA:
+        case PixelFormat::ARGB: {
+            configure_single_plane(width * 4uz);
+            break;
+        }
+
+        case PixelFormat::Y210: {
+            require_width_multiple(2, "Invalid width value for Y210");
+            configure_single_plane(width * 4uz);
+            break;
+        }
+
+        case PixelFormat::V210: {
+            require_width_multiple(6, "Invalid width value for V210");
+            configure_single_plane((width / 6uz) * 16uz);
             break;
         }
 
         case PixelFormat::YUV422RFC4175PG2BE10: {
-            if (width_ % 2 != 0) {
-                throw std::invalid_argument("Invalid width value for YUV422RFC4175PG2BE10");
-            }
-
-            configure_single_plane((static_cast<std::size_t>(width_) / 2uz) * 5uz);
+            require_width_multiple(2, "Invalid width value for YUV422RFC4175PG2BE10");
+            configure_single_plane((width / 2uz) * 5uz);
             break;
         }
 
         case PixelFormat::YUV422RFC4175PG2BE12: {
-            if (width_ % 2 != 0) {
-                throw std::invalid_argument("Invalid width value for YUV422RFC4175PG2BE12");
-            }
-
-            configure_single_plane((static_cast<std::size_t>(width_) / 2uz) * 6uz);
+            require_width_multiple(2, "Invalid width value for YUV422RFC4175PG2BE12");
+            configure_single_plane((width / 2uz) * 6uz);
             break;
         }
 
         case PixelFormat::YUV444RFC4175PG4BE10:
         case PixelFormat::RGBRFC4175PG4BE10: {
-            if (width_ % 4 != 0) {
-                throw std::invalid_argument("Invalid width value for RFC4175PG4BE10");
-            }
-
-            configure_single_plane((static_cast<std::size_t>(width_) / 4uz) * 15uz);
+            require_width_multiple(4, "Invalid width value for RFC4175PG4BE10");
+            configure_single_plane((width / 4uz) * 15uz);
             break;
         }
 
         case PixelFormat::YUV444RFC4175PG2BE12:
         case PixelFormat::RGBRFC4175PG2BE12: {
-            if (width_ % 2 != 0) {
-                throw std::invalid_argument("Invalid width value for RFC4175PG2BE12");
-            }
+            require_width_multiple(2, "Invalid width value for RFC4175PG2BE12");
+            configure_single_plane((width / 2uz) * 9uz);
+            break;
+        }
 
-            configure_single_plane((static_cast<std::size_t>(width_) / 2uz) * 9uz);
+        case PixelFormat::YUV422PLANAR8: {
+            require_width_multiple(2, "Invalid width value for YUV422PLANAR8");
+            configure_three_planes(width, width / 2uz, width / 2uz, height, height, height);
+            break;
+        }
+
+        case PixelFormat::YUV422PLANAR10LE:
+        case PixelFormat::YUV422PLANAR12LE:
+        case PixelFormat::YUV422PLANAR16LE: {
+            require_width_multiple(2, "Invalid width value for YUV422PLANAR16LE-compatible layout");
+            configure_three_planes(width * 2uz, (width / 2uz) * 2uz, (width / 2uz) * 2uz, height, height, height);
+            break;
+        }
+
+        case PixelFormat::YUV444PLANAR10LE:
+        case PixelFormat::YUV444PLANAR12LE: {
+            configure_three_planes(width * 2uz, width * 2uz, width * 2uz, height, height, height);
+            break;
+        }
+
+        case PixelFormat::YUV420PLANAR8: {
+            require_width_multiple(2, "Invalid width value for YUV420PLANAR8");
+            require_height_multiple(2, "Invalid height value for YUV420PLANAR8");
+            configure_three_planes(width, width / 2uz, width / 2uz, height, height / 2uz, height / 2uz);
             break;
         }
 

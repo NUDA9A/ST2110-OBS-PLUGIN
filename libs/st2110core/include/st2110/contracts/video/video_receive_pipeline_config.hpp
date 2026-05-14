@@ -1,5 +1,5 @@
-#ifndef ST2110_OBS_VIDEO_RECEICE_PIPELINE_CONFIG_HPP
-#define ST2110_OBS_VIDEO_RECEICE_PIPELINE_CONFIG_HPP
+#ifndef ST2110_OBS_VIDEO_RECEIVE_PIPELINE_CONFIG_HPP
+#define ST2110_OBS_VIDEO_RECEIVE_PIPELINE_CONFIG_HPP
 
 #include <st2110/contracts/video/depacketizer_config.hpp>
 #include <st2110/contracts/video/video_unit_reconstructor_config.hpp>
@@ -69,4 +69,4 @@ struct VideoReceivePipelineConfig {
 }
 } // namespace st2110
 
-#endif // ST2110_OBS_VIDEO_RECEICE_PIPELINE_CONFIG_HPP
+#endif // ST2110_OBS_VIDEO_RECEIVE_PIPELINE_CONFIG_HPP

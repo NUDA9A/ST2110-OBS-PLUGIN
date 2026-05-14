@@ -10,6 +10,7 @@
 #include <vector>
 #include <cstdint>
 #include <string_view>
+#include <optional>
 
 namespace st2110 {
 enum class SocketAddressFamily {
@@ -20,6 +21,21 @@ enum class SocketAddressFamily {
 struct ReceiveLocalLegPolicy {
     SocketAddressFamily family = SocketAddressFamily::IPv4;
     std::string local_ip{};
+
+    /*
+     * Kernel network interface selected for the route, for example "enp175s0f0".
+     *
+     * This is backend-neutral local receive metadata. Socket backend may ignore it.
+     * MTL projection may use it to resolve the corresponding PCI BDF.
+     */
+    std::optional<std::string> local_interface_name{};
+
+    /*
+     * PCI BDF of the selected local network adapter, for example "0000:af:01.0".
+     *
+     * For MTL DPDK-user mode this projects to MtlRuntimePortConfig::port_name.
+     */
+    std::optional<std::string> local_pci_bdf{};
 };
 
 struct ReceiveLocalPolicy {
@@ -247,6 +263,9 @@ determine_receive_route_lookup_target(const ReceiveRemoteLeg &leg) {
         .remote_ip = std::move(*remote_ip),
     };
 }
+
+[[nodiscard]] std::expected<ReceiveLocalLegPolicy, Error>
+resolve_receive_local_leg_policy_for_route_target(const ReceiveRouteLookupTarget &target);
 
 [[nodiscard]] std::expected<std::string, Error>
 resolve_preferred_local_ip_for_remote_target(SocketAddressFamily family, const std::string &remote_ip);
