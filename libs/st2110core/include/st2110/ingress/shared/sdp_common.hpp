@@ -50,6 +50,8 @@ struct RawSdpParsedMediaLine {
     std::uint8_t payload_type = 0;
 };
 
+enum class SdpMediaKind { Video, Audio };
+
 [[nodiscard]] inline std::string_view strip_cr(std::string_view line) {
     if (!line.empty() && line.back() == '\r') {
         line.remove_suffix(1);
@@ -380,6 +382,42 @@ parse_raw_sdp_media_line_single_payload_type(std::string_view media_value) {
     }
 
     return res;
+}
+
+[[nodiscard]] inline std::expected<SdpMediaKind, Error>
+classify_sdp_media_kind_from_document(const RawSdpDocument &raw_sdp) {
+    if (raw_sdp.media_sections.empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    std::string_view media_value = trim_ws(raw_sdp.media_sections.front().media_value);
+    if (media_value.empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    const auto tokens = split_ws(media_value);
+    if (tokens.empty()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (ascii_iequals(tokens.front(), "video")) {
+        return SdpMediaKind::Video;
+    }
+
+    if (ascii_iequals(tokens.front(), "audio")) {
+        return SdpMediaKind::Audio;
+    }
+
+    return std::unexpected(Error::Unsupported);
+}
+
+[[nodiscard]] inline std::expected<SdpMediaKind, Error> classify_sdp_media_kind(const std::string_view sdp) {
+    auto raw_sdp = parse_raw_sdp_document(sdp);
+    if (!raw_sdp.has_value()) {
+        return std::unexpected(raw_sdp.error());
+    }
+
+    return classify_sdp_media_kind_from_document(*raw_sdp);
 }
 
 [[nodiscard]] inline std::expected<std::uint8_t, Error> parse_hex_u8(const std::string_view text) {
