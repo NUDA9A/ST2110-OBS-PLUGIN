@@ -2,6 +2,8 @@
 
 #include <mtl/mtl_api.h>
 #include <mtl/st20_api.h>
+#include <mtl/st30_api.h>
+#include <mtl/st30_pipeline_api.h>
 #include <mtl/st_pipeline_api.h>
 
 #include <algorithm>
@@ -9,6 +11,7 @@
 #include <atomic>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -46,6 +49,22 @@ enum class DuplicateMode {
 enum class VideoPacking {
     Gpm,
     Bpm,
+};
+
+enum class MediaMode {
+    Video,
+    Audio,
+    Av,
+};
+
+enum class AudioPcmFormat {
+    Pcm16,
+    Pcm24,
+};
+
+struct AudioLegConfig {
+    std::array<std::uint8_t, 4> dst_ip{};
+    std::uint16_t udp_port = 5006;
 };
 
 struct VideoModeSpec {
@@ -87,6 +106,16 @@ struct AppConfig {
     std::chrono::milliseconds duration{60'000};
     std::chrono::milliseconds metadata_repeat_interval{1000};
 
+    MediaMode media_mode = MediaMode::Av;
+
+    AudioPcmFormat audio_pcm_format = AudioPcmFormat::Pcm24;
+    std::uint8_t audio_payload_type = 113;
+    std::uint16_t audio_channels = 2;
+    double audio_tone_hz = 440.0;
+
+    AudioLegConfig primary_audio{};
+    std::optional<AudioLegConfig> redundant_audio{};
+
     bool metadata_only = false;
 };
 
@@ -108,8 +137,7 @@ struct AppConfig {
 [[nodiscard]] std::uint16_t parse_u16(std::string_view value, std::string_view option_name) {
     std::uint32_t parsed = 0;
     const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), parsed);
-    if (ec != std::errc{} || ptr != value.data() + value.size() ||
-        parsed > std::numeric_limits<std::uint16_t>::max()) {
+    if (ec != std::errc{} || ptr != value.data() + value.size() || parsed > std::numeric_limits<std::uint16_t>::max()) {
         throw std::runtime_error("Invalid uint16 value for " + std::string(option_name));
     }
 
@@ -127,6 +155,18 @@ struct AppConfig {
     } catch (...) {
         throw std::runtime_error("Invalid positive integer for " + std::string(option_name));
     }
+}
+
+[[nodiscard]] VideoLegConfig make_unresolved_redundant_video_leg() {
+    VideoLegConfig leg{};
+    leg.udp_port = 0;
+    return leg;
+}
+
+[[nodiscard]] AudioLegConfig make_unresolved_redundant_audio_leg() {
+    AudioLegConfig leg{};
+    leg.udp_port = 0;
+    return leg;
 }
 
 [[nodiscard]] std::array<std::uint8_t, 4> parse_ipv4(std::string_view text, std::string_view option_name) {
@@ -167,6 +207,96 @@ struct AppConfig {
 
 [[nodiscard]] bool is_zero_ipv4(const std::array<std::uint8_t, 4> &ip) noexcept {
     return ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] == 0;
+}
+
+[[nodiscard]] bool video_enabled(const AppConfig &cfg) noexcept {
+    return cfg.media_mode == MediaMode::Video || cfg.media_mode == MediaMode::Av;
+}
+
+[[nodiscard]] bool audio_enabled(const AppConfig &cfg) noexcept {
+    return cfg.media_mode == MediaMode::Audio || cfg.media_mode == MediaMode::Av;
+}
+
+[[nodiscard]] MediaMode parse_media_mode(std::string_view value) {
+    if (value == "video") {
+        return MediaMode::Video;
+    }
+
+    if (value == "audio") {
+        return MediaMode::Audio;
+    }
+
+    if (value == "av" || value == "audio-video" || value == "video-audio") {
+        return MediaMode::Av;
+    }
+
+    throw std::runtime_error("Unsupported --media. Supported values: video, audio, av");
+}
+
+[[nodiscard]] AudioPcmFormat parse_audio_pcm_format(std::string_view value) {
+    if (value == "pcm16" || value == "l16") {
+        return AudioPcmFormat::Pcm16;
+    }
+
+    if (value == "pcm24" || value == "l24") {
+        return AudioPcmFormat::Pcm24;
+    }
+
+    throw std::runtime_error("Unsupported --audio-format. Supported values: pcm16, pcm24");
+}
+
+[[nodiscard]] st30_fmt to_mtl_audio_format(AudioPcmFormat fmt) noexcept {
+    switch (fmt) {
+    case AudioPcmFormat::Pcm16:
+        return ST30_FMT_PCM16;
+    case AudioPcmFormat::Pcm24:
+        return ST30_FMT_PCM24;
+    }
+
+    return ST30_FMT_PCM24;
+}
+
+[[nodiscard]] std::string audio_rtpmap_encoding(AudioPcmFormat fmt) {
+    switch (fmt) {
+    case AudioPcmFormat::Pcm16:
+        return "L16";
+    case AudioPcmFormat::Pcm24:
+        return "L24";
+    }
+
+    return "L24";
+}
+
+[[nodiscard]] std::size_t audio_bytes_per_sample(AudioPcmFormat fmt) noexcept {
+    switch (fmt) {
+    case AudioPcmFormat::Pcm16:
+        return 2;
+    case AudioPcmFormat::Pcm24:
+        return 3;
+    }
+
+    return 3;
+}
+
+[[nodiscard]] std::string audio_channel_order_sdp(std::uint16_t channels) {
+    switch (channels) {
+    case 1:
+        return "SMPTE2110.(M)";
+    case 2:
+        return "SMPTE2110.(ST)";
+    case 6:
+        return "SMPTE2110.(51)";
+    case 8:
+        return "SMPTE2110.(71)";
+    default:
+        if (channels == 0 || channels > 64) {
+            throw std::runtime_error("Unsupported audio channel count");
+        }
+
+        char buf[32]{};
+        std::snprintf(buf, sizeof(buf), "SMPTE2110.(U%02u)", static_cast<unsigned>(channels));
+        return buf;
+    }
 }
 
 [[nodiscard]] VideoModeSpec video_mode_spec(VideoMode mode) noexcept {
@@ -302,8 +432,8 @@ struct AppConfig {
     return out;
 }
 
-[[nodiscard]] std::string wrap_sdp_metadata_element(std::string_view media, std::string_view id,
-                                                    std::string_view name, std::string_view sdp) {
+[[nodiscard]] std::string wrap_sdp_metadata_element(std::string_view media, std::string_view id, std::string_view name,
+                                                    std::string_view sdp) {
     std::string xml;
     xml += "<st2110_sdp media=\"";
     xml += xml_escape_attribute(media);
@@ -375,48 +505,110 @@ struct AppConfig {
     return sdp;
 }
 
+[[nodiscard]] std::string build_audio_media_section(const AppConfig &cfg, const AudioLegConfig &leg,
+                                                    const MtlPortConfig &port, std::string_view mid) {
+    const std::string dst_ip = ipv4_to_string(leg.dst_ip);
+    const std::string source_ip = ipv4_to_string(port.local_ip);
+
+    std::string sdp;
+    sdp += "m=audio " + std::to_string(leg.udp_port) + " RTP/AVP " + std::to_string(cfg.audio_payload_type) + "\n";
+    sdp += "c=IN IP4 " + dst_ip + "/32\n";
+    sdp += "a=mid:" + std::string(mid) + "\n";
+    sdp += "a=source-filter: incl IN IP4 " + dst_ip + " " + source_ip + "\n";
+    sdp += "a=ts-refclk:localmac=00-00-00-00-00-00\n";
+    sdp += "a=mediaclk:direct=0\n";
+    sdp += "a=rtpmap:" + std::to_string(cfg.audio_payload_type) + " " + audio_rtpmap_encoding(cfg.audio_pcm_format) +
+           "/48000/" + std::to_string(cfg.audio_channels) + "\n";
+    sdp += "a=ptime:1\n";
+    sdp += "a=fmtp:" + std::to_string(cfg.audio_payload_type) +
+           " channel-order=" + audio_channel_order_sdp(cfg.audio_channels) + "; TSMODE=SAMP\n";
+
+    return sdp;
+}
+
+[[nodiscard]] std::string build_audio_sdp(const AppConfig &cfg) {
+    std::string sdp;
+    sdp += "v=0\n";
+    sdp += "o=- 0 0 IN IP4 " + ipv4_to_string(cfg.primary_port.local_ip) + "\n";
+    sdp += "s=" + cfg.ndi_name + " Audio\n";
+    sdp += "t=0 0\n";
+
+    if (cfg.duplicate_mode == DuplicateMode::On) {
+        sdp += "a=group:DUP primary redundant\n";
+    }
+
+    sdp += build_audio_media_section(cfg, cfg.primary_audio, cfg.primary_port, "primary");
+
+    if (cfg.duplicate_mode == DuplicateMode::On) {
+        sdp += build_audio_media_section(cfg, *cfg.redundant_audio, *cfg.redundant_port, "redundant");
+    }
+
+    return sdp;
+}
+
 [[nodiscard]] std::string build_st2110_sdp_metadata(const AppConfig &cfg) {
     std::string xml;
     xml += "<st2110_sdp_bundle>\n";
-    xml += wrap_sdp_metadata_element("video", "video", cfg.ndi_name + " Video", build_video_sdp(cfg));
+
+    if (video_enabled(cfg)) {
+        xml += wrap_sdp_metadata_element("video", "video", cfg.ndi_name + " Video", build_video_sdp(cfg));
+    }
+
+    if (audio_enabled(cfg)) {
+        xml += wrap_sdp_metadata_element("audio", "audio", cfg.ndi_name + " Audio", build_audio_sdp(cfg));
+    }
+
     xml += "</st2110_sdp_bundle>\n";
 
     return xml;
 }
 
 void print_help() {
-    std::cout
-        << "Usage:\n"
-        << "  st2110_mtl_send_test --port-name PORT --local-ip IP --video-dst-ip IP [options]\n\n"
-        << "Video modes:\n"
-        << "  --video-mode 1080p60   1920x1080 60fps UYVY, default\n"
-        << "  --video-mode 720p30    1280x720 30fps UYVY\n\n"
-        << "Primary leg:\n"
-        << "  --port-name VALUE              MTL port, e.g. 0000:af:01.0 or kernel:eth0\n"
-        << "  --local-ip IP                  Local sender/source IP for primary MTL port\n"
-        << "  --video-dst-ip IP              Primary destination/multicast IP, e.g. 239.211.0.20\n"
-        << "  --video-udp-port PORT          Primary video UDP port, default 5004\n\n"
-        << "Duplicate stream:\n"
-        << "  --duplicate                    Enable two-leg SDP DUP group and two-port MTL TX\n"
-        << "  --redundant-port-name VALUE    Redundant MTL port\n"
-        << "  --redundant-local-ip IP        Redundant sender/source IP\n"
-        << "  --redundant-video-dst-ip IP    Redundant destination/multicast IP\n"
-        << "  --redundant-video-udp-port P   Redundant UDP port, default primary+2\n\n"
-        << "Other options:\n"
-        << "  --name NAME                    NDI source name\n"
-        << "  --video-payload-type PT        RTP payload type, default 112\n"
-        << "  --packing gpm|bpm              ST 2110-20 packing, default gpm\n"
-        << "  --pmd dpdk-user|kernel-socket|native-af-xdp|dpdk-af-xdp|dpdk-af-packet\n"
-        << "  --frame-buffer-count N         MTL ST20P frame buffer count, default 3\n"
-        << "  --duration-ms N                Run duration, default 60000\n"
-        << "  --repeat-ms N                  NDI metadata repeat interval, default 1000\n"
-        << "  --metadata-only                Publish NDI SDP metadata without starting MTL TX\n";
+    std::cout << "Usage:\n"
+              << "  st2110_mtl_send_test --local-ip IP [--port-name PORT] [options]\n\n"
+              << "Media modes:\n"
+              << "  --media video                  Video only\n"
+              << "  --media audio                  Audio only\n"
+              << "  --media av                     Video + audio, default\n\n"
+              << "Video modes:\n"
+              << "  --video-mode 1080p60           1920x1080 60fps UYVY, default\n"
+              << "  --video-mode 720p30            1280x720 30fps UYVY\n\n"
+              << "Primary leg:\n"
+              << "  --port-name VALUE              MTL port, e.g. 0000:af:01.0 or kernel:eth0\n"
+              << "  --local-ip IP                  Local sender/source IP used in SDP and MTL\n"
+              << "  --video-dst-ip IP              Primary video destination/multicast IP, default 239.211.0.20\n"
+              << "  --video-udp-port PORT          Primary video UDP port, default 5004\n"
+              << "  --audio-dst-ip IP              Primary audio destination/multicast IP, default 239.211.0.22\n"
+              << "  --audio-udp-port PORT          Primary audio UDP port, default 5006\n\n"
+              << "Audio:\n"
+              << "  --audio-payload-type PT        RTP payload type, default 113\n"
+              << "  --audio-format pcm16|pcm24     Audio PCM format, default pcm24\n"
+              << "  --audio-channels N             Channel count 1..8, default 2\n"
+              << "  --audio-tone-hz N              Tone frequency, default 440\n\n"
+              << "Duplicate stream:\n"
+              << "  --duplicate                    Enable two-leg SDP DUP group and two-port MTL TX\n"
+              << "  --redundant-port-name VALUE    Redundant MTL port\n"
+              << "  --redundant-local-ip IP        Redundant sender/source IP\n"
+              << "  --redundant-video-dst-ip IP    Redundant video destination/multicast IP, default 239.211.0.21\n"
+              << "  --redundant-video-udp-port P   Redundant video UDP port, default primary video + 2\n"
+              << "  --redundant-audio-dst-ip IP    Redundant audio destination/multicast IP, default 239.211.0.23\n"
+              << "  --redundant-audio-udp-port P   Redundant audio UDP port, default primary audio + 2\n\n"
+              << "Other options:\n"
+              << "  --name NAME                    NDI source name\n"
+              << "  --video-payload-type PT        RTP payload type, default 112\n"
+              << "  --packing gpm|bpm              ST 2110-20 packing, default gpm\n"
+              << "  --pmd dpdk-user|kernel-socket|native-af-xdp|dpdk-af-xdp|dpdk-af-packet\n"
+              << "  --frame-buffer-count N         MTL frame buffer count, default 3\n"
+              << "  --duration-ms N                Run duration, default 60000\n"
+              << "  --repeat-ms N                  NDI metadata repeat interval, default 1000\n"
+              << "  --metadata-only                Publish NDI SDP metadata without starting MTL TX\n";
 }
 
 [[nodiscard]] AppConfig parse_args(int argc, char **argv) {
     AppConfig cfg{};
 
     cfg.primary_video.dst_ip = parse_ipv4("239.211.0.20", "default-primary-video-dst-ip");
+    cfg.primary_audio.dst_ip = parse_ipv4("239.211.0.22", "default-primary-audio-dst-ip");
 
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
@@ -433,6 +625,8 @@ void print_help() {
             std::exit(0);
         } else if (arg == "--name") {
             cfg.ndi_name = std::string(require_value(arg));
+        } else if (arg == "--media") {
+            cfg.media_mode = parse_media_mode(require_value(arg));
         } else if (arg == "--video-mode") {
             cfg.video_mode = parse_video_mode(require_value(arg));
         } else if (arg == "--port-name") {
@@ -449,6 +643,26 @@ void print_help() {
                 throw std::runtime_error("--video-payload-type must be in dynamic RTP payload range 96..127");
             }
             cfg.video_payload_type = parsed;
+        } else if (arg == "--audio-dst-ip") {
+            cfg.primary_audio.dst_ip = parse_ipv4(require_value(arg), arg);
+        } else if (arg == "--audio-udp-port") {
+            cfg.primary_audio.udp_port = parse_u16(require_value(arg), arg);
+        } else if (arg == "--audio-payload-type") {
+            const auto parsed = parse_u8(require_value(arg), arg);
+            if (parsed < 96 || parsed > 127) {
+                throw std::runtime_error("--audio-payload-type must be in dynamic RTP payload range 96..127");
+            }
+            cfg.audio_payload_type = parsed;
+        } else if (arg == "--audio-format") {
+            cfg.audio_pcm_format = parse_audio_pcm_format(require_value(arg));
+        } else if (arg == "--audio-channels") {
+            const auto parsed = parse_u16(require_value(arg), arg);
+            if (parsed == 0 || parsed > 8) {
+                throw std::runtime_error("--audio-channels must be in range 1..8 for current MTL RX MVP");
+            }
+            cfg.audio_channels = parsed;
+        } else if (arg == "--audio-tone-hz") {
+            cfg.audio_tone_hz = static_cast<double>(parse_positive_int(require_value(arg), arg));
         } else if (arg == "--packing") {
             cfg.packing = parse_video_packing(require_value(arg));
         } else if (arg == "--pmd") {
@@ -468,12 +682,19 @@ void print_help() {
             cfg.metadata_only = true;
         } else if (arg == "--duplicate") {
             cfg.duplicate_mode = DuplicateMode::On;
+
             if (!cfg.redundant_video.has_value()) {
-                cfg.redundant_video = VideoLegConfig{
-                    .dst_ip = parse_ipv4("239.211.0.21", "default-redundant-video-dst-ip"),
-                    .udp_port = static_cast<std::uint16_t>(cfg.primary_video.udp_port + 2),
-                };
+                VideoLegConfig leg = make_unresolved_redundant_video_leg();
+                leg.dst_ip = parse_ipv4("239.211.0.21", "default-redundant-video-dst-ip");
+                cfg.redundant_video = leg;
             }
+
+            if (!cfg.redundant_audio.has_value()) {
+                AudioLegConfig leg = make_unresolved_redundant_audio_leg();
+                leg.dst_ip = parse_ipv4("239.211.0.23", "default-redundant-audio-dst-ip");
+                cfg.redundant_audio = leg;
+            }
+
             if (!cfg.redundant_port.has_value()) {
                 cfg.redundant_port = MtlPortConfig{};
             }
@@ -489,14 +710,24 @@ void print_help() {
             cfg.redundant_port->local_ip = parse_ipv4(require_value(arg), arg);
         } else if (arg == "--redundant-video-dst-ip") {
             if (!cfg.redundant_video.has_value()) {
-                cfg.redundant_video = VideoLegConfig{};
+                cfg.redundant_video = make_unresolved_redundant_video_leg();
             }
             cfg.redundant_video->dst_ip = parse_ipv4(require_value(arg), arg);
         } else if (arg == "--redundant-video-udp-port") {
             if (!cfg.redundant_video.has_value()) {
-                cfg.redundant_video = VideoLegConfig{};
+                cfg.redundant_video = make_unresolved_redundant_video_leg();
             }
             cfg.redundant_video->udp_port = parse_u16(require_value(arg), arg);
+        } else if (arg == "--redundant-audio-dst-ip") {
+            if (!cfg.redundant_audio.has_value()) {
+                cfg.redundant_audio = make_unresolved_redundant_audio_leg();
+            }
+            cfg.redundant_audio->dst_ip = parse_ipv4(require_value(arg), arg);
+        } else if (arg == "--redundant-audio-udp-port") {
+            if (!cfg.redundant_audio.has_value()) {
+                cfg.redundant_audio = make_unresolved_redundant_audio_leg();
+            }
+            cfg.redundant_audio->udp_port = parse_u16(require_value(arg), arg);
         } else {
             throw std::runtime_error("Unknown argument: " + std::string(arg));
         }
@@ -506,37 +737,89 @@ void print_help() {
         throw std::runtime_error("--name must not be empty");
     }
 
-    if (!cfg.metadata_only) {
-        if (cfg.primary_port.port_name.empty()) {
-            throw std::runtime_error("--port-name is required unless --metadata-only is set");
+    if (!video_enabled(cfg) && !audio_enabled(cfg)) {
+        throw std::runtime_error("At least one media session must be enabled");
+    }
+
+    /*
+     * local-ip is needed even in --metadata-only mode because generated SDP
+     * contains o= and a=source-filter sender/source address.
+     */
+    if (is_zero_ipv4(cfg.primary_port.local_ip)) {
+        throw std::runtime_error("--local-ip is required");
+    }
+
+    if (!cfg.metadata_only && cfg.primary_port.port_name.empty()) {
+        throw std::runtime_error("--port-name is required unless --metadata-only is set");
+    }
+
+    if (video_enabled(cfg)) {
+        if (cfg.primary_video.udp_port == 0) {
+            throw std::runtime_error("--video-udp-port must not be 0");
         }
 
-        if (is_zero_ipv4(cfg.primary_port.local_ip)) {
-            throw std::runtime_error("--local-ip is required unless --metadata-only is set");
+        if (is_zero_ipv4(cfg.primary_video.dst_ip)) {
+            throw std::runtime_error("--video-dst-ip must not be 0.0.0.0");
+        }
+    }
+
+    if (audio_enabled(cfg)) {
+        if (cfg.primary_audio.udp_port == 0) {
+            throw std::runtime_error("--audio-udp-port must not be 0");
+        }
+
+        if (is_zero_ipv4(cfg.primary_audio.dst_ip)) {
+            throw std::runtime_error("--audio-dst-ip must not be 0.0.0.0");
         }
     }
 
     if (cfg.duplicate_mode == DuplicateMode::On) {
-        if (!cfg.redundant_port.has_value() || !cfg.redundant_video.has_value()) {
-            throw std::runtime_error("Internal duplicate configuration error");
+        if (!cfg.redundant_port.has_value()) {
+            throw std::runtime_error("Internal duplicate port configuration error");
         }
 
-        if (!cfg.metadata_only) {
-            if (cfg.redundant_port->port_name.empty()) {
-                throw std::runtime_error("--redundant-port-name is required when --duplicate is used");
+        if (!cfg.metadata_only && cfg.redundant_port->port_name.empty()) {
+            throw std::runtime_error("--redundant-port-name is required when --duplicate is used");
+        }
+
+        /*
+         * Same reason as primary local-ip: redundant local-ip is part of generated
+         * source-filter SDP.
+         */
+        if (is_zero_ipv4(cfg.redundant_port->local_ip)) {
+            throw std::runtime_error("--redundant-local-ip is required when --duplicate is used");
+        }
+
+        if (video_enabled(cfg)) {
+            if (!cfg.redundant_video.has_value()) {
+                VideoLegConfig leg = make_unresolved_redundant_video_leg();
+                leg.dst_ip = parse_ipv4("239.211.0.21", "default-redundant-video-dst-ip");
+                cfg.redundant_video = leg;
             }
 
-            if (is_zero_ipv4(cfg.redundant_port->local_ip)) {
-                throw std::runtime_error("--redundant-local-ip is required when --duplicate is used");
+            if (is_zero_ipv4(cfg.redundant_video->dst_ip)) {
+                throw std::runtime_error("--redundant-video-dst-ip must not be 0.0.0.0");
+            }
+
+            if (cfg.redundant_video->udp_port == 0) {
+                cfg.redundant_video->udp_port = static_cast<std::uint16_t>(cfg.primary_video.udp_port + 2);
             }
         }
 
-        if (is_zero_ipv4(cfg.redundant_video->dst_ip)) {
-            throw std::runtime_error("--redundant-video-dst-ip is required when --duplicate is used");
-        }
+        if (audio_enabled(cfg)) {
+            if (!cfg.redundant_audio.has_value()) {
+                AudioLegConfig leg = make_unresolved_redundant_audio_leg();
+                leg.dst_ip = parse_ipv4("239.211.0.23", "default-redundant-audio-dst-ip");
+                cfg.redundant_audio = leg;
+            }
 
-        if (cfg.redundant_video->udp_port == 0) {
-            cfg.redundant_video->udp_port = static_cast<std::uint16_t>(cfg.primary_video.udp_port + 2);
+            if (is_zero_ipv4(cfg.redundant_audio->dst_ip)) {
+                throw std::runtime_error("--redundant-audio-dst-ip must not be 0.0.0.0");
+            }
+
+            if (cfg.redundant_audio->udp_port == 0) {
+                cfg.redundant_audio->udp_port = static_cast<std::uint16_t>(cfg.primary_audio.udp_port + 2);
+            }
         }
     }
 
@@ -632,9 +915,7 @@ class NdiRuntime final {
 
     void *handle_ = nullptr;
 #else
-    void load() {
-        throw std::runtime_error("Dynamic NDI runtime loading is currently implemented only for Linux");
-    }
+    void load() { throw std::runtime_error("Dynamic NDI runtime loading is currently implemented only for Linux"); }
 #endif
 
     const NDIlib_v6 *ndi_ = nullptr;
@@ -685,13 +966,13 @@ class NdiMetadataSender final {
 };
 
 void fill_mtl_port(mtl_init_params &params, const mtl_port port_index, const MtlPortConfig &port_cfg,
-                   const mtl_pmd_type pmd) {
+                   const mtl_pmd_type pmd, const std::uint16_t tx_queue_count) {
     std::snprintf(params.port[port_index], MTL_PORT_MAX_LEN, "%s", port_cfg.port_name.c_str());
 
     params.pmd[port_index] = pmd;
     params.net_proto[port_index] = MTL_PROTO_STATIC;
 
-    params.tx_queues_cnt[port_index] = 1;
+    params.tx_queues_cnt[port_index] = tx_queue_count;
     params.rx_queues_cnt[port_index] = 0;
 
     std::memcpy(params.sip_addr[port_index], port_cfg.local_ip.data(), port_cfg.local_ip.size());
@@ -702,15 +983,119 @@ void fill_mtl_port(mtl_init_params &params, const mtl_port port_index, const Mtl
 
     params.num_ports = cfg.duplicate_mode == DuplicateMode::On ? 2 : 1;
 
-    fill_mtl_port(params, MTL_PORT_P, cfg.primary_port, cfg.pmd);
+    const std::uint16_t tx_queue_count =
+        static_cast<std::uint16_t>((video_enabled(cfg) ? 1U : 0U) + (audio_enabled(cfg) ? 1U : 0U));
+
+    if (tx_queue_count == 0) {
+        throw std::runtime_error("At least one media session must be enabled");
+    }
+
+    fill_mtl_port(params, MTL_PORT_P, cfg.primary_port, cfg.pmd, tx_queue_count);
 
     if (cfg.duplicate_mode == DuplicateMode::On) {
-        fill_mtl_port(params, MTL_PORT_R, *cfg.redundant_port, cfg.pmd);
+        fill_mtl_port(params, MTL_PORT_R, *cfg.redundant_port, cfg.pmd, tx_queue_count);
     }
 
     params.flags |= MTL_FLAG_DEV_AUTO_START_STOP;
 
     return params;
+}
+
+void fill_audio_tx_session_leg(st30p_tx_ops &ops, const mtl_session_port session_port, const MtlPortConfig &port,
+                               const AudioLegConfig &leg) {
+    std::memcpy(ops.port.dip_addr[session_port], leg.dst_ip.data(), leg.dst_ip.size());
+    std::snprintf(ops.port.port[session_port], MTL_PORT_MAX_LEN, "%s", port.port_name.c_str());
+    ops.port.udp_port[session_port] = leg.udp_port;
+}
+
+[[nodiscard]] st30p_tx_ops make_st30p_tx_ops(const AppConfig &cfg) {
+    st30p_tx_ops ops{};
+
+    ops.name = "st2110_mtl_audio_tx_test";
+    ops.priv = nullptr;
+
+    ops.port.num_port = cfg.duplicate_mode == DuplicateMode::On ? 2 : 1;
+    fill_audio_tx_session_leg(ops, MTL_SESSION_PORT_P, cfg.primary_port, cfg.primary_audio);
+
+    if (cfg.duplicate_mode == DuplicateMode::On) {
+        fill_audio_tx_session_leg(ops, MTL_SESSION_PORT_R, *cfg.redundant_port, *cfg.redundant_audio);
+    }
+
+    ops.port.payload_type = cfg.audio_payload_type;
+
+    ops.fmt = to_mtl_audio_format(cfg.audio_pcm_format);
+    ops.channel = cfg.audio_channels;
+    ops.sampling = ST30_SAMPLING_48K;
+    ops.ptime = ST30_PTIME_1MS;
+
+    ops.framebuff_cnt = cfg.frame_buffer_count;
+    ops.flags = ST30P_TX_FLAG_BLOCK_GET;
+
+    const int framebuff_size =
+        st30_calculate_framebuff_size(ops.fmt, ops.ptime, ops.sampling, ops.channel, 10'000'000ULL, nullptr);
+    if (framebuff_size <= 0) {
+        throw std::runtime_error("st30_calculate_framebuff_size failed");
+    }
+
+    ops.framebuff_size = static_cast<std::uint32_t>(framebuff_size);
+
+    return ops;
+}
+
+void write_pcm_sample_be(std::uint8_t *dst, std::int32_t sample_s32, AudioPcmFormat fmt) {
+    switch (fmt) {
+    case AudioPcmFormat::Pcm16: {
+        const std::int32_t v = sample_s32 >> 16;
+        dst[0] = static_cast<std::uint8_t>((v >> 8) & 0xFF);
+        dst[1] = static_cast<std::uint8_t>(v & 0xFF);
+        break;
+    }
+
+    case AudioPcmFormat::Pcm24: {
+        const std::int32_t v = sample_s32 >> 8;
+        dst[0] = static_cast<std::uint8_t>((v >> 16) & 0xFF);
+        dst[1] = static_cast<std::uint8_t>((v >> 8) & 0xFF);
+        dst[2] = static_cast<std::uint8_t>(v & 0xFF);
+        break;
+    }
+    }
+}
+
+void fill_audio_tone(st30_frame &frame, const AppConfig &cfg, double &phase) {
+    if (!frame.addr || cfg.audio_channels == 0) {
+        return;
+    }
+
+    const std::size_t bytes_per_sample = audio_bytes_per_sample(cfg.audio_pcm_format);
+    const std::size_t bytes_per_sample_frame = bytes_per_sample * static_cast<std::size_t>(cfg.audio_channels);
+
+    if (bytes_per_sample_frame == 0 || frame.buffer_size < bytes_per_sample_frame) {
+        return;
+    }
+
+    const std::size_t samples_per_channel = frame.buffer_size / bytes_per_sample_frame;
+    auto *dst = static_cast<std::uint8_t *>(frame.addr);
+
+    static constexpr double pi = 3.14159265358979323846;
+    static constexpr double sample_rate = 48000.0;
+
+    for (std::size_t sample_index = 0; sample_index < samples_per_channel; ++sample_index) {
+        const double value = std::sin(phase * 2.0 * pi) * 0.20;
+        const auto sample_s32 =
+            static_cast<std::int32_t>(value * static_cast<double>(std::numeric_limits<std::int32_t>::max()));
+
+        phase += cfg.audio_tone_hz / sample_rate;
+        if (phase >= 1.0) {
+            phase -= 1.0;
+        }
+
+        for (std::uint16_t channel = 0; channel < cfg.audio_channels; ++channel) {
+            const std::size_t ordinal = sample_index * static_cast<std::size_t>(cfg.audio_channels) + channel;
+            write_pcm_sample_be(dst + ordinal * bytes_per_sample, sample_s32, cfg.audio_pcm_format);
+        }
+    }
+
+    frame.data_size = samples_per_channel * bytes_per_sample_frame;
 }
 
 void fill_tx_session_leg(st20p_tx_ops &ops, const mtl_session_port session_port, const MtlPortConfig &port,
@@ -805,20 +1190,16 @@ void fill_uyvy_animated_gradient(st_frame &frame, std::uint64_t frame_index) {
     frame.data_size = stride * height;
 }
 
-class MtlVideoSender final {
+class MtlMediaSender final {
   public:
-    explicit MtlVideoSender(AppConfig cfg) : cfg_(std::move(cfg)) {}
+    explicit MtlMediaSender(AppConfig cfg) : cfg_(std::move(cfg)) {}
 
-    ~MtlVideoSender() { stop(); }
+    ~MtlMediaSender() { stop(); }
 
-    MtlVideoSender(const MtlVideoSender &) = delete;
-    MtlVideoSender &operator=(const MtlVideoSender &) = delete;
+    MtlMediaSender(const MtlMediaSender &) = delete;
+    MtlMediaSender &operator=(const MtlMediaSender &) = delete;
 
     void start() {
-        if (mt_ || tx_) {
-            return;
-        }
-
         auto params = make_mtl_init_params(cfg_);
 
         mt_ = mtl_init(&params);
@@ -826,34 +1207,60 @@ class MtlVideoSender final {
             throw std::runtime_error("mtl_init failed");
         }
 
-        auto ops = make_st20p_tx_ops(cfg_);
+        try {
+            if (video_enabled(cfg_)) {
+                auto ops = make_st20p_tx_ops(cfg_);
+                video_tx_ = st20p_tx_create(mt_, &ops);
+                if (!video_tx_) {
+                    throw std::runtime_error("st20p_tx_create failed");
+                }
+            }
 
-        tx_ = st20p_tx_create(mt_, &ops);
-        if (!tx_) {
-            mtl_uninit(mt_);
-            mt_ = nullptr;
-            throw std::runtime_error("st20p_tx_create failed");
+            if (audio_enabled(cfg_)) {
+                auto ops = make_st30p_tx_ops(cfg_);
+                audio_tx_ = st30p_tx_create(mt_, &ops);
+                if (!audio_tx_) {
+                    throw std::runtime_error("st30p_tx_create failed");
+                }
+            }
+        } catch (...) {
+            stop();
+            throw;
         }
 
-        const std::size_t frame_size = st20p_tx_frame_size(tx_);
-        std::cout << "MTL video TX started. frame_size=" << frame_size << " bytes\n";
-
         stop_requested_.store(false);
-        thread_ = std::jthread([this](std::stop_token token) { frame_loop(token); });
+
+        if (video_tx_) {
+            video_thread_ = std::jthread([this](std::stop_token token) { video_loop(token); });
+        }
+
+        if (audio_tx_) {
+            audio_thread_ = std::jthread([this](std::stop_token token) { audio_loop(token); });
+        }
     }
 
     void stop() noexcept {
         stop_requested_.store(true);
 
-        if (tx_) {
-            st20p_tx_wake_block(tx_);
+        if (video_tx_) {
+            st20p_tx_wake_block(video_tx_);
         }
 
-        thread_ = {};
+        if (audio_tx_) {
+            st30p_tx_wake_block(audio_tx_);
+        }
 
-        if (tx_) {
-            st20p_tx_free(tx_);
-            tx_ = nullptr;
+        video_thread_ = {};
+        audio_thread_ = {};
+
+        if (audio_tx_) {
+            st30p_tx_free(audio_tx_);
+            audio_tx_ = nullptr;
+        }
+
+        if (video_tx_) {
+            st20p_tx_free(video_tx_);
+            video_tx_ = nullptr;
         }
 
         if (mt_) {
@@ -863,29 +1270,45 @@ class MtlVideoSender final {
     }
 
   private:
-    void frame_loop(std::stop_token token) noexcept {
+    void video_loop(std::stop_token token) noexcept {
         std::uint64_t frame_index = 0;
 
         while (!token.stop_requested() && !stop_requested_.load()) {
-            st_frame *frame = st20p_tx_get_frame(tx_);
+            st_frame *frame = st20p_tx_get_frame(video_tx_);
             if (!frame) {
                 continue;
             }
 
             fill_uyvy_animated_gradient(*frame, frame_index);
-            st20p_tx_put_frame(tx_, frame);
+            st20p_tx_put_frame(video_tx_, frame);
 
             ++frame_index;
+        }
+    }
+
+    void audio_loop(std::stop_token token) noexcept {
+        double phase = 0.0;
+
+        while (!token.stop_requested() && !stop_requested_.load()) {
+            st30_frame *frame = st30p_tx_get_frame(audio_tx_);
+            if (!frame) {
+                continue;
+            }
+
+            fill_audio_tone(*frame, cfg_, phase);
+            st30p_tx_put_frame(audio_tx_, frame);
         }
     }
 
     AppConfig cfg_{};
 
     mtl_handle mt_ = nullptr;
-    st20p_tx_handle tx_ = nullptr;
+    st20p_tx_handle video_tx_ = nullptr;
+    st30p_tx_handle audio_tx_ = nullptr;
 
     std::atomic_bool stop_requested_{true};
-    std::jthread thread_{};
+    std::jthread video_thread_{};
+    std::jthread audio_thread_{};
 };
 
 } // namespace
@@ -904,24 +1327,31 @@ int main(int argc, char **argv) {
 
         NdiMetadataSender ndi_sender(*ndi, cfg.ndi_name);
 
-        std::optional<MtlVideoSender> video_sender{};
+        std::optional<MtlMediaSender> media_sender{};
         if (!cfg.metadata_only) {
-            video_sender.emplace(cfg);
-            video_sender->start();
+            media_sender.emplace(cfg);
+            media_sender->start();
         }
 
         const auto deadline = Clock::now() + cfg.duration;
 
         std::cout << "Publishing NDI source: " << cfg.ndi_name << '\n';
-        std::cout << "Video SDP:\n" << build_video_sdp(cfg) << '\n';
+
+        if (video_enabled(cfg)) {
+            std::cout << "Video SDP:\n" << build_video_sdp(cfg) << '\n';
+        }
+
+        if (audio_enabled(cfg)) {
+            std::cout << "Audio SDP:\n" << build_audio_sdp(cfg) << '\n';
+        }
 
         while (Clock::now() < deadline) {
             ndi_sender.publish_metadata(metadata);
-            std::cout << "Published ST 2110 video SDP metadata\n";
+            std::cout << "Published ST 2110 SDP metadata\n";
             std::this_thread::sleep_for(cfg.metadata_repeat_interval);
         }
 
-        video_sender.reset();
+        media_sender.reset();
 
         std::cout << "Done\n";
         return 0;
