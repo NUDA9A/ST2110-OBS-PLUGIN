@@ -21,6 +21,8 @@ inline constexpr const char *sourceBackendMtlValue = "mtl";
 inline constexpr const char *sourcePlayoutDelayMsPropertyId = "st2110_playout_delay_ms";
 inline constexpr const char *sourceReorderWindowPacketsPropertyId = "st2110_reorder_window_packets";
 
+inline constexpr const char *sourceRuntimeStatusPropertyId = "st2110_runtime_status";
+
 } // namespace obs_st2110
 
 #endif // ST2110_OBS_PLUGIN_PLUGIN_API_HPP

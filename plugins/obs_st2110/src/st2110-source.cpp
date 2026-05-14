@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <string_view>
 
 #ifndef ST2110_HAS_MTL_BACKEND
@@ -25,6 +26,39 @@ struct St2110Source {
 [[nodiscard]] obs_st2110::IDiscoveryProvider &discovery_provider() {
     static auto provider = obs_st2110::create_discovery_provider();
     return *provider;
+}
+
+[[nodiscard]] std::string runtime_status_text(const St2110Source *ctx) {
+    if (!ctx || !ctx->runtime) {
+        return "Runtime status is unavailable before the source instance is created.";
+    }
+
+    const bool running = ctx->runtime->running();
+    const std::string &last_error = ctx->runtime->last_error();
+
+    if (last_error.empty()) {
+        return running ? "Receive graph is running." : "Receive graph is stopped or idle.";
+    }
+
+    return std::string(running ? "Receive graph is running. " : "Receive graph is not running. ") + last_error;
+}
+
+[[nodiscard]] obs_text_info_type runtime_status_info_type(const St2110Source *ctx) {
+    if (!ctx || !ctx->runtime) {
+        return OBS_TEXT_INFO_NORMAL;
+    }
+
+    const std::string &last_error = ctx->runtime->last_error();
+
+    if (last_error.empty()) {
+        return OBS_TEXT_INFO_NORMAL;
+    }
+
+    if (ctx->runtime->running()) {
+        return OBS_TEXT_INFO_NORMAL;
+    }
+
+    return OBS_TEXT_INFO_WARNING;
 }
 
 [[nodiscard]] st2110::ReceiveBackendKind read_receive_backend_kind(obs_data_t *settings) {
@@ -146,7 +180,7 @@ void st2110_source_hide(void *data) {
 }
 
 obs_properties_t *st2110_source_get_properties(void *data) {
-    (void)data;
+    const auto *ctx = static_cast<const St2110Source *>(data);
 
     obs_properties_t *properties = obs_properties_create();
 
@@ -159,6 +193,12 @@ obs_properties_t *st2110_source_get_properties(void *data) {
     for (const auto &item : discovery_provider().list_sources()) {
         obs_property_list_add_string(source_list, item.display_name.c_str(), item.selection_key.c_str());
     }
+
+    obs_property_t *status_text =
+    obs_properties_add_text(properties, obs_st2110::sourceRuntimeStatusPropertyId, runtime_status_text(ctx).c_str(),
+                            OBS_TEXT_INFO);
+    obs_property_text_set_info_type(status_text, runtime_status_info_type(ctx));
+    obs_property_text_set_info_word_wrap(status_text, true);
 
     obs_properties_add_bool(properties, obs_st2110::sourceStartWhenActivePropertyId, "Start when active");
 

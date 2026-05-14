@@ -13,6 +13,7 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#include <cstdlib>
 
 #ifndef ST2110_HAS_NDI_DISCOVERY
 #define ST2110_HAS_NDI_DISCOVERY 0
