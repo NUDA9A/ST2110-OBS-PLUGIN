@@ -18,6 +18,7 @@ set(ST2110CORE_SOURCES
 if(ST2110_HAS_MTL_BACKEND)
     list(APPEND ST2110CORE_SOURCES
             src/backends/mtl/mtl_rx_video_backend.cpp
+            src/backends/mtl/mtl_rx_audio_backend.cpp
     )
 endif()
 
