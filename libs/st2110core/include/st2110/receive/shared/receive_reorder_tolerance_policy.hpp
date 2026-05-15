@@ -20,6 +20,8 @@ inline constexpr std::uint32_t defaultReorderWindowPackets = 32;
 struct ReorderBufferConfig {
     std::uint32_t window_size_packets = defaultReorderWindowPackets;
     ReceiveReorderGapPolicy reorder_tolerance_policy = ReceiveReorderGapPolicy::WaitForMissing;
+
+    friend bool operator==(const ReorderBufferConfig &, const ReorderBufferConfig &) = default;
 };
 } // namespace st2110
 

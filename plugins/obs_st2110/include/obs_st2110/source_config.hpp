@@ -32,6 +32,8 @@ struct ProviderSdpObject {
      * before dispatching to the media-specific parser.
      */
     std::optional<st2110::SdpMediaKind> declared_media_kind{};
+
+    friend bool operator==(const ProviderSdpObject &, const ProviderSdpObject &) = default;
 };
 
 struct SelectedDiscoveredSource {
@@ -46,6 +48,8 @@ struct SelectedDiscoveredSource {
      * - or one object per essence selected by the provider.
      */
     std::vector<ProviderSdpObject> sdp_objects{};
+
+    friend bool operator==(const SelectedDiscoveredSource &, const SelectedDiscoveredSource &) = default;
 };
 
 struct SourceConfig {

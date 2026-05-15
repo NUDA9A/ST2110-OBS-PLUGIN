@@ -1,6 +1,7 @@
 #include <obs_st2110/discovery_provider.hpp>
 
 #include <obs-module.h>
+#include <util/base.h>
 
 #include <algorithm>
 #include <chrono>
@@ -258,18 +259,18 @@ class NdiLibrary final {
             }
 
             if (!ndi_->initialize()) {
-                obs_log(LOG_WARNING, "ST2110 NDI discovery: NDI library loaded but initialize() failed");
+                blog(LOG_WARNING, "ST2110 NDI discovery: NDI library loaded but initialize() failed");
                 ndi_ = nullptr;
                 dlclose(handle_);
                 handle_ = nullptr;
                 continue;
             }
 
-            obs_log(LOG_INFO, "ST2110 NDI discovery: NDI library initialized: %s", ndi_->version());
+            blog(LOG_INFO, "ST2110 NDI discovery: NDI library initialized: %s", ndi_->version());
             return;
         }
 
-        obs_log(LOG_WARNING, "ST2110 NDI discovery: NDI runtime library was not found");
+        blog(LOG_WARNING, "ST2110 NDI discovery: NDI runtime library was not found");
     }
 
     void *handle_ = nullptr;
@@ -280,7 +281,7 @@ class NdiLibrary final {
          * Keep the provider compiled as unavailable on other platforms until
          * platform-specific dynamic loading paths are added.
          */
-        obs_log(LOG_WARNING, "ST2110 NDI discovery: dynamic NDI loading is not implemented for this platform");
+        blog(LOG_WARNING, "ST2110 NDI discovery: dynamic NDI loading is not implemented for this platform");
     }
 #endif
 

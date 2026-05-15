@@ -14,6 +14,8 @@ struct Settings {
     ReorderBufferConfig reorder_buffer_config{};
     PartialUnitPolicy partial_unit_policy{};
     ReceiveBackendKind backend_kind = ReceiveBackendKind::Socket;
+
+    friend bool operator==(const Settings &, const Settings &) = default;
 };
 }
 
