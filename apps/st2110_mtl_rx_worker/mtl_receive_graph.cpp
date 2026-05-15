@@ -37,6 +37,7 @@ struct MtlReceiveGraph::Impl {
      */
     MtlReceiveGraphConfig cfg{};
     MtlRuntimeContext *runtime = nullptr;
+    MtlWorkerGraphStats stats{};
     std::unique_ptr<MtlVideoRxSession> video{};
     std::unique_ptr<MtlAudioRxSession> audio{};
 
@@ -83,7 +84,7 @@ std::expected<bool, st2110::Error> MtlReceiveGraph::start_sessions() {
     std::unique_ptr<MtlAudioRxSession> staged_audio{};
 
     if (impl_->cfg.video.has_value()) {
-        auto video_session = MtlVideoRxSession::create(*impl_->runtime, *impl_->cfg.video);
+        auto video_session = MtlVideoRxSession::create(*impl_->runtime, *impl_->cfg.video, impl_->stats);
         if (!video_session.has_value()) {
             return std::unexpected(video_session.error());
         }
@@ -92,7 +93,7 @@ std::expected<bool, st2110::Error> MtlReceiveGraph::start_sessions() {
     }
 
     if (impl_->cfg.audio.has_value()) {
-        auto audio_session = MtlAudioRxSession::create(*impl_->runtime, *impl_->cfg.audio);
+        auto audio_session = MtlAudioRxSession::create(*impl_->runtime, *impl_->cfg.audio, impl_->stats);
         if (!audio_session.has_value()) {
             return std::unexpected(audio_session.error());
         }
@@ -128,5 +129,7 @@ bool MtlReceiveGraph::sessions_running() const noexcept {
 }
 
 const MtlReceiveGraphConfig &MtlReceiveGraph::config() const noexcept { return impl_->cfg; }
+
+MtlWorkerGraphStatsSnapshot MtlReceiveGraph::stats_snapshot() const noexcept { return impl_->stats.snapshot(); }
 
 } // namespace st2110_mtl_rx_worker

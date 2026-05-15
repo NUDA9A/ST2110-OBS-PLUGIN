@@ -91,6 +91,32 @@ resolve_graph_runtime_config(const std::optional<MtlVideoStartConfig> &video,
         event);
 }
 
+[[nodiscard]] std::expected<MtlWorkerStatsEvent, Error>
+interpret_stats_event(const MtlWorkerControlEvent &event, const MtlWorkerRequestId expected_request_id,
+                      const MtlWorkerGraphId expected_graph_id) {
+    return std::visit(
+        [expected_request_id, expected_graph_id](const auto &typed_event) -> std::expected<MtlWorkerStatsEvent, Error> {
+            using Event = std::decay_t<decltype(typed_event)>;
+
+            if constexpr (std::is_same_v<Event, MtlWorkerStatsEvent>) {
+                if (typed_event.request_id != expected_request_id || typed_event.graph_id != expected_graph_id) {
+                    return std::unexpected(Error::InvalidBackendState);
+                }
+
+                return typed_event;
+            } else if constexpr (std::is_same_v<Event, MtlWorkerErrorEvent>) {
+                if (typed_event.request_id != expected_request_id) {
+                    return std::unexpected(Error::InvalidBackendState);
+                }
+
+                return std::unexpected(typed_event.error);
+            } else {
+                return std::unexpected(Error::InvalidBackendState);
+            }
+        },
+        event);
+}
+
 } // namespace
 
 struct MtlWorkerGraphClient::Impl {
@@ -206,7 +232,6 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
 std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     if (!impl_->running) {
         impl_->active_start_count = 0;
-        impl_->worker_lease.reset();
         return true;
     }
 
@@ -243,9 +268,40 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
 
     impl_->running = false;
     impl_->active_start_count = 0;
-    impl_->worker_lease.reset();
 
     return true;
+}
+
+std::expected<MtlWorkerStatsEvent, Error> MtlWorkerGraphClient::stats() {
+    auto runtime = resolve_graph_runtime_config(impl_->video, impl_->audio);
+    if (!runtime.has_value()) {
+        return std::unexpected(runtime.error());
+    }
+
+    auto lease = default_mtl_worker_manager().acquire_or_spawn_compatible_worker(*runtime);
+    if (!lease.has_value()) {
+        return std::unexpected(lease.error());
+    }
+
+    impl_->worker_lease = *lease;
+
+    if (!impl_->worker_lease->control_channel) {
+        return std::unexpected(Error::InvalidBackendState);
+    }
+
+    auto request = make_stats_request();
+    if (!request.has_value()) {
+        return std::unexpected(request.error());
+    }
+
+    const MtlWorkerRequestId request_id = request->request_id;
+
+    auto event = impl_->worker_lease->control_channel->transact(MtlWorkerControlRequest{*request});
+    if (!event.has_value()) {
+        return std::unexpected(event.error());
+    }
+
+    return interpret_stats_event(*event, request_id, impl_->graph_id);
 }
 
 void MtlWorkerGraphClient::stop_noexcept() noexcept {
@@ -280,6 +336,17 @@ std::expected<MtlWorkerStartSessionsRequest, Error> MtlWorkerGraphClient::make_s
 
 MtlWorkerStopSessionsRequest MtlWorkerGraphClient::make_stop_sessions_request() const {
     return MtlWorkerStopSessionsRequest{
+        .request_id = next_request_id(),
+        .graph_id = impl_->graph_id,
+    };
+}
+
+std::expected<MtlWorkerStatsRequest, Error> MtlWorkerGraphClient::make_stats_request() const {
+    if (!configured()) {
+        return std::unexpected(Error::InvalidBackendState);
+    }
+
+    return MtlWorkerStatsRequest{
         .request_id = next_request_id(),
         .graph_id = impl_->graph_id,
     };

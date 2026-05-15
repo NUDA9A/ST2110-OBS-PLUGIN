@@ -44,10 +44,13 @@ class MtlWorkerGraphClient final {
     [[nodiscard]] std::expected<bool, Error> start();
     [[nodiscard]] std::expected<bool, Error> stop();
 
+    [[nodiscard]] std::expected<MtlWorkerStatsEvent, Error> stats();
+
     void stop_noexcept() noexcept;
 
     [[nodiscard]] std::expected<MtlWorkerStartSessionsRequest, Error> make_start_sessions_request() const;
     [[nodiscard]] MtlWorkerStopSessionsRequest make_stop_sessions_request() const;
+    [[nodiscard]] std::expected<MtlWorkerStatsRequest, Error> make_stats_request() const;
 
     [[nodiscard]] bool configured() const noexcept;
     [[nodiscard]] bool running() const noexcept;

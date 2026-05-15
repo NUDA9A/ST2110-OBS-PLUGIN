@@ -23,10 +23,15 @@ namespace st2110 {
  * - StartSessionsRequest
  * - StopSessionsRequest
  * - ShutdownRequest
+ * - StatsRequest
+ * - HealthCheckRequest
  * - HealthEvent
  * - ErrorEvent
  * - StartedEvent
  * - StoppedEvent
+ * - StatsEvent
+ * - FrameReadyEvent
+ * - AudioBlockReadyEvent
  */
 [[nodiscard]] std::expected<std::vector<std::uint8_t>, Error>
 serialize_mtl_worker_control_request(const MtlWorkerControlRequest &request);

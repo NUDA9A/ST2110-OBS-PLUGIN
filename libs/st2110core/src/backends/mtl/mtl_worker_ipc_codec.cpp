@@ -18,11 +18,16 @@ enum class MessageTag : std::uint8_t {
     StartSessionsRequest = 2,
     StopSessionsRequest = 3,
     ShutdownRequest = 4,
+    StatsRequest = 5,
+    HealthCheckRequest = 6,
 
     HealthEvent = 101,
     ErrorEvent = 102,
     StartedEvent = 103,
     StoppedEvent = 104,
+    StatsEvent = 105,
+    FrameReadyEvent = 106,
+    AudioBlockReadyEvent = 107,
 };
 
 class Writer {
@@ -151,6 +156,21 @@ class Reader {
     std::span<const std::uint8_t> bytes_{};
     std::size_t offset_ = 0;
 };
+
+void write_size_t_u64(Writer &writer, const std::size_t value) { writer.u64(static_cast<std::uint64_t>(value)); }
+
+[[nodiscard]] std::expected<std::size_t, Error> read_size_t_u64(Reader &reader) {
+    auto value = reader.u64();
+    if (!value.has_value()) {
+        return std::unexpected(value.error());
+    }
+
+    if (*value > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return static_cast<std::size_t>(*value);
+}
 
 [[nodiscard]] std::expected<bool, Error> write_runtime_port(Writer &writer, const MtlRuntimePortConfig &port) {
     auto wrote_name = writer.string(port.port_name);
@@ -574,6 +594,15 @@ serialize_mtl_worker_control_request(const MtlWorkerControlRequest &request) {
                 writer.u64(typed_request.request_id);
                 writer.u64(typed_request.graph_id);
                 return std::move(writer).finish();
+            } else if constexpr (std::is_same_v<Request, MtlWorkerStatsRequest>) {
+                writer.u8(static_cast<std::uint8_t>(MessageTag::StatsRequest));
+                writer.u64(typed_request.request_id);
+                writer.u64(typed_request.graph_id);
+                return std::move(writer).finish();
+            } else if constexpr (std::is_same_v<Request, MtlWorkerHealthCheckRequest>) {
+                writer.u8(static_cast<std::uint8_t>(MessageTag::HealthCheckRequest));
+                writer.u64(typed_request.request_id);
+                return std::move(writer).finish();
             } else if constexpr (std::is_same_v<Request, MtlWorkerShutdownRequest>) {
                 writer.u8(static_cast<std::uint8_t>(MessageTag::ShutdownRequest));
                 writer.u64(typed_request.request_id);
@@ -702,6 +731,48 @@ deserialize_mtl_worker_control_request(std::span<const std::uint8_t> payload) {
         };
     }
 
+    case MessageTag::StatsRequest: {
+        auto request_id = reader.u64();
+        if (!request_id.has_value()) {
+            return std::unexpected(request_id.error());
+        }
+
+        auto graph_id = reader.u64();
+        if (!graph_id.has_value()) {
+            return std::unexpected(graph_id.error());
+        }
+
+        auto consumed = ensure_consumed(reader);
+        if (!consumed.has_value()) {
+            return std::unexpected(consumed.error());
+        }
+
+        return MtlWorkerControlRequest{
+            MtlWorkerStatsRequest{
+                .request_id = *request_id,
+                .graph_id = *graph_id,
+            },
+        };
+    }
+
+    case MessageTag::HealthCheckRequest: {
+        auto request_id = reader.u64();
+        if (!request_id.has_value()) {
+            return std::unexpected(request_id.error());
+        }
+
+        auto consumed = ensure_consumed(reader);
+        if (!consumed.has_value()) {
+            return std::unexpected(consumed.error());
+        }
+
+        return MtlWorkerControlRequest{
+            MtlWorkerHealthCheckRequest{
+                .request_id = *request_id,
+            },
+        };
+    }
+
     case MessageTag::ShutdownRequest: {
         auto request_id = reader.u64();
         if (!request_id.has_value()) {
@@ -764,6 +835,38 @@ std::expected<std::vector<std::uint8_t>, Error> serialize_mtl_worker_control_eve
                 writer.u8(static_cast<std::uint8_t>(MessageTag::StoppedEvent));
                 writer.u64(typed_event.request_id);
                 writer.u64(typed_event.graph_id);
+                return std::move(writer).finish();
+            } else if constexpr (std::is_same_v<Event, MtlWorkerStatsEvent>) {
+                writer.u8(static_cast<std::uint8_t>(MessageTag::StatsEvent));
+                writer.u64(typed_event.request_id);
+                writer.u64(typed_event.graph_id);
+                writer.u64(typed_event.video_frames_received);
+                writer.u64(typed_event.audio_blocks_received);
+                writer.u64(typed_event.video_frames_dropped);
+                writer.u64(typed_event.audio_blocks_dropped);
+                return std::move(writer).finish();
+            } else if constexpr (std::is_same_v<Event, MtlWorkerFrameReadyEvent>) {
+                writer.u8(static_cast<std::uint8_t>(MessageTag::FrameReadyEvent));
+                writer.u64(typed_event.graph_id);
+                writer.u64(typed_event.slot_id);
+                writer.u32(typed_event.width);
+                writer.u32(typed_event.height);
+                writer.u32(typed_event.rtp_timestamp);
+                writer.u64(typed_event.receive_timestamp_ns);
+                write_size_t_u64(writer, typed_event.payload_size);
+                writer.u8(typed_event.partial ? 1 : 0);
+                return std::move(writer).finish();
+            } else if constexpr (std::is_same_v<Event, MtlWorkerAudioBlockReadyEvent>) {
+                writer.u8(static_cast<std::uint8_t>(MessageTag::AudioBlockReadyEvent));
+                writer.u64(typed_event.graph_id);
+                writer.u64(typed_event.slot_id);
+                writer.u32(typed_event.sample_rate_hz);
+                writer.u32(typed_event.channels);
+                writer.u32(typed_event.samples_per_channel);
+                writer.u32(typed_event.rtp_timestamp);
+                writer.u64(typed_event.receive_timestamp_ns);
+                write_size_t_u64(writer, typed_event.payload_size);
+                writer.u8(typed_event.partial ? 1 : 0);
                 return std::move(writer).finish();
             } else {
                 return std::unexpected(Error::Unsupported);
@@ -892,6 +995,109 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
             MtlWorkerStoppedEvent{
                 .request_id = *request_id,
                 .graph_id = *graph_id,
+            },
+        };
+    }
+
+    case MessageTag::StatsEvent: {
+        auto request_id = reader.u64();
+        auto graph_id = reader.u64();
+        auto video_frames_received = reader.u64();
+        auto audio_blocks_received = reader.u64();
+        auto video_frames_dropped = reader.u64();
+        auto audio_blocks_dropped = reader.u64();
+
+        if (!request_id.has_value() || !graph_id.has_value() || !video_frames_received.has_value() ||
+            !audio_blocks_received.has_value() || !video_frames_dropped.has_value() ||
+            !audio_blocks_dropped.has_value()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        auto consumed = ensure_consumed(reader);
+        if (!consumed.has_value()) {
+            return std::unexpected(consumed.error());
+        }
+
+        return MtlWorkerControlEvent{
+            MtlWorkerStatsEvent{
+                .request_id = *request_id,
+                .graph_id = *graph_id,
+                .video_frames_received = *video_frames_received,
+                .audio_blocks_received = *audio_blocks_received,
+                .video_frames_dropped = *video_frames_dropped,
+                .audio_blocks_dropped = *audio_blocks_dropped,
+            },
+        };
+    }
+
+    case MessageTag::FrameReadyEvent: {
+        auto graph_id = reader.u64();
+        auto slot_id = reader.u64();
+        auto width = reader.u32();
+        auto height = reader.u32();
+        auto rtp_timestamp = reader.u32();
+        auto receive_timestamp_ns = reader.u64();
+        auto payload_size = read_size_t_u64(reader);
+        auto partial = read_bool_u8(reader);
+
+        if (!graph_id.has_value() || !slot_id.has_value() || !width.has_value() || !height.has_value() ||
+            !rtp_timestamp.has_value() || !receive_timestamp_ns.has_value() || !payload_size.has_value() ||
+            !partial.has_value()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        auto consumed = ensure_consumed(reader);
+        if (!consumed.has_value()) {
+            return std::unexpected(consumed.error());
+        }
+
+        return MtlWorkerControlEvent{
+            MtlWorkerFrameReadyEvent{
+                .graph_id = *graph_id,
+                .slot_id = *slot_id,
+                .width = *width,
+                .height = *height,
+                .rtp_timestamp = *rtp_timestamp,
+                .receive_timestamp_ns = *receive_timestamp_ns,
+                .payload_size = *payload_size,
+                .partial = *partial,
+            },
+        };
+    }
+
+    case MessageTag::AudioBlockReadyEvent: {
+        auto graph_id = reader.u64();
+        auto slot_id = reader.u64();
+        auto sample_rate_hz = reader.u32();
+        auto channels = reader.u32();
+        auto samples_per_channel = reader.u32();
+        auto rtp_timestamp = reader.u32();
+        auto receive_timestamp_ns = reader.u64();
+        auto payload_size = read_size_t_u64(reader);
+        auto partial = read_bool_u8(reader);
+
+        if (!graph_id.has_value() || !slot_id.has_value() || !sample_rate_hz.has_value() || !channels.has_value() ||
+            !samples_per_channel.has_value() || !rtp_timestamp.has_value() || !receive_timestamp_ns.has_value() ||
+            !payload_size.has_value() || !partial.has_value()) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        auto consumed = ensure_consumed(reader);
+        if (!consumed.has_value()) {
+            return std::unexpected(consumed.error());
+        }
+
+        return MtlWorkerControlEvent{
+            MtlWorkerAudioBlockReadyEvent{
+                .graph_id = *graph_id,
+                .slot_id = *slot_id,
+                .sample_rate_hz = *sample_rate_hz,
+                .channels = *channels,
+                .samples_per_channel = *samples_per_channel,
+                .rtp_timestamp = *rtp_timestamp,
+                .receive_timestamp_ns = *receive_timestamp_ns,
+                .payload_size = *payload_size,
+                .partial = *partial,
             },
         };
     }

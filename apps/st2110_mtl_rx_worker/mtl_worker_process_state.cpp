@@ -160,13 +160,15 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
                           "StatsRequest graph id does not match current worker graph");
     }
 
+    const MtlWorkerGraphStatsSnapshot snapshot = graph_ ? graph_->stats_snapshot() : MtlWorkerGraphStatsSnapshot{};
+
     return st2110::MtlWorkerStatsEvent{
         .request_id = request.request_id,
         .graph_id = request.graph_id,
-        .video_frames_received = 0,
-        .audio_blocks_received = 0,
-        .video_frames_dropped = 0,
-        .audio_blocks_dropped = 0,
+        .video_frames_received = snapshot.video_frames_received,
+        .audio_blocks_received = snapshot.audio_blocks_received,
+        .video_frames_dropped = snapshot.video_frames_dropped,
+        .audio_blocks_dropped = snapshot.audio_blocks_dropped,
     };
 }
 

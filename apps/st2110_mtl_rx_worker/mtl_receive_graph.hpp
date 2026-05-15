@@ -4,6 +4,7 @@
 #include "mtl_audio_rx_session.hpp"
 #include "mtl_runtime_context.hpp"
 #include "mtl_video_rx_session.hpp"
+#include "mtl_worker_stats.hpp"
 
 #include <st2110/backends/mtl/mtl_worker_protocol.hpp>
 #include <st2110/foundation/error.hpp>
@@ -44,6 +45,8 @@ class MtlReceiveGraph final {
     [[nodiscard]] bool sessions_running() const noexcept;
 
     [[nodiscard]] const MtlReceiveGraphConfig &config() const noexcept;
+
+    [[nodiscard]] MtlWorkerGraphStatsSnapshot stats_snapshot() const noexcept;
 
   private:
     struct Impl;

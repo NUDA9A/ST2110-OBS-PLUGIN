@@ -11,6 +11,7 @@ add_executable(st2110_mtl_rx_worker
         mtl_audio_rx_session.cpp
         mtl_receive_graph.cpp
         mtl_worker_process_state.cpp
+        mtl_worker_event_writer.cpp
 )
 
 target_link_libraries(st2110_mtl_rx_worker PRIVATE

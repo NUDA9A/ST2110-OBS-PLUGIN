@@ -2,6 +2,7 @@
 #define ST2110_OBS_PLUGIN_MTL_RX_WORKER_AUDIO_RX_SESSION_HPP
 
 #include "mtl_runtime_context.hpp"
+#include "mtl_worker_stats.hpp"
 
 #include <st2110/delivery/audio/mtl_audio_start_config.hpp>
 #include <st2110/foundation/error.hpp>
@@ -28,8 +29,8 @@ namespace st2110_mtl_rx_worker {
  */
 class MtlAudioRxSession final {
   public:
-    static std::expected<std::unique_ptr<MtlAudioRxSession>, st2110::Error> create(MtlRuntimeContext &runtime,
-                                                                                   st2110::MtlAudioStartConfig cfg);
+    static std::expected<std::unique_ptr<MtlAudioRxSession>, st2110::Error>
+    create(MtlRuntimeContext &runtime, st2110::MtlAudioStartConfig cfg, MtlWorkerGraphStats &stats);
 
     ~MtlAudioRxSession();
 

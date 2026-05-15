@@ -2,6 +2,7 @@
 #define ST2110_OBS_PLUGIN_MTL_RX_WORKER_VIDEO_RX_SESSION_HPP
 
 #include "mtl_runtime_context.hpp"
+#include "mtl_worker_stats.hpp"
 
 #include <st2110/delivery/video/mtl_video_start_config.hpp>
 #include <st2110/foundation/error.hpp>
@@ -27,8 +28,8 @@ namespace st2110_mtl_rx_worker {
  */
 class MtlVideoRxSession final {
   public:
-    static std::expected<std::unique_ptr<MtlVideoRxSession>, st2110::Error> create(MtlRuntimeContext &runtime,
-                                                                                   st2110::MtlVideoStartConfig cfg);
+    static std::expected<std::unique_ptr<MtlVideoRxSession>, st2110::Error>
+    create(MtlRuntimeContext &runtime, st2110::MtlVideoStartConfig cfg, MtlWorkerGraphStats &stats);
 
     ~MtlVideoRxSession();
 

@@ -128,10 +128,13 @@ struct MtlAudioRxSession::Impl {
     st2110::MtlAudioStartConfig cfg{};
     st30p_rx_handle rx = nullptr;
 
+    MtlWorkerGraphStats *stats = nullptr;
+
     std::jthread receive_thread{};
 
-    explicit Impl(st2110::MtlAudioStartConfig session_cfg, st30p_rx_handle session_handle)
-        : cfg(std::move(session_cfg)), rx(session_handle) {}
+    explicit Impl(st2110::MtlAudioStartConfig session_cfg, st30p_rx_handle session_handle,
+                  MtlWorkerGraphStats &graph_stats)
+        : cfg(std::move(session_cfg)), rx(session_handle), stats(&graph_stats) {}
 
     ~Impl() {
         stop_thread_noexcept();
@@ -185,6 +188,10 @@ struct MtlAudioRxSession::Impl {
                 continue;
             }
 
+            if (stats) {
+                stats->record_audio_block_received();
+            }
+
             /*
              * Future media data-plane boundary:
              *
@@ -203,7 +210,7 @@ struct MtlAudioRxSession::Impl {
 };
 
 std::expected<std::unique_ptr<MtlAudioRxSession>, st2110::Error>
-MtlAudioRxSession::create(MtlRuntimeContext &runtime, st2110::MtlAudioStartConfig cfg) {
+MtlAudioRxSession::create(MtlRuntimeContext &runtime, st2110::MtlAudioStartConfig cfg, MtlWorkerGraphStats &stats) {
     if (!runtime.handle()) {
         return std::unexpected(st2110::Error::InvalidBackendState);
     }
@@ -218,7 +225,7 @@ MtlAudioRxSession::create(MtlRuntimeContext &runtime, st2110::MtlAudioStartConfi
         return std::unexpected(st2110::Error::SystemFailure);
     }
 
-    auto impl = std::make_unique<Impl>(std::move(cfg), rx);
+    auto impl = std::make_unique<Impl>(std::move(cfg), rx, stats);
 
     auto started = impl->start_thread();
     if (!started.has_value()) {

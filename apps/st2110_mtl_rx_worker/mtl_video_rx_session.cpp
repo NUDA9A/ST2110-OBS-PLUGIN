@@ -219,10 +219,13 @@ struct MtlVideoRxSession::Impl {
     st2110::MtlVideoStartConfig cfg{};
     st20p_rx_handle rx = nullptr;
 
+    MtlWorkerGraphStats *stats = nullptr;
+
     std::jthread receive_thread{};
 
-    explicit Impl(st2110::MtlVideoStartConfig session_cfg, st20p_rx_handle session_handle)
-        : cfg(std::move(session_cfg)), rx(session_handle) {}
+    explicit Impl(st2110::MtlVideoStartConfig session_cfg, st20p_rx_handle session_handle,
+                  MtlWorkerGraphStats &graph_stats)
+        : cfg(std::move(session_cfg)), rx(session_handle), stats(&graph_stats) {}
 
     ~Impl() {
         stop_thread_noexcept();
@@ -276,6 +279,10 @@ struct MtlVideoRxSession::Impl {
                 continue;
             }
 
+            if (stats) {
+                stats->record_video_frame_received();
+            }
+
             /*
              * Future media data-plane boundary:
              *
@@ -294,7 +301,7 @@ struct MtlVideoRxSession::Impl {
 };
 
 std::expected<std::unique_ptr<MtlVideoRxSession>, st2110::Error>
-MtlVideoRxSession::create(MtlRuntimeContext &runtime, st2110::MtlVideoStartConfig cfg) {
+MtlVideoRxSession::create(MtlRuntimeContext &runtime, st2110::MtlVideoStartConfig cfg, MtlWorkerGraphStats &stats) {
     if (!runtime.handle()) {
         return std::unexpected(st2110::Error::InvalidBackendState);
     }
@@ -309,7 +316,7 @@ MtlVideoRxSession::create(MtlRuntimeContext &runtime, st2110::MtlVideoStartConfi
         return std::unexpected(st2110::Error::SystemFailure);
     }
 
-    auto impl = std::make_unique<Impl>(std::move(cfg), rx);
+    auto impl = std::make_unique<Impl>(std::move(cfg), rx, stats);
 
     auto started = impl->start_thread();
     if (!started.has_value()) {
