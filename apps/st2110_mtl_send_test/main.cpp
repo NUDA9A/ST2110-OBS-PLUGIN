@@ -1,5 +1,3 @@
-#include <Processing.NDI.Lib.h>
-
 #include <mtl/mtl_api.h>
 #include <mtl/st20_api.h>
 #include <mtl/st30_api.h>
@@ -27,6 +25,9 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <cstddef>
+
+#include <Processing.NDI.Lib.h>
 
 #if defined(__linux__)
 #include <dlfcn.h>
