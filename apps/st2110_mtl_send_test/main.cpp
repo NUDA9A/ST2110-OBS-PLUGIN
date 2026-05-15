@@ -10,6 +10,7 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -25,7 +26,6 @@
 #include <thread>
 #include <utility>
 #include <vector>
-#include <cstddef>
 
 #include <Processing.NDI.Lib.h>
 
@@ -479,6 +479,7 @@ struct AppConfig {
     sdp += "; TP=2110TPN";
     sdp += "; MAXUDP=1460";
     sdp += "; TSMODE=SAMP";
+    sdp += "; TSDELAY=0";
     sdp += "\n";
 
     return sdp;
@@ -522,7 +523,7 @@ struct AppConfig {
            "/48000/" + std::to_string(cfg.audio_channels) + "\n";
     sdp += "a=ptime:1\n";
     sdp += "a=fmtp:" + std::to_string(cfg.audio_payload_type) +
-           " channel-order=" + audio_channel_order_sdp(cfg.audio_channels) + "; TSMODE=SAMP\n";
+           " channel-order=" + audio_channel_order_sdp(cfg.audio_channels) + "; TSMODE=SAMP; TSDELAY=0\n";
 
     return sdp;
 }
