@@ -17,15 +17,18 @@ namespace st2110_mtl_rx_worker {
  * Owns st20p_rx_handle lifetime only.
  * Does not own mtl_handle.
  * Does not know OBS sinks.
- * Does not deliver frames yet.
+ *
+ * Current implementation starts a worker-local receive thread that drains MTL
+ * frames and returns them to MTL. Shared-memory export and FrameReady IPC
+ * notifications are intentionally not implemented in this step.
  *
  * The owning worker graph must destroy video/audio sessions before destroying
  * the MtlRuntimeContext they were created against.
  */
 class MtlVideoRxSession final {
-public:
-    static std::expected<std::unique_ptr<MtlVideoRxSession>, st2110::Error>
-    create(MtlRuntimeContext &runtime, st2110::MtlVideoStartConfig cfg);
+  public:
+    static std::expected<std::unique_ptr<MtlVideoRxSession>, st2110::Error> create(MtlRuntimeContext &runtime,
+                                                                                   st2110::MtlVideoStartConfig cfg);
 
     ~MtlVideoRxSession();
 
@@ -39,7 +42,7 @@ public:
 
     [[nodiscard]] const st2110::MtlVideoStartConfig &config() const noexcept;
 
-private:
+  private:
     struct Impl;
 
     explicit MtlVideoRxSession(std::unique_ptr<Impl> impl);

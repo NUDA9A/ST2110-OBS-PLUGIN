@@ -16,6 +16,8 @@ if(ST2110_HAS_MTL_BACKEND)
             src/backends/mtl/mtl_rx_audio_backend_proxy.cpp
             src/backends/mtl/mtl_worker_control_channel.cpp
             src/backends/mtl/mtl_worker_process_control_channel.cpp
+            src/backends/mtl/mtl_worker_ipc_framing.cpp
+            src/backends/mtl/mtl_worker_ipc_codec.cpp
             src/backends/mtl/mtl_worker_manager.cpp
             src/backends/mtl/mtl_worker_graph_client.cpp
     )

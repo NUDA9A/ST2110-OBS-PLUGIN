@@ -34,6 +34,7 @@ class MtlRxAudioBackendProxy final : public IRxBackend {
     MtlAudioStartConfig cfg_{};
     std::shared_ptr<MtlWorkerGraphClient> graph_client_{};
     IFrameSink *sink_ = nullptr;
+    bool started_ = false;
 };
 
 } // namespace st2110

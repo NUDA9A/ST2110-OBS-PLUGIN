@@ -17,15 +17,19 @@ namespace st2110_mtl_rx_worker {
  * Owns st30p_rx_handle lifetime only.
  * Does not own mtl_handle.
  * Does not know OBS sinks.
- * Does not deliver audio blocks yet.
+ *
+ * Current implementation starts a worker-local receive thread that drains MTL
+ * audio frames and returns them to MTL. Shared-memory export and
+ * AudioBlockReady IPC notifications are intentionally not implemented in this
+ * step.
  *
  * The owning worker graph must destroy video/audio sessions before destroying
  * the MtlRuntimeContext they were created against.
  */
 class MtlAudioRxSession final {
-public:
-    static std::expected<std::unique_ptr<MtlAudioRxSession>, st2110::Error>
-    create(MtlRuntimeContext &runtime, st2110::MtlAudioStartConfig cfg);
+  public:
+    static std::expected<std::unique_ptr<MtlAudioRxSession>, st2110::Error> create(MtlRuntimeContext &runtime,
+                                                                                   st2110::MtlAudioStartConfig cfg);
 
     ~MtlAudioRxSession();
 
@@ -39,7 +43,7 @@ public:
 
     [[nodiscard]] const st2110::MtlAudioStartConfig &config() const noexcept;
 
-private:
+  private:
     struct Impl;
 
     explicit MtlAudioRxSession(std::unique_ptr<Impl> impl);

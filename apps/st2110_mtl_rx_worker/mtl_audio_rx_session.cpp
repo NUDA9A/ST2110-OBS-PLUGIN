@@ -3,9 +3,11 @@
 #include <mtl/st30_api.h>
 #include <mtl/st30_pipeline_api.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <cstdint>
+#include <stop_token>
+#include <thread>
 #include <utility>
 
 namespace st2110_mtl_rx_worker {
@@ -83,9 +85,8 @@ make_st30p_rx_ops(const st2110::MtlAudioStartConfig &cfg) noexcept {
         return std::unexpected(ptime.error());
     }
 
-    const int framebuff_size =
-        st30_calculate_framebuff_size(*fmt, *ptime, *sampling, cfg.media.channel_count,
-                                      cfg.frame_buffer_duration_ns, nullptr);
+    const int framebuff_size = st30_calculate_framebuff_size(*fmt, *ptime, *sampling, cfg.media.channel_count,
+                                                             cfg.frame_buffer_duration_ns, nullptr);
     if (framebuff_size <= 0) {
         return std::unexpected(st2110::Error::SystemFailure);
     }
@@ -127,14 +128,76 @@ struct MtlAudioRxSession::Impl {
     st2110::MtlAudioStartConfig cfg{};
     st30p_rx_handle rx = nullptr;
 
+    std::jthread receive_thread{};
+
     explicit Impl(st2110::MtlAudioStartConfig session_cfg, st30p_rx_handle session_handle)
         : cfg(std::move(session_cfg)), rx(session_handle) {}
 
     ~Impl() {
+        stop_thread_noexcept();
+
         if (rx) {
-            st30p_rx_wake_block(rx);
             st30p_rx_free(rx);
             rx = nullptr;
+        }
+    }
+
+    [[nodiscard]] std::expected<bool, st2110::Error> start_thread() {
+        if (!rx) {
+            return std::unexpected(st2110::Error::InvalidBackendState);
+        }
+
+        try {
+            receive_thread = std::jthread([this](std::stop_token stop_token) { receive_loop_noexcept(stop_token); });
+        } catch (...) {
+            st30p_rx_wake_block(rx);
+            return std::unexpected(st2110::Error::SystemFailure);
+        }
+
+        return true;
+    }
+
+    void stop_thread_noexcept() noexcept {
+        if (!receive_thread.joinable()) {
+            return;
+        }
+
+        receive_thread.request_stop();
+
+        if (rx) {
+            st30p_rx_wake_block(rx);
+        }
+
+        try {
+            receive_thread.join();
+        } catch (...) {
+            /*
+             * Destructor path must stay noexcept.
+             * In normal execution join() should not throw after joinable() check.
+             */
+        }
+    }
+
+    void receive_loop_noexcept(std::stop_token stop_token) noexcept {
+        while (!stop_token.stop_requested()) {
+            st30_frame *frame = st30p_rx_get_frame(rx);
+            if (!frame) {
+                continue;
+            }
+
+            /*
+             * Future media data-plane boundary:
+             *
+             * - map MTL st30_frame metadata;
+             * - convert/copy PCM payload into shared-memory audio ring slot;
+             * - send MtlWorkerAudioBlockReadyEvent through control/event IPC;
+             * - release the MTL frame after payload ownership is no longer tied
+             *   to MTL-owned memory.
+             *
+             * For now, the worker only validates the blocking get/put lifetime
+             * and returns the frame immediately to MTL.
+             */
+            st30p_rx_put_frame(rx, frame);
         }
     }
 };
@@ -156,6 +219,12 @@ MtlAudioRxSession::create(MtlRuntimeContext &runtime, st2110::MtlAudioStartConfi
     }
 
     auto impl = std::make_unique<Impl>(std::move(cfg), rx);
+
+    auto started = impl->start_thread();
+    if (!started.has_value()) {
+        return std::unexpected(started.error());
+    }
+
     return std::unique_ptr<MtlAudioRxSession>(new MtlAudioRxSession(std::move(impl)));
 }
 
@@ -169,8 +238,6 @@ void MtlAudioRxSession::wake_block() noexcept {
     }
 }
 
-const st2110::MtlAudioStartConfig &MtlAudioRxSession::config() const noexcept {
-    return impl_->cfg;
-}
+const st2110::MtlAudioStartConfig &MtlAudioRxSession::config() const noexcept { return impl_->cfg; }
 
 } // namespace st2110_mtl_rx_worker

@@ -12,17 +12,13 @@
 namespace st2110 {
 
 /*
- * OBS-process-side control channel backed by a future MTL worker process.
+ * OBS-process-side control channel backed by an MTL worker process.
  *
- * Current skeleton does not spawn/connect yet. It only fixes the concrete
- * process-channel boundary that will later own:
+ * Current implementation starts the worker process, exchanges length-prefixed
+ * typed control frames over a Unix socketpair, and keeps MTL API ownership out
+ * of the OBS process.
  *
- *   worker executable path
- *   process handle / pid
- *   IPC endpoint
- *   request/response framing
- *
- * This class must not include MTL runtime headers and must not call MTL APIs.
+ * Shared-memory media transport is still a separate future boundary.
  */
 class MtlWorkerProcessControlChannel final : public IMtlWorkerControlChannel {
   public:

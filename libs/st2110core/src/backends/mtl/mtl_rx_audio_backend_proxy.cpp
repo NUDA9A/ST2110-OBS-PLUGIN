@@ -16,6 +16,14 @@ RxBackendLifecycleResult MtlRxAudioBackendProxy::start(IFrameSink *sink) {
         return std::unexpected(Error::InvalidBackendState);
     }
 
+    if (started_) {
+        if (sink_ != sink) {
+            return std::unexpected(Error::InvalidBackendState);
+        }
+
+        return true;
+    }
+
     auto attached = graph_client_->attach_sink(sink);
     if (!attached.has_value()) {
         return std::unexpected(attached.error());
@@ -30,24 +38,40 @@ RxBackendLifecycleResult MtlRxAudioBackendProxy::start(IFrameSink *sink) {
      */
     auto started = graph_client_->start();
     if (!started.has_value()) {
-        graph_client_->detach_sink_noexcept(sink_);
+        if (!graph_client_->running()) {
+            graph_client_->detach_sink_noexcept(sink_);
+        }
+
         sink_ = nullptr;
         return std::unexpected(started.error());
     }
 
+    started_ = true;
     return started;
 }
 
 RxBackendLifecycleResult MtlRxAudioBackendProxy::stop() {
     if (!graph_client_) {
         sink_ = nullptr;
+        started_ = false;
         return true;
     }
 
+    if (!started_) {
+        sink_ = nullptr;
+        return true;
+    }
+
+    auto *attached_sink = sink_;
+
     auto stopped = graph_client_->stop();
 
-    graph_client_->detach_sink_noexcept(sink_);
+    if (!graph_client_->running()) {
+        graph_client_->detach_sink_noexcept(attached_sink);
+    }
+
     sink_ = nullptr;
+    started_ = false;
 
     return stopped;
 }

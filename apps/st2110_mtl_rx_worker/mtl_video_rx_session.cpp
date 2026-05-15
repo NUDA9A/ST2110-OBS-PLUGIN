@@ -5,6 +5,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <stop_token>
+#include <thread>
 #include <utility>
 
 namespace st2110_mtl_rx_worker {
@@ -217,14 +219,76 @@ struct MtlVideoRxSession::Impl {
     st2110::MtlVideoStartConfig cfg{};
     st20p_rx_handle rx = nullptr;
 
+    std::jthread receive_thread{};
+
     explicit Impl(st2110::MtlVideoStartConfig session_cfg, st20p_rx_handle session_handle)
         : cfg(std::move(session_cfg)), rx(session_handle) {}
 
     ~Impl() {
+        stop_thread_noexcept();
+
         if (rx) {
-            st20p_rx_wake_block(rx);
             st20p_rx_free(rx);
             rx = nullptr;
+        }
+    }
+
+    [[nodiscard]] std::expected<bool, st2110::Error> start_thread() {
+        if (!rx) {
+            return std::unexpected(st2110::Error::InvalidBackendState);
+        }
+
+        try {
+            receive_thread = std::jthread([this](std::stop_token stop_token) { receive_loop_noexcept(stop_token); });
+        } catch (...) {
+            st20p_rx_wake_block(rx);
+            return std::unexpected(st2110::Error::SystemFailure);
+        }
+
+        return true;
+    }
+
+    void stop_thread_noexcept() noexcept {
+        if (!receive_thread.joinable()) {
+            return;
+        }
+
+        receive_thread.request_stop();
+
+        if (rx) {
+            st20p_rx_wake_block(rx);
+        }
+
+        try {
+            receive_thread.join();
+        } catch (...) {
+            /*
+             * Destructor path must stay noexcept.
+             * In normal execution join() should not throw after joinable() check.
+             */
+        }
+    }
+
+    void receive_loop_noexcept(std::stop_token stop_token) noexcept {
+        while (!stop_token.stop_requested()) {
+            st_frame *frame = st20p_rx_get_frame(rx);
+            if (!frame) {
+                continue;
+            }
+
+            /*
+             * Future media data-plane boundary:
+             *
+             * - map MTL st_frame metadata;
+             * - copy/export payload into shared-memory video ring slot;
+             * - send MtlWorkerFrameReadyEvent through control/event IPC;
+             * - wait for/recover slot ownership according to the future shared
+             *   memory protocol.
+             *
+             * For now, the worker only validates the blocking get/put lifetime
+             * and returns the frame immediately to MTL.
+             */
+            st20p_rx_put_frame(rx, frame);
         }
     }
 };
@@ -246,6 +310,12 @@ MtlVideoRxSession::create(MtlRuntimeContext &runtime, st2110::MtlVideoStartConfi
     }
 
     auto impl = std::make_unique<Impl>(std::move(cfg), rx);
+
+    auto started = impl->start_thread();
+    if (!started.has_value()) {
+        return std::unexpected(started.error());
+    }
+
     return std::unique_ptr<MtlVideoRxSession>(new MtlVideoRxSession(std::move(impl)));
 }
 
@@ -259,8 +329,6 @@ void MtlVideoRxSession::wake_block() noexcept {
     }
 }
 
-const st2110::MtlVideoStartConfig &MtlVideoRxSession::config() const noexcept {
-    return impl_->cfg;
-}
+const st2110::MtlVideoStartConfig &MtlVideoRxSession::config() const noexcept { return impl_->cfg; }
 
 } // namespace st2110_mtl_rx_worker
