@@ -18,8 +18,8 @@
 #include <st2110/receive/video/video_receive_bootstrap.hpp>
 
 #if ST2110_HAS_MTL_BACKEND
-#include <st2110/backends/mtl/mtl_rx_audio_backend.hpp>
-#include <st2110/backends/mtl/mtl_rx_video_backend.hpp>
+#include <st2110/backends/mtl/mtl_rx_audio_backend_proxy.hpp>
+#include <st2110/backends/mtl/mtl_rx_video_backend_proxy.hpp>
 #include <st2110/delivery/audio/mtl_audio_start_config.hpp>
 #include <st2110/delivery/video/mtl_video_start_config.hpp>
 #endif
@@ -104,7 +104,7 @@ make_video_backend(const st2110::ReceiveStartRequest &request, const st2110::Set
             return std::unexpected(mtl_cfg.error());
         }
 
-        return std::make_unique<st2110::MtlRxVideoBackend>(std::move(*mtl_cfg));
+        return std::make_unique<st2110::MtlRxVideoBackendProxy>(std::move(*mtl_cfg));
 #else
         return std::unexpected(st2110::Error::Unsupported);
 #endif
@@ -129,7 +129,7 @@ make_audio_backend(const st2110::ReceiveStartRequest &request, const st2110::Set
             return std::unexpected(mtl_cfg.error());
         }
 
-        return std::make_unique<st2110::MtlRxAudioBackend>(std::move(*mtl_cfg));
+        return std::make_unique<st2110::MtlRxAudioBackendProxy>(std::move(*mtl_cfg));
 #else
         return std::unexpected(st2110::Error::Unsupported);
 #endif

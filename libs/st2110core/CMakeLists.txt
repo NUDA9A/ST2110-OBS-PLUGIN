@@ -4,11 +4,6 @@ else()
     set(ST2110_HAS_MTL_BACKEND OFF)
 endif()
 
-if(ST2110_HAS_MTL_BACKEND)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(ST2110_MTL REQUIRED IMPORTED_TARGET mtl)
-endif()
-
 set(ST2110CORE_SOURCES
         src/stub.cpp
         src/backends/receive_local_policy.cpp
@@ -17,8 +12,8 @@ set(ST2110CORE_SOURCES
 
 if(ST2110_HAS_MTL_BACKEND)
     list(APPEND ST2110CORE_SOURCES
-            src/backends/mtl/mtl_rx_video_backend.cpp
-            src/backends/mtl/mtl_rx_audio_backend.cpp
+            src/backends/mtl/mtl_rx_video_backend_proxy.cpp
+            src/backends/mtl/mtl_rx_audio_backend_proxy.cpp
     )
 endif()
 
@@ -48,9 +43,3 @@ target_compile_definitions(st2110core PUBLIC
         ST2110_HAS_MTL_BACKEND=$<BOOL:${ST2110_HAS_MTL_BACKEND}>
         ST2110_MTL_DEV_KERNEL_SOCKET=$<BOOL:${ST2110_MTL_DEV_KERNEL_SOCKET}>
 )
-
-if(ST2110_HAS_MTL_BACKEND)
-    target_link_libraries(st2110core PRIVATE
-            PkgConfig::ST2110_MTL
-    )
-endif()
