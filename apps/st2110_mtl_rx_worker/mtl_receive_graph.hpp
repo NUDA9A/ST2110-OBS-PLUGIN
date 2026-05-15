@@ -15,6 +15,7 @@
 #include <span>
 
 namespace st2110_mtl_rx_worker {
+class MtlWorkerEventWriter;
 
 using MtlReceiveGraphConfig = st2110::MtlWorkerStartSessionsRequest;
 
@@ -27,7 +28,8 @@ using MtlReceiveGraphConfig = st2110::MtlWorkerStartSessionsRequest;
 class MtlReceiveGraph final {
   public:
     static std::expected<std::unique_ptr<MtlReceiveGraph>, st2110::Error>
-    create(MtlRuntimeContext &runtime, MtlReceiveGraphConfig cfg, std::span<const int> ancillary_file_descriptors = {});
+create(MtlRuntimeContext &runtime, MtlReceiveGraphConfig cfg, MtlWorkerEventWriter &event_writer,
+       std::span<const int> ancillary_file_descriptors = {});
 
     ~MtlReceiveGraph();
 

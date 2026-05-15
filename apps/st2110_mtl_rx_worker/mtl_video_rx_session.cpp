@@ -1,4 +1,5 @@
 #include "mtl_video_rx_session.hpp"
+#include "mtl_worker_event_writer.hpp"
 
 #include <mtl/st20_api.h>
 #include <mtl/st_pipeline_api.h>
@@ -242,13 +243,19 @@ struct MtlVideoRxSession::Impl {
     st20p_rx_handle rx = nullptr;
 
     MtlWorkerGraphStats *stats = nullptr;
+    MtlWorkerEventWriter *event_writer = nullptr;
     st2110::MtlWorkerSharedMemoryRingMap *media_ring = nullptr;
 
     std::jthread receive_thread{};
 
     explicit Impl(st2110::MtlVideoStartConfig session_cfg, st20p_rx_handle session_handle,
-                  MtlWorkerGraphStats &graph_stats, st2110::MtlWorkerSharedMemoryRingMap *bound_media_ring)
-        : cfg(std::move(session_cfg)), rx(session_handle), stats(&graph_stats), media_ring(bound_media_ring) {}
+              MtlWorkerGraphStats &graph_stats, MtlWorkerEventWriter &writer,
+              st2110::MtlWorkerSharedMemoryRingMap *bound_media_ring)
+    : cfg(std::move(session_cfg)),
+      rx(session_handle),
+      stats(&graph_stats),
+      event_writer(&writer),
+      media_ring(bound_media_ring) {}
 
     ~Impl() {
         stop_thread_noexcept();
@@ -325,6 +332,7 @@ struct MtlVideoRxSession::Impl {
 
 std::expected<std::unique_ptr<MtlVideoRxSession>, st2110::Error>
 MtlVideoRxSession::create(MtlRuntimeContext &runtime, st2110::MtlVideoStartConfig cfg, MtlWorkerGraphStats &stats,
+                          MtlWorkerEventWriter &event_writer,
                           st2110::MtlWorkerSharedMemoryRingMap *media_ring) {
     if (!runtime.handle()) {
         return std::unexpected(st2110::Error::InvalidBackendState);
@@ -345,8 +353,7 @@ MtlVideoRxSession::create(MtlRuntimeContext &runtime, st2110::MtlVideoStartConfi
         return std::unexpected(st2110::Error::SystemFailure);
     }
 
-    auto impl = std::make_unique<Impl>(std::move(cfg), rx, stats, media_ring);
-
+    auto impl = std::make_unique<Impl>(std::move(cfg), rx, stats, event_writer, media_ring);
     auto started = impl->start_thread();
     if (!started.has_value()) {
         return std::unexpected(started.error());

@@ -1,4 +1,5 @@
 #include "mtl_audio_rx_session.hpp"
+#include "mtl_worker_event_writer.hpp"
 
 #include <mtl/st30_api.h>
 #include <mtl/st30_pipeline_api.h>
@@ -151,13 +152,19 @@ struct MtlAudioRxSession::Impl {
     st30p_rx_handle rx = nullptr;
 
     MtlWorkerGraphStats *stats = nullptr;
+    MtlWorkerEventWriter *event_writer = nullptr;
     st2110::MtlWorkerSharedMemoryRingMap *media_ring = nullptr;
 
     std::jthread receive_thread{};
 
     explicit Impl(st2110::MtlAudioStartConfig session_cfg, st30p_rx_handle session_handle,
-                  MtlWorkerGraphStats &graph_stats, st2110::MtlWorkerSharedMemoryRingMap *bound_media_ring)
-        : cfg(std::move(session_cfg)), rx(session_handle), stats(&graph_stats), media_ring(bound_media_ring) {}
+              MtlWorkerGraphStats &graph_stats, MtlWorkerEventWriter &writer,
+              st2110::MtlWorkerSharedMemoryRingMap *bound_media_ring)
+    : cfg(std::move(session_cfg)),
+      rx(session_handle),
+      stats(&graph_stats),
+      event_writer(&writer),
+      media_ring(bound_media_ring) {}
 
     ~Impl() {
         stop_thread_noexcept();
@@ -234,6 +241,7 @@ struct MtlAudioRxSession::Impl {
 
 std::expected<std::unique_ptr<MtlAudioRxSession>, st2110::Error>
 MtlAudioRxSession::create(MtlRuntimeContext &runtime, st2110::MtlAudioStartConfig cfg, MtlWorkerGraphStats &stats,
+                          MtlWorkerEventWriter &event_writer,
                           st2110::MtlWorkerSharedMemoryRingMap *media_ring) {
     if (!runtime.handle()) {
         return std::unexpected(st2110::Error::InvalidBackendState);
@@ -254,7 +262,7 @@ MtlAudioRxSession::create(MtlRuntimeContext &runtime, st2110::MtlAudioStartConfi
         return std::unexpected(st2110::Error::SystemFailure);
     }
 
-    auto impl = std::make_unique<Impl>(std::move(cfg), rx, stats, media_ring);
+    auto impl = std::make_unique<Impl>(std::move(cfg), rx, stats, event_writer, media_ring);
 
     auto started = impl->start_thread();
     if (!started.has_value()) {

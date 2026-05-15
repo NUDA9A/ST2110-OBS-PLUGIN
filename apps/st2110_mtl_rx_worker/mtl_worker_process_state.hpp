@@ -11,15 +11,19 @@
 
 namespace st2110_mtl_rx_worker {
 
+class MtlWorkerEventWriter;
+
 /*
  * Worker-process-local typed control state.
  *
- * This class does not implement IPC. It only defines the command handling
- * semantics that future IPC framing will call after deserializing a worker
- * control request.
+ * This class owns worker command semantics and passes the worker event writer
+ * into graph/session construction so receive threads can later emit asynchronous
+ * media-ready events through the single worker IPC write boundary.
  */
 class MtlWorkerProcessState final {
   public:
+    explicit MtlWorkerProcessState(MtlWorkerEventWriter &event_writer) noexcept;
+
     st2110::MtlWorkerControlEvent handle(const st2110::MtlWorkerControlRequest &request);
     st2110::MtlWorkerControlEvent handle(const st2110::MtlWorkerControlRequest &request,
                                          std::span<const int> ancillary_file_descriptors);
@@ -41,6 +45,7 @@ class MtlWorkerProcessState final {
                                                          st2110::MtlWorkerGraphId graph_id, st2110::Error error,
                                                          const char *message) const;
 
+    MtlWorkerEventWriter *event_writer_ = nullptr;
     std::unique_ptr<MtlRuntimeContext> runtime_{};
     std::unique_ptr<MtlReceiveGraph> graph_{};
     bool shutdown_requested_ = false;

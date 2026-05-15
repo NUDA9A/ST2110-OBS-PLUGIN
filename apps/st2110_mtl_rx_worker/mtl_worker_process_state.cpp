@@ -1,5 +1,7 @@
 #include "mtl_worker_process_state.hpp"
 
+#include "mtl_worker_event_writer.hpp"
+
 #include <span>
 #include <type_traits>
 #include <utility>
@@ -43,6 +45,9 @@ template <typename Request>
 }
 
 } // namespace
+
+MtlWorkerProcessState::MtlWorkerProcessState(MtlWorkerEventWriter &event_writer) noexcept
+    : event_writer_(&event_writer) {}
 
 st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWorkerControlRequest &request) {
     return std::visit(
@@ -171,7 +176,12 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
         };
     }
 
-    auto graph = MtlReceiveGraph::create(*runtime_, request, ancillary_file_descriptors);
+    if (!event_writer_) {
+        return make_error(request.request_id, request.graph_id, st2110::Error::InvalidBackendState,
+                          "Worker event writer is not configured");
+    }
+
+    auto graph = MtlReceiveGraph::create(*runtime_, request, *event_writer_, ancillary_file_descriptors);
     if (!graph.has_value()) {
         return make_error(request.request_id, request.graph_id, graph.error(), "Failed to create MTL receive graph");
     }

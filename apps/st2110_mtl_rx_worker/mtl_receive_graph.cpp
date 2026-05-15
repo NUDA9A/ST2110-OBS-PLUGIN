@@ -1,4 +1,7 @@
 #include "mtl_receive_graph.hpp"
+
+#include "mtl_worker_event_writer.hpp"
+
 #include <st2110/backends/mtl/mtl_worker_shared_memory_ring.hpp>
 
 #include <span>
@@ -96,18 +99,22 @@ struct MtlReceiveGraph::Impl {
      */
     MtlReceiveGraphConfig cfg{};
     MtlRuntimeContext *runtime = nullptr;
+    MtlWorkerEventWriter *event_writer = nullptr;
     MtlWorkerGraphStats stats{};
     std::vector<st2110::MtlWorkerSharedMemoryRingMap> media_rings{};
     std::unique_ptr<MtlVideoRxSession> video{};
     std::unique_ptr<MtlAudioRxSession> audio{};
 
-    Impl(MtlRuntimeContext &runtime_context, MtlReceiveGraphConfig graph_cfg,
-         std::vector<st2110::MtlWorkerSharedMemoryRingMap> imported_media_rings)
-        : cfg(std::move(graph_cfg)), runtime(&runtime_context), media_rings(std::move(imported_media_rings)) {}
+    Impl(MtlRuntimeContext &runtime_context, MtlReceiveGraphConfig graph_cfg, MtlWorkerEventWriter &writer,
+     std::vector<st2110::MtlWorkerSharedMemoryRingMap> imported_media_rings)
+    : cfg(std::move(graph_cfg)),
+      runtime(&runtime_context),
+      event_writer(&writer),
+      media_rings(std::move(imported_media_rings)) {}
 };
 
 std::expected<std::unique_ptr<MtlReceiveGraph>, st2110::Error>
-MtlReceiveGraph::create(MtlRuntimeContext &runtime, MtlReceiveGraphConfig cfg,
+MtlReceiveGraph::create(MtlRuntimeContext &runtime, MtlReceiveGraphConfig cfg, MtlWorkerEventWriter &event_writer,
                         std::span<const int> ancillary_file_descriptors) {
     auto runtime_cfg = resolve_graph_runtime_config(cfg);
     if (!runtime_cfg.has_value()) {
@@ -123,7 +130,7 @@ MtlReceiveGraph::create(MtlRuntimeContext &runtime, MtlReceiveGraphConfig cfg,
         return std::unexpected(imported_rings.error());
     }
 
-    auto impl = std::make_unique<Impl>(runtime, std::move(cfg), std::move(*imported_rings));
+    auto impl = std::make_unique<Impl>(runtime, std::move(cfg), event_writer, std::move(*imported_rings));
     auto graph = std::unique_ptr<MtlReceiveGraph>(new MtlReceiveGraph(std::move(impl)));
 
     auto started = graph->start_sessions();
@@ -156,7 +163,12 @@ std::expected<bool, st2110::Error> MtlReceiveGraph::start_sessions() {
             return std::unexpected(video_ring.error());
         }
 
-        auto video_session = MtlVideoRxSession::create(*impl_->runtime, *impl_->cfg.video, impl_->stats, *video_ring);
+        if (!impl_->event_writer) {
+            return std::unexpected(st2110::Error::InvalidBackendState);
+        }
+
+        auto video_session =
+            MtlVideoRxSession::create(*impl_->runtime, *impl_->cfg.video, impl_->stats, *impl_->event_writer, *video_ring);
         if (!video_session.has_value()) {
             return std::unexpected(video_session.error());
         }
@@ -170,7 +182,12 @@ std::expected<bool, st2110::Error> MtlReceiveGraph::start_sessions() {
             return std::unexpected(audio_ring.error());
         }
 
-        auto audio_session = MtlAudioRxSession::create(*impl_->runtime, *impl_->cfg.audio, impl_->stats, *audio_ring);
+        if (!impl_->event_writer) {
+            return std::unexpected(st2110::Error::InvalidBackendState);
+        }
+
+        auto audio_session =
+            MtlAudioRxSession::create(*impl_->runtime, *impl_->cfg.audio, impl_->stats, *impl_->event_writer, *audio_ring);
         if (!audio_session.has_value()) {
             return std::unexpected(audio_session.error());
         }

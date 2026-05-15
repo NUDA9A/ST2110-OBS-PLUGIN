@@ -12,7 +12,7 @@
 #include <memory>
 
 namespace st2110_mtl_rx_worker {
-
+class MtlWorkerEventWriter;
 /*
  * Worker-process-local MTL ST30P audio RX session.
  *
@@ -32,7 +32,7 @@ class MtlAudioRxSession final {
   public:
     static std::expected<std::unique_ptr<MtlAudioRxSession>, st2110::Error>
 create(MtlRuntimeContext &runtime, st2110::MtlAudioStartConfig cfg, MtlWorkerGraphStats &stats,
-       st2110::MtlWorkerSharedMemoryRingMap *media_ring = nullptr);
+       MtlWorkerEventWriter &event_writer, st2110::MtlWorkerSharedMemoryRingMap *media_ring = nullptr);
 
     ~MtlAudioRxSession();
 

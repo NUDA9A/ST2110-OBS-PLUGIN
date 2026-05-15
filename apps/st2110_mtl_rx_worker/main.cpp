@@ -15,8 +15,8 @@ int main() {
      */
     std::cerr << "st2110_mtl_rx_worker started\n";
 
-    st2110_mtl_rx_worker::MtlWorkerProcessState state{};
     st2110_mtl_rx_worker::MtlWorkerEventWriter event_writer{STDOUT_FILENO};
+    st2110_mtl_rx_worker::MtlWorkerProcessState state{event_writer};
 
     while (!state.shutdown_requested()) {
         auto frame = st2110::read_mtl_worker_control_frame_with_fds(STDIN_FILENO);
