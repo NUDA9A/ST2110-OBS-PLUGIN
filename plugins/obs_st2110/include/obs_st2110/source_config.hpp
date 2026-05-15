@@ -53,8 +53,6 @@ struct SelectedDiscoveredSource {
 };
 
 struct SourceConfig {
-    bool start_when_active = true;
-
     std::optional<SelectedDiscoveredSource> selected_source{};
 
     st2110::Settings receive_settings{};

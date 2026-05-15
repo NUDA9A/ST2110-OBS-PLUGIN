@@ -34,13 +34,21 @@ struct St2110Source {
     }
 
     const bool running = ctx->runtime->running();
+    const bool configured = ctx->runtime->configured();
     const std::string &last_error = ctx->runtime->last_error();
 
-    if (last_error.empty()) {
-        return running ? "Receive graph is running." : "Receive graph is stopped or idle.";
+    const char *state_text = "Receive graph is stopped or idle.";
+    if (running) {
+        state_text = "Receive graph is running.";
+    } else if (configured) {
+        state_text = "Receive graph is configured but stopped.";
     }
 
-    return std::string(running ? "Receive graph is running. " : "Receive graph is not running. ") + last_error;
+    if (last_error.empty()) {
+        return state_text;
+    }
+
+    return std::string(state_text) + " " + last_error;
 }
 
 [[nodiscard]] obs_text_info_type runtime_status_info_type(const St2110Source *ctx) {
@@ -54,7 +62,7 @@ struct St2110Source {
         return OBS_TEXT_INFO_NORMAL;
     }
 
-    if (ctx->runtime->running()) {
+    if (ctx->runtime->running() || ctx->runtime->configured()) {
         return OBS_TEXT_INFO_NORMAL;
     }
 
@@ -97,10 +105,9 @@ struct St2110Source {
         return config;
     }
 
-    config.start_when_active = obs_data_get_bool(settings, obs_st2110::sourceStartWhenActivePropertyId);
-
     const char *selection_key_text = obs_data_get_string(settings, obs_st2110::sourceSelectionPropertyId);
-    const std::string_view selection_key = selection_key_text ? std::string_view(selection_key_text) : std::string_view{};
+    const std::string_view selection_key =
+        selection_key_text ? std::string_view(selection_key_text) : std::string_view{};
 
     if (!selection_key.empty()) {
         config.selected_source = discovery_provider().resolve_source(selection_key);
@@ -113,9 +120,7 @@ struct St2110Source {
     return config;
 }
 
-const char *st2110_source_get_name(void *) {
-    return obs_st2110::sourceName;
-}
+const char *st2110_source_get_name(void *) { return obs_st2110::sourceName; }
 
 void *st2110_source_create(obs_data_t *settings, obs_source_t *source) {
     auto ctx = std::make_unique<St2110Source>(source);
@@ -130,7 +135,6 @@ void st2110_source_destroy(void *data) {
         return;
     }
 
-    ctx->runtime->stop();
     delete ctx;
 }
 
@@ -143,40 +147,32 @@ void st2110_source_update(void *data, obs_data_t *settings) {
     ctx->runtime->update(read_source_config(settings));
 }
 
-void st2110_source_activate(void *data) {
+void st2110_source_activate(void *data) { (void)data; }
+
+void st2110_source_deactivate(void *data) { (void)data; }
+
+void st2110_source_show(void *data) { (void)data; }
+
+void st2110_source_hide(void *data) { (void)data; }
+
+bool st2110_source_start_receive_clicked(obs_properties_t *, obs_property_t *, void *data) {
     auto *ctx = static_cast<St2110Source *>(data);
-    if (!ctx) {
-        return;
+    if (!ctx || !ctx->runtime) {
+        return false;
     }
 
-    ctx->runtime->start();
+    ctx->runtime->start_receive();
+    return true;
 }
 
-void st2110_source_deactivate(void *data) {
+bool st2110_source_stop_receive_clicked(obs_properties_t *, obs_property_t *, void *data) {
     auto *ctx = static_cast<St2110Source *>(data);
-    if (!ctx) {
-        return;
+    if (!ctx || !ctx->runtime) {
+        return false;
     }
 
-    ctx->runtime->stop();
-}
-
-void st2110_source_show(void *data) {
-    auto *ctx = static_cast<St2110Source *>(data);
-    if (!ctx) {
-        return;
-    }
-
-    ctx->runtime->start();
-}
-
-void st2110_source_hide(void *data) {
-    auto *ctx = static_cast<St2110Source *>(data);
-    if (!ctx) {
-        return;
-    }
-
-    ctx->runtime->stop();
+    ctx->runtime->stop_receive();
+    return true;
 }
 
 obs_properties_t *st2110_source_get_properties(void *data) {
@@ -184,9 +180,8 @@ obs_properties_t *st2110_source_get_properties(void *data) {
 
     obs_properties_t *properties = obs_properties_create();
 
-    obs_property_t *source_list =
-        obs_properties_add_list(properties, obs_st2110::sourceSelectionPropertyId, "Source", OBS_COMBO_TYPE_LIST,
-                                OBS_COMBO_FORMAT_STRING);
+    obs_property_t *source_list = obs_properties_add_list(properties, obs_st2110::sourceSelectionPropertyId, "Source",
+                                                          OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
 
     obs_property_list_add_string(source_list, "No ST 2110 sources discovered", "");
 
@@ -194,13 +189,16 @@ obs_properties_t *st2110_source_get_properties(void *data) {
         obs_property_list_add_string(source_list, item.display_name.c_str(), item.selection_key.c_str());
     }
 
-    obs_property_t *status_text =
-    obs_properties_add_text(properties, obs_st2110::sourceRuntimeStatusPropertyId, runtime_status_text(ctx).c_str(),
-                            OBS_TEXT_INFO);
+    obs_property_t *status_text = obs_properties_add_text(properties, obs_st2110::sourceRuntimeStatusPropertyId,
+                                                          runtime_status_text(ctx).c_str(), OBS_TEXT_INFO);
     obs_property_text_set_info_type(status_text, runtime_status_info_type(ctx));
     obs_property_text_set_info_word_wrap(status_text, true);
 
-    obs_properties_add_bool(properties, obs_st2110::sourceStartWhenActivePropertyId, "Start when active");
+    obs_properties_add_button(properties, obs_st2110::sourceStartReceiveButtonPropertyId, "Start receive",
+                              st2110_source_start_receive_clicked);
+
+    obs_properties_add_button(properties, obs_st2110::sourceStopReceiveButtonPropertyId, "Stop receive",
+                              st2110_source_stop_receive_clicked);
 
     obs_property_t *backend_list =
         obs_properties_add_list(properties, obs_st2110::sourceBackendPropertyId, "Receive backend", OBS_COMBO_TYPE_LIST,
@@ -214,15 +212,14 @@ obs_properties_t *st2110_source_get_properties(void *data) {
 
     obs_properties_add_int(properties, obs_st2110::sourcePlayoutDelayMsPropertyId, "Playout delay (ms)", 0, 5000, 1);
 
-    obs_properties_add_int(properties, obs_st2110::sourceReorderWindowPacketsPropertyId, "Socket reorder window packets",
-                           1, 4096, 1);
+    obs_properties_add_int(properties, obs_st2110::sourceReorderWindowPacketsPropertyId,
+                           "Socket reorder window packets", 1, 4096, 1);
 
     return properties;
 }
 
 void st2110_source_get_defaults(obs_data_t *settings) {
     obs_data_set_default_string(settings, obs_st2110::sourceSelectionPropertyId, "");
-    obs_data_set_default_bool(settings, obs_st2110::sourceStartWhenActivePropertyId, true);
     obs_data_set_default_string(settings, obs_st2110::sourceBackendPropertyId, obs_st2110::sourceBackendSocketValue);
     obs_data_set_default_int(settings, obs_st2110::sourcePlayoutDelayMsPropertyId, 0);
     obs_data_set_default_int(settings, obs_st2110::sourceReorderWindowPacketsPropertyId,

@@ -12,8 +12,6 @@ inline constexpr const char *sourceName = "ST 2110 Source";
 
 inline constexpr const char *sourceSelectionPropertyId = "st2110_source_selection";
 
-inline constexpr const char *sourceStartWhenActivePropertyId = "st2110_start_when_active";
-
 inline constexpr const char *sourceBackendPropertyId = "st2110_receive_backend";
 inline constexpr const char *sourceBackendSocketValue = "socket";
 inline constexpr const char *sourceBackendMtlValue = "mtl";
@@ -22,6 +20,9 @@ inline constexpr const char *sourcePlayoutDelayMsPropertyId = "st2110_playout_de
 inline constexpr const char *sourceReorderWindowPacketsPropertyId = "st2110_reorder_window_packets";
 
 inline constexpr const char *sourceRuntimeStatusPropertyId = "st2110_runtime_status";
+
+inline constexpr const char *sourceStartReceiveButtonPropertyId = "st2110_start_receive";
+inline constexpr const char *sourceStopReceiveButtonPropertyId = "st2110_stop_receive";
 
 } // namespace obs_st2110
 

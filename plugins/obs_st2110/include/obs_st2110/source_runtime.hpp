@@ -24,13 +24,14 @@ public:
 
     void update(const SourceConfig &config);
 
-    void start();
-    void stop() noexcept;
+    void start_receive();
+    void stop_receive() noexcept;
 
     [[nodiscard]] std::uint32_t width() const noexcept;
     [[nodiscard]] std::uint32_t height() const noexcept;
 
     [[nodiscard]] bool running() const noexcept;
+    [[nodiscard]] bool configured() const noexcept;
     [[nodiscard]] const std::string &last_error() const noexcept;
 
 private:

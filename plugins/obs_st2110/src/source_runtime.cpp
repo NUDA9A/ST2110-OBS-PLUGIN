@@ -167,49 +167,53 @@ class SourceRuntime::Impl {
   public:
     explicit Impl(obs_source_t *source) : source_(source) {}
 
-    ~Impl() { stop(); }
+    ~Impl() { destroy_receive_graph_noexcept(); }
 
     void update(SourceConfig config) {
-        const bool graph_relevant_config_changed = config != config_;
+        const bool graph_relevant_changed = graph_relevant_config_changed(config, config_);
 
-        if (graph_relevant_config_changed && receive_graph_running()) {
-            stop_receive_graph_noexcept();
+        if (graph_relevant_changed) {
+            destroy_receive_graph_noexcept();
         }
 
         config_ = std::move(config);
 
-        if (lifecycle_active_ && config_.start_when_active && graph_relevant_config_changed) {
+        if (receive_requested_ && graph_relevant_changed) {
             start_receive_graph();
         }
     }
 
-    void start() {
-        lifecycle_active_ = true;
-
-        if (!config_.start_when_active) {
-            return;
-        }
-
+    void start_receive() {
+        receive_requested_ = true;
         start_receive_graph();
     }
 
-    void stop() noexcept {
-        lifecycle_active_ = false;
-        stop_receive_graph_noexcept();
+    void stop_receive() noexcept {
+        receive_requested_ = false;
+        stop_active_sessions_noexcept();
     }
 
     [[nodiscard]] std::uint32_t width() const noexcept { return width_; }
 
     [[nodiscard]] std::uint32_t height() const noexcept { return height_; }
 
-    [[nodiscard]] bool running() const noexcept { return receive_graph_running(); }
+    [[nodiscard]] bool running() const noexcept { return active_sessions_running(); }
+
+    [[nodiscard]] bool configured() const noexcept { return configured_graph_exists(); }
 
     [[nodiscard]] const std::string &last_error() const noexcept { return last_error_; }
 
   private:
-    [[nodiscard]] bool receive_graph_running() const noexcept {
+    [[nodiscard]] static bool graph_relevant_config_changed(const SourceConfig &next, const SourceConfig &current) {
+        return next.selected_source != current.selected_source || next.receive_settings != current.receive_settings ||
+               next.playout_delay_ns != current.playout_delay_ns;
+    }
+
+    [[nodiscard]] bool configured_graph_exists() const noexcept {
         return static_cast<bool>(sink_) || static_cast<bool>(video_backend_) || static_cast<bool>(audio_backend_);
     }
+
+    [[nodiscard]] bool active_sessions_running() const noexcept { return active_sessions_running_; }
 
     void set_error(const std::string &message) { last_error_ = message; }
 
@@ -218,11 +222,22 @@ class SourceRuntime::Impl {
     }
 
     void start_receive_graph() {
-        if (receive_graph_running()) {
+        if (!ensure_configured_graph()) {
             return;
         }
 
+        if (!start_active_sessions()) {
+            destroy_configured_graph_noexcept();
+        }
+    }
+
+    [[nodiscard]] bool ensure_configured_graph() {
+        if (configured_graph_exists()) {
+            return true;
+        }
+
         last_error_.clear();
+        configured_graph_description_.clear();
 
         if (!has_provider_selected_sdp(config_)) {
             /*
@@ -231,24 +246,24 @@ class SourceRuntime::Impl {
              * The source is active, but no provider-selected sender exists yet.
              * Do not create fake SDP, fake sink, or fake backends.
              */
-            return;
+            return false;
         }
 
         auto media_set = resolve_selected_source_media_set(*config_.selected_source);
         if (!media_set.has_value()) {
             set_error("Selected provider SDP media selection failed", media_set.error());
-            return;
+            return false;
         }
 
         auto parsed_streams = parse_selected_source_streams(*media_set);
         if (!parsed_streams.has_value()) {
             set_error("Selected provider SDP parser dispatch failed", parsed_streams.error());
-            return;
+            return false;
         }
 
         if (parsed_streams->empty()) {
             set_error("Selected provider SDP parser dispatch produced an empty stream set");
-            return;
+            return false;
         }
 
         std::optional<st2110::VideoReceiveBootstrap> video_bootstrap{};
@@ -267,7 +282,7 @@ class SourceRuntime::Impl {
                 auto local = st2110::auto_select_receive_local_policy(video_bootstrap->receive_bootstrap);
                 if (!local.has_value()) {
                     set_error("Video receive local policy selection failed", local.error());
-                    return;
+                    return false;
                 }
 
                 video_request = st2110::ReceiveStartRequest{
@@ -278,7 +293,7 @@ class SourceRuntime::Impl {
                 auto backend = make_video_backend(*video_request, config_.receive_settings);
                 if (!backend.has_value()) {
                     set_error("Video receive backend construction failed", backend.error());
-                    return;
+                    return false;
                 }
 
                 staged_video_backend = std::move(*backend);
@@ -290,7 +305,7 @@ class SourceRuntime::Impl {
                 auto local = st2110::auto_select_receive_local_policy(audio_bootstrap->receive_bootstrap);
                 if (!local.has_value()) {
                     set_error("Audio receive local policy selection failed", local.error());
-                    return;
+                    return false;
                 }
 
                 audio_request = st2110::ReceiveStartRequest{
@@ -301,67 +316,21 @@ class SourceRuntime::Impl {
                 auto backend = make_audio_backend(*audio_request, config_.receive_settings);
                 if (!backend.has_value()) {
                     set_error("Audio receive backend construction failed", backend.error());
-                    return;
+                    return false;
                 }
 
                 staged_audio_backend = std::move(*backend);
             }
         } catch (const std::exception &ex) {
             set_error(std::string("Receive graph construction failed: ") + ex.what());
-            return;
+            return false;
         } catch (...) {
             set_error("Receive graph construction failed with an unknown exception");
-            return;
+            return false;
         }
 
         auto staged_sink = std::make_unique<ObsSynchronizedFrameSink>(
             source_, make_sink_config(video_bootstrap, audio_bootstrap, config_.playout_delay_ns));
-
-        staged_sink->start();
-
-        const auto cleanup_staged_graph = [&staged_video_backend, &staged_audio_backend, &staged_sink]() noexcept {
-            if (staged_video_backend) {
-                (void)staged_video_backend->stop();
-            }
-
-            if (staged_audio_backend) {
-                (void)staged_audio_backend->stop();
-            }
-
-            if (staged_sink) {
-                staged_sink->stop();
-            }
-        };
-
-        if (staged_video_backend) {
-            auto started = staged_video_backend->start(staged_sink.get());
-            if (!started.has_value()) {
-                cleanup_staged_graph();
-                set_error("Video receive backend start failed", started.error());
-                return;
-            }
-
-            if (!*started) {
-                cleanup_staged_graph();
-                set_error("Video receive backend start returned false");
-                return;
-            }
-        }
-
-        if (staged_audio_backend) {
-            auto started = staged_audio_backend->start(staged_sink.get());
-            if (!started.has_value()) {
-                cleanup_staged_graph();
-                set_error("Audio receive backend start failed", started.error());
-                return;
-            }
-
-            if (!*started) {
-                cleanup_staged_graph();
-                set_error("Audio receive backend start returned false");
-                return;
-            }
-        }
 
         width_ = video_bootstrap.has_value() ? video_bootstrap->stream.media.width : 0;
         height_ = video_bootstrap.has_value() ? video_bootstrap->stream.media.height : 0;
@@ -369,82 +338,148 @@ class SourceRuntime::Impl {
         sink_ = std::move(staged_sink);
         video_backend_ = std::move(staged_video_backend);
         audio_backend_ = std::move(staged_audio_backend);
+        configured_graph_description_ = describe_parsed_stream_composition(*parsed_streams);
 
-        last_error_ = std::string("Receive graph started for ") + describe_parsed_stream_composition(*parsed_streams) +
-                      ".";
+        return true;
     }
 
-    void stop_receive_graph_noexcept() noexcept {
-        /*
-         * Stop order is part of the ownership contract:
-         *
-         * 1. backends stop first;
-         * 2. sink stops after callbacks can no longer be emitted.
-         */
+    [[nodiscard]] bool start_active_sessions() {
+        if (active_sessions_running()) {
+            return true;
+        }
+
+        if (!configured_graph_exists()) {
+            set_error("Cannot start receive sessions without a configured graph");
+            return false;
+        }
+
+        if (sink_) {
+            sink_->start();
+        }
+
+        const auto cleanup_started_sessions = [this]() noexcept {
+            if (video_backend_) {
+                (void)video_backend_->stop();
+            }
+
+            if (audio_backend_) {
+                (void)audio_backend_->stop();
+            }
+
+            if (sink_) {
+                sink_->stop();
+            }
+
+            active_sessions_running_ = false;
+        };
+
+        if (video_backend_) {
+            auto started = video_backend_->start(sink_.get());
+            if (!started.has_value()) {
+                cleanup_started_sessions();
+                set_error("Video receive backend start failed", started.error());
+                return false;
+            }
+
+            if (!*started) {
+                cleanup_started_sessions();
+                set_error("Video receive backend start returned false");
+                return false;
+            }
+        }
+
+        if (audio_backend_) {
+            auto started = audio_backend_->start(sink_.get());
+            if (!started.has_value()) {
+                cleanup_started_sessions();
+                set_error("Audio receive backend start failed", started.error());
+                return false;
+            }
+
+            if (!*started) {
+                cleanup_started_sessions();
+                set_error("Audio receive backend start returned false");
+                return false;
+            }
+        }
+
+        active_sessions_running_ = true;
+        last_error_ = std::string("Receive graph started for ") + configured_graph_description_ + ".";
+
+        return true;
+    }
+
+    void stop_active_sessions_noexcept() noexcept {
+        if (!active_sessions_running()) {
+            return;
+        }
+
         if (video_backend_) {
             (void)video_backend_->stop();
-            video_backend_.reset();
         }
 
         if (audio_backend_) {
             (void)audio_backend_->stop();
-            audio_backend_.reset();
         }
 
         if (sink_) {
             sink_->stop();
-            sink_.reset();
         }
+
+        active_sessions_running_ = false;
+    }
+
+    void destroy_configured_graph_noexcept() noexcept {
+        video_backend_.reset();
+        audio_backend_.reset();
+        sink_.reset();
 
         width_ = 0;
         height_ = 0;
+        configured_graph_description_.clear();
+        active_sessions_running_ = false;
+    }
+
+    void destroy_receive_graph_noexcept() noexcept {
+        stop_active_sessions_noexcept();
+        destroy_configured_graph_noexcept();
     }
 
     obs_source_t *source_ = nullptr;
 
     SourceConfig config_{};
-    bool lifecycle_active_ = false;
+    bool receive_requested_ = false;
 
     std::uint32_t width_ = 0;
     std::uint32_t height_ = 0;
 
     std::string last_error_{};
+    std::string configured_graph_description_{};
 
     std::unique_ptr<ObsSynchronizedFrameSink> sink_{};
     std::unique_ptr<st2110::IRxBackend> video_backend_{};
     std::unique_ptr<st2110::IRxBackend> audio_backend_{};
+    bool active_sessions_running_ = false;
 };
 
 SourceRuntime::SourceRuntime(obs_source_t *source) : impl_(std::make_unique<Impl>(source)) {}
 
 SourceRuntime::~SourceRuntime() = default;
 
-void SourceRuntime::update(const SourceConfig &config) {
-    impl_->update(config);
-}
+void SourceRuntime::update(const SourceConfig &config) { impl_->update(config); }
 
-void SourceRuntime::start() {
-    impl_->start();
-}
+void SourceRuntime::start_receive() { impl_->start_receive(); }
 
-void SourceRuntime::stop() noexcept {
-    impl_->stop();
-}
+void SourceRuntime::stop_receive() noexcept { impl_->stop_receive(); }
 
-std::uint32_t SourceRuntime::width() const noexcept {
-    return impl_->width();
-}
+std::uint32_t SourceRuntime::width() const noexcept { return impl_->width(); }
 
-std::uint32_t SourceRuntime::height() const noexcept {
-    return impl_->height();
-}
+std::uint32_t SourceRuntime::height() const noexcept { return impl_->height(); }
 
-bool SourceRuntime::running() const noexcept {
-    return impl_->running();
-}
+bool SourceRuntime::running() const noexcept { return impl_->running(); }
 
-const std::string &SourceRuntime::last_error() const noexcept {
-    return impl_->last_error();
-}
+bool SourceRuntime::configured() const noexcept { return impl_->configured(); }
+
+const std::string &SourceRuntime::last_error() const noexcept { return impl_->last_error(); }
 
 } // namespace obs_st2110
