@@ -88,7 +88,7 @@ struct MtlWorkerProcessControlChannel::Impl {
     std::mutex state_mutex{};
     std::condition_variable state_cv{};
 
-    std::unordered_map<MtlWorkerRequestId, MtlWorkerControlEvent> completed_responses{};
+    std::unordered_map<MtlWorkerRequestId, MtlWorkerControlEventEnvelope> completed_responses{};
 
     bool reader_failed = false;
     Error reader_error = Error::Ok;
@@ -166,19 +166,21 @@ struct MtlWorkerProcessControlChannel::Impl {
 
     void reader_loop_noexcept(const int fd) noexcept {
         for (;;) {
-            auto payload = read_mtl_worker_control_frame(fd);
-            if (!payload.has_value()) {
-                notify_reader_failed(payload.error());
+            auto frame = read_mtl_worker_control_frame_with_fds(fd);
+            if (!frame.has_value()) {
+                notify_reader_failed(frame.error());
                 return;
             }
 
-            auto event = deserialize_mtl_worker_control_event(*payload);
+            auto event = deserialize_mtl_worker_control_event(frame->payload());
             if (!event.has_value()) {
                 notify_reader_failed(event.error());
                 return;
             }
 
             const MtlWorkerRequestId request_id = request_id_from_event(*event);
+
+            MtlWorkerControlEventEnvelope envelope{std::move(*event), std::move(*frame)};
 
             if (request_id == 0) {
                 /*
@@ -189,14 +191,15 @@ struct MtlWorkerProcessControlChannel::Impl {
                  * - worker health notifications not tied to transact()
                  *
                  * For now, control-plane transact() responses are the only
-                 * consumed events.
+                 * consumed events. Any descriptors attached to an unhandled async
+                 * event are closed by envelope destruction here.
                  */
                 continue;
             }
 
             {
                 std::lock_guard lock(state_mutex);
-                completed_responses[request_id] = std::move(*event);
+                completed_responses.insert_or_assign(request_id, std::move(envelope));
             }
 
             state_cv.notify_all();
@@ -219,7 +222,8 @@ struct MtlWorkerProcessControlChannel::Impl {
         state_cv.notify_all();
     }
 
-    [[nodiscard]] std::expected<MtlWorkerControlEvent, Error> wait_for_response(const MtlWorkerRequestId request_id) {
+    [[nodiscard]] std::expected<MtlWorkerControlEventEnvelope, Error>
+    wait_for_response(const MtlWorkerRequestId request_id) {
         std::unique_lock lock(state_mutex);
 
         state_cv.wait(lock, [this, request_id]() {
@@ -228,9 +232,9 @@ struct MtlWorkerProcessControlChannel::Impl {
 
         auto found = completed_responses.find(request_id);
         if (found != completed_responses.end()) {
-            MtlWorkerControlEvent event = std::move(found->second);
+            MtlWorkerControlEventEnvelope envelope = std::move(found->second);
             completed_responses.erase(found);
-            return event;
+            return std::move(envelope);
         }
 
         if (reader_failed) {
@@ -272,8 +276,9 @@ MtlWorkerProcessControlChannel::MtlWorkerProcessControlChannel(std::filesystem::
 
 MtlWorkerProcessControlChannel::~MtlWorkerProcessControlChannel() { shutdown_noexcept(); }
 
-std::expected<MtlWorkerControlEvent, Error>
-MtlWorkerProcessControlChannel::transact(const MtlWorkerControlRequest &request) {
+std::expected<MtlWorkerControlEventEnvelope, Error>
+MtlWorkerProcessControlChannel::transact_with_fds(const MtlWorkerControlRequest &request,
+                                                  std::span<const int> file_descriptors) {
     auto started = impl_->ensure_worker_started();
     if (!started.has_value()) {
         return std::unexpected(started.error());
@@ -292,7 +297,8 @@ MtlWorkerProcessControlChannel::transact(const MtlWorkerControlRequest &request)
     {
         std::lock_guard write_lock(impl_->write_mutex);
 
-        auto wrote = write_mtl_worker_control_frame(impl_->worker_control_fd, *request_payload);
+        auto wrote =
+            write_mtl_worker_control_frame_with_fds(impl_->worker_control_fd, *request_payload, file_descriptors);
         if (!wrote.has_value()) {
             return std::unexpected(wrote.error());
         }

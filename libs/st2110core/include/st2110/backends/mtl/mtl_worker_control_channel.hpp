@@ -1,13 +1,42 @@
 #ifndef ST2110_OBS_PLUGIN_MTL_WORKER_CONTROL_CHANNEL_HPP
 #define ST2110_OBS_PLUGIN_MTL_WORKER_CONTROL_CHANNEL_HPP
 
+#include <st2110/backends/mtl/mtl_worker_ipc_framing.hpp>
 #include <st2110/backends/mtl/mtl_worker_protocol.hpp>
 #include <st2110/foundation/error.hpp>
 
 #include <expected>
 #include <memory>
+#include <span>
+#include <utility>
+#include <vector>
 
 namespace st2110 {
+
+/*
+ * Typed worker response envelope.
+ *
+ * The typed event is deserialized from the byte payload.
+ * Any descriptors attached to the same IPC frame remain owned by ipc_frame.
+ *
+ * Call release_file_descriptors() when ownership must move to a higher-level
+ * component, for example a future shared-memory ring importer.
+ */
+struct MtlWorkerControlEventEnvelope {
+    MtlWorkerControlEvent event{};
+    MtlWorkerIpcFrame ipc_frame{};
+
+    MtlWorkerControlEventEnvelope() = default;
+
+    MtlWorkerControlEventEnvelope(MtlWorkerControlEvent response_event, MtlWorkerIpcFrame transport_frame)
+        : event(std::move(response_event)), ipc_frame(std::move(transport_frame)) {}
+
+    [[nodiscard]] const std::vector<int> &file_descriptors() const noexcept { return ipc_frame.file_descriptors(); }
+
+    [[nodiscard]] bool has_file_descriptors() const noexcept { return ipc_frame.has_file_descriptors(); }
+
+    [[nodiscard]] std::vector<int> release_file_descriptors() noexcept { return ipc_frame.release_file_descriptors(); }
+};
 
 /*
  * OBS-process-side control channel to an MTL worker process.
@@ -17,7 +46,7 @@ namespace st2110 {
  * mechanism.
  */
 class IMtlWorkerControlChannel {
-public:
+  public:
     virtual ~IMtlWorkerControlChannel() = default;
 
     IMtlWorkerControlChannel(const IMtlWorkerControlChannel &) = delete;
@@ -26,10 +55,25 @@ public:
     IMtlWorkerControlChannel(IMtlWorkerControlChannel &&) noexcept = delete;
     IMtlWorkerControlChannel &operator=(IMtlWorkerControlChannel &&) noexcept = delete;
 
-    [[nodiscard]] virtual std::expected<MtlWorkerControlEvent, Error>
-    transact(const MtlWorkerControlRequest &request) = 0;
+    /*
+     * Payload-only compatibility API.
+     *
+     * This rejects responses that carry descriptors. Use transact_with_fds()
+     * when descriptors are part of the expected response contract.
+     */
+    [[nodiscard]] virtual std::expected<MtlWorkerControlEvent, Error> transact(const MtlWorkerControlRequest &request);
 
-protected:
+    /*
+     * Fd-aware typed transaction API.
+     *
+     * file_descriptors are borrowed by this call. Ownership remains with the
+     * caller. Any response descriptors are returned owned by the response
+     * envelope.
+     */
+    [[nodiscard]] virtual std::expected<MtlWorkerControlEventEnvelope, Error>
+    transact_with_fds(const MtlWorkerControlRequest &request, std::span<const int> file_descriptors) = 0;
+
+  protected:
     IMtlWorkerControlChannel() = default;
 };
 

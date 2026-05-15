@@ -7,6 +7,7 @@
 #include <st2110/foundation/error.hpp>
 
 #include <memory>
+#include <span>
 
 namespace st2110_mtl_rx_worker {
 
@@ -20,9 +21,13 @@ namespace st2110_mtl_rx_worker {
 class MtlWorkerProcessState final {
   public:
     st2110::MtlWorkerControlEvent handle(const st2110::MtlWorkerControlRequest &request);
+    st2110::MtlWorkerControlEvent handle(const st2110::MtlWorkerControlRequest &request,
+                                         std::span<const int> ancillary_file_descriptors);
 
     st2110::MtlWorkerControlEvent handle(const st2110::MtlWorkerConfigHandshakeRequest &request);
     st2110::MtlWorkerControlEvent handle(const st2110::MtlWorkerStartSessionsRequest &request);
+    st2110::MtlWorkerControlEvent handle(const st2110::MtlWorkerStartSessionsRequest &request,
+                                         std::span<const int> ancillary_file_descriptors);
     st2110::MtlWorkerControlEvent handle(const st2110::MtlWorkerStopSessionsRequest &request);
     st2110::MtlWorkerControlEvent handle(const st2110::MtlWorkerStatsRequest &request);
     st2110::MtlWorkerControlEvent handle(const st2110::MtlWorkerHealthCheckRequest &request);

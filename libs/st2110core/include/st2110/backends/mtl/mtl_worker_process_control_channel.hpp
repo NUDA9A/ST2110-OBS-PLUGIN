@@ -8,6 +8,7 @@
 #include <expected>
 #include <filesystem>
 #include <memory>
+#include <span>
 
 namespace st2110 {
 
@@ -31,7 +32,8 @@ class MtlWorkerProcessControlChannel final : public IMtlWorkerControlChannel {
     MtlWorkerProcessControlChannel(MtlWorkerProcessControlChannel &&) noexcept = delete;
     MtlWorkerProcessControlChannel &operator=(MtlWorkerProcessControlChannel &&) noexcept = delete;
 
-    [[nodiscard]] std::expected<MtlWorkerControlEvent, Error> transact(const MtlWorkerControlRequest &request) override;
+    [[nodiscard]] std::expected<MtlWorkerControlEventEnvelope, Error>
+    transact_with_fds(const MtlWorkerControlRequest &request, std::span<const int> file_descriptors) override;
 
     void shutdown_noexcept() noexcept;
 

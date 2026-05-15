@@ -5,10 +5,12 @@
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace st2110 {
 namespace {
@@ -170,6 +172,260 @@ void write_size_t_u64(Writer &writer, const std::size_t value) { writer.u64(stat
     }
 
     return static_cast<std::size_t>(*value);
+}
+
+[[nodiscard]] bool add_overflows_u64(const std::uint64_t a, const std::uint64_t b, std::uint64_t &out) noexcept {
+    if (std::numeric_limits<std::uint64_t>::max() - a < b) {
+        return true;
+    }
+
+    out = a + b;
+    return false;
+}
+
+[[nodiscard]] bool mul_overflows_u64(const std::uint64_t a, const std::uint64_t b, std::uint64_t &out) noexcept {
+    if (a != 0 && b > std::numeric_limits<std::uint64_t>::max() / a) {
+        return true;
+    }
+
+    out = a * b;
+    return false;
+}
+
+[[nodiscard]] std::expected<MtlWorkerMediaKind, Error> read_worker_media_kind(Reader &reader) {
+    auto value = reader.u32();
+    if (!value.has_value()) {
+        return std::unexpected(value.error());
+    }
+
+    const auto media_kind = static_cast<MtlWorkerMediaKind>(*value);
+    switch (media_kind) {
+    case MtlWorkerMediaKind::Video:
+    case MtlWorkerMediaKind::Audio:
+        return media_kind;
+    }
+
+    return std::unexpected(Error::InvalidValue);
+}
+
+[[nodiscard]] std::expected<bool, Error>
+validate_shared_memory_ring_descriptor(const MtlWorkerSharedMemoryRingDescriptor &descriptor) {
+    if (descriptor.ring_id == 0 || descriptor.layout_version != mtlWorkerSharedMemoryRingLayoutVersion ||
+        descriptor.mapped_size_bytes == 0 || descriptor.slot_count == 0 || descriptor.slot_stride_bytes == 0 ||
+        descriptor.slot_payload_capacity_bytes == 0) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    switch (descriptor.media_kind) {
+    case MtlWorkerMediaKind::Video:
+    case MtlWorkerMediaKind::Audio:
+        break;
+    default:
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    std::uint64_t payload_end_within_slot = 0;
+    if (add_overflows_u64(descriptor.slot_payload_offset_bytes, descriptor.slot_payload_capacity_bytes,
+                          payload_end_within_slot)) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (payload_end_within_slot > descriptor.slot_stride_bytes) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    std::uint64_t last_slot_relative_offset = 0;
+    if (mul_overflows_u64(static_cast<std::uint64_t>(descriptor.slot_count - 1), descriptor.slot_stride_bytes,
+                          last_slot_relative_offset)) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    std::uint64_t last_slot_payload_end = 0;
+    if (add_overflows_u64(last_slot_relative_offset, payload_end_within_slot, last_slot_payload_end)) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    std::uint64_t mapped_payload_end = 0;
+    if (add_overflows_u64(descriptor.slot_region_offset_bytes, last_slot_payload_end, mapped_payload_end)) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (mapped_payload_end > descriptor.mapped_size_bytes) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return true;
+}
+
+[[nodiscard]] std::expected<bool, Error>
+write_shared_memory_ring_descriptor(Writer &writer, const MtlWorkerSharedMemoryRingDescriptor &descriptor) {
+    auto valid = validate_shared_memory_ring_descriptor(descriptor);
+    if (!valid.has_value()) {
+        return std::unexpected(valid.error());
+    }
+
+    writer.u64(descriptor.ring_id);
+    writer.u32(static_cast<std::uint32_t>(descriptor.media_kind));
+    writer.u32(descriptor.fd_index);
+    writer.u32(descriptor.layout_version);
+    writer.u64(descriptor.mapped_size_bytes);
+    writer.u64(descriptor.slot_region_offset_bytes);
+    writer.u32(descriptor.slot_count);
+    writer.u64(descriptor.slot_stride_bytes);
+    writer.u64(descriptor.slot_payload_offset_bytes);
+    writer.u64(descriptor.slot_payload_capacity_bytes);
+
+    return true;
+}
+
+[[nodiscard]] std::expected<MtlWorkerSharedMemoryRingDescriptor, Error>
+read_shared_memory_ring_descriptor(Reader &reader) {
+    auto ring_id = reader.u64();
+    if (!ring_id.has_value()) {
+        return std::unexpected(ring_id.error());
+    }
+
+    auto media_kind = read_worker_media_kind(reader);
+    if (!media_kind.has_value()) {
+        return std::unexpected(media_kind.error());
+    }
+
+    auto fd_index = reader.u32();
+    auto layout_version = reader.u32();
+    auto mapped_size_bytes = reader.u64();
+    auto slot_region_offset_bytes = reader.u64();
+    auto slot_count = reader.u32();
+    auto slot_stride_bytes = reader.u64();
+    auto slot_payload_offset_bytes = reader.u64();
+    auto slot_payload_capacity_bytes = reader.u64();
+
+    if (!fd_index.has_value() || !layout_version.has_value() || !mapped_size_bytes.has_value() ||
+        !slot_region_offset_bytes.has_value() || !slot_count.has_value() || !slot_stride_bytes.has_value() ||
+        !slot_payload_offset_bytes.has_value() || !slot_payload_capacity_bytes.has_value()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    MtlWorkerSharedMemoryRingDescriptor descriptor{
+        .ring_id = *ring_id,
+        .media_kind = *media_kind,
+        .fd_index = *fd_index,
+        .layout_version = *layout_version,
+        .mapped_size_bytes = *mapped_size_bytes,
+        .slot_region_offset_bytes = *slot_region_offset_bytes,
+        .slot_count = *slot_count,
+        .slot_stride_bytes = *slot_stride_bytes,
+        .slot_payload_offset_bytes = *slot_payload_offset_bytes,
+        .slot_payload_capacity_bytes = *slot_payload_capacity_bytes,
+    };
+
+    auto valid = validate_shared_memory_ring_descriptor(descriptor);
+    if (!valid.has_value()) {
+        return std::unexpected(valid.error());
+    }
+
+    return descriptor;
+}
+
+[[nodiscard]] std::expected<bool, Error>
+validate_shared_memory_ring_descriptors(const std::vector<MtlWorkerSharedMemoryRingDescriptor> &descriptors) {
+    if (descriptors.size() > defaultMtlWorkerMaxSharedMemoryRingDescriptors) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    for (std::size_t i = 0; i < descriptors.size(); ++i) {
+        auto valid = validate_shared_memory_ring_descriptor(descriptors[i]);
+        if (!valid.has_value()) {
+            return std::unexpected(valid.error());
+        }
+
+        for (std::size_t j = 0; j < i; ++j) {
+            if (descriptors[j].ring_id == descriptors[i].ring_id) {
+                return std::unexpected(Error::InvalidValue);
+            }
+        }
+    }
+
+    return true;
+}
+
+[[nodiscard]] bool media_kind_has_matching_session(const MtlWorkerMediaKind media_kind, const bool has_video,
+                                                   const bool has_audio) noexcept {
+    switch (media_kind) {
+    case MtlWorkerMediaKind::Video:
+        return has_video;
+    case MtlWorkerMediaKind::Audio:
+        return has_audio;
+    }
+
+    return false;
+}
+
+[[nodiscard]] std::expected<bool, Error>
+validate_start_sessions_media_rings(const bool has_video, const bool has_audio,
+                                    const std::vector<MtlWorkerSharedMemoryRingDescriptor> &descriptors) {
+    auto valid = validate_shared_memory_ring_descriptors(descriptors);
+    if (!valid.has_value()) {
+        return std::unexpected(valid.error());
+    }
+
+    for (const auto &descriptor : descriptors) {
+        if (!media_kind_has_matching_session(descriptor.media_kind, has_video, has_audio)) {
+            return std::unexpected(Error::InvalidValue);
+        }
+    }
+
+    return true;
+}
+
+[[nodiscard]] std::expected<bool, Error>
+write_shared_memory_ring_descriptors(Writer &writer,
+                                     const std::vector<MtlWorkerSharedMemoryRingDescriptor> &descriptors) {
+    auto valid = validate_shared_memory_ring_descriptors(descriptors);
+    if (!valid.has_value()) {
+        return std::unexpected(valid.error());
+    }
+
+    writer.u32(static_cast<std::uint32_t>(descriptors.size()));
+
+    for (const auto &descriptor : descriptors) {
+        auto wrote = write_shared_memory_ring_descriptor(writer, descriptor);
+        if (!wrote.has_value()) {
+            return std::unexpected(wrote.error());
+        }
+    }
+
+    return true;
+}
+
+[[nodiscard]] std::expected<std::vector<MtlWorkerSharedMemoryRingDescriptor>, Error>
+read_shared_memory_ring_descriptors(Reader &reader) {
+    auto count = reader.u32();
+    if (!count.has_value()) {
+        return std::unexpected(count.error());
+    }
+
+    if (*count > defaultMtlWorkerMaxSharedMemoryRingDescriptors) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    std::vector<MtlWorkerSharedMemoryRingDescriptor> descriptors{};
+    descriptors.reserve(*count);
+
+    for (std::uint32_t i = 0; i < *count; ++i) {
+        auto descriptor = read_shared_memory_ring_descriptor(reader);
+        if (!descriptor.has_value()) {
+            return std::unexpected(descriptor.error());
+        }
+
+        descriptors.push_back(std::move(*descriptor));
+    }
+
+    auto valid = validate_shared_memory_ring_descriptors(descriptors);
+    if (!valid.has_value()) {
+        return std::unexpected(valid.error());
+    }
+
+    return descriptors;
 }
 
 [[nodiscard]] std::expected<bool, Error> write_runtime_port(Writer &writer, const MtlRuntimePortConfig &port) {
@@ -588,6 +844,17 @@ serialize_mtl_worker_control_request(const MtlWorkerControlRequest &request) {
                     }
                 }
 
+                auto valid_media_rings = validate_start_sessions_media_rings(
+                    typed_request.video.has_value(), typed_request.audio.has_value(), typed_request.media_rings);
+                if (!valid_media_rings.has_value()) {
+                    return std::unexpected(valid_media_rings.error());
+                }
+
+                auto wrote_media_rings = write_shared_memory_ring_descriptors(writer, typed_request.media_rings);
+                if (!wrote_media_rings.has_value()) {
+                    return std::unexpected(wrote_media_rings.error());
+                }
+
                 return std::move(writer).finish();
             } else if constexpr (std::is_same_v<Request, MtlWorkerStopSessionsRequest>) {
                 writer.u8(static_cast<std::uint8_t>(MessageTag::StopSessionsRequest));
@@ -688,6 +955,17 @@ deserialize_mtl_worker_control_request(std::span<const std::uint8_t> payload) {
             audio = std::move(*audio_cfg);
         }
 
+        auto media_rings = read_shared_memory_ring_descriptors(reader);
+        if (!media_rings.has_value()) {
+            return std::unexpected(media_rings.error());
+        }
+
+        auto valid_media_rings =
+            validate_start_sessions_media_rings(video.has_value(), audio.has_value(), *media_rings);
+        if (!valid_media_rings.has_value()) {
+            return std::unexpected(valid_media_rings.error());
+        }
+
         if (!video.has_value() && !audio.has_value()) {
             return std::unexpected(Error::InvalidValue);
         }
@@ -703,6 +981,7 @@ deserialize_mtl_worker_control_request(std::span<const std::uint8_t> payload) {
                 .graph_id = *graph_id,
                 .video = std::move(video),
                 .audio = std::move(audio),
+                .media_rings = std::move(*media_rings),
             },
         };
     }
@@ -848,6 +1127,7 @@ std::expected<std::vector<std::uint8_t>, Error> serialize_mtl_worker_control_eve
             } else if constexpr (std::is_same_v<Event, MtlWorkerFrameReadyEvent>) {
                 writer.u8(static_cast<std::uint8_t>(MessageTag::FrameReadyEvent));
                 writer.u64(typed_event.graph_id);
+                writer.u64(typed_event.ring_id);
                 writer.u64(typed_event.slot_id);
                 writer.u32(typed_event.width);
                 writer.u32(typed_event.height);
@@ -859,6 +1139,7 @@ std::expected<std::vector<std::uint8_t>, Error> serialize_mtl_worker_control_eve
             } else if constexpr (std::is_same_v<Event, MtlWorkerAudioBlockReadyEvent>) {
                 writer.u8(static_cast<std::uint8_t>(MessageTag::AudioBlockReadyEvent));
                 writer.u64(typed_event.graph_id);
+                writer.u64(typed_event.ring_id);
                 writer.u64(typed_event.slot_id);
                 writer.u32(typed_event.sample_rate_hz);
                 writer.u32(typed_event.channels);
@@ -1032,6 +1313,7 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
 
     case MessageTag::FrameReadyEvent: {
         auto graph_id = reader.u64();
+        auto ring_id = reader.u64();
         auto slot_id = reader.u64();
         auto width = reader.u32();
         auto height = reader.u32();
@@ -1040,9 +1322,9 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
         auto payload_size = read_size_t_u64(reader);
         auto partial = read_bool_u8(reader);
 
-        if (!graph_id.has_value() || !slot_id.has_value() || !width.has_value() || !height.has_value() ||
-            !rtp_timestamp.has_value() || !receive_timestamp_ns.has_value() || !payload_size.has_value() ||
-            !partial.has_value()) {
+        if (!graph_id.has_value() || !ring_id.has_value() || !slot_id.has_value() || !width.has_value() ||
+            !height.has_value() || !rtp_timestamp.has_value() || !receive_timestamp_ns.has_value() ||
+            !payload_size.has_value() || !partial.has_value()) {
             return std::unexpected(Error::InvalidValue);
         }
 
@@ -1054,6 +1336,7 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
         return MtlWorkerControlEvent{
             MtlWorkerFrameReadyEvent{
                 .graph_id = *graph_id,
+                .ring_id = *ring_id,
                 .slot_id = *slot_id,
                 .width = *width,
                 .height = *height,
@@ -1067,6 +1350,7 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
 
     case MessageTag::AudioBlockReadyEvent: {
         auto graph_id = reader.u64();
+        auto ring_id = reader.u64();
         auto slot_id = reader.u64();
         auto sample_rate_hz = reader.u32();
         auto channels = reader.u32();
@@ -1076,9 +1360,9 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
         auto payload_size = read_size_t_u64(reader);
         auto partial = read_bool_u8(reader);
 
-        if (!graph_id.has_value() || !slot_id.has_value() || !sample_rate_hz.has_value() || !channels.has_value() ||
-            !samples_per_channel.has_value() || !rtp_timestamp.has_value() || !receive_timestamp_ns.has_value() ||
-            !payload_size.has_value() || !partial.has_value()) {
+        if (!graph_id.has_value() || !ring_id.has_value() || !slot_id.has_value() || !sample_rate_hz.has_value() ||
+            !channels.has_value() || !samples_per_channel.has_value() || !rtp_timestamp.has_value() ||
+            !receive_timestamp_ns.has_value() || !payload_size.has_value() || !partial.has_value()) {
             return std::unexpected(Error::InvalidValue);
         }
 
@@ -1090,6 +1374,7 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
         return MtlWorkerControlEvent{
             MtlWorkerAudioBlockReadyEvent{
                 .graph_id = *graph_id,
+                .ring_id = *ring_id,
                 .slot_id = *slot_id,
                 .sample_rate_hz = *sample_rate_hz,
                 .channels = *channels,

@@ -6,6 +6,7 @@
 
 #include <st2110/delivery/audio/mtl_audio_start_config.hpp>
 #include <st2110/foundation/error.hpp>
+#include <st2110/backends/mtl/mtl_worker_shared_memory_ring.hpp>
 
 #include <expected>
 #include <memory>
@@ -30,7 +31,8 @@ namespace st2110_mtl_rx_worker {
 class MtlAudioRxSession final {
   public:
     static std::expected<std::unique_ptr<MtlAudioRxSession>, st2110::Error>
-    create(MtlRuntimeContext &runtime, st2110::MtlAudioStartConfig cfg, MtlWorkerGraphStats &stats);
+create(MtlRuntimeContext &runtime, st2110::MtlAudioStartConfig cfg, MtlWorkerGraphStats &stats,
+       st2110::MtlWorkerSharedMemoryRingMap *media_ring = nullptr);
 
     ~MtlAudioRxSession();
 
@@ -43,6 +45,7 @@ class MtlAudioRxSession final {
     void wake_block() noexcept;
 
     [[nodiscard]] const st2110::MtlAudioStartConfig &config() const noexcept;
+    [[nodiscard]] const st2110::MtlWorkerSharedMemoryRingMap *media_ring() const noexcept;
 
   private:
     struct Impl;

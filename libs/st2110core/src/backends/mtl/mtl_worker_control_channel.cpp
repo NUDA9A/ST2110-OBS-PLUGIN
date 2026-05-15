@@ -1,18 +1,34 @@
 #include <st2110/backends/mtl/mtl_worker_control_channel.hpp>
 
+#include <utility>
+
 namespace st2110 {
 namespace {
 
 class UnsupportedMtlWorkerControlChannel final : public IMtlWorkerControlChannel {
-public:
-    [[nodiscard]] std::expected<MtlWorkerControlEvent, Error>
-    transact(const MtlWorkerControlRequest &request) override {
+  public:
+    [[nodiscard]] std::expected<MtlWorkerControlEventEnvelope, Error>
+    transact_with_fds(const MtlWorkerControlRequest &request, std::span<const int> file_descriptors) override {
         (void)request;
+        (void)file_descriptors;
         return std::unexpected(Error::Unsupported);
     }
 };
 
 } // namespace
+
+std::expected<MtlWorkerControlEvent, Error> IMtlWorkerControlChannel::transact(const MtlWorkerControlRequest &request) {
+    auto envelope = transact_with_fds(request, {});
+    if (!envelope.has_value()) {
+        return std::unexpected(envelope.error());
+    }
+
+    if (envelope->has_file_descriptors()) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return std::move(envelope->event);
+}
 
 std::shared_ptr<IMtlWorkerControlChannel> create_unsupported_mtl_worker_control_channel() {
     return std::make_shared<UnsupportedMtlWorkerControlChannel>();

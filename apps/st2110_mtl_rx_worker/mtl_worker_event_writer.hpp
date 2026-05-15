@@ -6,6 +6,7 @@
 
 #include <expected>
 #include <mutex>
+#include <span>
 
 namespace st2110_mtl_rx_worker {
 
@@ -36,6 +37,9 @@ class MtlWorkerEventWriter final {
     MtlWorkerEventWriter &operator=(MtlWorkerEventWriter &&) noexcept = delete;
 
     [[nodiscard]] std::expected<bool, st2110::Error> write_event(const st2110::MtlWorkerControlEvent &event);
+
+    [[nodiscard]] std::expected<bool, st2110::Error> write_event_with_fds(const st2110::MtlWorkerControlEvent &event,
+                                                                          std::span<const int> file_descriptors);
 
     [[nodiscard]] int fd() const noexcept;
 

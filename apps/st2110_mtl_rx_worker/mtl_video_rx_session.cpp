@@ -143,6 +143,28 @@ map_mtl_video_output_format(const st2110::PixelFormat fmt) noexcept {
     return false;
 }
 
+[[nodiscard]] std::expected<bool, st2110::Error>
+validate_video_media_ring(const st2110::MtlWorkerSharedMemoryRingMap *ring) noexcept {
+    if (!ring) {
+        return true;
+    }
+
+    if (!ring->mapped()) {
+        return std::unexpected(st2110::Error::InvalidBackendState);
+    }
+
+    if (ring->descriptor().media_kind != st2110::MtlWorkerMediaKind::Video) {
+        return std::unexpected(st2110::Error::InvalidValue);
+    }
+
+    auto valid_headers = ring->validate_initialized_slot_headers();
+    if (!valid_headers.has_value()) {
+        return std::unexpected(valid_headers.error());
+    }
+
+    return true;
+}
+
 void fill_st20p_session_port(st20p_rx_ops &ops, const mtl_session_port session_port,
                              const st2110::MtlRuntimePortConfig &runtime_port,
                              const st2110::MtlVideoSessionPortConfig &session_port_cfg) {
@@ -220,12 +242,13 @@ struct MtlVideoRxSession::Impl {
     st20p_rx_handle rx = nullptr;
 
     MtlWorkerGraphStats *stats = nullptr;
+    st2110::MtlWorkerSharedMemoryRingMap *media_ring = nullptr;
 
     std::jthread receive_thread{};
 
     explicit Impl(st2110::MtlVideoStartConfig session_cfg, st20p_rx_handle session_handle,
-                  MtlWorkerGraphStats &graph_stats)
-        : cfg(std::move(session_cfg)), rx(session_handle), stats(&graph_stats) {}
+                  MtlWorkerGraphStats &graph_stats, st2110::MtlWorkerSharedMemoryRingMap *bound_media_ring)
+        : cfg(std::move(session_cfg)), rx(session_handle), stats(&graph_stats), media_ring(bound_media_ring) {}
 
     ~Impl() {
         stop_thread_noexcept();
@@ -301,9 +324,15 @@ struct MtlVideoRxSession::Impl {
 };
 
 std::expected<std::unique_ptr<MtlVideoRxSession>, st2110::Error>
-MtlVideoRxSession::create(MtlRuntimeContext &runtime, st2110::MtlVideoStartConfig cfg, MtlWorkerGraphStats &stats) {
+MtlVideoRxSession::create(MtlRuntimeContext &runtime, st2110::MtlVideoStartConfig cfg, MtlWorkerGraphStats &stats,
+                          st2110::MtlWorkerSharedMemoryRingMap *media_ring) {
     if (!runtime.handle()) {
         return std::unexpected(st2110::Error::InvalidBackendState);
+    }
+
+    auto valid_ring = validate_video_media_ring(media_ring);
+    if (!valid_ring.has_value()) {
+        return std::unexpected(valid_ring.error());
     }
 
     auto ops = make_st20p_rx_ops(cfg);
@@ -316,7 +345,7 @@ MtlVideoRxSession::create(MtlRuntimeContext &runtime, st2110::MtlVideoStartConfi
         return std::unexpected(st2110::Error::SystemFailure);
     }
 
-    auto impl = std::make_unique<Impl>(std::move(cfg), rx, stats);
+    auto impl = std::make_unique<Impl>(std::move(cfg), rx, stats, media_ring);
 
     auto started = impl->start_thread();
     if (!started.has_value()) {
@@ -337,5 +366,9 @@ void MtlVideoRxSession::wake_block() noexcept {
 }
 
 const st2110::MtlVideoStartConfig &MtlVideoRxSession::config() const noexcept { return impl_->cfg; }
+
+const st2110::MtlWorkerSharedMemoryRingMap *MtlVideoRxSession::media_ring() const noexcept {
+    return impl_->media_ring;
+}
 
 } // namespace st2110_mtl_rx_worker

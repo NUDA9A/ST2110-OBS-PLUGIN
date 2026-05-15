@@ -10,6 +10,12 @@ namespace st2110_mtl_rx_worker {
 MtlWorkerEventWriter::MtlWorkerEventWriter(const int fd) noexcept : fd_(fd) {}
 
 std::expected<bool, st2110::Error> MtlWorkerEventWriter::write_event(const st2110::MtlWorkerControlEvent &event) {
+    return write_event_with_fds(event, {});
+}
+
+std::expected<bool, st2110::Error>
+MtlWorkerEventWriter::write_event_with_fds(const st2110::MtlWorkerControlEvent &event,
+                                           std::span<const int> file_descriptors) {
     if (fd_ < 0) {
         return std::unexpected(st2110::Error::InvalidValue);
     }
@@ -21,7 +27,7 @@ std::expected<bool, st2110::Error> MtlWorkerEventWriter::write_event(const st211
 
     std::lock_guard lock(write_mutex_);
 
-    auto wrote = st2110::write_mtl_worker_control_frame(fd_, *payload);
+    auto wrote = st2110::write_mtl_worker_control_frame_with_fds(fd_, *payload, file_descriptors);
     if (!wrote.has_value()) {
         return std::unexpected(wrote.error());
     }

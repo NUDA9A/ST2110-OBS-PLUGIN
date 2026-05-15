@@ -19,19 +19,19 @@ int main() {
     st2110_mtl_rx_worker::MtlWorkerEventWriter event_writer{STDOUT_FILENO};
 
     while (!state.shutdown_requested()) {
-        auto frame = st2110::read_mtl_worker_control_frame(STDIN_FILENO);
+        auto frame = st2110::read_mtl_worker_control_frame_with_fds(STDIN_FILENO);
         if (!frame.has_value()) {
             std::cerr << "MTL worker control frame read failed\n";
             return 1;
         }
 
-        auto request = st2110::deserialize_mtl_worker_control_request(*frame);
+        auto request = st2110::deserialize_mtl_worker_control_request(frame->payload());
         if (!request.has_value()) {
             std::cerr << "MTL worker control request decode failed\n";
             return 1;
         }
 
-        st2110::MtlWorkerControlEvent event = state.handle(*request);
+        st2110::MtlWorkerControlEvent event = state.handle(*request, frame->file_descriptors());
 
         auto wrote = event_writer.write_event(event);
         if (!wrote.has_value()) {

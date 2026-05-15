@@ -1,6 +1,9 @@
 #include "mtl_receive_graph.hpp"
+#include <st2110/backends/mtl/mtl_worker_shared_memory_ring.hpp>
 
+#include <span>
 #include <utility>
+#include <vector>
 
 namespace st2110_mtl_rx_worker {
 namespace {
@@ -24,6 +27,62 @@ resolve_graph_runtime_config(const MtlReceiveGraphConfig &cfg) {
     return cfg.audio->runtime;
 }
 
+[[nodiscard]] std::expected<std::vector<st2110::MtlWorkerSharedMemoryRingMap>, st2110::Error>
+import_shared_memory_rings(const MtlReceiveGraphConfig &cfg, std::span<const int> ancillary_file_descriptors) {
+    std::vector<st2110::MtlWorkerSharedMemoryRingMap> rings{};
+
+    if (cfg.media_rings.empty()) {
+        if (!ancillary_file_descriptors.empty()) {
+            return std::unexpected(st2110::Error::InvalidValue);
+        }
+
+        return rings;
+    }
+
+    rings.reserve(cfg.media_rings.size());
+
+    for (const auto &descriptor : cfg.media_rings) {
+        if (descriptor.fd_index >= ancillary_file_descriptors.size()) {
+            return std::unexpected(st2110::Error::InvalidValue);
+        }
+
+        auto mapped = st2110::MtlWorkerSharedMemoryRingMap::map_from_descriptor(
+            descriptor, ancillary_file_descriptors[descriptor.fd_index]);
+        if (!mapped.has_value()) {
+            return std::unexpected(mapped.error());
+        }
+
+        auto valid_headers = mapped->validate_initialized_slot_headers();
+        if (!valid_headers.has_value()) {
+            return std::unexpected(valid_headers.error());
+        }
+
+        rings.push_back(std::move(*mapped));
+    }
+
+    return rings;
+}
+
+[[nodiscard]] std::expected<st2110::MtlWorkerSharedMemoryRingMap *, st2110::Error>
+find_unique_media_ring(std::vector<st2110::MtlWorkerSharedMemoryRingMap> &rings,
+                       const st2110::MtlWorkerMediaKind media_kind) noexcept {
+    st2110::MtlWorkerSharedMemoryRingMap *found = nullptr;
+
+    for (auto &ring : rings) {
+        if (ring.descriptor().media_kind != media_kind) {
+            continue;
+        }
+
+        if (found) {
+            return std::unexpected(st2110::Error::InvalidValue);
+        }
+
+        found = &ring;
+    }
+
+    return found;
+}
+
 } // namespace
 
 struct MtlReceiveGraph::Impl {
@@ -38,15 +97,18 @@ struct MtlReceiveGraph::Impl {
     MtlReceiveGraphConfig cfg{};
     MtlRuntimeContext *runtime = nullptr;
     MtlWorkerGraphStats stats{};
+    std::vector<st2110::MtlWorkerSharedMemoryRingMap> media_rings{};
     std::unique_ptr<MtlVideoRxSession> video{};
     std::unique_ptr<MtlAudioRxSession> audio{};
 
-    Impl(MtlRuntimeContext &runtime_context, MtlReceiveGraphConfig graph_cfg)
-        : cfg(std::move(graph_cfg)), runtime(&runtime_context) {}
+    Impl(MtlRuntimeContext &runtime_context, MtlReceiveGraphConfig graph_cfg,
+         std::vector<st2110::MtlWorkerSharedMemoryRingMap> imported_media_rings)
+        : cfg(std::move(graph_cfg)), runtime(&runtime_context), media_rings(std::move(imported_media_rings)) {}
 };
 
-std::expected<std::unique_ptr<MtlReceiveGraph>, st2110::Error> MtlReceiveGraph::create(MtlRuntimeContext &runtime,
-                                                                                       MtlReceiveGraphConfig cfg) {
+std::expected<std::unique_ptr<MtlReceiveGraph>, st2110::Error>
+MtlReceiveGraph::create(MtlRuntimeContext &runtime, MtlReceiveGraphConfig cfg,
+                        std::span<const int> ancillary_file_descriptors) {
     auto runtime_cfg = resolve_graph_runtime_config(cfg);
     if (!runtime_cfg.has_value()) {
         return std::unexpected(runtime_cfg.error());
@@ -56,7 +118,12 @@ std::expected<std::unique_ptr<MtlReceiveGraph>, st2110::Error> MtlReceiveGraph::
         return std::unexpected(st2110::Error::InvalidValue);
     }
 
-    auto impl = std::make_unique<Impl>(runtime, std::move(cfg));
+    auto imported_rings = import_shared_memory_rings(cfg, ancillary_file_descriptors);
+    if (!imported_rings.has_value()) {
+        return std::unexpected(imported_rings.error());
+    }
+
+    auto impl = std::make_unique<Impl>(runtime, std::move(cfg), std::move(*imported_rings));
     auto graph = std::unique_ptr<MtlReceiveGraph>(new MtlReceiveGraph(std::move(impl)));
 
     auto started = graph->start_sessions();
@@ -84,7 +151,12 @@ std::expected<bool, st2110::Error> MtlReceiveGraph::start_sessions() {
     std::unique_ptr<MtlAudioRxSession> staged_audio{};
 
     if (impl_->cfg.video.has_value()) {
-        auto video_session = MtlVideoRxSession::create(*impl_->runtime, *impl_->cfg.video, impl_->stats);
+        auto video_ring = find_unique_media_ring(impl_->media_rings, st2110::MtlWorkerMediaKind::Video);
+        if (!video_ring.has_value()) {
+            return std::unexpected(video_ring.error());
+        }
+
+        auto video_session = MtlVideoRxSession::create(*impl_->runtime, *impl_->cfg.video, impl_->stats, *video_ring);
         if (!video_session.has_value()) {
             return std::unexpected(video_session.error());
         }
@@ -93,7 +165,12 @@ std::expected<bool, st2110::Error> MtlReceiveGraph::start_sessions() {
     }
 
     if (impl_->cfg.audio.has_value()) {
-        auto audio_session = MtlAudioRxSession::create(*impl_->runtime, *impl_->cfg.audio, impl_->stats);
+        auto audio_ring = find_unique_media_ring(impl_->media_rings, st2110::MtlWorkerMediaKind::Audio);
+        if (!audio_ring.has_value()) {
+            return std::unexpected(audio_ring.error());
+        }
+
+        auto audio_session = MtlAudioRxSession::create(*impl_->runtime, *impl_->cfg.audio, impl_->stats, *audio_ring);
         if (!audio_session.has_value()) {
             return std::unexpected(audio_session.error());
         }

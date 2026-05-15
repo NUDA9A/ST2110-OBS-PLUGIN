@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <variant>
+#include <vector>
 
 namespace st2110 {
 
@@ -27,10 +28,72 @@ namespace st2110 {
 using MtlWorkerRequestId = std::uint64_t;
 using MtlWorkerGraphId = std::uint64_t;
 using MtlWorkerSlotId = std::uint64_t;
+using MtlWorkerSharedMemoryRingId = std::uint64_t;
 
-enum class MtlWorkerMediaKind {
-    Video,
-    Audio,
+inline constexpr std::uint32_t mtlWorkerSharedMemoryRingLayoutVersion = 1;
+inline constexpr std::size_t defaultMtlWorkerMaxSharedMemoryRingDescriptors = 16;
+
+enum class MtlWorkerMediaKind : std::uint32_t {
+    Video = 0,
+    Audio = 1,
+};
+
+struct MtlWorkerSharedMemoryRingDescriptor {
+    /*
+     * Stable graph-local ring identifier.
+     *
+     * Ready events reference this id; raw fd numbers are never serialized into
+     * the typed protocol.
+     */
+    MtlWorkerSharedMemoryRingId ring_id = 0;
+
+    /*
+     * Which media path owns this ring.
+     */
+    MtlWorkerMediaKind media_kind = MtlWorkerMediaKind::Video;
+
+    /*
+     * Index into the ancillary fd vector attached to the same StartSessions IPC
+     * frame.
+     *
+     * This is not an OS fd number.
+     */
+    std::uint32_t fd_index = 0;
+
+    /*
+     * Version of the shared-memory slot layout understood by both processes.
+     */
+    std::uint32_t layout_version = mtlWorkerSharedMemoryRingLayoutVersion;
+
+    /*
+     * Total mmap size for the fd.
+     */
+    std::uint64_t mapped_size_bytes = 0;
+
+    /*
+     * Byte offset where the slot region starts inside the mapping.
+     */
+    std::uint64_t slot_region_offset_bytes = 0;
+
+    /*
+     * Number of fixed-stride slots in the slot region.
+     */
+    std::uint32_t slot_count = 0;
+
+    /*
+     * Distance in bytes between consecutive slot starts.
+     */
+    std::uint64_t slot_stride_bytes = 0;
+
+    /*
+     * Byte offset from slot start to media payload.
+     */
+    std::uint64_t slot_payload_offset_bytes = 0;
+
+    /*
+     * Maximum payload bytes available in each slot.
+     */
+    std::uint64_t slot_payload_capacity_bytes = 0;
 };
 
 struct MtlWorkerConfigHandshakeRequest {
@@ -44,6 +107,17 @@ struct MtlWorkerStartSessionsRequest {
 
     std::optional<MtlVideoStartConfig> video{};
     std::optional<MtlAudioStartConfig> audio{};
+
+    /*
+     * Shared-memory media rings available to this graph.
+     *
+     * Each descriptor references an fd by fd_index into the ancillary fd vector
+     * attached to the same StartSessions frame. The descriptor never carries a
+     * raw fd value.
+     *
+     * Empty vector preserves the current control-only behavior.
+     */
+    std::vector<MtlWorkerSharedMemoryRingDescriptor> media_rings{};
 };
 
 struct MtlWorkerStopSessionsRequest {
@@ -65,12 +139,8 @@ struct MtlWorkerShutdownRequest {
 };
 
 using MtlWorkerControlRequest =
-    std::variant<MtlWorkerConfigHandshakeRequest,
-                 MtlWorkerStartSessionsRequest,
-                 MtlWorkerStopSessionsRequest,
-                 MtlWorkerStatsRequest,
-                 MtlWorkerHealthCheckRequest,
-                 MtlWorkerShutdownRequest>;
+    std::variant<MtlWorkerConfigHandshakeRequest, MtlWorkerStartSessionsRequest, MtlWorkerStopSessionsRequest,
+                 MtlWorkerStatsRequest, MtlWorkerHealthCheckRequest, MtlWorkerShutdownRequest>;
 
 struct MtlWorkerStartedEvent {
     MtlWorkerRequestId request_id = 0;
@@ -107,6 +177,7 @@ struct MtlWorkerHealthEvent {
 
 struct MtlWorkerFrameReadyEvent {
     MtlWorkerGraphId graph_id = 0;
+    MtlWorkerSharedMemoryRingId ring_id = 0;
     MtlWorkerSlotId slot_id = 0;
 
     std::uint32_t width = 0;
@@ -120,6 +191,7 @@ struct MtlWorkerFrameReadyEvent {
 
 struct MtlWorkerAudioBlockReadyEvent {
     MtlWorkerGraphId graph_id = 0;
+    MtlWorkerSharedMemoryRingId ring_id = 0;
     MtlWorkerSlotId slot_id = 0;
 
     std::uint32_t sample_rate_hz = 0;
@@ -133,13 +205,8 @@ struct MtlWorkerAudioBlockReadyEvent {
 };
 
 using MtlWorkerControlEvent =
-    std::variant<MtlWorkerStartedEvent,
-                 MtlWorkerStoppedEvent,
-                 MtlWorkerErrorEvent,
-                 MtlWorkerStatsEvent,
-                 MtlWorkerHealthEvent,
-                 MtlWorkerFrameReadyEvent,
-                 MtlWorkerAudioBlockReadyEvent>;
+    std::variant<MtlWorkerStartedEvent, MtlWorkerStoppedEvent, MtlWorkerErrorEvent, MtlWorkerStatsEvent,
+                 MtlWorkerHealthEvent, MtlWorkerFrameReadyEvent, MtlWorkerAudioBlockReadyEvent>;
 
 } // namespace st2110
 

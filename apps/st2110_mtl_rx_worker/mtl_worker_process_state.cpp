@@ -1,5 +1,7 @@
 #include "mtl_worker_process_state.hpp"
 
+#include <span>
+#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -29,11 +31,43 @@ resolve_start_request_runtime_config(const st2110::MtlWorkerStartSessionsRequest
     return request.audio->runtime;
 }
 
+template <typename Request>
+[[nodiscard]] st2110::MtlWorkerGraphId graph_id_from_request(const Request &request) noexcept {
+    if constexpr (std::is_same_v<Request, st2110::MtlWorkerStartSessionsRequest> ||
+                  std::is_same_v<Request, st2110::MtlWorkerStopSessionsRequest> ||
+                  std::is_same_v<Request, st2110::MtlWorkerStatsRequest>) {
+        return request.graph_id;
+    } else {
+        return 0;
+    }
+}
+
 } // namespace
 
 st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWorkerControlRequest &request) {
     return std::visit(
         [this](const auto &typed_request) -> st2110::MtlWorkerControlEvent { return handle(typed_request); }, request);
+}
+
+st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWorkerControlRequest &request,
+                                                            std::span<const int> ancillary_file_descriptors) {
+    return std::visit(
+        [this, ancillary_file_descriptors](const auto &typed_request) -> st2110::MtlWorkerControlEvent {
+            using Request = std::decay_t<decltype(typed_request)>;
+
+            if constexpr (std::is_same_v<Request, st2110::MtlWorkerStartSessionsRequest>) {
+                return handle(typed_request, ancillary_file_descriptors);
+            } else {
+                if (!ancillary_file_descriptors.empty()) {
+                    return make_error(typed_request.request_id, graph_id_from_request(typed_request),
+                                      st2110::Error::InvalidValue,
+                                      "Ancillary file descriptors are only accepted with StartSessions requests");
+                }
+
+                return handle(typed_request);
+            }
+        },
+        request);
 }
 
 st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWorkerConfigHandshakeRequest &request) {
@@ -71,6 +105,11 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
 }
 
 st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWorkerStartSessionsRequest &request) {
+    return handle(request, {});
+}
+
+st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWorkerStartSessionsRequest &request,
+                                                            std::span<const int> ancillary_file_descriptors) {
     if (shutdown_requested_) {
         return make_error(request.request_id, request.graph_id, st2110::Error::OperationAborted,
                           "Cannot start sessions after worker shutdown was requested");
@@ -79,6 +118,18 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
     if (!request.video.has_value() && !request.audio.has_value()) {
         return make_error(request.request_id, request.graph_id, st2110::Error::InvalidValue,
                           "StartSessions request contains no video or audio session");
+    }
+
+    if (request.media_rings.empty() && !ancillary_file_descriptors.empty()) {
+        return make_error(request.request_id, request.graph_id, st2110::Error::InvalidValue,
+                          "StartSessions received ancillary fds without shared-memory ring descriptors");
+    }
+
+    for (const auto &descriptor : request.media_rings) {
+        if (descriptor.fd_index >= ancillary_file_descriptors.size()) {
+            return make_error(request.request_id, request.graph_id, st2110::Error::InvalidValue,
+                              "StartSessions shared-memory ring descriptor references a missing ancillary fd");
+        }
     }
 
     auto runtime_cfg = resolve_start_request_runtime_config(request);
@@ -120,7 +171,7 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
         };
     }
 
-    auto graph = MtlReceiveGraph::create(*runtime_, request);
+    auto graph = MtlReceiveGraph::create(*runtime_, request, ancillary_file_descriptors);
     if (!graph.has_value()) {
         return make_error(request.request_id, request.graph_id, graph.error(), "Failed to create MTL receive graph");
     }

@@ -6,6 +6,7 @@
 
 #include <st2110/delivery/video/mtl_video_start_config.hpp>
 #include <st2110/foundation/error.hpp>
+#include <st2110/backends/mtl/mtl_worker_shared_memory_ring.hpp>
 
 #include <expected>
 #include <memory>
@@ -29,7 +30,8 @@ namespace st2110_mtl_rx_worker {
 class MtlVideoRxSession final {
   public:
     static std::expected<std::unique_ptr<MtlVideoRxSession>, st2110::Error>
-    create(MtlRuntimeContext &runtime, st2110::MtlVideoStartConfig cfg, MtlWorkerGraphStats &stats);
+create(MtlRuntimeContext &runtime, st2110::MtlVideoStartConfig cfg, MtlWorkerGraphStats &stats,
+       st2110::MtlWorkerSharedMemoryRingMap *media_ring = nullptr);
 
     ~MtlVideoRxSession();
 
@@ -42,6 +44,7 @@ class MtlVideoRxSession final {
     void wake_block() noexcept;
 
     [[nodiscard]] const st2110::MtlVideoStartConfig &config() const noexcept;
+    [[nodiscard]] const st2110::MtlWorkerSharedMemoryRingMap *media_ring() const noexcept;
 
   private:
     struct Impl;

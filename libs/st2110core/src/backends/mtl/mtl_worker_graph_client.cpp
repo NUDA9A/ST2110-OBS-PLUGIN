@@ -1,13 +1,22 @@
 #include <st2110/backends/mtl/mtl_worker_graph_client.hpp>
 
+#include <st2110/backends/mtl/mtl_worker_shared_memory_ring_owner.hpp>
+
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <limits>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace st2110 {
 namespace {
+
+inline constexpr MtlWorkerSharedMemoryRingId videoRingId = 1;
+inline constexpr MtlWorkerSharedMemoryRingId audioRingId = 2;
 
 [[nodiscard]] MtlWorkerGraphId next_graph_id() noexcept {
     static std::atomic<MtlWorkerGraphId> next{1};
@@ -17,6 +26,292 @@ namespace {
 [[nodiscard]] MtlWorkerRequestId next_request_id() noexcept {
     static std::atomic<MtlWorkerRequestId> next{1};
     return next.fetch_add(1, std::memory_order_relaxed);
+}
+
+[[nodiscard]] std::expected<std::uint64_t, Error> add_u64(const std::uint64_t a, const std::uint64_t b) noexcept {
+    if (std::numeric_limits<std::uint64_t>::max() - a < b) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return a + b;
+}
+
+[[nodiscard]] std::expected<std::uint64_t, Error> mul_u64(const std::uint64_t a, const std::uint64_t b) noexcept {
+    if (a != 0 && b > std::numeric_limits<std::uint64_t>::max() / a) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return a * b;
+}
+
+[[nodiscard]] std::expected<std::uint64_t, Error> ceil_div_u64(const std::uint64_t value,
+                                                               const std::uint64_t divisor) noexcept {
+    if (divisor == 0) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    const std::uint64_t quotient = value / divisor;
+    const std::uint64_t remainder = value % divisor;
+
+    if (remainder == 0) {
+        return quotient;
+    }
+
+    return add_u64(quotient, 1);
+}
+
+[[nodiscard]] std::expected<std::uint64_t, Error> round_up_to_multiple_u64(const std::uint64_t value,
+                                                                           const std::uint64_t multiple) noexcept {
+    auto divided = ceil_div_u64(value, multiple);
+    if (!divided.has_value()) {
+        return std::unexpected(divided.error());
+    }
+
+    return mul_u64(*divided, multiple);
+}
+
+[[nodiscard]] std::expected<std::uint64_t, Error> pixel_count_u64(const std::uint32_t width,
+                                                                  const std::uint32_t height) noexcept {
+    if (width == 0 || height == 0) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return mul_u64(width, height);
+}
+
+[[nodiscard]] std::expected<std::uint64_t, Error>
+video_slot_payload_capacity_bytes(const MtlVideoStartConfig &cfg) noexcept {
+    auto pixels = pixel_count_u64(cfg.width, cfg.height);
+    if (!pixels.has_value()) {
+        return std::unexpected(pixels.error());
+    }
+
+    const std::uint64_t width = cfg.width;
+    const std::uint64_t height = cfg.height;
+
+    switch (cfg.output_format) {
+    case PixelFormat::UYVY:
+    case PixelFormat::YUV422PLANAR8:
+        return mul_u64(*pixels, 2);
+
+    case PixelFormat::RGB8:
+        return mul_u64(*pixels, 3);
+
+    case PixelFormat::BGRA:
+    case PixelFormat::ARGB:
+    case PixelFormat::Y210:
+    case PixelFormat::YUV422PLANAR10LE:
+    case PixelFormat::YUV422PLANAR12LE:
+    case PixelFormat::YUV422PLANAR16LE:
+        return mul_u64(*pixels, 4);
+
+    case PixelFormat::YUV444PLANAR10LE:
+    case PixelFormat::YUV444PLANAR12LE:
+        return mul_u64(*pixels, 6);
+
+    case PixelFormat::YUV420PLANAR8: {
+        auto triple = mul_u64(*pixels, 3);
+        if (!triple.has_value()) {
+            return std::unexpected(triple.error());
+        }
+
+        return ceil_div_u64(*triple, 2);
+    }
+
+    case PixelFormat::V210: {
+        auto groups = ceil_div_u64(width, 6);
+        if (!groups.has_value()) {
+            return std::unexpected(groups.error());
+        }
+
+        auto bytes_per_line = mul_u64(*groups, 16);
+        if (!bytes_per_line.has_value()) {
+            return std::unexpected(bytes_per_line.error());
+        }
+
+        return mul_u64(*bytes_per_line, height);
+    }
+
+    case PixelFormat::YUV422RFC4175PG2BE10: {
+        auto pairs = ceil_div_u64(width, 2);
+        if (!pairs.has_value()) {
+            return std::unexpected(pairs.error());
+        }
+
+        auto bytes_per_line = mul_u64(*pairs, 5);
+        if (!bytes_per_line.has_value()) {
+            return std::unexpected(bytes_per_line.error());
+        }
+
+        return mul_u64(*bytes_per_line, height);
+    }
+
+    case PixelFormat::YUV422RFC4175PG2BE12: {
+        auto pairs = ceil_div_u64(width, 2);
+        if (!pairs.has_value()) {
+            return std::unexpected(pairs.error());
+        }
+
+        auto bytes_per_line = mul_u64(*pairs, 6);
+        if (!bytes_per_line.has_value()) {
+            return std::unexpected(bytes_per_line.error());
+        }
+
+        return mul_u64(*bytes_per_line, height);
+    }
+
+    case PixelFormat::YUV444RFC4175PG4BE10:
+    case PixelFormat::RGBRFC4175PG4BE10: {
+        auto groups = ceil_div_u64(width, 4);
+        if (!groups.has_value()) {
+            return std::unexpected(groups.error());
+        }
+
+        auto bytes_per_line = mul_u64(*groups, 15);
+        if (!bytes_per_line.has_value()) {
+            return std::unexpected(bytes_per_line.error());
+        }
+
+        return mul_u64(*bytes_per_line, height);
+    }
+
+    case PixelFormat::YUV444RFC4175PG2BE12:
+    case PixelFormat::RGBRFC4175PG2BE12: {
+        auto pairs = ceil_div_u64(width, 2);
+        if (!pairs.has_value()) {
+            return std::unexpected(pairs.error());
+        }
+
+        auto bytes_per_line = mul_u64(*pairs, 9);
+        if (!bytes_per_line.has_value()) {
+            return std::unexpected(bytes_per_line.error());
+        }
+
+        return mul_u64(*bytes_per_line, height);
+    }
+    }
+
+    return std::unexpected(Error::Unsupported);
+}
+
+[[nodiscard]] std::expected<std::uint64_t, Error> audio_bytes_per_sample(const MtlAudioPcmFormat format) noexcept {
+    switch (format) {
+    case MtlAudioPcmFormat::Pcm16:
+        return 2;
+    case MtlAudioPcmFormat::Pcm24:
+        return 3;
+    }
+
+    return std::unexpected(Error::Unsupported);
+}
+
+[[nodiscard]] std::expected<std::uint64_t, Error>
+audio_slot_payload_capacity_bytes(const MtlAudioStartConfig &cfg) noexcept {
+    if (cfg.media.sampling_rate_hz == 0 || cfg.media.channel_count == 0 || cfg.frame_buffer_duration_ns == 0) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    auto sample_rate_times_duration =
+        mul_u64(static_cast<std::uint64_t>(cfg.media.sampling_rate_hz), cfg.frame_buffer_duration_ns);
+    if (!sample_rate_times_duration.has_value()) {
+        return std::unexpected(sample_rate_times_duration.error());
+    }
+
+    auto samples_per_channel = ceil_div_u64(*sample_rate_times_duration, 1'000'000'000ULL);
+    if (!samples_per_channel.has_value()) {
+        return std::unexpected(samples_per_channel.error());
+    }
+
+    auto bytes_per_sample = audio_bytes_per_sample(cfg.pcm_format);
+    if (!bytes_per_sample.has_value()) {
+        return std::unexpected(bytes_per_sample.error());
+    }
+
+    auto samples_all_channels = mul_u64(*samples_per_channel, cfg.media.channel_count);
+    if (!samples_all_channels.has_value()) {
+        return std::unexpected(samples_all_channels.error());
+    }
+
+    return mul_u64(*samples_all_channels, *bytes_per_sample);
+}
+
+[[nodiscard]] std::uint32_t ring_slot_count_from_frame_buffer_count(const std::uint16_t frame_buffer_count) noexcept {
+    return std::max<std::uint32_t>(2, frame_buffer_count);
+}
+
+struct PreparedMediaRings {
+    std::vector<MtlWorkerSharedMemoryRingOwner> owners{};
+    std::vector<MtlWorkerSharedMemoryRingDescriptor> descriptors{};
+    std::vector<int> file_descriptors{};
+};
+
+[[nodiscard]] std::expected<bool, Error> append_ring_owner(PreparedMediaRings &rings,
+                                                           MtlWorkerSharedMemoryRingOwnerConfig cfg) {
+    cfg.fd_index = static_cast<std::uint32_t>(rings.file_descriptors.size());
+
+    auto owner = MtlWorkerSharedMemoryRingOwner::create(cfg);
+    if (!owner.has_value()) {
+        return std::unexpected(owner.error());
+    }
+
+    const int fd = owner->fd();
+    const MtlWorkerSharedMemoryRingDescriptor descriptor = owner->descriptor();
+
+    rings.owners.push_back(std::move(*owner));
+    rings.descriptors.push_back(descriptor);
+    rings.file_descriptors.push_back(fd);
+
+    return true;
+}
+
+[[nodiscard]] std::expected<PreparedMediaRings, Error>
+prepare_media_rings(const MtlWorkerGraphId graph_id, const std::optional<MtlVideoStartConfig> &video,
+                    const std::optional<MtlAudioStartConfig> &audio) {
+    PreparedMediaRings rings{};
+
+    if (video.has_value()) {
+        auto capacity = video_slot_payload_capacity_bytes(*video);
+        if (!capacity.has_value()) {
+            return std::unexpected(capacity.error());
+        }
+
+        auto appended = append_ring_owner(
+            rings, MtlWorkerSharedMemoryRingOwnerConfig{
+                       .ring_id = videoRingId,
+                       .media_kind = MtlWorkerMediaKind::Video,
+                       .fd_index = 0,
+                       .slot_count = ring_slot_count_from_frame_buffer_count(video->frame_buffer_count),
+                       .slot_payload_capacity_bytes = *capacity,
+                       .debug_name = "st2110_mtl_video_graph_" + std::to_string(graph_id),
+                   });
+
+        if (!appended.has_value()) {
+            return std::unexpected(appended.error());
+        }
+    }
+
+    if (audio.has_value()) {
+        auto capacity = audio_slot_payload_capacity_bytes(*audio);
+        if (!capacity.has_value()) {
+            return std::unexpected(capacity.error());
+        }
+
+        auto appended = append_ring_owner(
+            rings, MtlWorkerSharedMemoryRingOwnerConfig{
+                       .ring_id = audioRingId,
+                       .media_kind = MtlWorkerMediaKind::Audio,
+                       .fd_index = 0,
+                       .slot_count = ring_slot_count_from_frame_buffer_count(audio->frame_buffer_count),
+                       .slot_payload_capacity_bytes = *capacity,
+                       .debug_name = "st2110_mtl_audio_graph_" + std::to_string(graph_id),
+                   });
+
+        if (!appended.has_value()) {
+            return std::unexpected(appended.error());
+        }
+    }
+
+    return rings;
 }
 
 [[nodiscard]] std::expected<MtlRuntimeConfig, Error>
@@ -127,6 +422,8 @@ struct MtlWorkerGraphClient::Impl {
 
     IFrameSink *sink = nullptr;
 
+    std::vector<MtlWorkerSharedMemoryRingOwner> media_ring_owners{};
+
     std::optional<MtlWorkerManager::WorkerLease> worker_lease{};
     bool running = false;
     std::uint32_t active_start_count = 0;
@@ -204,26 +501,40 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
     impl_->worker_lease = *lease;
 
     if (!impl_->worker_lease->control_channel) {
+        impl_->worker_lease.reset();
         return std::unexpected(Error::InvalidBackendState);
+    }
+
+    auto prepared_rings = prepare_media_rings(impl_->graph_id, impl_->video, impl_->audio);
+    if (!prepared_rings.has_value()) {
+        impl_->worker_lease.reset();
+        return std::unexpected(prepared_rings.error());
     }
 
     auto request = make_start_sessions_request();
     if (!request.has_value()) {
+        impl_->worker_lease.reset();
         return std::unexpected(request.error());
     }
 
+    request->media_rings = prepared_rings->descriptors;
+
     const MtlWorkerRequestId request_id = request->request_id;
 
-    auto event = impl_->worker_lease->control_channel->transact(MtlWorkerControlRequest{*request});
-    if (!event.has_value()) {
-        return std::unexpected(event.error());
+    auto envelope = impl_->worker_lease->control_channel->transact_with_fds(MtlWorkerControlRequest{*request},
+                                                                            prepared_rings->file_descriptors);
+    if (!envelope.has_value()) {
+        impl_->worker_lease.reset();
+        return std::unexpected(envelope.error());
     }
 
-    auto started = interpret_start_sessions_event(*event, request_id, impl_->graph_id);
+    auto started = interpret_start_sessions_event(envelope->event, request_id, impl_->graph_id);
     if (!started.has_value()) {
+        impl_->worker_lease.reset();
         return std::unexpected(started.error());
     }
 
+    impl_->media_ring_owners = std::move(prepared_rings->owners);
     impl_->running = true;
     impl_->active_start_count = 1;
     return true;
@@ -232,6 +543,7 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
 std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     if (!impl_->running) {
         impl_->active_start_count = 0;
+        impl_->media_ring_owners.clear();
         return true;
     }
 
@@ -243,6 +555,7 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     if (!impl_->worker_lease.has_value() || !impl_->worker_lease->control_channel) {
         impl_->running = false;
         impl_->active_start_count = 0;
+        impl_->media_ring_owners.clear();
         impl_->worker_lease.reset();
         return std::unexpected(Error::InvalidBackendState);
     }
@@ -254,6 +567,7 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     if (!event.has_value()) {
         impl_->running = false;
         impl_->active_start_count = 0;
+        impl_->media_ring_owners.clear();
         impl_->worker_lease.reset();
         return std::unexpected(event.error());
     }
@@ -262,12 +576,14 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     if (!stopped.has_value()) {
         impl_->running = false;
         impl_->active_start_count = 0;
+        impl_->media_ring_owners.clear();
         impl_->worker_lease.reset();
         return std::unexpected(stopped.error());
     }
 
     impl_->running = false;
     impl_->active_start_count = 0;
+    impl_->media_ring_owners.clear();
 
     return true;
 }
@@ -331,6 +647,7 @@ std::expected<MtlWorkerStartSessionsRequest, Error> MtlWorkerGraphClient::make_s
         .graph_id = impl_->graph_id,
         .video = impl_->video,
         .audio = impl_->audio,
+        .media_rings = {},
     };
 }
 
