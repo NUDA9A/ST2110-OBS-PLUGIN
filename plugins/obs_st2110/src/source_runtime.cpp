@@ -5,9 +5,9 @@
 #include <obs_st2110/sdp_media_selection.hpp>
 #include <obs_st2110/sdp_parser_dispatch.hpp>
 
-#include <st2110/backends/receive_local_policy.hpp>
 #include <st2110/backends/socket/socket_rx_audio_backend.hpp>
 #include <st2110/backends/socket/socket_rx_video_backend.hpp>
+#include <st2110/backends/mtl/mtl_worker_graph_client.hpp>
 #include <st2110/contracts/backend/backend.hpp>
 #include <st2110/delivery/audio/socket_audio_start_config.hpp>
 #include <st2110/delivery/synchronized_frame_sink.hpp>
@@ -90,7 +90,9 @@ make_audio_receive_start_request(const st2110::ParsedSdpStreamSet &parsed) {
 }
 
 [[nodiscard]] std::expected<std::unique_ptr<st2110::IRxBackend>, st2110::Error>
-make_video_backend(const st2110::ReceiveStartRequest &request, const st2110::Settings &settings) {
+make_video_backend(const st2110::ReceiveStartRequest &request, const st2110::Settings &settings,
+                   const std::shared_ptr<st2110::MtlWorkerGraphClient> &mtl_graph_client) {
+    (void)mtl_graph_client;
     switch (settings.backend_kind) {
     case st2110::ReceiveBackendKind::Socket: {
         return std::make_unique<st2110::SocketRxVideoBackend>(
@@ -104,7 +106,16 @@ make_video_backend(const st2110::ReceiveStartRequest &request, const st2110::Set
             return std::unexpected(mtl_cfg.error());
         }
 
-        return std::make_unique<st2110::MtlRxVideoBackendProxy>(std::move(*mtl_cfg));
+        if (!mtl_graph_client) {
+            return std::unexpected(st2110::Error::InvalidBackendState);
+        }
+
+        auto configured = mtl_graph_client->configure_video(*mtl_cfg);
+        if (!configured.has_value()) {
+            return std::unexpected(configured.error());
+        }
+
+        return std::make_unique<st2110::MtlRxVideoBackendProxy>(std::move(*mtl_cfg), mtl_graph_client);
 #else
         return std::unexpected(st2110::Error::Unsupported);
 #endif
@@ -115,7 +126,9 @@ make_video_backend(const st2110::ReceiveStartRequest &request, const st2110::Set
 }
 
 [[nodiscard]] std::expected<std::unique_ptr<st2110::IRxBackend>, st2110::Error>
-make_audio_backend(const st2110::ReceiveStartRequest &request, const st2110::Settings &settings) {
+make_audio_backend(const st2110::ReceiveStartRequest &request, const st2110::Settings &settings,
+                   const std::shared_ptr<st2110::MtlWorkerGraphClient> &mtl_graph_client) {
+    (void)mtl_graph_client;
     switch (settings.backend_kind) {
     case st2110::ReceiveBackendKind::Socket: {
         return std::make_unique<st2110::SocketRxAudioBackend>(
@@ -129,7 +142,16 @@ make_audio_backend(const st2110::ReceiveStartRequest &request, const st2110::Set
             return std::unexpected(mtl_cfg.error());
         }
 
-        return std::make_unique<st2110::MtlRxAudioBackendProxy>(std::move(*mtl_cfg));
+        if (!mtl_graph_client) {
+            return std::unexpected(st2110::Error::InvalidBackendState);
+        }
+
+        auto configured = mtl_graph_client->configure_audio(*mtl_cfg);
+        if (!configured.has_value()) {
+            return std::unexpected(configured.error());
+        }
+
+        return std::make_unique<st2110::MtlRxAudioBackendProxy>(std::move(*mtl_cfg), mtl_graph_client);
 #else
         return std::unexpected(st2110::Error::Unsupported);
 #endif
@@ -275,6 +297,14 @@ class SourceRuntime::Impl {
         std::unique_ptr<st2110::IRxBackend> staged_video_backend{};
         std::unique_ptr<st2110::IRxBackend> staged_audio_backend{};
 
+        std::shared_ptr<st2110::MtlWorkerGraphClient> mtl_graph_client{};
+
+#if ST2110_HAS_MTL_BACKEND
+        if (config_.receive_settings.backend_kind == st2110::ReceiveBackendKind::Mtl) {
+            mtl_graph_client = std::make_shared<st2110::MtlWorkerGraphClient>();
+        }
+#endif
+
         try {
             if (parsed_streams->has_video()) {
                 video_bootstrap = st2110::project_parsed_video_sdp_to_receive_bootstrap(*parsed_streams->video);
@@ -290,7 +320,7 @@ class SourceRuntime::Impl {
                     .local = std::move(*local),
                 };
 
-                auto backend = make_video_backend(*video_request, config_.receive_settings);
+                auto backend = make_video_backend(*video_request, config_.receive_settings, mtl_graph_client);
                 if (!backend.has_value()) {
                     set_error("Video receive backend construction failed", backend.error());
                     return false;
@@ -313,7 +343,7 @@ class SourceRuntime::Impl {
                     .local = std::move(*local),
                 };
 
-                auto backend = make_audio_backend(*audio_request, config_.receive_settings);
+                auto backend = make_audio_backend(*audio_request, config_.receive_settings, mtl_graph_client);
                 if (!backend.has_value()) {
                     set_error("Audio receive backend construction failed", backend.error());
                     return false;

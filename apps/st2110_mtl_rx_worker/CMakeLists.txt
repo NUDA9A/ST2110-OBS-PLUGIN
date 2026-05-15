@@ -8,6 +8,9 @@ add_executable(st2110_mtl_rx_worker
         main.cpp
         mtl_runtime_context.cpp
         mtl_video_rx_session.cpp
+        mtl_audio_rx_session.cpp
+        mtl_receive_graph.cpp
+        mtl_worker_process_state.cpp
 )
 
 target_link_libraries(st2110_mtl_rx_worker PRIVATE

@@ -14,6 +14,10 @@ if(ST2110_HAS_MTL_BACKEND)
     list(APPEND ST2110CORE_SOURCES
             src/backends/mtl/mtl_rx_video_backend_proxy.cpp
             src/backends/mtl/mtl_rx_audio_backend_proxy.cpp
+            src/backends/mtl/mtl_worker_control_channel.cpp
+            src/backends/mtl/mtl_worker_process_control_channel.cpp
+            src/backends/mtl/mtl_worker_manager.cpp
+            src/backends/mtl/mtl_worker_graph_client.cpp
     )
 endif()
 

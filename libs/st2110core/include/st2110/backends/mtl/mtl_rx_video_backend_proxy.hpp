@@ -1,8 +1,11 @@
 #ifndef ST2110_OBS_PLUGIN_MTL_RX_VIDEO_BACKEND_PROXY_HPP
 #define ST2110_OBS_PLUGIN_MTL_RX_VIDEO_BACKEND_PROXY_HPP
 
+#include <st2110/backends/mtl/mtl_worker_graph_client.hpp>
 #include <st2110/contracts/backend/backend.hpp>
 #include <st2110/delivery/video/mtl_video_start_config.hpp>
+
+#include <memory>
 
 namespace st2110 {
 
@@ -14,8 +17,8 @@ namespace st2110 {
  * process and deliver worker-exported frames to the OBS-process sink.
  */
 class MtlRxVideoBackendProxy final : public IRxBackend {
-public:
-    explicit MtlRxVideoBackendProxy(MtlVideoStartConfig cfg);
+  public:
+    MtlRxVideoBackendProxy(MtlVideoStartConfig cfg, std::shared_ptr<MtlWorkerGraphClient> graph_client);
     ~MtlRxVideoBackendProxy() override = default;
 
     MtlRxVideoBackendProxy(const MtlRxVideoBackendProxy &) = delete;
@@ -27,8 +30,10 @@ public:
     RxBackendLifecycleResult start(IFrameSink *sink) override;
     RxBackendLifecycleResult stop() override;
 
-private:
+  private:
     MtlVideoStartConfig cfg_{};
+    std::shared_ptr<MtlWorkerGraphClient> graph_client_{};
+    IFrameSink *sink_ = nullptr;
 };
 
 } // namespace st2110

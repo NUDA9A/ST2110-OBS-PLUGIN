@@ -1,8 +1,11 @@
 #ifndef ST2110_OBS_PLUGIN_MTL_RX_AUDIO_BACKEND_PROXY_HPP
 #define ST2110_OBS_PLUGIN_MTL_RX_AUDIO_BACKEND_PROXY_HPP
 
+#include <st2110/backends/mtl/mtl_worker_graph_client.hpp>
 #include <st2110/contracts/backend/backend.hpp>
 #include <st2110/delivery/audio/mtl_audio_start_config.hpp>
+
+#include <memory>
 
 namespace st2110 {
 
@@ -14,8 +17,8 @@ namespace st2110 {
  * process and deliver worker-exported audio blocks to the OBS-process sink.
  */
 class MtlRxAudioBackendProxy final : public IRxBackend {
-public:
-    explicit MtlRxAudioBackendProxy(MtlAudioStartConfig cfg);
+  public:
+    MtlRxAudioBackendProxy(MtlAudioStartConfig cfg, std::shared_ptr<MtlWorkerGraphClient> graph_client);
     ~MtlRxAudioBackendProxy() override = default;
 
     MtlRxAudioBackendProxy(const MtlRxAudioBackendProxy &) = delete;
@@ -27,8 +30,10 @@ public:
     RxBackendLifecycleResult start(IFrameSink *sink) override;
     RxBackendLifecycleResult stop() override;
 
-private:
+  private:
     MtlAudioStartConfig cfg_{};
+    std::shared_ptr<MtlWorkerGraphClient> graph_client_{};
+    IFrameSink *sink_ = nullptr;
 };
 
 } // namespace st2110

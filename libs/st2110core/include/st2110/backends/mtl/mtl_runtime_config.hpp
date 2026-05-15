@@ -26,6 +26,8 @@ struct MtlRuntimePortConfig {
      *   mtl_init_params::sip_addr[...]
      */
     std::array<std::uint8_t, 4> sip_addr{};
+
+    friend bool operator==(const MtlRuntimePortConfig &, const MtlRuntimePortConfig &) = default;
 };
 
 struct MtlRuntimeConfig {
@@ -47,6 +49,8 @@ struct MtlRuntimeConfig {
      * If absent, backend starts a one-port MTL runtime.
      */
     std::optional<MtlRuntimePortConfig> redundant_port{};
+
+    friend bool operator==(const MtlRuntimeConfig &, const MtlRuntimeConfig &) = default;
 };
 
 } // namespace st2110
