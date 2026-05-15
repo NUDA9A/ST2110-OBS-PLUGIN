@@ -463,7 +463,7 @@ struct AppConfig {
     sdp += "c=IN IP4 " + dst_ip + "/32\n";
     sdp += "a=mid:" + std::string(mid) + "\n";
     sdp += "a=source-filter: incl IN IP4 " + dst_ip + " " + source_ip + "\n";
-    sdp += "a=ts-refclk:localmac=00-00-00-00-00-00\n";
+    sdp += "a=ts-refclk:localmac=02-00-00-00-00-01\n";
     sdp += "a=mediaclk:direct=0\n";
     sdp += "a=rtpmap:" + std::to_string(cfg.video_payload_type) + " raw/90000\n";
     sdp += "a=fmtp:" + std::to_string(cfg.video_payload_type) + " sampling=YCbCr-4:2:2";
@@ -516,7 +516,7 @@ struct AppConfig {
     sdp += "c=IN IP4 " + dst_ip + "/32\n";
     sdp += "a=mid:" + std::string(mid) + "\n";
     sdp += "a=source-filter: incl IN IP4 " + dst_ip + " " + source_ip + "\n";
-    sdp += "a=ts-refclk:localmac=00-00-00-00-00-00\n";
+    sdp += "a=ts-refclk:localmac=02-00-00-00-00-01\n";
     sdp += "a=mediaclk:direct=0\n";
     sdp += "a=rtpmap:" + std::to_string(cfg.audio_payload_type) + " " + audio_rtpmap_encoding(cfg.audio_pcm_format) +
            "/48000/" + std::to_string(cfg.audio_channels) + "\n";
