@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #include <cerrno>
 #include <condition_variable>
@@ -17,9 +18,66 @@
 #include <unordered_map>
 #include <utility>
 #include <variant>
+#include <chrono>
 
 namespace st2110 {
 namespace {
+
+using namespace std::chrono_literals;
+
+inline constexpr auto mtlWorkerConfigHandshakeTimeout = 30s;
+inline constexpr auto mtlWorkerStartSessionsTimeout = 30s;
+inline constexpr auto mtlWorkerStopSessionsTimeout = 5s;
+inline constexpr auto mtlWorkerStatsTimeout = 2s;
+inline constexpr auto mtlWorkerHealthCheckTimeout = 2s;
+inline constexpr auto mtlWorkerShutdownTimeout = 5s;
+inline constexpr auto mtlWorkerSocketSendTimeout = 5s;
+inline constexpr auto mtlWorkerTerminateGraceTimeout = 1s;
+inline constexpr auto mtlWorkerKillGraceTimeout = 2s;
+
+[[nodiscard]] std::chrono::milliseconds timeout_for_request(const MtlWorkerControlRequest &request) noexcept {
+    return std::visit(
+        [](const auto &typed_request) -> std::chrono::milliseconds {
+            using Request = std::decay_t<decltype(typed_request)>;
+
+            if constexpr (std::is_same_v<Request, MtlWorkerConfigHandshakeRequest>) {
+                return std::chrono::duration_cast<std::chrono::milliseconds>(mtlWorkerConfigHandshakeTimeout);
+            } else if constexpr (std::is_same_v<Request, MtlWorkerStartSessionsRequest>) {
+                return std::chrono::duration_cast<std::chrono::milliseconds>(mtlWorkerStartSessionsTimeout);
+            } else if constexpr (std::is_same_v<Request, MtlWorkerStopSessionsRequest>) {
+                return std::chrono::duration_cast<std::chrono::milliseconds>(mtlWorkerStopSessionsTimeout);
+            } else if constexpr (std::is_same_v<Request, MtlWorkerStatsRequest>) {
+                return std::chrono::duration_cast<std::chrono::milliseconds>(mtlWorkerStatsTimeout);
+            } else if constexpr (std::is_same_v<Request, MtlWorkerHealthCheckRequest>) {
+                return std::chrono::duration_cast<std::chrono::milliseconds>(mtlWorkerHealthCheckTimeout);
+            } else if constexpr (std::is_same_v<Request, MtlWorkerShutdownRequest>) {
+                return std::chrono::duration_cast<std::chrono::milliseconds>(mtlWorkerShutdownTimeout);
+            } else {
+                return 5s;
+            }
+        },
+        request);
+}
+
+[[nodiscard]] std::expected<bool, Error> configure_socket_send_timeout(const int fd,
+                                                                        const std::chrono::milliseconds timeout) noexcept {
+    if (fd < 0 || timeout.count() <= 0) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(timeout);
+    const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(timeout - seconds);
+
+    timeval value{};
+    value.tv_sec = static_cast<time_t>(seconds.count());
+    value.tv_usec = static_cast<suseconds_t>(micros.count());
+
+    if (::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &value, sizeof(value)) != 0) {
+        return std::unexpected(Error::SystemFailure);
+    }
+
+    return true;
+}
 
 void close_fd_noexcept(int &fd) noexcept {
     if (fd >= 0) {
@@ -36,6 +94,33 @@ void shutdown_fd_noexcept(int &fd) noexcept {
     }
 }
 
+[[nodiscard]] bool wait_process_exit_noexcept(const pid_t pid, const std::chrono::milliseconds timeout) noexcept {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+
+    for (;;) {
+        int status = 0;
+        const pid_t rc = ::waitpid(pid, &status, WNOHANG);
+
+        if (rc == pid) {
+            return true;
+        }
+
+        if (rc < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            return true;
+        }
+
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return false;
+        }
+
+        std::this_thread::sleep_for(50ms);
+    }
+}
+
 void terminate_process_noexcept(pid_t &pid) noexcept {
     if (pid <= 0) {
         pid = -1;
@@ -44,13 +129,18 @@ void terminate_process_noexcept(pid_t &pid) noexcept {
 
     (void)::kill(pid, SIGTERM);
 
-    int status = 0;
-    while (::waitpid(pid, &status, 0) < 0) {
-        if (errno != EINTR) {
-            break;
-        }
-    }
+    if (!wait_process_exit_noexcept(pid, std::chrono::duration_cast<std::chrono::milliseconds>(
+                                             mtlWorkerTerminateGraceTimeout))) {
+        (void)::kill(pid, SIGKILL);
+        (void)wait_process_exit_noexcept(pid, std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                  mtlWorkerKillGraceTimeout));
+                                             }
 
+    /*
+     * Do not block indefinitely here. If the child is stuck in an uninterruptible
+     * kernel state, the parent must still be able to invalidate the channel and
+     * continue.
+     */
     pid = -1;
 }
 
@@ -175,6 +265,15 @@ struct MtlWorkerProcessControlChannel::Impl {
         worker_pid = pid;
         worker_control_fd = control_socket[0];
 
+        auto send_timeout = configure_socket_send_timeout(
+    worker_control_fd,
+    std::chrono::duration_cast<std::chrono::milliseconds>(mtlWorkerSocketSendTimeout));
+        if (!send_timeout.has_value()) {
+            shutdown_fd_noexcept(worker_control_fd);
+            terminate_process_noexcept(worker_pid);
+            return std::unexpected(send_timeout.error());
+        }
+
         reader_thread = std::thread([this, fd = worker_control_fd]() { reader_loop_noexcept(fd); });
 
         return true;
@@ -205,6 +304,11 @@ struct MtlWorkerProcessControlChannel::Impl {
 
             {
                 std::lock_guard lock(state_mutex);
+
+                if (shutdown_requested || reader_failed) {
+                    return;
+                }
+
                 completed_responses.insert_or_assign(request_id, std::move(envelope));
             }
 
@@ -223,7 +327,7 @@ struct MtlWorkerProcessControlChannel::Impl {
         {
             std::lock_guard lock(state_mutex);
 
-            if (shutdown_requested) {
+            if (shutdown_requested || reader_failed) {
                 return;
             }
 
@@ -251,29 +355,59 @@ struct MtlWorkerProcessControlChannel::Impl {
         }
     }
 
+    void mark_channel_failed_no_lock(const Error error) noexcept {
+        if (reader_failed) {
+            return;
+        }
+
+        reader_error = error == Error::Ok ? Error::OperationAborted : error;
+        reader_failed = true;
+    }
+
+    void fail_channel_noexcept(const Error error) noexcept {
+        {
+            std::lock_guard lock(state_mutex);
+            mark_channel_failed_no_lock(error);
+        }
+
+        state_cv.notify_all();
+    }
+
     void notify_reader_failed(const Error error) noexcept {
         {
             std::lock_guard lock(state_mutex);
 
             if (shutdown_requested) {
-                reader_error = Error::OperationAborted;
+                mark_channel_failed_no_lock(Error::OperationAborted);
             } else {
-                reader_error = error;
+                mark_channel_failed_no_lock(error);
             }
-
-            reader_failed = true;
         }
 
         state_cv.notify_all();
     }
 
     [[nodiscard]] std::expected<MtlWorkerControlEventEnvelope, Error>
-    wait_for_response(const MtlWorkerRequestId request_id) {
+wait_for_response(const MtlWorkerRequestId request_id, const std::chrono::milliseconds timeout) {
+        if (timeout.count() <= 0) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
         std::unique_lock lock(state_mutex);
 
-        state_cv.wait(lock, [this, request_id]() {
+        const bool ready = state_cv.wait_for(lock, timeout, [this, request_id]() {
             return completed_responses.contains(request_id) || reader_failed || shutdown_requested;
         });
+
+        if (!ready) {
+            completed_responses.erase(request_id);
+            mark_channel_failed_no_lock(Error::OperationAborted);
+
+            lock.unlock();
+            state_cv.notify_all();
+
+            return std::unexpected(Error::OperationAborted);
+        }
 
         auto found = completed_responses.find(request_id);
         if (found != completed_responses.end()) {
@@ -346,11 +480,12 @@ MtlWorkerProcessControlChannel::transact_with_fds(const MtlWorkerControlRequest 
         auto wrote =
             write_mtl_worker_control_frame_with_fds(impl_->worker_control_fd, *request_payload, file_descriptors);
         if (!wrote.has_value()) {
+            impl_->fail_channel_noexcept(wrote.error());
             return std::unexpected(wrote.error());
         }
     }
 
-    return impl_->wait_for_response(request_id);
+    return impl_->wait_for_response(request_id, timeout_for_request(request));
 }
 
 std::expected<bool, Error>
