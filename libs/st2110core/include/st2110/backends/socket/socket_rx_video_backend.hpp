@@ -70,6 +70,9 @@ class SocketRxVideoBackend final : public SocketRxSingleMediaBackendBase {
     }
 
     void deliver_reconstructed_frame(ReconstructedVideoFrame &&frame) const noexcept {
+        record_frame_delivered_noexcept();
+        record_media_unit_delivered_noexcept();
+
         sink_->on_video_frame(std::move(frame.frame),
                               FrameTimingMetadata{.rtp_timestamp = frame.rtp_timestamp,
                                                   .receive_timestamp_ns = frame.receive_timestamp_ns});

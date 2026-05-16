@@ -71,6 +71,8 @@ class SocketRxAudioBackend final : public SocketRxSingleMediaBackendBase {
     }
 
     void deliver_assembled_audio_block(AssembledAudioBlock &&block) const noexcept {
+        record_media_unit_delivered_noexcept();
+
         sink_->on_audio_frame(std::move(block.buffer),
                               FrameTimingMetadata{.rtp_timestamp = block.rtp_timestamp,
                                                   .receive_timestamp_ns = block.receive_timestamp_ns});

@@ -246,6 +246,39 @@ void append_counter(std::string &out, const char *name, const std::uint64_t valu
     out += "\n";
 }
 
+void append_backend_stats(std::string &out, const char *title, const st2110::IRxBackend *backend) {
+    out += title;
+    out += "\n";
+
+    if (!backend) {
+        out += "  unavailable\n";
+        return;
+    }
+
+    out += "  health: ";
+    out += backend->healthy() ? "healthy" : "unhealthy";
+    out += "\n";
+
+    const std::string backend_error = backend->last_error_message();
+    if (!backend_error.empty()) {
+        out += "  last_error: ";
+        out += backend_error;
+        out += "\n";
+    }
+
+    const st2110::BackendStats stats = backend->stats_snapshot();
+
+    append_counter(out, "datagrams_received", stats.datagrams_received);
+    append_counter(out, "bytes_received", stats.bytes_received);
+    append_counter(out, "control_datagrams_ignored", stats.control_datagrams_ignored);
+    append_counter(out, "nonmedia_datagrams_ignored", stats.nonmedia_datagrams_ignored);
+    append_counter(out, "packets_parsed_ok", stats.packets_parsed_ok);
+    append_counter(out, "packets_rejected", stats.packets_rejected);
+    append_counter(out, "datagrams_dropped", stats.datagrams_dropped);
+    append_counter(out, "frames_delivered", stats.frames_delivered);
+    append_counter(out, "media_units_delivered", stats.media_units_delivered);
+}
+
 #if ST2110_HAS_MTL_BACKEND
 void append_rx_port_stats(std::string &out, const char *prefix, const st2110::MtlWorkerRxPortStats &stats) {
     out += "  ";
@@ -570,8 +603,8 @@ class SourceRuntime::Impl {
         }
 #endif
 
-        out += "\nSocket counters: unavailable in this debug panel.\n";
-        out += "MTL counters: unavailable because current backend is not MTL.\n";
+        out += "\n";
+        out += make_socket_debug_status();
 
         return out;
     }
@@ -637,6 +670,20 @@ class SourceRuntime::Impl {
         return out;
     }
 #endif
+
+    [[nodiscard]] std::string make_socket_debug_status() const {
+        std::string out{};
+
+        out += "Socket backend diagnostics\n";
+
+        append_backend_stats(out, "Socket video backend", video_backend_.get());
+        out += "\n";
+        append_backend_stats(out, "Socket audio backend", audio_backend_.get());
+
+        out += "\nMTL counters: unavailable because current backend is not MTL.\n";
+
+        return out;
+    }
 
     void start_receive_graph() {
         if (!ensure_configured_graph()) {

@@ -10,7 +10,9 @@
 #include "st2110/receive/video/depacketizer_stats.hpp"
 #include <st2110/foundation/timestamp.hpp>
 
+#include <cstdint>
 #include <expected>
+#include <string>
 
 namespace st2110 {
 using RxBackendLifecycleResult = std::expected<bool, Error>;
@@ -53,6 +55,12 @@ class IRxBackend {
   public:
     virtual RxBackendLifecycleResult stop() = 0;
     virtual RxBackendLifecycleResult start(IFrameSink *sink) = 0;
+
+    [[nodiscard]] virtual BackendStats stats_snapshot() const { return {}; }
+
+    [[nodiscard]] virtual bool healthy() const { return true; }
+
+    [[nodiscard]] virtual std::string last_error_message() const { return {}; }
 
     virtual ~IRxBackend() = default;
 };

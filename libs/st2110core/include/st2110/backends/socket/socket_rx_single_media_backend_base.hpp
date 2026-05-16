@@ -8,6 +8,7 @@
 #include <st2110/receive/shared/receive_reorder_tolerance_policy.hpp>
 #include <st2110/receive/shared/reorder_buffer.hpp>
 
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -16,6 +17,7 @@
 #include <mutex>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <unordered_set>
 #include <utility>
@@ -131,7 +133,24 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
   public:
     ~SocketRxSingleMediaBackendBase() override = default;
 
+    [[nodiscard]] BackendStats stats_snapshot() const override {
+        std::lock_guard lock(diagnostics_mutex_);
+        return stats_;
+    }
+
+    [[nodiscard]] bool healthy() const override {
+        std::lock_guard lock(diagnostics_mutex_);
+        return healthy_;
+    }
+
+    [[nodiscard]] std::string last_error_message() const override {
+        std::lock_guard lock(diagnostics_mutex_);
+        return last_error_message_;
+    }
+
     RxBackendLifecycleResult stop() override {
+        stopping_.store(true, std::memory_order_relaxed);
+
         auto first_err = Error::Ok;
 
         for (const auto &leg : runtime_legs_) {
@@ -159,6 +178,7 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
         duplicate_merge_enabled_ = false;
 
         if (first_err != Error::Ok) {
+            record_backend_failure_noexcept(first_err, "Socket backend stop failed");
             return std::unexpected(first_err);
         }
 
@@ -186,6 +206,9 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
     [[nodiscard]] std::unique_ptr<ISocketRxPort> create_port() const { return port_factory_->create_port(); }
 
     [[nodiscard]] RxBackendLifecycleResult start_common_runtime(IFrameSink *sink) {
+        stopping_.store(false, std::memory_order_relaxed);
+        reset_diagnostics_noexcept();
+
         sink_ = sink;
         duplicate_merge_history_.clear();
         std::vector<SocketRxRuntimeLeg> staged;
@@ -195,10 +218,12 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
             SocketRxRuntimeLeg leg{};
             leg.port = create_port();
             if (!leg.port) {
+                record_backend_failure_noexcept(Error::SystemFailure, "Socket port factory returned null port");
                 return std::unexpected(Error::SystemFailure);
             }
 
             if (const Error err = leg.port->open(open_config); err != Error::Ok) {
+                record_backend_failure_noexcept(err, "Socket port open failed");
                 return std::unexpected(err);
             }
 
@@ -241,9 +266,12 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
                 case Error::BadRTPVersion:
                 case Error::Ok:
                 default:
+                    mark_receive_leg_unhealthy_noexcept(received.error(), leg_index, "Socket receive loop exited");
                     return;
                 }
             }
+
+            record_datagram_received_noexcept(received->size_bytes);
 
             process_received_datagram(leg_index, ByteSpan(leg.receive_buffer.data(), received->size_bytes),
                                       received->receive_timestamp_ns);
@@ -317,22 +345,34 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
     void process_received_datagram(const std::size_t leg_index, ByteSpan udp_payload,
                                    const TimestampNs receive_timestamp_ns) noexcept {
         if (is_rtcp_like_datagram(udp_payload)) {
+            record_control_datagram_ignored_noexcept();
             return;
         }
 
         if (Error err = validate_packet_parse_policy(udp_payload, maxudp_); err != Error::Ok) {
+            record_packet_rejected_noexcept();
             return;
         }
 
         auto packet = parse_packet(leg_index, udp_payload);
-        if (!packet || (*packet)->rtp.payload_type != expected_payload_type_) {
+        if (!packet) {
+            record_packet_rejected_noexcept();
             return;
         }
+
+        if ((*packet)->rtp.payload_type != expected_payload_type_) {
+            record_nonmedia_datagram_ignored_noexcept();
+            return;
+        }
+
+        record_packet_parsed_ok_noexcept();
 
         (*packet)->receive_timestamp_ns = receive_timestamp_ns;
 
         auto stored_packet = (*packet)->store();
-        (void)packet_queue_.push(std::move(stored_packet));
+        if (!packet_queue_.push(std::move(stored_packet))) {
+            record_datagram_dropped_noexcept();
+        }
     }
 
     void process_stored_packet_downstream(std::unique_ptr<StoredPacket> packet) noexcept {
@@ -343,6 +383,7 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
         }
 
         if (const Error err = reorder_buffer_->push(std::move(packet)); err != Error::Ok) {
+            record_datagram_dropped_noexcept();
             return;
         }
 
@@ -363,6 +404,116 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
             process_stored_packet_downstream(std::move(packet));
         }
     }
+
+    void reset_diagnostics_noexcept() noexcept {
+        try {
+            std::lock_guard lock(diagnostics_mutex_);
+            stats_ = BackendStats{};
+            healthy_ = true;
+            last_error_message_.clear();
+        } catch (...) {
+        }
+    }
+
+    void record_backend_failure_noexcept(const Error error, const char *message) noexcept {
+        try {
+            std::lock_guard lock(diagnostics_mutex_);
+            healthy_ = false;
+            last_error_message_ = message ? message : "Socket backend failure";
+            last_error_message_ += ": ";
+            last_error_message_ += to_string(error);
+        } catch (...) {
+        }
+    }
+
+    void mark_receive_leg_unhealthy_noexcept(const Error error, const std::size_t leg_index,
+                                             const char *message) noexcept {
+        if (stopping_.load(std::memory_order_relaxed)) {
+            return;
+        }
+
+        try {
+            std::lock_guard lock(diagnostics_mutex_);
+            healthy_ = false;
+            last_error_message_ = message ? message : "Socket receive loop exited";
+            last_error_message_ += " on leg ";
+            last_error_message_ += std::to_string(leg_index);
+            last_error_message_ += ": ";
+            last_error_message_ += to_string(error);
+        } catch (...) {
+        }
+    }
+
+    void record_datagram_received_noexcept(const std::size_t size_bytes) const noexcept {
+        try {
+            std::lock_guard lock(diagnostics_mutex_);
+            ++stats_.datagrams_received;
+            stats_.bytes_received += static_cast<std::uint64_t>(size_bytes);
+        } catch (...) {
+        }
+    }
+
+    void record_control_datagram_ignored_noexcept() const noexcept {
+        try {
+            std::lock_guard lock(diagnostics_mutex_);
+            ++stats_.control_datagrams_ignored;
+        } catch (...) {
+        }
+    }
+
+    void record_nonmedia_datagram_ignored_noexcept() const noexcept {
+        try {
+            std::lock_guard lock(diagnostics_mutex_);
+            ++stats_.nonmedia_datagrams_ignored;
+        } catch (...) {
+        }
+    }
+
+    void record_packet_parsed_ok_noexcept() const noexcept {
+        try {
+            std::lock_guard lock(diagnostics_mutex_);
+            ++stats_.packets_parsed_ok;
+        } catch (...) {
+        }
+    }
+
+    void record_packet_rejected_noexcept() const noexcept {
+        try {
+            std::lock_guard lock(diagnostics_mutex_);
+            ++stats_.packets_rejected;
+        } catch (...) {
+        }
+    }
+
+    void record_datagram_dropped_noexcept() const noexcept {
+        try {
+            std::lock_guard lock(diagnostics_mutex_);
+            ++stats_.datagrams_dropped;
+        } catch (...) {
+        }
+    }
+
+    void record_media_unit_delivered_noexcept() const noexcept {
+        try {
+            std::lock_guard lock(diagnostics_mutex_);
+            ++stats_.media_units_delivered;
+        } catch (...) {
+        }
+    }
+
+    void record_frame_delivered_noexcept() const noexcept {
+        try {
+            std::lock_guard lock(diagnostics_mutex_);
+            ++stats_.frames_delivered;
+        } catch (...) {
+        }
+    }
+
+    mutable std::mutex diagnostics_mutex_{};
+    mutable BackendStats stats_{};
+    bool healthy_ = true;
+    std::string last_error_message_{};
+    std::atomic_bool stopping_{false};
 
     bool duplicate_merge_enabled_ = false;
     IFrameSink *sink_ = nullptr;
