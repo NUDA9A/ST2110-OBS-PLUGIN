@@ -417,6 +417,18 @@ interpret_stats_event(const MtlWorkerControlEvent &event, const MtlWorkerRequest
         event);
 }
 
+struct MtlWorkerGraphClientAsyncStatsSnapshot {
+    std::uint64_t frame_ready_events = 0;
+    std::uint64_t audio_block_ready_events = 0;
+    std::uint64_t video_frames_delivered = 0;
+    std::uint64_t audio_blocks_delivered = 0;
+    std::uint64_t released_slots = 0;
+    std::uint64_t malformed_ready_events = 0;
+    std::uint64_t delivery_failures = 0;
+    std::uint64_t release_failures = 0;
+    std::uint64_t ignored_events = 0;
+};
+
 [[nodiscard]] MtlWorkerStatsEvent
 merge_async_stats(MtlWorkerStatsEvent stats, const MtlWorkerGraphClientAsyncStatsSnapshot &async_stats) noexcept {
     stats.frame_ready_events = async_stats.frame_ready_events;
@@ -432,18 +444,6 @@ merge_async_stats(MtlWorkerStatsEvent stats, const MtlWorkerGraphClientAsyncStat
 }
 
 } // namespace
-
-struct MtlWorkerGraphClientAsyncStatsSnapshot {
-    std::uint64_t frame_ready_events = 0;
-    std::uint64_t audio_block_ready_events = 0;
-    std::uint64_t video_frames_delivered = 0;
-    std::uint64_t audio_blocks_delivered = 0;
-    std::uint64_t released_slots = 0;
-    std::uint64_t malformed_ready_events = 0;
-    std::uint64_t delivery_failures = 0;
-    std::uint64_t release_failures = 0;
-    std::uint64_t ignored_events = 0;
-};
 
 struct MtlWorkerGraphClientAsyncState {
     MtlWorkerGraphClientAsyncState(MtlWorkerGraphId graph, std::optional<MtlVideoStartConfig> video,
