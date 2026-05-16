@@ -10,8 +10,22 @@
 namespace st2110_mtl_rx_worker {
 namespace {
 
-[[nodiscard]] st2110::MtlWorkerGraphId current_graph_id(const MtlReceiveGraph *graph) noexcept {
-    return graph ? graph->config().graph_id : 0;
+[[nodiscard]] st2110::MtlWorkerGraphId first_graph_id(
+    const std::unordered_map<st2110::MtlWorkerGraphId, std::unique_ptr<MtlReceiveGraph>> &graphs) noexcept {
+    return graphs.empty() ? 0 : graphs.begin()->first;
+}
+
+[[nodiscard]] bool any_sessions_running(
+    const std::unordered_map<st2110::MtlWorkerGraphId, std::unique_ptr<MtlReceiveGraph>> &graphs) noexcept {
+    for (const auto &[graph_id, graph] : graphs) {
+        (void)graph_id;
+
+        if (graph && graph->sessions_running()) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 [[nodiscard]] std::expected<st2110::MtlRuntimeConfig, st2110::Error>
@@ -77,13 +91,13 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
 
 st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWorkerConfigHandshakeRequest &request) {
     if (shutdown_requested_) {
-        return make_error(request.request_id, current_graph_id(graph_.get()), st2110::Error::OperationAborted,
+        return make_error(request.request_id, first_graph_id(graphs_), st2110::Error::OperationAborted,
                           "Worker shutdown was already requested");
     }
 
     if (runtime_) {
         if (runtime_->config() != request.runtime) {
-            return make_error(request.request_id, current_graph_id(graph_.get()), st2110::Error::InvalidBackendState,
+            return make_error(request.request_id, first_graph_id(graphs_), st2110::Error::InvalidBackendState,
                               "Worker runtime config is incompatible with handshake request");
         }
 
@@ -96,7 +110,7 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
 
     auto runtime = MtlRuntimeContext::create(request.runtime);
     if (!runtime.has_value()) {
-        return make_error(request.request_id, current_graph_id(graph_.get()), runtime.error(),
+        return make_error(request.request_id, first_graph_id(graphs_), runtime.error(),
                           "Failed to initialize MTL worker runtime");
     }
 
@@ -120,6 +134,11 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
                           "Cannot start sessions after worker shutdown was requested");
     }
 
+    if (request.graph_id == 0) {
+        return make_error(request.request_id, request.graph_id, st2110::Error::InvalidValue,
+                          "StartSessions request contains invalid graph_id");
+    }
+
     if (!request.video.has_value() && !request.audio.has_value()) {
         return make_error(request.request_id, request.graph_id, st2110::Error::InvalidValue,
                           "StartSessions request contains no video or audio session");
@@ -135,6 +154,11 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
             return make_error(request.request_id, request.graph_id, st2110::Error::InvalidValue,
                               "StartSessions shared-memory ring descriptor references a missing ancillary fd");
         }
+    }
+
+    if (graphs_.contains(request.graph_id)) {
+        return make_error(request.request_id, request.graph_id, st2110::Error::InvalidBackendState,
+                          "Worker already owns a receive graph with this graph_id");
     }
 
     auto runtime_cfg = resolve_start_request_runtime_config(request);
@@ -158,24 +182,6 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
         runtime_ = std::move(*runtime);
     }
 
-    if (graph_) {
-        if (graph_->config().graph_id != request.graph_id) {
-            return make_error(request.request_id, request.graph_id, st2110::Error::InvalidBackendState,
-                              "Worker already owns a different receive graph");
-        }
-
-        auto started = graph_->start_sessions();
-        if (!started.has_value()) {
-            return make_error(request.request_id, request.graph_id, started.error(),
-                              "Failed to restart cached MTL receive sessions");
-        }
-
-        return st2110::MtlWorkerStartedEvent{
-            .request_id = request.request_id,
-            .graph_id = request.graph_id,
-        };
-    }
-
     if (!event_writer_) {
         return make_error(request.request_id, request.graph_id, st2110::Error::InvalidBackendState,
                           "Worker event writer is not configured");
@@ -186,7 +192,7 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
         return make_error(request.request_id, request.graph_id, graph.error(), "Failed to create MTL receive graph");
     }
 
-    graph_ = std::move(*graph);
+    graphs_.emplace(request.graph_id, std::move(*graph));
 
     return st2110::MtlWorkerStartedEvent{
         .request_id = request.request_id,
@@ -195,19 +201,24 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
 }
 
 st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWorkerStopSessionsRequest &request) {
-    if (!graph_) {
+    auto found = graphs_.find(request.graph_id);
+    if (found == graphs_.end()) {
         return st2110::MtlWorkerStoppedEvent{
             .request_id = request.request_id,
             .graph_id = request.graph_id,
         };
     }
 
-    if (graph_->config().graph_id != request.graph_id) {
-        return make_error(request.request_id, request.graph_id, st2110::Error::InvalidBackendState,
-                          "StopSessions graph id does not match current worker graph");
+    if (found->second) {
+        found->second->stop_sessions_noexcept();
     }
 
-    graph_->stop_sessions_noexcept();
+    /*
+     * Ordinary MTL Stop releases the worker-side graph object and therefore
+     * unmaps this graph's shared-memory media transport. The worker runtime
+     * stays alive for compatible future StartSessions.
+     */
+    graphs_.erase(found);
 
     return st2110::MtlWorkerStoppedEvent{
         .request_id = request.request_id,
@@ -216,12 +227,9 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
 }
 
 st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWorkerStatsRequest &request) {
-    if (graph_ && graph_->config().graph_id != request.graph_id) {
-        return make_error(request.request_id, request.graph_id, st2110::Error::InvalidBackendState,
-                          "StatsRequest graph id does not match current worker graph");
-    }
-
-    const MtlWorkerGraphStatsSnapshot snapshot = graph_ ? graph_->stats_snapshot() : MtlWorkerGraphStatsSnapshot{};
+    const auto found = graphs_.find(request.graph_id);
+    const MtlWorkerGraphStatsSnapshot snapshot =
+        found != graphs_.end() && found->second ? found->second->stats_snapshot() : MtlWorkerGraphStatsSnapshot{};
 
     return st2110::MtlWorkerStatsEvent{
         .request_id = request.request_id,
@@ -242,13 +250,17 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
 }
 
 st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWorkerShutdownRequest &request) {
-    const st2110::MtlWorkerGraphId graph_id = current_graph_id(graph_.get());
+    const st2110::MtlWorkerGraphId graph_id = first_graph_id(graphs_);
 
-    if (graph_) {
-        graph_->stop_sessions_noexcept();
-        graph_.reset();
+    for (auto &[stored_graph_id, graph] : graphs_) {
+        (void)stored_graph_id;
+
+        if (graph) {
+            graph->stop_sessions_noexcept();
+        }
     }
 
+    graphs_.clear();
     runtime_.reset();
 
     shutdown_requested_ = true;
@@ -261,7 +273,7 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
 
 bool MtlWorkerProcessState::shutdown_requested() const noexcept { return shutdown_requested_; }
 
-bool MtlWorkerProcessState::sessions_running() const noexcept { return graph_ && graph_->sessions_running(); }
+bool MtlWorkerProcessState::sessions_running() const noexcept { return any_sessions_running(graphs_); }
 
 st2110::MtlWorkerErrorEvent MtlWorkerProcessState::make_error(st2110::MtlWorkerRequestId request_id,
                                                               st2110::MtlWorkerGraphId graph_id, st2110::Error error,

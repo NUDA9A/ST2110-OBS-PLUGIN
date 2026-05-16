@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <span>
+#include <unordered_map>
 
 namespace st2110_mtl_rx_worker {
 
@@ -17,8 +18,12 @@ class MtlWorkerEventWriter;
  * Worker-process-local typed control state.
  *
  * This class owns worker command semantics and passes the worker event writer
- * into graph/session construction so receive threads can later emit asynchronous
+ * into graph/session construction so receive threads can emit asynchronous
  * media-ready events through the single worker IPC write boundary.
+ *
+ * The worker owns one MTL runtime context and may own multiple receive graphs
+ * keyed by MtlWorkerGraphId. Ordinary StopSessions releases the selected graph
+ * and its shared-memory mappings, but keeps the worker runtime alive for reuse.
  */
 class MtlWorkerProcessState final {
   public:
@@ -47,7 +52,7 @@ class MtlWorkerProcessState final {
 
     MtlWorkerEventWriter *event_writer_ = nullptr;
     std::unique_ptr<MtlRuntimeContext> runtime_{};
-    std::unique_ptr<MtlReceiveGraph> graph_{};
+    std::unordered_map<st2110::MtlWorkerGraphId, std::unique_ptr<MtlReceiveGraph>> graphs_{};
     bool shutdown_requested_ = false;
 };
 
