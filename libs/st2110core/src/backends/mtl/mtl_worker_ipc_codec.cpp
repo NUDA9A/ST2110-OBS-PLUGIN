@@ -1123,6 +1123,16 @@ std::expected<std::vector<std::uint8_t>, Error> serialize_mtl_worker_control_eve
                 writer.u64(typed_event.audio_blocks_received);
                 writer.u64(typed_event.video_frames_dropped);
                 writer.u64(typed_event.audio_blocks_dropped);
+                writer.u64(typed_event.frame_ready_events);
+                writer.u64(typed_event.audio_block_ready_events);
+                writer.u64(typed_event.video_frames_delivered);
+                writer.u64(typed_event.audio_blocks_delivered);
+                writer.u64(typed_event.released_slots);
+                writer.u64(typed_event.malformed_ready_events);
+                writer.u64(typed_event.delivery_failures);
+                writer.u64(typed_event.release_failures);
+                writer.u64(typed_event.ignored_events);
+
                 return std::move(writer).finish();
             } else if constexpr (std::is_same_v<Event, MtlWorkerFrameReadyEvent>) {
                 writer.u8(static_cast<std::uint8_t>(MessageTag::FrameReadyEvent));
@@ -1287,10 +1297,22 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
         auto audio_blocks_received = reader.u64();
         auto video_frames_dropped = reader.u64();
         auto audio_blocks_dropped = reader.u64();
+        auto frame_ready_events = reader.u64();
+        auto audio_block_ready_events = reader.u64();
+        auto video_frames_delivered = reader.u64();
+        auto audio_blocks_delivered = reader.u64();
+        auto released_slots = reader.u64();
+        auto malformed_ready_events = reader.u64();
+        auto delivery_failures = reader.u64();
+        auto release_failures = reader.u64();
+        auto ignored_events = reader.u64();
 
         if (!request_id.has_value() || !graph_id.has_value() || !video_frames_received.has_value() ||
             !audio_blocks_received.has_value() || !video_frames_dropped.has_value() ||
-            !audio_blocks_dropped.has_value()) {
+            !audio_blocks_dropped.has_value() || !frame_ready_events.has_value() ||
+            !audio_block_ready_events.has_value() || !video_frames_delivered.has_value() ||
+            !audio_blocks_delivered.has_value() || !released_slots.has_value() || !malformed_ready_events.has_value() ||
+            !delivery_failures.has_value() || !release_failures.has_value() || !ignored_events.has_value()) {
             return std::unexpected(Error::InvalidValue);
         }
 
@@ -1307,6 +1329,15 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
                 .audio_blocks_received = *audio_blocks_received,
                 .video_frames_dropped = *video_frames_dropped,
                 .audio_blocks_dropped = *audio_blocks_dropped,
+                .frame_ready_events = *frame_ready_events,
+                .audio_block_ready_events = *audio_block_ready_events,
+                .video_frames_delivered = *video_frames_delivered,
+                .audio_blocks_delivered = *audio_blocks_delivered,
+                .released_slots = *released_slots,
+                .malformed_ready_events = *malformed_ready_events,
+                .delivery_failures = *delivery_failures,
+                .release_failures = *release_failures,
+                .ignored_events = *ignored_events,
             },
         };
     }

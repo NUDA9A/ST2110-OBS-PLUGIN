@@ -417,7 +417,33 @@ interpret_stats_event(const MtlWorkerControlEvent &event, const MtlWorkerRequest
         event);
 }
 
+[[nodiscard]] MtlWorkerStatsEvent
+merge_async_stats(MtlWorkerStatsEvent stats, const MtlWorkerGraphClientAsyncStatsSnapshot &async_stats) noexcept {
+    stats.frame_ready_events = async_stats.frame_ready_events;
+    stats.audio_block_ready_events = async_stats.audio_block_ready_events;
+    stats.video_frames_delivered = async_stats.video_frames_delivered;
+    stats.audio_blocks_delivered = async_stats.audio_blocks_delivered;
+    stats.released_slots = async_stats.released_slots;
+    stats.malformed_ready_events = async_stats.malformed_ready_events;
+    stats.delivery_failures = async_stats.delivery_failures;
+    stats.release_failures = async_stats.release_failures;
+    stats.ignored_events = async_stats.ignored_events;
+    return stats;
+}
+
 } // namespace
+
+struct MtlWorkerGraphClientAsyncStatsSnapshot {
+    std::uint64_t frame_ready_events = 0;
+    std::uint64_t audio_block_ready_events = 0;
+    std::uint64_t video_frames_delivered = 0;
+    std::uint64_t audio_blocks_delivered = 0;
+    std::uint64_t released_slots = 0;
+    std::uint64_t malformed_ready_events = 0;
+    std::uint64_t delivery_failures = 0;
+    std::uint64_t release_failures = 0;
+    std::uint64_t ignored_events = 0;
+};
 
 struct MtlWorkerGraphClientAsyncState {
     MtlWorkerGraphClientAsyncState(MtlWorkerGraphId graph, std::optional<MtlVideoStartConfig> video,
@@ -464,6 +490,26 @@ struct MtlWorkerGraphClientAsyncState {
                 sink = nullptr;
             }
         } catch (...) {
+        }
+    }
+
+    [[nodiscard]] MtlWorkerGraphClientAsyncStatsSnapshot snapshot_noexcept() noexcept {
+        try {
+            std::lock_guard lock(mutex);
+
+            return MtlWorkerGraphClientAsyncStatsSnapshot{
+                .frame_ready_events = frame_ready_events,
+                .audio_block_ready_events = audio_block_ready_events,
+                .video_frames_delivered = video_frames_delivered,
+                .audio_blocks_delivered = audio_blocks_delivered,
+                .released_slots = released_slots,
+                .malformed_ready_events = malformed_ready_events,
+                .delivery_failures = delivery_failures,
+                .release_failures = release_failures,
+                .ignored_events = ignored_events,
+            };
+        } catch (...) {
+            return {};
         }
     }
 
@@ -1077,7 +1123,17 @@ std::expected<MtlWorkerStatsEvent, Error> MtlWorkerGraphClient::stats() {
         return std::unexpected(event.error());
     }
 
-    return interpret_stats_event(*event, request_id, impl_->graph_id);
+    auto stats = interpret_stats_event(*event, request_id, impl_->graph_id);
+    if (!stats.has_value()) {
+        return std::unexpected(stats.error());
+    }
+
+    MtlWorkerGraphClientAsyncStatsSnapshot async_snapshot{};
+    if (impl_->async_event_state) {
+        async_snapshot = impl_->async_event_state->snapshot_noexcept();
+    }
+
+    return merge_async_stats(*stats, async_snapshot);
 }
 
 void MtlWorkerGraphClient::stop_noexcept() noexcept {

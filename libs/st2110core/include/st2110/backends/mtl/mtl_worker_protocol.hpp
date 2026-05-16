@@ -167,6 +167,23 @@ struct MtlWorkerStatsEvent {
     std::uint64_t audio_blocks_received = 0;
     std::uint64_t video_frames_dropped = 0;
     std::uint64_t audio_blocks_dropped = 0;
+
+    /*
+     * OBS-process-side async/data-plane counters.
+     *
+     * Worker-side StatsRequest responses naturally leave these as zero. The
+     * MtlWorkerGraphClient merges its local async delivery snapshot before
+     * returning stats() to callers.
+     */
+    std::uint64_t frame_ready_events = 0;
+    std::uint64_t audio_block_ready_events = 0;
+    std::uint64_t video_frames_delivered = 0;
+    std::uint64_t audio_blocks_delivered = 0;
+    std::uint64_t released_slots = 0;
+    std::uint64_t malformed_ready_events = 0;
+    std::uint64_t delivery_failures = 0;
+    std::uint64_t release_failures = 0;
+    std::uint64_t ignored_events = 0;
 };
 
 struct MtlWorkerHealthEvent {
