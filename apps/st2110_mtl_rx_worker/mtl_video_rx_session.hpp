@@ -47,6 +47,8 @@ create(MtlRuntimeContext &runtime, st2110::MtlWorkerGraphId graph_id, st2110::Mt
     [[nodiscard]] const st2110::MtlVideoStartConfig &config() const noexcept;
     [[nodiscard]] const st2110::MtlWorkerSharedMemoryRingMap *media_ring() const noexcept;
 
+    void append_stats_snapshot(MtlWorkerGraphStatsSnapshot &snapshot) const noexcept;
+
   private:
     struct Impl;
 

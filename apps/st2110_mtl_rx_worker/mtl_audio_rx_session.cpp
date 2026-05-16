@@ -381,8 +381,6 @@ struct MtlAudioRxSession::Impl {
             st30p_rx_put_frame(rx, frame);
         }
     }
-
-    void append_stats_snapshot(MtlWorkerGraphStatsSnapshot &snapshot) const noexcept;
 };
 
 std::expected<std::unique_ptr<MtlAudioRxSession>, st2110::Error>

@@ -561,8 +561,6 @@ struct MtlVideoRxSession::Impl {
             st20p_rx_put_frame(rx, frame);
         }
     }
-
-    void append_stats_snapshot(MtlWorkerGraphStatsSnapshot &snapshot) const noexcept;
 };
 
 std::expected<std::unique_ptr<MtlVideoRxSession>, st2110::Error>
