@@ -11,6 +11,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -65,138 +66,14 @@ inline constexpr MtlWorkerSharedMemoryRingId audioRingId = 2;
     return add_u64(quotient, 1);
 }
 
-[[nodiscard]] std::expected<std::uint64_t, Error> round_up_to_multiple_u64(const std::uint64_t value,
-                                                                           const std::uint64_t multiple) noexcept {
-    auto divided = ceil_div_u64(value, multiple);
-    if (!divided.has_value()) {
-        return std::unexpected(divided.error());
-    }
-
-    return mul_u64(*divided, multiple);
-}
-
-[[nodiscard]] std::expected<std::uint64_t, Error> pixel_count_u64(const std::uint32_t width,
-                                                                  const std::uint32_t height) noexcept {
-    if (width == 0 || height == 0) {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    return mul_u64(width, height);
-}
-
 [[nodiscard]] std::expected<std::uint64_t, Error>
 video_slot_payload_capacity_bytes(const MtlVideoStartConfig &cfg) noexcept {
-    auto pixels = pixel_count_u64(cfg.width, cfg.height);
-    if (!pixels.has_value()) {
-        return std::unexpected(pixels.error());
+    try {
+        VideoFrame frame{cfg.width, cfg.height, cfg.output_format};
+        return static_cast<std::uint64_t>(frame.size_bytes());
+    } catch (...) {
+        return std::unexpected(Error::Unsupported);
     }
-
-    const std::uint64_t width = cfg.width;
-    const std::uint64_t height = cfg.height;
-
-    switch (cfg.output_format) {
-    case PixelFormat::UYVY:
-    case PixelFormat::YUV422PLANAR8:
-        return mul_u64(*pixels, 2);
-
-    case PixelFormat::RGB8:
-        return mul_u64(*pixels, 3);
-
-    case PixelFormat::BGRA:
-    case PixelFormat::ARGB:
-    case PixelFormat::Y210:
-    case PixelFormat::YUV422PLANAR10LE:
-    case PixelFormat::YUV422PLANAR12LE:
-    case PixelFormat::YUV422PLANAR16LE:
-        return mul_u64(*pixels, 4);
-
-    case PixelFormat::YUV444PLANAR10LE:
-    case PixelFormat::YUV444PLANAR12LE:
-        return mul_u64(*pixels, 6);
-
-    case PixelFormat::YUV420PLANAR8: {
-        auto triple = mul_u64(*pixels, 3);
-        if (!triple.has_value()) {
-            return std::unexpected(triple.error());
-        }
-
-        return ceil_div_u64(*triple, 2);
-    }
-
-    case PixelFormat::V210: {
-        auto groups = ceil_div_u64(width, 6);
-        if (!groups.has_value()) {
-            return std::unexpected(groups.error());
-        }
-
-        auto bytes_per_line = mul_u64(*groups, 16);
-        if (!bytes_per_line.has_value()) {
-            return std::unexpected(bytes_per_line.error());
-        }
-
-        return mul_u64(*bytes_per_line, height);
-    }
-
-    case PixelFormat::YUV422RFC4175PG2BE10: {
-        auto pairs = ceil_div_u64(width, 2);
-        if (!pairs.has_value()) {
-            return std::unexpected(pairs.error());
-        }
-
-        auto bytes_per_line = mul_u64(*pairs, 5);
-        if (!bytes_per_line.has_value()) {
-            return std::unexpected(bytes_per_line.error());
-        }
-
-        return mul_u64(*bytes_per_line, height);
-    }
-
-    case PixelFormat::YUV422RFC4175PG2BE12: {
-        auto pairs = ceil_div_u64(width, 2);
-        if (!pairs.has_value()) {
-            return std::unexpected(pairs.error());
-        }
-
-        auto bytes_per_line = mul_u64(*pairs, 6);
-        if (!bytes_per_line.has_value()) {
-            return std::unexpected(bytes_per_line.error());
-        }
-
-        return mul_u64(*bytes_per_line, height);
-    }
-
-    case PixelFormat::YUV444RFC4175PG4BE10:
-    case PixelFormat::RGBRFC4175PG4BE10: {
-        auto groups = ceil_div_u64(width, 4);
-        if (!groups.has_value()) {
-            return std::unexpected(groups.error());
-        }
-
-        auto bytes_per_line = mul_u64(*groups, 15);
-        if (!bytes_per_line.has_value()) {
-            return std::unexpected(bytes_per_line.error());
-        }
-
-        return mul_u64(*bytes_per_line, height);
-    }
-
-    case PixelFormat::YUV444RFC4175PG2BE12:
-    case PixelFormat::RGBRFC4175PG2BE12: {
-        auto pairs = ceil_div_u64(width, 2);
-        if (!pairs.has_value()) {
-            return std::unexpected(pairs.error());
-        }
-
-        auto bytes_per_line = mul_u64(*pairs, 9);
-        if (!bytes_per_line.has_value()) {
-            return std::unexpected(bytes_per_line.error());
-        }
-
-        return mul_u64(*bytes_per_line, height);
-    }
-    }
-
-    return std::unexpected(Error::Unsupported);
 }
 
 [[nodiscard]] std::expected<std::uint64_t, Error> audio_bytes_per_sample(const MtlAudioPcmFormat format) noexcept {
@@ -549,9 +426,8 @@ struct MtlWorkerGraphClientAsyncState {
     }
 
     [[nodiscard]] bool begin_ready_slot_no_lock(MtlWorkerSharedMemoryRingMap &ring, const MtlWorkerSlotId slot_id,
-                                            const std::uint64_t event_sequence,
-                                            const std::size_t event_payload_size,
-                                            std::uint32_t &out_slot_index) noexcept {
+                                                const std::uint64_t event_sequence,
+                                                std::uint32_t &out_slot_index) noexcept {
         const auto &descriptor = ring.descriptor();
         const auto slot_index = static_cast<std::uint32_t>(slot_id);
 
@@ -560,8 +436,7 @@ struct MtlWorkerGraphClientAsyncState {
             return false;
         }
 
-        auto began = ring.begin_read_slot_if_matches(slot_index, event_sequence,
-                                                     static_cast<std::uint64_t>(event_payload_size));
+        auto began = ring.begin_read_slot_if_matches(slot_index, event_sequence);
         if (!began.has_value()) {
             ++release_failures;
             return false;
@@ -586,9 +461,9 @@ struct MtlWorkerGraphClientAsyncState {
     }
 
     [[nodiscard]] bool validate_ready_payload_no_lock(MtlWorkerSharedMemoryRingMap &ring,
-                                                  const std::uint32_t slot_index,
-                                                  const std::uint64_t event_sequence,
-                                                  const std::size_t event_payload_size) noexcept {
+                                                      const std::uint32_t slot_index,
+                                                      const std::uint64_t event_sequence,
+                                                      const MtlWorkerMediaKind expected_media_kind) noexcept {
         bool malformed = false;
         bool stale = false;
 
@@ -602,17 +477,25 @@ struct MtlWorkerGraphClientAsyncState {
             malformed = true;
         }
 
-        if (payload.has_value() && event_payload_size > payload->size()) {
-            malformed = true;
-        }
-
         if (header.has_value()) {
             if ((*header)->sequence != event_sequence) {
                 stale = true;
             }
 
-            if ((*header)->payload_size != static_cast<std::uint64_t>(event_payload_size)) {
-                stale = true;
+            if ((*header)->payload_size == 0) {
+                malformed = true;
+            }
+
+            if (payload.has_value() && (*header)->payload_size > payload->size()) {
+                malformed = true;
+            }
+
+            if ((*header)->media.media_kind != expected_media_kind) {
+                malformed = true;
+            }
+
+            if ((*header)->media.plane_count == 0 || (*header)->media.plane_count > mtlWorkerSharedMemoryMaxPlanes) {
+                malformed = true;
             }
         }
 
@@ -629,13 +512,32 @@ struct MtlWorkerGraphClientAsyncState {
         return true;
     }
 
-    void deliver_video_frame_no_lock(MtlWorkerSharedMemoryRingMap &ring, const std::uint32_t slot_index,
-                                     const MtlWorkerFrameReadyEvent &event) noexcept {
+    void deliver_video_frame_no_lock(MtlWorkerSharedMemoryRingMap &ring, const std::uint32_t slot_index) noexcept {
         if (!sink || !video_config.has_value()) {
             return;
         }
 
-        if (event.width == 0 || event.height == 0 || event.payload_size == 0) {
+        auto header = ring.slot_header(slot_index);
+        if (!header.has_value()) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        const auto &slot = **header;
+        const auto &media = slot.media;
+
+        if (media.media_kind != MtlWorkerMediaKind::Video ||
+            media.media_format != static_cast<std::uint32_t>(video_config->output_format)) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        if (media.width == 0 || media.height == 0 || slot.payload_size == 0) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        if (media.width != video_config->width || media.height != video_config->height) {
             ++malformed_ready_events;
             return;
         }
@@ -646,19 +548,105 @@ struct MtlWorkerGraphClientAsyncState {
             return;
         }
 
-        try {
-            VideoFrame frame{event.width, event.height, video_config->output_format};
+        if (slot.payload_size > static_cast<std::uint64_t>(payload->size())) {
+            ++malformed_ready_events;
+            return;
+        }
 
-            if (frame.size_bytes() != event.payload_size || frame.size_bytes() > payload->size()) {
+        try {
+            VideoFrame frame{media.width, media.height, video_config->output_format};
+
+            if (media.plane_count != frame.plane_count() || media.plane_count == 0 ||
+                media.plane_count > mtlWorkerSharedMemoryMaxPlanes) {
                 ++malformed_ready_events;
                 return;
             }
 
-            std::memcpy(frame.data(), payload->data(), frame.size_bytes());
+            for (std::size_t plane = 0; plane < frame.plane_count(); ++plane) {
+                const std::uint64_t src_offset_u64 = media.plane_offset_bytes[plane];
+                const std::uint64_t src_plane_size_u64 = media.plane_size_bytes[plane];
+                const std::uint64_t src_stride_u64 = media.plane_line_size_bytes[plane];
+
+                if (src_stride_u64 == 0 || src_plane_size_u64 == 0) {
+                    ++malformed_ready_events;
+                    return;
+                }
+
+                const std::size_t active_row_bytes = frame.active_row_bytes(plane);
+                const std::size_t height_rows = frame.plane_height_rows(plane);
+
+                if (active_row_bytes == 0 || height_rows == 0) {
+                    ++malformed_ready_events;
+                    return;
+                }
+
+                const auto active_row_bytes_u64 = static_cast<std::uint64_t>(active_row_bytes);
+                const auto height_rows_u64 = static_cast<std::uint64_t>(height_rows);
+
+                if (src_stride_u64 < active_row_bytes_u64) {
+                    ++malformed_ready_events;
+                    return;
+                }
+
+                auto last_row_offset = mul_u64(height_rows_u64 - 1, src_stride_u64);
+                if (!last_row_offset.has_value()) {
+                    ++malformed_ready_events;
+                    return;
+                }
+
+                auto required_plane_bytes = add_u64(*last_row_offset, active_row_bytes_u64);
+                if (!required_plane_bytes.has_value()) {
+                    ++malformed_ready_events;
+                    return;
+                }
+
+                if (src_plane_size_u64 < *required_plane_bytes) {
+                    ++malformed_ready_events;
+                    return;
+                }
+
+                if (src_offset_u64 > slot.payload_size) {
+                    ++malformed_ready_events;
+                    return;
+                }
+
+                if (src_plane_size_u64 > slot.payload_size - src_offset_u64) {
+                    ++malformed_ready_events;
+                    return;
+                }
+
+                if (src_offset_u64 > static_cast<std::uint64_t>(payload->size())) {
+                    ++malformed_ready_events;
+                    return;
+                }
+
+                if (*required_plane_bytes > static_cast<std::uint64_t>(payload->size()) - src_offset_u64) {
+                    ++malformed_ready_events;
+                    return;
+                }
+
+                if (src_offset_u64 > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()) ||
+                    src_stride_u64 > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()) ||
+                    active_row_bytes_u64 > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+                    ++malformed_ready_events;
+                    return;
+                }
+
+                const auto src_offset = static_cast<std::size_t>(src_offset_u64);
+                const auto src_stride = static_cast<std::size_t>(src_stride_u64);
+                const auto active_row_bytes_size = static_cast<std::size_t>(active_row_bytes_u64);
+
+                const std::byte *src_plane = payload->data() + src_offset;
+
+                for (std::size_t row = 0; row < height_rows; ++row) {
+                    std::memcpy(frame.row_data(static_cast<std::uint32_t>(row), plane), src_plane + row * src_stride,
+                                active_row_bytes_size);
+                }
+            }
 
             sink->on_video_frame(std::move(frame), FrameTimingMetadata{
-                                                       .rtp_timestamp = event.rtp_timestamp,
-                                                       .receive_timestamp_ns = event.receive_timestamp_ns,
+                                                       .rtp_timestamp = media.rtp_timestamp,
+                                                       .receive_timestamp_ns = media.receive_timestamp_ns,
                                                    });
 
             ++video_frames_delivered;
@@ -757,25 +745,39 @@ struct MtlWorkerGraphClientAsyncState {
         return true;
     }
 
-    void deliver_audio_block_no_lock(MtlWorkerSharedMemoryRingMap &ring, const std::uint32_t slot_index,
-                                     const MtlWorkerAudioBlockReadyEvent &event) noexcept {
+    void deliver_audio_block_no_lock(MtlWorkerSharedMemoryRingMap &ring, const std::uint32_t slot_index) noexcept {
         if (!sink || !audio_config.has_value()) {
             return;
         }
 
-        if (event.sample_rate_hz == 0 || event.channels == 0 || event.samples_per_channel == 0 ||
-            event.payload_size == 0) {
+        auto header = ring.slot_header(slot_index);
+        if (!header.has_value()) {
             ++malformed_ready_events;
             return;
         }
 
-        if (event.channels > static_cast<std::uint32_t>(std::numeric_limits<std::uint16_t>::max())) {
+        const auto &slot = **header;
+        const auto &media = slot.media;
+
+        if (media.media_kind != MtlWorkerMediaKind::Audio ||
+            media.media_format != static_cast<std::uint32_t>(audio_config->pcm_format)) {
             ++malformed_ready_events;
             return;
         }
 
-        if (event.sample_rate_hz != audio_config->media.sampling_rate_hz ||
-            event.channels != audio_config->media.channel_count) {
+        if (media.sample_rate_hz == 0 || media.channels == 0 || media.samples_per_channel == 0 ||
+            slot.payload_size == 0) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        if (media.channels > static_cast<std::uint32_t>(std::numeric_limits<std::uint16_t>::max())) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        if (media.sample_rate_hz != audio_config->media.sampling_rate_hz ||
+            media.channels != audio_config->media.channel_count) {
             ++malformed_ready_events;
             return;
         }
@@ -786,27 +788,27 @@ struct MtlWorkerGraphClientAsyncState {
             return;
         }
 
-        if (event.payload_size > payload->size()) {
+        if (slot.payload_size > payload->size()) {
             ++malformed_ready_events;
             return;
         }
 
         try {
             AudioBuffer buffer{
-                event.sample_rate_hz,
-                static_cast<std::uint16_t>(event.channels),
-                event.samples_per_channel,
+                media.sample_rate_hz,
+                static_cast<std::uint16_t>(media.channels),
+                media.samples_per_channel,
             };
 
-            const auto active_payload = std::span<const std::byte>{payload->data(), event.payload_size};
+            const auto active_payload = std::span<const std::byte>{payload->data(), slot.payload_size};
 
             if (!convert_interleaved_pcm_to_s32_no_lock(active_payload, audio_config->pcm_format, buffer)) {
                 return;
             }
 
             sink->on_audio_frame(std::move(buffer), FrameTimingMetadata{
-                                                        .rtp_timestamp = event.rtp_timestamp,
-                                                        .receive_timestamp_ns = event.receive_timestamp_ns,
+                                                        .rtp_timestamp = media.rtp_timestamp,
+                                                        .receive_timestamp_ns = media.receive_timestamp_ns,
                                                     });
 
             ++audio_blocks_delivered;
@@ -829,13 +831,14 @@ struct MtlWorkerGraphClientAsyncState {
         auto &ring = owner->ring_map();
 
         std::uint32_t slot_index = 0;
-        if (!begin_ready_slot_no_lock(ring, event.slot_id, event.sequence, event.payload_size, slot_index)) {
+        if (!begin_ready_slot_no_lock(ring, event.slot_id, event.sequence, slot_index)) {
             return;
         }
 
-        const bool valid_payload = validate_ready_payload_no_lock(ring, slot_index, event.sequence, event.payload_size);
+        const bool valid_payload =
+            validate_ready_payload_no_lock(ring, slot_index, event.sequence, MtlWorkerMediaKind::Video);
         if (valid_payload) {
-            deliver_video_frame_no_lock(ring, slot_index, event);
+            deliver_video_frame_no_lock(ring, slot_index);
         }
 
         auto released = ring.release_read_slot(slot_index);
@@ -862,13 +865,14 @@ struct MtlWorkerGraphClientAsyncState {
         auto &ring = owner->ring_map();
 
         std::uint32_t slot_index = 0;
-        if (!begin_ready_slot_no_lock(ring, event.slot_id, event.sequence, event.payload_size, slot_index)) {
+        if (!begin_ready_slot_no_lock(ring, event.slot_id, event.sequence, slot_index)) {
             return;
         }
 
-        const bool valid_payload = validate_ready_payload_no_lock(ring, slot_index, event.sequence, event.payload_size);
+        const bool valid_payload =
+            validate_ready_payload_no_lock(ring, slot_index, event.sequence, MtlWorkerMediaKind::Audio);
         if (valid_payload) {
-            deliver_audio_block_no_lock(ring, slot_index, event);
+            deliver_audio_block_no_lock(ring, slot_index);
         }
 
         auto released = ring.release_read_slot(slot_index);
@@ -918,6 +922,7 @@ struct MtlWorkerGraphClient::Impl {
     std::optional<MtlWorkerManager::WorkerLease> worker_lease{};
     std::shared_ptr<MtlWorkerGraphClientAsyncState> async_event_state{};
     bool async_event_handler_registered = false;
+    bool manager_graph_registered = false;
     bool running = false;
     std::uint32_t active_start_count = 0;
 
@@ -931,6 +936,31 @@ struct MtlWorkerGraphClient::Impl {
         }
 
         async_event_handler_registered = false;
+    }
+
+    void release_manager_graph_noexcept() noexcept {
+        if (!manager_graph_registered) {
+            return;
+        }
+
+        if (worker_lease.has_value()) {
+            default_mtl_worker_manager().release_graph_noexcept(worker_lease->worker_id, graph_id);
+        }
+
+        manager_graph_registered = false;
+    }
+
+    void invalidate_worker_noexcept() noexcept {
+        if (worker_lease.has_value()) {
+            default_mtl_worker_manager().invalidate_worker_noexcept(worker_lease->worker_id);
+        }
+
+        manager_graph_registered = false;
+    }
+
+    void clear_worker_lease_noexcept() noexcept {
+        manager_graph_registered = false;
+        worker_lease.reset();
     }
 };
 
@@ -1002,27 +1032,31 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
         return std::unexpected(runtime.error());
     }
 
-    auto lease = default_mtl_worker_manager().acquire_or_spawn_compatible_worker(*runtime);
+    auto lease = default_mtl_worker_manager().acquire_or_spawn_compatible_worker_for_graph(*runtime, impl_->graph_id);
     if (!lease.has_value()) {
         return std::unexpected(lease.error());
     }
 
     impl_->worker_lease = *lease;
+    impl_->manager_graph_registered = true;
 
     if (!impl_->worker_lease->control_channel) {
-        impl_->worker_lease.reset();
+        impl_->release_manager_graph_noexcept();
+        impl_->clear_worker_lease_noexcept();
         return std::unexpected(Error::InvalidBackendState);
     }
 
     auto prepared_rings = prepare_media_rings(impl_->graph_id, impl_->video, impl_->audio);
     if (!prepared_rings.has_value()) {
-        impl_->worker_lease.reset();
+        impl_->release_manager_graph_noexcept();
+        impl_->clear_worker_lease_noexcept();
         return std::unexpected(prepared_rings.error());
     }
 
     auto request = make_start_sessions_request();
     if (!request.has_value()) {
-        impl_->worker_lease.reset();
+        impl_->release_manager_graph_noexcept();
+        impl_->clear_worker_lease_noexcept();
         return std::unexpected(request.error());
     }
 
@@ -1040,7 +1074,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
 
     if (!registered_async_handler.has_value()) {
         impl_->async_event_state.reset();
-        impl_->worker_lease.reset();
+        impl_->invalidate_worker_noexcept();
+        impl_->clear_worker_lease_noexcept();
         return std::unexpected(registered_async_handler.error());
     }
 
@@ -1053,7 +1088,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
     if (!envelope.has_value()) {
         impl_->unregister_async_event_handler_noexcept();
         impl_->async_event_state.reset();
-        impl_->worker_lease.reset();
+        impl_->invalidate_worker_noexcept();
+        impl_->clear_worker_lease_noexcept();
         return std::unexpected(envelope.error());
     }
 
@@ -1061,7 +1097,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
     if (!started.has_value()) {
         impl_->unregister_async_event_handler_noexcept();
         impl_->async_event_state.reset();
-        impl_->worker_lease.reset();
+        impl_->release_manager_graph_noexcept();
+        impl_->clear_worker_lease_noexcept();
         return std::unexpected(started.error());
     }
 
@@ -1075,6 +1112,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
         impl_->active_start_count = 0;
         impl_->unregister_async_event_handler_noexcept();
         impl_->async_event_state.reset();
+        impl_->release_manager_graph_noexcept();
+        impl_->clear_worker_lease_noexcept();
         return true;
     }
 
@@ -1088,7 +1127,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
         impl_->active_start_count = 0;
         impl_->unregister_async_event_handler_noexcept();
         impl_->async_event_state.reset();
-        impl_->worker_lease.reset();
+        impl_->release_manager_graph_noexcept();
+        impl_->clear_worker_lease_noexcept();
         return std::unexpected(Error::InvalidBackendState);
     }
 
@@ -1101,7 +1141,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
         impl_->active_start_count = 0;
         impl_->unregister_async_event_handler_noexcept();
         impl_->async_event_state.reset();
-        impl_->worker_lease.reset();
+        impl_->invalidate_worker_noexcept();
+        impl_->clear_worker_lease_noexcept();
         return std::unexpected(event.error());
     }
 
@@ -1111,7 +1152,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
         impl_->active_start_count = 0;
         impl_->unregister_async_event_handler_noexcept();
         impl_->async_event_state.reset();
-        impl_->worker_lease.reset();
+        impl_->invalidate_worker_noexcept();
+        impl_->clear_worker_lease_noexcept();
         return std::unexpected(stopped.error());
     }
 
@@ -1119,24 +1161,14 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     impl_->active_start_count = 0;
     impl_->unregister_async_event_handler_noexcept();
     impl_->async_event_state.reset();
+    impl_->release_manager_graph_noexcept();
+    impl_->clear_worker_lease_noexcept();
 
     return true;
 }
 
 std::expected<MtlWorkerStatsEvent, Error> MtlWorkerGraphClient::stats() {
-    auto runtime = resolve_graph_runtime_config(impl_->video, impl_->audio);
-    if (!runtime.has_value()) {
-        return std::unexpected(runtime.error());
-    }
-
-    auto lease = default_mtl_worker_manager().acquire_or_spawn_compatible_worker(*runtime);
-    if (!lease.has_value()) {
-        return std::unexpected(lease.error());
-    }
-
-    impl_->worker_lease = *lease;
-
-    if (!impl_->worker_lease->control_channel) {
+    if (!impl_->running || !impl_->worker_lease.has_value() || !impl_->worker_lease->control_channel) {
         return std::unexpected(Error::InvalidBackendState);
     }
 
@@ -1149,11 +1181,23 @@ std::expected<MtlWorkerStatsEvent, Error> MtlWorkerGraphClient::stats() {
 
     auto event = impl_->worker_lease->control_channel->transact(MtlWorkerControlRequest{*request});
     if (!event.has_value()) {
+        impl_->running = false;
+        impl_->active_start_count = 0;
+        impl_->unregister_async_event_handler_noexcept();
+        impl_->async_event_state.reset();
+        impl_->invalidate_worker_noexcept();
+        impl_->clear_worker_lease_noexcept();
         return std::unexpected(event.error());
     }
 
     auto stats = interpret_stats_event(*event, request_id, impl_->graph_id);
     if (!stats.has_value()) {
+        impl_->running = false;
+        impl_->active_start_count = 0;
+        impl_->unregister_async_event_handler_noexcept();
+        impl_->async_event_state.reset();
+        impl_->invalidate_worker_noexcept();
+        impl_->clear_worker_lease_noexcept();
         return std::unexpected(stats.error());
     }
 

@@ -366,6 +366,10 @@ MtlWorkerProcessControlChannel::register_async_event_handler(MtlWorkerGraphId gr
         return std::unexpected(Error::OperationAborted);
     }
 
+    if (impl_->reader_failed) {
+        return std::unexpected(impl_->reader_error == Error::Ok ? Error::OperationAborted : impl_->reader_error);
+    }
+
     impl_->async_event_handlers.insert_or_assign(graph_id, std::move(handler));
     return true;
 }
@@ -394,6 +398,16 @@ const std::filesystem::path &MtlWorkerProcessControlChannel::worker_executable_p
 std::shared_ptr<IMtlWorkerControlChannel>
 create_mtl_worker_process_control_channel(std::filesystem::path worker_executable_path) {
     return std::make_shared<MtlWorkerProcessControlChannel>(std::move(worker_executable_path));
+}
+
+bool MtlWorkerProcessControlChannel::healthy() const noexcept {
+    try {
+        std::lock_guard lock(impl_->state_mutex);
+        return !impl_->shutdown_requested && !impl_->reader_failed && impl_->worker_pid > 0 &&
+               impl_->worker_control_fd >= 0;
+    } catch (...) {
+        return false;
+    }
 }
 
 } // namespace st2110

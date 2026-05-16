@@ -1,25 +1,18 @@
 #ifndef ST2110_OBS_PLUGIN_MTL_AUDIO_START_CONFIG_HPP
 #define ST2110_OBS_PLUGIN_MTL_AUDIO_START_CONFIG_HPP
 
-#include <st2110/backends/mtl/mtl_runtime_config.hpp>
+#include <st2110/backends/mtl/mtl_runtime_resolver.hpp>
 #include <st2110/foundation/error.hpp>
 #include <st2110/model/audio/audio_signaling.hpp>
 #include <st2110/receive/shared/receive_start_request.hpp>
 
 #include <array>
-#include <charconv>
-#include <cstddef>
 #include <cstdint>
 #include <expected>
 #include <optional>
-#include <string_view>
+#include <string>
 #include <utility>
 #include <variant>
-#include <string>
-
-#ifndef ST2110_MTL_DEV_KERNEL_SOCKET
-#define ST2110_MTL_DEV_KERNEL_SOCKET 0
-#endif
 
 namespace st2110 {
 
@@ -137,95 +130,6 @@ struct MtlAudioStartProjectionSettings {
     std::uint64_t frame_buffer_duration_ns = mtlAudioDefaultFrameBufferDurationNs;
 };
 
-[[nodiscard]] inline std::expected<std::uint8_t, Error> parse_mtl_audio_ipv4_octet(std::string_view value) {
-    if (value.empty() || value.size() > 3) {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    unsigned int parsed = 0;
-    const char *first = value.data();
-    const char *last = value.data() + value.size();
-
-    const auto [ptr, ec] = std::from_chars(first, last, parsed);
-    if (ec != std::errc{} || ptr != last || parsed > 255) {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    return static_cast<std::uint8_t>(parsed);
-}
-
-[[nodiscard]] inline std::expected<std::array<std::uint8_t, 4>, Error>
-parse_mtl_audio_ipv4_address(std::string_view address) {
-    std::array<std::uint8_t, 4> result{};
-
-    for (std::size_t i = 0; i < result.size(); ++i) {
-        const std::size_t dot = address.find('.');
-        const std::string_view token = (dot == std::string_view::npos) ? address : address.substr(0, dot);
-
-        auto octet = parse_mtl_audio_ipv4_octet(token);
-        if (!octet.has_value()) {
-            return std::unexpected(octet.error());
-        }
-
-        result[i] = *octet;
-
-        if (i + 1 == result.size()) {
-            if (dot != std::string_view::npos) {
-                return std::unexpected(Error::InvalidValue);
-            }
-            return result;
-        }
-
-        if (dot == std::string_view::npos) {
-            return std::unexpected(Error::InvalidValue);
-        }
-
-        address.remove_prefix(dot + 1);
-    }
-
-    return result;
-}
-
-[[nodiscard]] inline std::expected<MtlRuntimePortConfig, Error>
-project_receive_local_leg_to_mtl_audio_runtime_port(const ReceiveLocalLegPolicy &local_leg) {
-    if (local_leg.family != SocketAddressFamily::IPv4) {
-        return std::unexpected(Error::Unsupported);
-    }
-
-    auto sip_addr = parse_mtl_audio_ipv4_address(local_leg.local_ip);
-    if (!sip_addr.has_value()) {
-        return std::unexpected(sip_addr.error());
-    }
-
-#if ST2110_MTL_DEV_KERNEL_SOCKET
-    if (!local_leg.local_interface_name.has_value()) {
-        return std::unexpected(Error::Unsupported);
-    }
-
-    if (local_leg.local_interface_name->empty()) {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    return MtlRuntimePortConfig{
-        .port_name = std::string("kernel:") + *local_leg.local_interface_name,
-        .sip_addr = *sip_addr,
-    };
-#else
-    if (!local_leg.local_pci_bdf.has_value()) {
-        return std::unexpected(Error::Unsupported);
-    }
-
-    if (local_leg.local_pci_bdf->empty()) {
-        return std::unexpected(Error::InvalidValue);
-    }
-
-    return MtlRuntimePortConfig{
-        .port_name = *local_leg.local_pci_bdf,
-        .sip_addr = *sip_addr,
-    };
-#endif
-}
-
 [[nodiscard]] inline std::expected<MtlAudioPcmFormat, Error>
 project_audio_media_to_mtl_pcm_format(const AudioMediaDescription &media) {
     if (media.pcm_encoding != AudioPcmEncoding::LinearPcm) {
@@ -281,7 +185,7 @@ project_audio_media_to_mtl_channel_count(const AudioMediaDescription &media) {
 
 [[nodiscard]] inline std::expected<MtlAudioSessionPortConfig, Error>
 project_receive_remote_leg_to_mtl_audio_session_port(const ReceiveRemoteLeg &leg) {
-    auto ip_addr = parse_mtl_audio_ipv4_address(leg.destination.destination_address);
+    auto ip_addr = parse_mtl_ipv4_address(leg.destination.destination_address);
     if (!ip_addr.has_value()) {
         return std::unexpected(ip_addr.error());
     }
@@ -293,7 +197,7 @@ project_receive_remote_leg_to_mtl_audio_session_port(const ReceiveRemoteLeg &leg
     };
 
     if (!leg.source_filter.source_addresses.empty()) {
-        auto source_ip = parse_mtl_audio_ipv4_address(leg.source_filter.source_addresses.front());
+        auto source_ip = parse_mtl_ipv4_address(leg.source_filter.source_addresses.front());
         if (!source_ip.has_value()) {
             return std::unexpected(source_ip.error());
         }
@@ -351,9 +255,9 @@ project_receive_start_request_to_mtl_audio_start(const ReceiveStartRequest &requ
         return std::unexpected(samples_per_packet.error());
     }
 
-    auto primary_runtime = project_receive_local_leg_to_mtl_audio_runtime_port(request.local.legs[0]);
-    if (!primary_runtime.has_value()) {
-        return std::unexpected(primary_runtime.error());
+    auto runtime = project_receive_local_policy_to_mtl_runtime_config(bootstrap->receive_bootstrap, request.local);
+    if (!runtime.has_value()) {
+        return std::unexpected(runtime.error());
     }
 
     auto primary = project_receive_remote_leg_to_mtl_audio_session_port(bootstrap->receive_bootstrap.legs[0]);
@@ -361,13 +265,8 @@ project_receive_start_request_to_mtl_audio_start(const ReceiveStartRequest &requ
         return std::unexpected(primary.error());
     }
 
-    MtlRuntimeConfig runtime{
-        .primary_port = *primary_runtime,
-        .redundant_port = std::nullopt,
-    };
-
     MtlAudioStartConfig result{
-        .runtime = runtime,
+        .runtime = *runtime,
         .primary = *primary,
         .redundant = std::nullopt,
         .expected_payload_type = bootstrap->stream.receive_signaled_stream.expected_payload_type,
@@ -385,17 +284,11 @@ project_receive_start_request_to_mtl_audio_start(const ReceiveStartRequest &requ
             return std::unexpected(Error::InvalidValue);
         }
 
-        auto redundant_runtime = project_receive_local_leg_to_mtl_audio_runtime_port(request.local.legs[1]);
-        if (!redundant_runtime.has_value()) {
-            return std::unexpected(redundant_runtime.error());
-        }
-
         auto redundant = project_receive_remote_leg_to_mtl_audio_session_port(bootstrap->receive_bootstrap.legs[1]);
         if (!redundant.has_value()) {
             return std::unexpected(redundant.error());
         }
 
-        result.runtime.redundant_port = *redundant_runtime;
         result.redundant = *redundant;
     }
 

@@ -70,6 +70,76 @@ namespace {
     return true;
 }
 
+void reset_slot_media_metadata_noexcept(MtlWorkerSharedMemorySlotHeader &header) noexcept {
+    header.media = MtlWorkerSharedMemorySlotMediaMetadata{};
+}
+
+[[nodiscard]] bool valid_media_kind_value(const MtlWorkerMediaKind value) noexcept {
+    switch (value) {
+    case MtlWorkerMediaKind::Video:
+    case MtlWorkerMediaKind::Audio:
+        return true;
+    }
+
+    return false;
+}
+
+[[nodiscard]] std::expected<bool, Error>
+validate_slot_media_metadata(const MtlWorkerSharedMemorySlotMediaMetadata &metadata, const std::uint64_t payload_size,
+                             const std::uint64_t payload_capacity) noexcept {
+    if (!valid_media_kind_value(metadata.media_kind)) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (payload_size == 0 || payload_size > payload_capacity) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (metadata.plane_count == 0 || metadata.plane_count > mtlWorkerSharedMemoryMaxPlanes) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    std::uint64_t covered_payload_end = 0;
+
+    for (std::uint32_t i = 0; i < metadata.plane_count; ++i) {
+        const std::uint64_t offset = metadata.plane_offset_bytes[i];
+        const std::uint64_t size = metadata.plane_size_bytes[i];
+
+        if (size == 0) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        std::uint64_t end = 0;
+        if (add_overflows_u64(offset, size, end) || end > payload_size) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        if (end > covered_payload_end) {
+            covered_payload_end = end;
+        }
+    }
+
+    if (covered_payload_end > payload_size) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    switch (metadata.media_kind) {
+    case MtlWorkerMediaKind::Video:
+        if (metadata.width == 0 || metadata.height == 0) {
+            return std::unexpected(Error::InvalidValue);
+        }
+        break;
+
+    case MtlWorkerMediaKind::Audio:
+        if (metadata.sample_rate_hz == 0 || metadata.channels == 0 || metadata.samples_per_channel == 0) {
+            return std::unexpected(Error::InvalidValue);
+        }
+        break;
+    }
+
+    return true;
+}
+
 } // namespace
 
 std::expected<bool, Error> validate_mtl_worker_shared_memory_ring_descriptor_for_mapping(
@@ -286,8 +356,7 @@ std::expected<bool, Error> MtlWorkerSharedMemoryRingMap::initialize_slot_headers
         (*header)->flags = static_cast<std::uint32_t>(MtlWorkerSharedMemorySlotFlags::None);
         (*header)->sequence = 0;
         (*header)->payload_size = 0;
-        (*header)->reserved0 = 0;
-        (*header)->reserved1 = 0;
+        reset_slot_media_metadata_noexcept(**header);
 
         std::atomic_ref<std::uint32_t> state_ref((*header)->state);
         state_ref.store(static_cast<std::uint32_t>(MtlWorkerSharedMemorySlotState::Empty), std::memory_order_release);
@@ -348,12 +417,17 @@ std::expected<bool, Error> MtlWorkerSharedMemoryRingMap::begin_write_slot(const 
                                              std::memory_order_acq_rel, std::memory_order_acquire);
 }
 
-std::expected<bool, Error> MtlWorkerSharedMemoryRingMap::publish_written_slot(const std::uint32_t slot_index,
-                                                                              const std::uint64_t payload_size,
-                                                                              const std::uint64_t sequence,
-                                                                              const std::uint32_t flags) noexcept {
+std::expected<bool, Error>
+MtlWorkerSharedMemoryRingMap::publish_written_slot(const std::uint32_t slot_index, const std::uint64_t payload_size,
+                                                   const std::uint64_t sequence, const std::uint32_t flags,
+                                                   const MtlWorkerSharedMemorySlotMediaMetadata &metadata) noexcept {
     if (payload_size > descriptor_.slot_payload_capacity_bytes) {
         return std::unexpected(Error::InvalidValue);
+    }
+
+    auto valid_metadata = validate_slot_media_metadata(metadata, payload_size, descriptor_.slot_payload_capacity_bytes);
+    if (!valid_metadata.has_value()) {
+        return std::unexpected(valid_metadata.error());
     }
 
     auto header = slot_header(slot_index);
@@ -373,6 +447,7 @@ std::expected<bool, Error> MtlWorkerSharedMemoryRingMap::publish_written_slot(co
     (*header)->payload_size = payload_size;
     (*header)->sequence = sequence;
     (*header)->flags = flags;
+    (*header)->media = metadata;
 
     std::atomic_ref<std::uint32_t> state_ref((*header)->state);
     state_ref.store(static_cast<std::uint32_t>(MtlWorkerSharedMemorySlotState::Ready), std::memory_order_release);
@@ -397,6 +472,7 @@ std::expected<bool, Error> MtlWorkerSharedMemoryRingMap::abort_write_slot(const 
 
     (*header)->payload_size = 0;
     (*header)->flags = static_cast<std::uint32_t>(MtlWorkerSharedMemorySlotFlags::None);
+    reset_slot_media_metadata_noexcept(**header);
 
     std::atomic_ref<std::uint32_t> state_ref((*header)->state);
     state_ref.store(static_cast<std::uint32_t>(MtlWorkerSharedMemorySlotState::Empty), std::memory_order_release);
@@ -420,8 +496,7 @@ std::expected<bool, Error> MtlWorkerSharedMemoryRingMap::begin_read_slot(const s
 
 std::expected<MtlWorkerSharedMemoryBeginReadResult, Error>
 MtlWorkerSharedMemoryRingMap::begin_read_slot_if_matches(const std::uint32_t slot_index,
-                                                         const std::uint64_t expected_sequence,
-                                                         const std::uint64_t expected_payload_size) noexcept {
+                                                         const std::uint64_t expected_sequence) noexcept {
     auto header = slot_header(slot_index);
     if (!header.has_value()) {
         return std::unexpected(header.error());
@@ -438,7 +513,7 @@ MtlWorkerSharedMemoryRingMap::begin_read_slot_if_matches(const std::uint32_t slo
         return MtlWorkerSharedMemoryBeginReadResult::NotReady;
     }
 
-    if ((*header)->sequence != expected_sequence || (*header)->payload_size != expected_payload_size) {
+    if ((*header)->sequence != expected_sequence) {
         return MtlWorkerSharedMemoryBeginReadResult::Stale;
     }
 
@@ -453,13 +528,14 @@ MtlWorkerSharedMemoryRingMap::begin_read_slot_if_matches(const std::uint32_t slo
         return MtlWorkerSharedMemoryBeginReadResult::NotReady;
     }
 
-    /*
-     * After the successful Ready -> Reading transition, the worker cannot reuse
-     * this slot until OBS releases it. Re-check the fields to guard against
-     * corrupted shared memory.
-     */
-    if ((*header)->sequence != expected_sequence || (*header)->payload_size != expected_payload_size) {
+    if ((*header)->sequence != expected_sequence) {
         return std::unexpected(Error::InvalidValue);
+    }
+
+    auto valid_metadata = validate_slot_media_metadata((*header)->media, (*header)->payload_size,
+                                                       descriptor_.slot_payload_capacity_bytes);
+    if (!valid_metadata.has_value()) {
+        return std::unexpected(valid_metadata.error());
     }
 
     return MtlWorkerSharedMemoryBeginReadResult::Acquired;
@@ -482,6 +558,7 @@ std::expected<bool, Error> MtlWorkerSharedMemoryRingMap::release_read_slot(const
 
     (*header)->payload_size = 0;
     (*header)->flags = static_cast<std::uint32_t>(MtlWorkerSharedMemorySlotFlags::None);
+    reset_slot_media_metadata_noexcept(**header);
 
     std::atomic_ref<std::uint32_t> state_ref((*header)->state);
     state_ref.store(static_cast<std::uint32_t>(MtlWorkerSharedMemorySlotState::Empty), std::memory_order_release);

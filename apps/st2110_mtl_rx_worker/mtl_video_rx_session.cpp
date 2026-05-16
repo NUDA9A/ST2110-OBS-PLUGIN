@@ -3,10 +3,12 @@
 
 #include <mtl/st20_api.h>
 #include <mtl/st_pipeline_api.h>
+#include <st2110/delivery/video/video_frame.hpp>
 
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <span>
 #include <stop_token>
 #include <thread>
@@ -168,17 +170,17 @@ validate_video_media_ring(const st2110::MtlWorkerSharedMemoryRingMap *ring) noex
     return true;
 }
 
-[[nodiscard]] std::expected<bool, st2110::Error>
-acquire_video_ring_slot(st2110::MtlWorkerSharedMemoryRingMap &ring, std::uint32_t &next_slot_index,
-                        std::uint32_t &out_slot_index) noexcept {
+[[nodiscard]] std::expected<bool, st2110::Error> acquire_video_ring_slot(st2110::MtlWorkerSharedMemoryRingMap &ring,
+                                                                         std::uint32_t &next_slot_index,
+                                                                         std::uint32_t &out_slot_index) noexcept {
     const auto &descriptor = ring.descriptor();
     if (descriptor.slot_count == 0) {
         return std::unexpected(st2110::Error::InvalidBackendState);
     }
 
     for (std::uint32_t attempt = 0; attempt < descriptor.slot_count; ++attempt) {
-        const std::uint32_t candidate = static_cast<std::uint32_t>(
-            (static_cast<std::uint64_t>(next_slot_index) + attempt) % descriptor.slot_count);
+        const std::uint32_t candidate =
+            static_cast<std::uint32_t>((static_cast<std::uint64_t>(next_slot_index) + attempt) % descriptor.slot_count);
 
         auto began = ring.begin_write_slot(candidate);
         if (!began.has_value()) {
@@ -187,8 +189,8 @@ acquire_video_ring_slot(st2110::MtlWorkerSharedMemoryRingMap &ring, std::uint32_
 
         if (*began) {
             out_slot_index = candidate;
-            next_slot_index = static_cast<std::uint32_t>((static_cast<std::uint64_t>(candidate) + 1) %
-                                                         descriptor.slot_count);
+            next_slot_index =
+                static_cast<std::uint32_t>((static_cast<std::uint64_t>(candidate) + 1) % descriptor.slot_count);
             return true;
         }
     }
@@ -196,20 +198,134 @@ acquire_video_ring_slot(st2110::MtlWorkerSharedMemoryRingMap &ring, std::uint32_
     return false;
 }
 
+struct VideoPayloadCopyResult {
+    std::uint64_t payload_size = 0;
+    st2110::MtlWorkerSharedMemorySlotMediaMetadata metadata{};
+};
+
+[[nodiscard]] bool add_overflows_u64(const std::uint64_t a, const std::uint64_t b, std::uint64_t &out) noexcept {
+    if (std::numeric_limits<std::uint64_t>::max() - a < b) {
+        return true;
+    }
+
+    out = a + b;
+    return false;
+}
+
+[[nodiscard]] bool mul_overflows_u64(const std::uint64_t a, const std::uint64_t b, std::uint64_t &out) noexcept {
+    if (a != 0 && b > std::numeric_limits<std::uint64_t>::max() / a) {
+        return true;
+    }
+
+    out = a * b;
+    return false;
+}
+
+[[nodiscard]] std::expected<VideoPayloadCopyResult, st2110::Error>
+copy_video_frame_planes_to_payload(std::span<std::byte> payload, const st2110::MtlVideoStartConfig &cfg,
+                                   st_frame *frame) {
+    if (!frame) {
+        return std::unexpected(st2110::Error::InvalidValue);
+    }
+
+    if (frame->width != cfg.width || frame->height != cfg.height) {
+        return std::unexpected(st2110::Error::InvalidValue);
+    }
+
+    auto expected_output_format = map_mtl_video_output_format(cfg.output_format);
+    if (!expected_output_format.has_value()) {
+        return std::unexpected(expected_output_format.error());
+    }
+
+    if (frame->fmt != *expected_output_format) {
+        return std::unexpected(st2110::Error::InvalidValue);
+    }
+
+    st2110::VideoFrame layout{frame->width, frame->height, cfg.output_format};
+
+    if (layout.plane_count() == 0 || layout.plane_count() > st2110::mtlWorkerSharedMemoryMaxPlanes) {
+        return std::unexpected(st2110::Error::InvalidValue);
+    }
+
+    st2110::MtlWorkerSharedMemorySlotMediaMetadata metadata{
+        .media_kind = st2110::MtlWorkerMediaKind::Video,
+        .media_format = static_cast<std::uint32_t>(cfg.output_format),
+        .width = frame->width,
+        .height = frame->height,
+        .sample_rate_hz = 0,
+        .channels = 0,
+        .samples_per_channel = 0,
+        .rtp_timestamp = frame->rtp_timestamp,
+        .receive_timestamp_ns = static_cast<st2110::TimestampNs>(frame->receive_timestamp),
+        .plane_count = static_cast<std::uint32_t>(layout.plane_count()),
+        .reserved0 = 0,
+        .plane_offset_bytes = {0, 0, 0, 0},
+        .plane_size_bytes = {0, 0, 0, 0},
+        .plane_line_size_bytes = {0, 0, 0, 0},
+    };
+
+    std::uint64_t payload_offset = 0;
+
+    for (std::size_t plane = 0; plane < layout.plane_count(); ++plane) {
+        if (!frame->addr[plane]) {
+            return std::unexpected(st2110::Error::InvalidValue);
+        }
+
+        const auto active_row_bytes = static_cast<std::uint64_t>(layout.active_row_bytes(plane));
+        const auto height_rows = static_cast<std::uint64_t>(layout.plane_height_rows(plane));
+        const auto source_stride = static_cast<std::uint64_t>(frame->linesize[plane]);
+
+        if (active_row_bytes == 0 || height_rows == 0 || source_stride < active_row_bytes) {
+            return std::unexpected(st2110::Error::InvalidValue);
+        }
+
+        std::uint64_t plane_size = 0;
+        if (mul_overflows_u64(active_row_bytes, height_rows, plane_size)) {
+            return std::unexpected(st2110::Error::InvalidValue);
+        }
+
+        std::uint64_t next_payload_offset = 0;
+        if (add_overflows_u64(payload_offset, plane_size, next_payload_offset) ||
+            next_payload_offset > static_cast<std::uint64_t>(payload.size())) {
+            return std::unexpected(st2110::Error::InvalidValue);
+        }
+
+        const auto *src = static_cast<const std::byte *>(frame->addr[plane]);
+        std::byte *dst = payload.data() + static_cast<std::size_t>(payload_offset);
+
+        for (std::uint64_t row = 0; row < height_rows; ++row) {
+            std::memcpy(dst + static_cast<std::size_t>(row * active_row_bytes),
+                        src + static_cast<std::size_t>(row * source_stride),
+                        static_cast<std::size_t>(active_row_bytes));
+        }
+
+        metadata.plane_offset_bytes[plane] = payload_offset;
+        metadata.plane_size_bytes[plane] = plane_size;
+
+        /*
+         * Shared-memory payload is tightly packed per plane. This is the slot
+         * payload line size, not necessarily MTL's source linesize.
+         */
+        metadata.plane_line_size_bytes[plane] = active_row_bytes;
+
+        payload_offset = next_payload_offset;
+    }
+
+    return VideoPayloadCopyResult{
+        .payload_size = payload_offset,
+        .metadata = metadata,
+    };
+}
+
 [[nodiscard]] std::expected<bool, st2110::Error>
 export_video_frame_to_ring(st2110::MtlWorkerSharedMemoryRingMap *ring, MtlWorkerEventWriter *event_writer,
-                           const st2110::MtlWorkerGraphId graph_id, st_frame *frame,
-                           std::uint32_t &next_slot_index, std::uint64_t &next_sequence) noexcept {
+                           const st2110::MtlWorkerGraphId graph_id, const st2110::MtlVideoStartConfig &cfg,
+                           st_frame *frame, std::uint32_t &next_slot_index, std::uint64_t &next_sequence) noexcept {
     if (!ring || !event_writer || !frame) {
         return false;
     }
 
-    if (!ring->mapped() || !frame->addr[0] || frame->data_size == 0) {
-        return false;
-    }
-
-    const std::uint64_t payload_size = static_cast<std::uint64_t>(frame->data_size);
-    if (payload_size > ring->descriptor().slot_payload_capacity_bytes) {
+    if (!ring->mapped()) {
         return false;
     }
 
@@ -229,17 +345,28 @@ export_video_frame_to_ring(st2110::MtlWorkerSharedMemoryRingMap *ring, MtlWorker
         return std::unexpected(payload.error());
     }
 
-    if (payload->size() < frame->data_size) {
+    std::expected<VideoPayloadCopyResult, st2110::Error> copied;
+
+    try {
+        copied = copy_video_frame_planes_to_payload(*payload, cfg, frame);
+    } catch (...) {
+        (void)ring->abort_write_slot(slot_index);
+        return std::unexpected(st2110::Error::InvalidValue);
+    }
+    if (!copied.has_value()) {
+        (void)ring->abort_write_slot(slot_index);
+        return std::unexpected(copied.error());
+    }
+
+    if (copied->payload_size == 0 || copied->payload_size > ring->descriptor().slot_payload_capacity_bytes) {
         (void)ring->abort_write_slot(slot_index);
         return false;
     }
 
-    std::memcpy(payload->data(), frame->addr[0], frame->data_size);
-
     const std::uint64_t sequence = next_sequence++;
     auto published = ring->publish_written_slot(
-        slot_index, payload_size, sequence,
-        static_cast<std::uint32_t>(st2110::MtlWorkerSharedMemorySlotFlags::None));
+        slot_index, copied->payload_size, sequence,
+        static_cast<std::uint32_t>(st2110::MtlWorkerSharedMemorySlotFlags::None), copied->metadata);
     if (!published.has_value()) {
         (void)ring->abort_write_slot(slot_index);
         return std::unexpected(published.error());
@@ -250,12 +377,6 @@ export_video_frame_to_ring(st2110::MtlWorkerSharedMemoryRingMap *ring, MtlWorker
         .ring_id = ring->descriptor().ring_id,
         .slot_id = slot_index,
         .sequence = sequence,
-        .width = frame->width,
-        .height = frame->height,
-        .rtp_timestamp = frame->rtp_timestamp,
-        .receive_timestamp_ns = static_cast<st2110::TimestampNs>(frame->receive_timestamp),
-        .payload_size = static_cast<std::size_t>(payload_size),
-        .partial = false,
     };
 
     auto wrote = event_writer->write_event(st2110::MtlWorkerControlEvent{event});
@@ -352,14 +473,10 @@ struct MtlVideoRxSession::Impl {
     std::jthread receive_thread{};
 
     explicit Impl(st2110::MtlWorkerGraphId graph, st2110::MtlVideoStartConfig session_cfg,
-              st20p_rx_handle session_handle, MtlWorkerGraphStats &graph_stats, MtlWorkerEventWriter &writer,
-              st2110::MtlWorkerSharedMemoryRingMap *bound_media_ring)
-    : cfg(std::move(session_cfg)),
-      graph_id(graph),
-      rx(session_handle),
-      stats(&graph_stats),
-      event_writer(&writer),
-      media_ring(bound_media_ring) {}
+                  st20p_rx_handle session_handle, MtlWorkerGraphStats &graph_stats, MtlWorkerEventWriter &writer,
+                  st2110::MtlWorkerSharedMemoryRingMap *bound_media_ring)
+        : cfg(std::move(session_cfg)), graph_id(graph), rx(session_handle), stats(&graph_stats), event_writer(&writer),
+          media_ring(bound_media_ring) {}
 
     ~Impl() {
         stop_thread_noexcept();
@@ -417,8 +534,8 @@ struct MtlVideoRxSession::Impl {
                 stats->record_video_frame_received();
             }
 
-            auto exported = export_video_frame_to_ring(media_ring, event_writer, graph_id, frame, next_slot_index,
-                                           next_sequence);
+            auto exported = export_video_frame_to_ring(media_ring, event_writer, graph_id, cfg, frame, next_slot_index,
+                                                       next_sequence);
             if (!exported.has_value() || !*exported) {
                 if (stats) {
                     stats->record_video_frame_dropped();
@@ -433,8 +550,7 @@ struct MtlVideoRxSession::Impl {
 std::expected<std::unique_ptr<MtlVideoRxSession>, st2110::Error>
 MtlVideoRxSession::create(MtlRuntimeContext &runtime, st2110::MtlWorkerGraphId graph_id,
                           st2110::MtlVideoStartConfig cfg, MtlWorkerGraphStats &stats,
-                          MtlWorkerEventWriter &event_writer,
-                          st2110::MtlWorkerSharedMemoryRingMap *media_ring) {
+                          MtlWorkerEventWriter &event_writer, st2110::MtlWorkerSharedMemoryRingMap *media_ring) {
     if (!runtime.handle()) {
         return std::unexpected(st2110::Error::InvalidBackendState);
     }
@@ -475,8 +591,6 @@ void MtlVideoRxSession::wake_block() noexcept {
 
 const st2110::MtlVideoStartConfig &MtlVideoRxSession::config() const noexcept { return impl_->cfg; }
 
-const st2110::MtlWorkerSharedMemoryRingMap *MtlVideoRxSession::media_ring() const noexcept {
-    return impl_->media_ring;
-}
+const st2110::MtlWorkerSharedMemoryRingMap *MtlVideoRxSession::media_ring() const noexcept { return impl_->media_ring; }
 
 } // namespace st2110_mtl_rx_worker

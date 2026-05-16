@@ -1141,12 +1141,6 @@ std::expected<std::vector<std::uint8_t>, Error> serialize_mtl_worker_control_eve
                 writer.u64(typed_event.ring_id);
                 writer.u64(typed_event.slot_id);
                 writer.u64(typed_event.sequence);
-                writer.u32(typed_event.width);
-                writer.u32(typed_event.height);
-                writer.u32(typed_event.rtp_timestamp);
-                writer.u64(typed_event.receive_timestamp_ns);
-                write_size_t_u64(writer, typed_event.payload_size);
-                writer.u8(typed_event.partial ? 1 : 0);
                 return std::move(writer).finish();
             } else if constexpr (std::is_same_v<Event, MtlWorkerAudioBlockReadyEvent>) {
                 writer.u8(static_cast<std::uint8_t>(MessageTag::AudioBlockReadyEvent));
@@ -1154,13 +1148,6 @@ std::expected<std::vector<std::uint8_t>, Error> serialize_mtl_worker_control_eve
                 writer.u64(typed_event.ring_id);
                 writer.u64(typed_event.slot_id);
                 writer.u64(typed_event.sequence);
-                writer.u32(typed_event.sample_rate_hz);
-                writer.u32(typed_event.channels);
-                writer.u32(typed_event.samples_per_channel);
-                writer.u32(typed_event.rtp_timestamp);
-                writer.u64(typed_event.receive_timestamp_ns);
-                write_size_t_u64(writer, typed_event.payload_size);
-                writer.u8(typed_event.partial ? 1 : 0);
                 return std::move(writer).finish();
             } else {
                 return std::unexpected(Error::Unsupported);
@@ -1311,9 +1298,9 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
         auto release_failures = reader.u64();
         auto ignored_events = reader.u64();
 
-        if (!stale_ready_events.has_value() || !request_id.has_value() || !graph_id.has_value() || !video_frames_received.has_value() ||
-            !audio_blocks_received.has_value() || !video_frames_dropped.has_value() ||
-            !audio_blocks_dropped.has_value() || !frame_ready_events.has_value() ||
+        if (!stale_ready_events.has_value() || !request_id.has_value() || !graph_id.has_value() ||
+            !video_frames_received.has_value() || !audio_blocks_received.has_value() ||
+            !video_frames_dropped.has_value() || !audio_blocks_dropped.has_value() || !frame_ready_events.has_value() ||
             !audio_block_ready_events.has_value() || !video_frames_delivered.has_value() ||
             !audio_blocks_delivered.has_value() || !released_slots.has_value() || !malformed_ready_events.has_value() ||
             !delivery_failures.has_value() || !release_failures.has_value() || !ignored_events.has_value()) {
@@ -1352,16 +1339,8 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
         auto ring_id = reader.u64();
         auto slot_id = reader.u64();
         auto sequence = reader.u64();
-        auto width = reader.u32();
-        auto height = reader.u32();
-        auto rtp_timestamp = reader.u32();
-        auto receive_timestamp_ns = reader.u64();
-        auto payload_size = read_size_t_u64(reader);
-        auto partial = read_bool_u8(reader);
 
-        if (!sequence.has_value() || !graph_id.has_value() || !ring_id.has_value() || !slot_id.has_value() || !width.has_value() ||
-            !height.has_value() || !rtp_timestamp.has_value() || !receive_timestamp_ns.has_value() ||
-            !payload_size.has_value() || !partial.has_value()) {
+        if (!sequence.has_value() || !graph_id.has_value() || !ring_id.has_value() || !slot_id.has_value()) {
             return std::unexpected(Error::InvalidValue);
         }
 
@@ -1376,12 +1355,6 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
                 .ring_id = *ring_id,
                 .slot_id = *slot_id,
                 .sequence = *sequence,
-                .width = *width,
-                .height = *height,
-                .rtp_timestamp = *rtp_timestamp,
-                .receive_timestamp_ns = *receive_timestamp_ns,
-                .payload_size = *payload_size,
-                .partial = *partial,
             },
         };
     }
@@ -1391,17 +1364,8 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
         auto ring_id = reader.u64();
         auto slot_id = reader.u64();
         auto sequence = reader.u64();
-        auto sample_rate_hz = reader.u32();
-        auto channels = reader.u32();
-        auto samples_per_channel = reader.u32();
-        auto rtp_timestamp = reader.u32();
-        auto receive_timestamp_ns = reader.u64();
-        auto payload_size = read_size_t_u64(reader);
-        auto partial = read_bool_u8(reader);
 
-        if (!sequence.has_value() || !graph_id.has_value() || !ring_id.has_value() || !slot_id.has_value() || !sample_rate_hz.has_value() ||
-            !channels.has_value() || !samples_per_channel.has_value() || !rtp_timestamp.has_value() ||
-            !receive_timestamp_ns.has_value() || !payload_size.has_value() || !partial.has_value()) {
+        if (!sequence.has_value() || !graph_id.has_value() || !ring_id.has_value() || !slot_id.has_value()) {
             return std::unexpected(Error::InvalidValue);
         }
 
@@ -1416,13 +1380,6 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
                 .ring_id = *ring_id,
                 .slot_id = *slot_id,
                 .sequence = *sequence,
-                .sample_rate_hz = *sample_rate_hz,
-                .channels = *channels,
-                .samples_per_channel = *samples_per_channel,
-                .rtp_timestamp = *rtp_timestamp,
-                .receive_timestamp_ns = *receive_timestamp_ns,
-                .payload_size = *payload_size,
-                .partial = *partial,
             },
         };
     }

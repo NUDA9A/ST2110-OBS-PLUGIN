@@ -46,12 +46,43 @@ enum class MtlWorkerSharedMemoryBeginReadResult : std::uint32_t {
     Stale = 2,
 };
 
+inline constexpr std::uint32_t mtlWorkerSharedMemoryMaxPlanes = 4;
+
+struct MtlWorkerSharedMemorySlotMediaMetadata {
+    MtlWorkerMediaKind media_kind = MtlWorkerMediaKind::Video;
+
+    /*
+     * Video: static_cast<std::uint32_t>(PixelFormat).
+     * Audio: static_cast<std::uint32_t>(MtlAudioPcmFormat).
+     */
+    std::uint32_t media_format = 0;
+
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+
+    std::uint32_t sample_rate_hz = 0;
+    std::uint32_t channels = 0;
+    std::uint32_t samples_per_channel = 0;
+
+    std::uint32_t rtp_timestamp = 0;
+    TimestampNs receive_timestamp_ns = 0;
+
+    std::uint32_t plane_count = 0;
+    std::uint32_t reserved0 = 0;
+
+    std::uint64_t plane_offset_bytes[mtlWorkerSharedMemoryMaxPlanes]{};
+    std::uint64_t plane_size_bytes[mtlWorkerSharedMemoryMaxPlanes]{};
+    std::uint64_t plane_line_size_bytes[mtlWorkerSharedMemoryMaxPlanes]{};
+};
+
+static_assert(std::is_standard_layout_v<MtlWorkerSharedMemorySlotMediaMetadata>);
+static_assert(std::is_trivially_copyable_v<MtlWorkerSharedMemorySlotMediaMetadata>);
+
 /*
  * Fixed slot header stored at the beginning of every slot.
  *
- * The structure intentionally uses plain integer fields rather than
- * std::atomic members. Inter-process synchronization is performed with
- * std::atomic_ref over these fields.
+ * Ready events carry routing information only. This header carries media
+ * payload/layout metadata for the slot payload.
  */
 struct alignas(64) MtlWorkerSharedMemorySlotHeader {
     std::uint32_t magic = mtlWorkerSharedMemorySlotMagic;
@@ -63,8 +94,7 @@ struct alignas(64) MtlWorkerSharedMemorySlotHeader {
     std::uint64_t sequence = 0;
     std::uint64_t payload_size = 0;
 
-    std::uint64_t reserved0 = 0;
-    std::uint64_t reserved1 = 0;
+    MtlWorkerSharedMemorySlotMediaMetadata media{};
 };
 
 static_assert(std::is_standard_layout_v<MtlWorkerSharedMemorySlotHeader>);
@@ -110,16 +140,16 @@ class MtlWorkerSharedMemoryRingMap final {
 
     [[nodiscard]] std::expected<bool, Error> begin_write_slot(std::uint32_t slot_index) noexcept;
 
-    [[nodiscard]] std::expected<bool, Error> publish_written_slot(std::uint32_t slot_index, std::uint64_t payload_size,
-                                                                  std::uint64_t sequence, std::uint32_t flags) noexcept;
+    [[nodiscard]] std::expected<bool, Error>
+    publish_written_slot(std::uint32_t slot_index, std::uint64_t payload_size, std::uint64_t sequence,
+                         std::uint32_t flags, const MtlWorkerSharedMemorySlotMediaMetadata &metadata) noexcept;
 
     [[nodiscard]] std::expected<bool, Error> abort_write_slot(std::uint32_t slot_index) noexcept;
 
     [[nodiscard]] std::expected<bool, Error> begin_read_slot(std::uint32_t slot_index) noexcept;
 
     [[nodiscard]] std::expected<MtlWorkerSharedMemoryBeginReadResult, Error>
-begin_read_slot_if_matches(std::uint32_t slot_index, std::uint64_t expected_sequence,
-                           std::uint64_t expected_payload_size) noexcept;
+    begin_read_slot_if_matches(std::uint32_t slot_index, std::uint64_t expected_sequence) noexcept;
 
     [[nodiscard]] std::expected<bool, Error> release_read_slot(std::uint32_t slot_index) noexcept;
 

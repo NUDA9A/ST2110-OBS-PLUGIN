@@ -21,6 +21,11 @@ namespace st2110 {
  * Workers are cached by derived MtlRuntimeConfig. Multiple receive graphs with
  * the same compatible runtime config reuse the same worker process/control
  * channel; incompatible runtime configs get separate workers.
+ *
+ * The manager also tracks graph ownership. A healthy idle compatible worker may
+ * remain cached for future reuse. A healthy idle incompatible worker is retired
+ * when a new incompatible runtime is acquired or when it becomes idle while
+ * another runtime worker exists.
  */
 class MtlWorkerManager final {
   public:
@@ -40,7 +45,12 @@ class MtlWorkerManager final {
     MtlWorkerManager(MtlWorkerManager &&) noexcept = delete;
     MtlWorkerManager &operator=(MtlWorkerManager &&) noexcept = delete;
 
-    [[nodiscard]] std::expected<WorkerLease, Error> acquire_or_spawn_compatible_worker(const MtlRuntimeConfig &runtime);
+    [[nodiscard]] std::expected<WorkerLease, Error>
+    acquire_or_spawn_compatible_worker_for_graph(const MtlRuntimeConfig &runtime, MtlWorkerGraphId graph_id);
+
+    void release_graph_noexcept(std::uint64_t worker_id, MtlWorkerGraphId graph_id) noexcept;
+
+    void invalidate_worker_noexcept(std::uint64_t worker_id) noexcept;
 
     void shutdown_all_workers_noexcept() noexcept;
     [[nodiscard]] const std::filesystem::path &worker_executable_path() const noexcept;

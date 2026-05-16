@@ -30,7 +30,7 @@ using MtlWorkerGraphId = std::uint64_t;
 using MtlWorkerSlotId = std::uint64_t;
 using MtlWorkerSharedMemoryRingId = std::uint64_t;
 
-inline constexpr std::uint32_t mtlWorkerSharedMemoryRingLayoutVersion = 1;
+inline constexpr std::uint32_t mtlWorkerSharedMemoryRingLayoutVersion = 2;
 inline constexpr std::size_t defaultMtlWorkerMaxSharedMemoryRingDescriptors = 16;
 
 enum class MtlWorkerMediaKind : std::uint32_t {
@@ -198,14 +198,6 @@ struct MtlWorkerFrameReadyEvent {
     MtlWorkerSharedMemoryRingId ring_id = 0;
     MtlWorkerSlotId slot_id = 0;
     std::uint64_t sequence = 0;
-
-    std::uint32_t width = 0;
-    std::uint32_t height = 0;
-    std::uint32_t rtp_timestamp = 0;
-    TimestampNs receive_timestamp_ns = 0;
-
-    std::size_t payload_size = 0;
-    bool partial = false;
 };
 
 struct MtlWorkerAudioBlockReadyEvent {
@@ -213,15 +205,6 @@ struct MtlWorkerAudioBlockReadyEvent {
     MtlWorkerSharedMemoryRingId ring_id = 0;
     MtlWorkerSlotId slot_id = 0;
     std::uint64_t sequence = 0;
-
-    std::uint32_t sample_rate_hz = 0;
-    std::uint32_t channels = 0;
-    std::uint32_t samples_per_channel = 0;
-    std::uint32_t rtp_timestamp = 0;
-    TimestampNs receive_timestamp_ns = 0;
-
-    std::size_t payload_size = 0;
-    bool partial = false;
 };
 
 using MtlWorkerControlEvent =

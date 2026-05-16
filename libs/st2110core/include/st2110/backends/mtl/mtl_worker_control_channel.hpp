@@ -96,6 +96,7 @@ class IMtlWorkerControlChannel {
     register_async_event_handler(MtlWorkerGraphId graph_id, MtlWorkerAsyncEventHandler handler) = 0;
 
     virtual void unregister_async_event_handler_noexcept(MtlWorkerGraphId graph_id) noexcept = 0;
+    [[nodiscard]] virtual bool healthy() const noexcept = 0;
 
   protected:
     IMtlWorkerControlChannel() = default;

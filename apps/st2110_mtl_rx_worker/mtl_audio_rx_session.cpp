@@ -82,17 +82,17 @@ audio_bytes_per_sample(const st2110::MtlAudioPcmFormat format) noexcept {
     return std::unexpected(st2110::Error::Unsupported);
 }
 
-[[nodiscard]] std::expected<bool, st2110::Error>
-acquire_audio_ring_slot(st2110::MtlWorkerSharedMemoryRingMap &ring, std::uint32_t &next_slot_index,
-                        std::uint32_t &out_slot_index) noexcept {
+[[nodiscard]] std::expected<bool, st2110::Error> acquire_audio_ring_slot(st2110::MtlWorkerSharedMemoryRingMap &ring,
+                                                                         std::uint32_t &next_slot_index,
+                                                                         std::uint32_t &out_slot_index) noexcept {
     const auto &descriptor = ring.descriptor();
     if (descriptor.slot_count == 0) {
         return std::unexpected(st2110::Error::InvalidBackendState);
     }
 
     for (std::uint32_t attempt = 0; attempt < descriptor.slot_count; ++attempt) {
-        const std::uint32_t candidate = static_cast<std::uint32_t>(
-            (static_cast<std::uint64_t>(next_slot_index) + attempt) % descriptor.slot_count);
+        const std::uint32_t candidate =
+            static_cast<std::uint32_t>((static_cast<std::uint64_t>(next_slot_index) + attempt) % descriptor.slot_count);
 
         auto began = ring.begin_write_slot(candidate);
         if (!began.has_value()) {
@@ -101,8 +101,8 @@ acquire_audio_ring_slot(st2110::MtlWorkerSharedMemoryRingMap &ring, std::uint32_
 
         if (*began) {
             out_slot_index = candidate;
-            next_slot_index = static_cast<std::uint32_t>((static_cast<std::uint64_t>(candidate) + 1) %
-                                                         descriptor.slot_count);
+            next_slot_index =
+                static_cast<std::uint32_t>((static_cast<std::uint64_t>(candidate) + 1) % descriptor.slot_count);
             return true;
         }
     }
@@ -113,8 +113,7 @@ acquire_audio_ring_slot(st2110::MtlWorkerSharedMemoryRingMap &ring, std::uint32_
 [[nodiscard]] std::expected<bool, st2110::Error>
 export_audio_frame_to_ring(st2110::MtlWorkerSharedMemoryRingMap *ring, MtlWorkerEventWriter *event_writer,
                            const st2110::MtlWorkerGraphId graph_id, const st2110::MtlAudioStartConfig &cfg,
-                           st30_frame *frame, std::uint32_t &next_slot_index,
-                           std::uint64_t &next_sequence) noexcept {
+                           st30_frame *frame, std::uint32_t &next_slot_index, std::uint64_t &next_sequence) noexcept {
     if (!ring || !event_writer || !frame) {
         return false;
     }
@@ -149,17 +148,6 @@ export_audio_frame_to_ring(st2110::MtlWorkerSharedMemoryRingMap *ring, MtlWorker
         return false;
     }
 
-    std::memcpy(payload->data(), frame->addr, frame->data_size);
-
-    const std::uint64_t sequence = next_sequence++;
-    auto published = ring->publish_written_slot(
-        slot_index, payload_size, sequence,
-        static_cast<std::uint32_t>(st2110::MtlWorkerSharedMemorySlotFlags::None));
-    if (!published.has_value()) {
-        (void)ring->abort_write_slot(slot_index);
-        return std::unexpected(published.error());
-    }
-
     auto bytes_per_sample = audio_bytes_per_sample(cfg.pcm_format);
     if (!bytes_per_sample.has_value()) {
         return std::unexpected(bytes_per_sample.error());
@@ -170,18 +158,39 @@ export_audio_frame_to_ring(st2110::MtlWorkerSharedMemoryRingMap *ring, MtlWorker
     const std::uint32_t samples_per_channel =
         bytes_per_frame != 0 ? static_cast<std::uint32_t>(payload_size / bytes_per_frame) : 0;
 
-    st2110::MtlWorkerAudioBlockReadyEvent event{
-        .graph_id = graph_id,
-        .ring_id = ring->descriptor().ring_id,
-        .slot_id = slot_index,
-        .sequence = sequence,
+    std::memcpy(payload->data(), frame->addr, frame->data_size);
+
+    st2110::MtlWorkerSharedMemorySlotMediaMetadata metadata{
+        .media_kind = st2110::MtlWorkerMediaKind::Audio,
+        .media_format = static_cast<std::uint32_t>(cfg.pcm_format),
+        .width = 0,
+        .height = 0,
         .sample_rate_hz = cfg.media.sampling_rate_hz,
         .channels = channels,
         .samples_per_channel = samples_per_channel,
         .rtp_timestamp = frame->rtp_timestamp,
         .receive_timestamp_ns = static_cast<st2110::TimestampNs>(frame->receive_timestamp),
-        .payload_size = static_cast<std::size_t>(payload_size),
-        .partial = false,
+        .plane_count = 1,
+        .reserved0 = 0,
+        .plane_offset_bytes = {0, 0, 0, 0},
+        .plane_size_bytes = {payload_size, 0, 0, 0},
+        .plane_line_size_bytes = {payload_size, 0, 0, 0},
+    };
+
+    const std::uint64_t sequence = next_sequence++;
+    auto published =
+        ring->publish_written_slot(slot_index, payload_size, sequence,
+                                   static_cast<std::uint32_t>(st2110::MtlWorkerSharedMemorySlotFlags::None), metadata);
+    if (!published.has_value()) {
+        (void)ring->abort_write_slot(slot_index);
+        return std::unexpected(published.error());
+    }
+
+    st2110::MtlWorkerAudioBlockReadyEvent event{
+        .graph_id = graph_id,
+        .ring_id = ring->descriptor().ring_id,
+        .slot_id = slot_index,
+        .sequence = sequence,
     };
 
     auto wrote = event_writer->write_event(st2110::MtlWorkerControlEvent{event});
@@ -285,14 +294,10 @@ struct MtlAudioRxSession::Impl {
     std::jthread receive_thread{};
 
     explicit Impl(st2110::MtlWorkerGraphId graph, st2110::MtlAudioStartConfig session_cfg,
-              st30p_rx_handle session_handle, MtlWorkerGraphStats &graph_stats, MtlWorkerEventWriter &writer,
-              st2110::MtlWorkerSharedMemoryRingMap *bound_media_ring)
-    : cfg(std::move(session_cfg)),
-      graph_id(graph),
-      rx(session_handle),
-      stats(&graph_stats),
-      event_writer(&writer),
-      media_ring(bound_media_ring) {}
+                  st30p_rx_handle session_handle, MtlWorkerGraphStats &graph_stats, MtlWorkerEventWriter &writer,
+                  st2110::MtlWorkerSharedMemoryRingMap *bound_media_ring)
+        : cfg(std::move(session_cfg)), graph_id(graph), rx(session_handle), stats(&graph_stats), event_writer(&writer),
+          media_ring(bound_media_ring) {}
 
     ~Impl() {
         stop_thread_noexcept();
@@ -351,7 +356,7 @@ struct MtlAudioRxSession::Impl {
             }
 
             auto exported = export_audio_frame_to_ring(media_ring, event_writer, graph_id, cfg, frame, next_slot_index,
-                                           next_sequence);
+                                                       next_sequence);
             if (!exported.has_value() || !*exported) {
                 if (stats) {
                     stats->record_audio_block_dropped();
@@ -366,8 +371,7 @@ struct MtlAudioRxSession::Impl {
 std::expected<std::unique_ptr<MtlAudioRxSession>, st2110::Error>
 MtlAudioRxSession::create(MtlRuntimeContext &runtime, st2110::MtlWorkerGraphId graph_id,
                           st2110::MtlAudioStartConfig cfg, MtlWorkerGraphStats &stats,
-                          MtlWorkerEventWriter &event_writer,
-                          st2110::MtlWorkerSharedMemoryRingMap *media_ring) {
+                          MtlWorkerEventWriter &event_writer, st2110::MtlWorkerSharedMemoryRingMap *media_ring) {
     if (!runtime.handle()) {
         return std::unexpected(st2110::Error::InvalidBackendState);
     }
@@ -409,8 +413,6 @@ void MtlAudioRxSession::wake_block() noexcept {
 
 const st2110::MtlAudioStartConfig &MtlAudioRxSession::config() const noexcept { return impl_->cfg; }
 
-const st2110::MtlWorkerSharedMemoryRingMap *MtlAudioRxSession::media_ring() const noexcept {
-    return impl_->media_ring;
-}
+const st2110::MtlWorkerSharedMemoryRingMap *MtlAudioRxSession::media_ring() const noexcept { return impl_->media_ring; }
 
 } // namespace st2110_mtl_rx_worker

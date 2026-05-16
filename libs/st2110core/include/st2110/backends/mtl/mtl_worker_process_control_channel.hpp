@@ -34,14 +34,16 @@ class MtlWorkerProcessControlChannel final : public IMtlWorkerControlChannel {
 
     [[nodiscard]] std::expected<MtlWorkerControlEventEnvelope, Error>
     transact_with_fds(const MtlWorkerControlRequest &request, std::span<const int> file_descriptors) override;
-    [[nodiscard]] std::expected<bool, Error>
-register_async_event_handler(MtlWorkerGraphId graph_id, MtlWorkerAsyncEventHandler handler) override;
+    [[nodiscard]] std::expected<bool, Error> register_async_event_handler(MtlWorkerGraphId graph_id,
+                                                                          MtlWorkerAsyncEventHandler handler) override;
 
     void unregister_async_event_handler_noexcept(MtlWorkerGraphId graph_id) noexcept override;
 
     void shutdown_noexcept() noexcept;
 
     [[nodiscard]] const std::filesystem::path &worker_executable_path() const noexcept;
+
+    [[nodiscard]] bool healthy() const noexcept override;
 
   private:
     struct Impl;
