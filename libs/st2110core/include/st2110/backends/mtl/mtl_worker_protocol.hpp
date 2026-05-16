@@ -181,6 +181,7 @@ struct MtlWorkerStatsEvent {
     std::uint64_t audio_blocks_delivered = 0;
     std::uint64_t released_slots = 0;
     std::uint64_t malformed_ready_events = 0;
+    std::uint64_t stale_ready_events = 0;
     std::uint64_t delivery_failures = 0;
     std::uint64_t release_failures = 0;
     std::uint64_t ignored_events = 0;
@@ -196,6 +197,7 @@ struct MtlWorkerFrameReadyEvent {
     MtlWorkerGraphId graph_id = 0;
     MtlWorkerSharedMemoryRingId ring_id = 0;
     MtlWorkerSlotId slot_id = 0;
+    std::uint64_t sequence = 0;
 
     std::uint32_t width = 0;
     std::uint32_t height = 0;
@@ -210,6 +212,7 @@ struct MtlWorkerAudioBlockReadyEvent {
     MtlWorkerGraphId graph_id = 0;
     MtlWorkerSharedMemoryRingId ring_id = 0;
     MtlWorkerSlotId slot_id = 0;
+    std::uint64_t sequence = 0;
 
     std::uint32_t sample_rate_hz = 0;
     std::uint32_t channels = 0;

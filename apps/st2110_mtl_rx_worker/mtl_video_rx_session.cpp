@@ -249,6 +249,7 @@ export_video_frame_to_ring(st2110::MtlWorkerSharedMemoryRingMap *ring, MtlWorker
         .graph_id = graph_id,
         .ring_id = ring->descriptor().ring_id,
         .slot_id = slot_index,
+        .sequence = sequence,
         .width = frame->width,
         .height = frame->height,
         .rtp_timestamp = frame->rtp_timestamp,

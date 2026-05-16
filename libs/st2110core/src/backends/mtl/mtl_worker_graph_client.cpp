@@ -424,6 +424,7 @@ struct MtlWorkerGraphClientAsyncStatsSnapshot {
     std::uint64_t audio_blocks_delivered = 0;
     std::uint64_t released_slots = 0;
     std::uint64_t malformed_ready_events = 0;
+    std::uint64_t stale_ready_events = 0;
     std::uint64_t delivery_failures = 0;
     std::uint64_t release_failures = 0;
     std::uint64_t ignored_events = 0;
@@ -437,6 +438,7 @@ merge_async_stats(MtlWorkerStatsEvent stats, const MtlWorkerGraphClientAsyncStat
     stats.audio_blocks_delivered = async_stats.audio_blocks_delivered;
     stats.released_slots = async_stats.released_slots;
     stats.malformed_ready_events = async_stats.malformed_ready_events;
+    stats.stale_ready_events = async_stats.stale_ready_events;
     stats.delivery_failures = async_stats.delivery_failures;
     stats.release_failures = async_stats.release_failures;
     stats.ignored_events = async_stats.ignored_events;
@@ -469,6 +471,7 @@ struct MtlWorkerGraphClientAsyncState {
     std::uint64_t audio_blocks_delivered = 0;
     std::uint64_t released_slots = 0;
     std::uint64_t malformed_ready_events = 0;
+    std::uint64_t stale_ready_events = 0;
     std::uint64_t delivery_failures = 0;
     std::uint64_t release_failures = 0;
     std::uint64_t ignored_events = 0;
@@ -504,6 +507,7 @@ struct MtlWorkerGraphClientAsyncState {
                 .audio_blocks_delivered = audio_blocks_delivered,
                 .released_slots = released_slots,
                 .malformed_ready_events = malformed_ready_events,
+                .stale_ready_events = stale_ready_events,
                 .delivery_failures = delivery_failures,
                 .release_failures = release_failures,
                 .ignored_events = ignored_events,
@@ -570,9 +574,11 @@ struct MtlWorkerGraphClientAsyncState {
     }
 
     [[nodiscard]] bool validate_ready_payload_no_lock(MtlWorkerSharedMemoryRingMap &ring,
-                                                      const std::uint32_t slot_index,
-                                                      const std::size_t event_payload_size) noexcept {
+                                                  const std::uint32_t slot_index,
+                                                  const std::uint64_t event_sequence,
+                                                  const std::size_t event_payload_size) noexcept {
         bool malformed = false;
+        bool stale = false;
 
         auto header = ring.slot_header(slot_index);
         if (!header.has_value()) {
@@ -588,12 +594,23 @@ struct MtlWorkerGraphClientAsyncState {
             malformed = true;
         }
 
-        if (header.has_value() && static_cast<std::uint64_t>(event_payload_size) > (*header)->payload_size) {
-            malformed = true;
+        if (header.has_value()) {
+            if ((*header)->sequence != event_sequence) {
+                stale = true;
+            }
+
+            if ((*header)->payload_size != static_cast<std::uint64_t>(event_payload_size)) {
+                stale = true;
+            }
         }
 
         if (malformed) {
             ++malformed_ready_events;
+            return false;
+        }
+
+        if (stale) {
+            ++stale_ready_events;
             return false;
         }
 
@@ -804,7 +821,7 @@ struct MtlWorkerGraphClientAsyncState {
             return;
         }
 
-        const bool valid_payload = validate_ready_payload_no_lock(ring, slot_index, event.payload_size);
+        const bool valid_payload = validate_ready_payload_no_lock(ring, slot_index, event.sequence, event.payload_size);
         if (valid_payload) {
             deliver_video_frame_no_lock(ring, slot_index, event);
         }
@@ -837,7 +854,7 @@ struct MtlWorkerGraphClientAsyncState {
             return;
         }
 
-        const bool valid_payload = validate_ready_payload_no_lock(ring, slot_index, event.payload_size);
+        const bool valid_payload = validate_ready_payload_no_lock(ring, slot_index, event.sequence, event.payload_size);
         if (valid_payload) {
             deliver_audio_block_no_lock(ring, slot_index, event);
         }
