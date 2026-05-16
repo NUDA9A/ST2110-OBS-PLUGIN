@@ -218,16 +218,20 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
         };
     }
 
+    const bool healthy_before_stop = refresh_worker_health_noexcept();
+    const st2110::Error stop_health_error = worker_health_error_;
+    const std::string stop_health_message = worker_health_message_;
+
     if (found->second) {
         found->second->stop_sessions_noexcept();
     }
-
-    /*
-     * Ordinary MTL Stop releases the worker-side graph object and therefore
-     * unmaps this graph's shared-memory media transport. The worker runtime
-     * stays alive for compatible future StartSessions.
-     */
+    
     graphs_.erase(found);
+
+    if (!healthy_before_stop) {
+        return make_error(request.request_id, request.graph_id, stop_health_error,
+                          stop_health_message.c_str());
+    }
 
     return st2110::MtlWorkerStoppedEvent{
         .request_id = request.request_id,
