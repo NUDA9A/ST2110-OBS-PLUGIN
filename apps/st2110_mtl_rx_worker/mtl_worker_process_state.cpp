@@ -225,12 +225,11 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
     if (found->second) {
         found->second->stop_sessions_noexcept();
     }
-    
+
     graphs_.erase(found);
 
     if (!healthy_before_stop) {
-        return make_error(request.request_id, request.graph_id, stop_health_error,
-                          stop_health_message.c_str());
+        return make_error(request.request_id, request.graph_id, stop_health_error, stop_health_message.c_str());
     }
 
     return st2110::MtlWorkerStoppedEvent{

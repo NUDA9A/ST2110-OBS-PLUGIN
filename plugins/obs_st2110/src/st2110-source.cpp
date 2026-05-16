@@ -69,6 +69,14 @@ struct St2110Source {
     return OBS_TEXT_INFO_WARNING;
 }
 
+[[nodiscard]] std::string runtime_debug_text(St2110Source *ctx) {
+    if (!ctx || !ctx->runtime) {
+        return "Debug counters are unavailable before the source instance is created.";
+    }
+
+    return ctx->runtime->debug_status();
+}
+
 [[nodiscard]] st2110::ReceiveBackendKind read_receive_backend_kind(obs_data_t *settings) {
     const char *backend_text = obs_data_get_string(settings, obs_st2110::sourceBackendPropertyId);
     const std::string_view backend = backend_text ? std::string_view(backend_text) : std::string_view{};
@@ -233,8 +241,19 @@ bool st2110_source_stop_receive_clicked(obs_properties_t *, obs_property_t *, vo
     return true;
 }
 
+bool st2110_source_refresh_debug_counters_clicked(obs_properties_t *, obs_property_t *, void *) {
+    /*
+     * Returning true asks OBS to refresh/rebuild the properties UI.
+     * The counters are sampled when st2110_source_get_properties() runs.
+     */
+    return true;
+}
+
 obs_properties_t *st2110_source_get_properties(void *data) {
-    const auto *ctx = static_cast<const St2110Source *>(data);
+    auto *ctx = static_cast<St2110Source *>(data);
+
+    const std::string debug_text_value = runtime_debug_text(ctx);
+    const std::string status_text_value = runtime_status_text(ctx);
 
     obs_properties_t *properties = obs_properties_create();
 
@@ -248,9 +267,17 @@ obs_properties_t *st2110_source_get_properties(void *data) {
     }
 
     obs_property_t *status_text = obs_properties_add_text(properties, obs_st2110::sourceRuntimeStatusPropertyId,
-                                                          runtime_status_text(ctx).c_str(), OBS_TEXT_INFO);
+                                                          status_text_value.c_str(), OBS_TEXT_INFO);
     obs_property_text_set_info_type(status_text, runtime_status_info_type(ctx));
     obs_property_text_set_info_word_wrap(status_text, true);
+
+    obs_property_t *debug_text = obs_properties_add_text(properties, obs_st2110::sourceRuntimeDebugCountersPropertyId,
+                                                         debug_text_value.c_str(), OBS_TEXT_INFO);
+    obs_property_text_set_info_type(debug_text, OBS_TEXT_INFO_NORMAL);
+    obs_property_text_set_info_word_wrap(debug_text, true);
+
+    obs_properties_add_button(properties, obs_st2110::sourceRefreshDebugCountersButtonPropertyId,
+                              "Refresh debug counters", st2110_source_refresh_debug_counters_clicked);
 
     obs_properties_add_button(properties, obs_st2110::sourceStartReceiveButtonPropertyId, "Start receive",
                               st2110_source_start_receive_clicked);
@@ -316,7 +343,7 @@ void st2110_source_get_defaults(obs_data_t *settings) {
     obs_data_set_default_int(settings, obs_st2110::sourceReorderWindowPacketsPropertyId,
                              st2110::defaultReorderWindowPackets);
     obs_data_set_default_string(settings, obs_st2110::sourceReorderGapPolicyPropertyId,
-                            obs_st2110::sourceReorderGapPolicyWaitForMissingValue);
+                                obs_st2110::sourceReorderGapPolicyWaitForMissingValue);
     obs_data_set_default_int(settings, obs_st2110::sourceFlushAfterNPacketsPropertyId,
                              st2110::defaultFlushAfterNPackets);
     obs_data_set_default_string(settings, obs_st2110::sourcePartialUnitPolicyPropertyId,

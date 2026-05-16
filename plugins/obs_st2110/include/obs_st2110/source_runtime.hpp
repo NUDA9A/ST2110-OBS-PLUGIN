@@ -12,7 +12,7 @@
 namespace obs_st2110 {
 
 class SourceRuntime {
-public:
+  public:
     explicit SourceRuntime(obs_source_t *source);
     ~SourceRuntime();
 
@@ -33,8 +33,9 @@ public:
     [[nodiscard]] bool running() const noexcept;
     [[nodiscard]] bool configured() const noexcept;
     [[nodiscard]] const std::string &last_error() const noexcept;
+    [[nodiscard]] std::string debug_status();
 
-private:
+  private:
     class Impl;
     std::unique_ptr<Impl> impl_;
 };

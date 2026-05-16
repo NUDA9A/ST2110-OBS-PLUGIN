@@ -227,6 +227,191 @@ resolve_configured_mtl_runtime_key(const std::shared_ptr<st2110::MtlWorkerGraphC
 }
 #endif
 
+[[nodiscard]] const char *backend_kind_name(const st2110::ReceiveBackendKind kind) noexcept {
+    switch (kind) {
+    case st2110::ReceiveBackendKind::Socket:
+        return "Socket";
+    case st2110::ReceiveBackendKind::Mtl:
+        return "MTL";
+    }
+
+    return "Unknown";
+}
+
+void append_counter(std::string &out, const char *name, const std::uint64_t value) {
+    out += "  ";
+    out += name;
+    out += ": ";
+    out += std::to_string(value);
+    out += "\n";
+}
+
+#if ST2110_HAS_MTL_BACKEND
+void append_rx_port_stats(std::string &out, const char *prefix, const st2110::MtlWorkerRxPortStats &stats) {
+    out += "  ";
+    out += prefix;
+    out += ".packets: ";
+    out += std::to_string(stats.packets);
+    out += "\n";
+
+    out += "  ";
+    out += prefix;
+    out += ".bytes: ";
+    out += std::to_string(stats.bytes);
+    out += "\n";
+
+    out += "  ";
+    out += prefix;
+    out += ".frames: ";
+    out += std::to_string(stats.frames);
+    out += "\n";
+
+    out += "  ";
+    out += prefix;
+    out += ".incomplete_frames: ";
+    out += std::to_string(stats.incomplete_frames);
+    out += "\n";
+
+    out += "  ";
+    out += prefix;
+    out += ".err_packets: ";
+    out += std::to_string(stats.err_packets);
+    out += "\n";
+
+    out += "  ";
+    out += prefix;
+    out += ".out_of_order_packets: ";
+    out += std::to_string(stats.out_of_order_packets);
+    out += "\n";
+}
+
+void append_device_port_stats(std::string &out, const char *prefix, const st2110::MtlWorkerDeviceRxPortStats &stats) {
+    out += "  ";
+    out += prefix;
+    out += ".rx_packets: ";
+    out += std::to_string(stats.rx_packets);
+    out += "\n";
+
+    out += "  ";
+    out += prefix;
+    out += ".rx_bytes: ";
+    out += std::to_string(stats.rx_bytes);
+    out += "\n";
+
+    out += "  ";
+    out += prefix;
+    out += ".rx_err_packets: ";
+    out += std::to_string(stats.rx_err_packets);
+    out += "\n";
+
+    out += "  ";
+    out += prefix;
+    out += ".rx_hw_dropped_packets: ";
+    out += std::to_string(stats.rx_hw_dropped_packets);
+    out += "\n";
+
+    out += "  ";
+    out += prefix;
+    out += ".rx_nombuf_packets: ";
+    out += std::to_string(stats.rx_nombuf_packets);
+    out += "\n";
+}
+
+[[nodiscard]] std::string format_mtl_worker_stats(const st2110::MtlWorkerStatsEvent &stats) {
+    std::string out{};
+
+    out += "MTL graph\n";
+    append_counter(out, "graph_id", stats.graph_id);
+
+    out += "\nVideo counters\n";
+    append_counter(out, "video_frames_received", stats.video_frames_received);
+    append_counter(out, "video_frames_dropped", stats.video_frames_dropped);
+    append_counter(out, "video_frames_delivered", stats.video_frames_delivered);
+    append_counter(out, "frame_ready_events", stats.frame_ready_events);
+    append_counter(out, "video_frame_packets_total", stats.video_frame_packets_total);
+    append_counter(out, "video_frame_packets_received_primary", stats.video_frame_packets_received_primary);
+    append_counter(out, "video_frame_packets_received_redundant", stats.video_frame_packets_received_redundant);
+    append_counter(out, "video_reconstructed_frames", stats.video_reconstructed_frames);
+    append_counter(out, "video_corrupted_frames", stats.video_corrupted_frames);
+    append_counter(out, "video_complete_frames", stats.video_complete_frames);
+
+    out += "\nVideo session counters\n";
+    if (stats.video_session_stats_available) {
+        append_counter(out, "video_session_packets_received", stats.video_session_packets_received);
+        append_counter(out, "video_session_packets_out_of_order", stats.video_session_packets_out_of_order);
+        append_counter(out, "video_session_packets_wrong_ssrc_dropped", stats.video_session_packets_wrong_ssrc_dropped);
+        append_counter(out, "video_session_packets_wrong_payload_type_dropped",
+                       stats.video_session_packets_wrong_payload_type_dropped);
+        append_counter(out, "video_session_bytes_received", stats.video_session_bytes_received);
+        append_counter(out, "video_session_frames_dropped", stats.video_session_frames_dropped);
+        append_counter(out, "video_session_frames_packets_missed", stats.video_session_frames_packets_missed);
+        append_counter(out, "video_session_packets_wrong_length_dropped",
+                       stats.video_session_packets_wrong_length_dropped);
+        append_counter(out, "video_session_slot_get_frame_failures", stats.video_session_slot_get_frame_failures);
+
+        append_rx_port_stats(out, "video_session_primary", stats.video_session_primary);
+        append_rx_port_stats(out, "video_session_redundant", stats.video_session_redundant);
+    } else {
+        out += "  video_session: unavailable\n";
+    }
+    append_counter(out, "video_session_stats_query_failures", stats.video_session_stats_query_failures);
+
+    out += "\nAudio counters\n";
+    append_counter(out, "audio_blocks_received", stats.audio_blocks_received);
+    append_counter(out, "audio_blocks_dropped", stats.audio_blocks_dropped);
+    append_counter(out, "audio_blocks_delivered", stats.audio_blocks_delivered);
+    append_counter(out, "audio_block_ready_events", stats.audio_block_ready_events);
+    append_counter(out, "audio_block_bytes_received", stats.audio_block_bytes_received);
+    append_counter(out, "audio_block_packets_total", stats.audio_block_packets_total);
+    append_counter(out, "audio_block_packets_received_primary", stats.audio_block_packets_received_primary);
+    append_counter(out, "audio_block_packets_received_redundant", stats.audio_block_packets_received_redundant);
+
+    out += "\nAudio session counters\n";
+    if (stats.audio_session_stats_available) {
+        append_counter(out, "audio_session_packets_received", stats.audio_session_packets_received);
+        append_counter(out, "audio_session_packets_out_of_order", stats.audio_session_packets_out_of_order);
+        append_counter(out, "audio_session_packets_wrong_ssrc_dropped", stats.audio_session_packets_wrong_ssrc_dropped);
+        append_counter(out, "audio_session_packets_wrong_payload_type_dropped",
+                       stats.audio_session_packets_wrong_payload_type_dropped);
+        append_counter(out, "audio_session_packets_redundant", stats.audio_session_packets_redundant);
+        append_counter(out, "audio_session_packets_dropped", stats.audio_session_packets_dropped);
+        append_counter(out, "audio_session_packets_length_mismatch_dropped",
+                       stats.audio_session_packets_length_mismatch_dropped);
+        append_counter(out, "audio_session_slot_get_frame_failures", stats.audio_session_slot_get_frame_failures);
+
+        append_rx_port_stats(out, "audio_session_primary", stats.audio_session_primary);
+        append_rx_port_stats(out, "audio_session_redundant", stats.audio_session_redundant);
+    } else {
+        out += "  audio_session: unavailable\n";
+    }
+    append_counter(out, "audio_session_stats_query_failures", stats.audio_session_stats_query_failures);
+
+    out += "\nShared-memory delivery counters\n";
+    append_counter(out, "released_slots", stats.released_slots);
+    append_counter(out, "malformed_ready_events", stats.malformed_ready_events);
+    append_counter(out, "stale_ready_events", stats.stale_ready_events);
+    append_counter(out, "delivery_failures", stats.delivery_failures);
+    append_counter(out, "release_failures", stats.release_failures);
+    append_counter(out, "ignored_events", stats.ignored_events);
+
+    out += "\nMTL device port counters\n";
+    if (stats.mtl_primary_port_stats_available) {
+        append_device_port_stats(out, "mtl_primary_port", stats.mtl_primary_port);
+    } else {
+        out += "  mtl_primary_port: unavailable\n";
+    }
+
+    if (stats.mtl_redundant_port_stats_available) {
+        append_device_port_stats(out, "mtl_redundant_port", stats.mtl_redundant_port);
+    } else {
+        out += "  mtl_redundant_port: unavailable\n";
+    }
+    append_counter(out, "mtl_port_stats_query_failures", stats.mtl_port_stats_query_failures);
+
+    return out;
+}
+#endif
+
 } // namespace
 
 class SourceRuntime::Impl {
@@ -286,6 +471,8 @@ class SourceRuntime::Impl {
 
     [[nodiscard]] const std::string &last_error() const noexcept { return last_error_; }
 
+    [[nodiscard]] std::string debug_status() { return make_debug_status(); }
+
   private:
     struct ConfiguredReceiveGraph {
         std::unique_ptr<ObsSynchronizedFrameSink> sink{};
@@ -341,6 +528,115 @@ class SourceRuntime::Impl {
 
         set_error(message, error);
     }
+
+    [[nodiscard]] std::string make_debug_status() {
+        std::string out{};
+
+        out += "Receive state: ";
+        if (running()) {
+            out += "running";
+        } else if (configured()) {
+            out += "configured/stopped";
+        } else if (receive_requested_) {
+            out += "requested/unconfigured";
+        } else {
+            out += "idle";
+        }
+        out += "\n";
+
+        out += "Configured graph: ";
+        out += configured_graph_exists() ? "yes" : "no";
+        out += "\n";
+
+        out += "Configured media: ";
+        out += configured_graph_description_.empty() ? "unavailable" : configured_graph_description_;
+        out += "\n";
+
+        out += "Backend: ";
+        out += backend_kind_name(config_.receive_settings.backend_kind);
+        out += "\n";
+
+        if (!last_error_.empty()) {
+            out += "Last status/error: ";
+            out += last_error_;
+            out += "\n";
+        }
+
+#if ST2110_HAS_MTL_BACKEND
+        if (config_.receive_settings.backend_kind == st2110::ReceiveBackendKind::Mtl) {
+            out += "\n";
+            out += make_mtl_debug_status();
+            return out;
+        }
+#endif
+
+        out += "\nSocket counters: unavailable in this debug panel.\n";
+        out += "MTL counters: unavailable because current backend is not MTL.\n";
+
+        return out;
+    }
+
+#if ST2110_HAS_MTL_BACKEND
+    [[nodiscard]] std::string make_mtl_debug_status() {
+        std::string out{};
+
+        if (!mtl_graph_client_) {
+            out += "MTL graph client: unavailable\n";
+            out += "MTL counters: unavailable because MTL graph is not configured.\n";
+            return out;
+        }
+
+        out += "MTL graph client: available\n";
+        out += "MTL graph id: ";
+        out += std::to_string(mtl_graph_client_->graph_id());
+        out += "\n";
+
+        out += "MTL graph running: ";
+        out += mtl_graph_client_->running() ? "yes" : "no";
+        out += "\n";
+
+        if (!configured_graph_exists()) {
+            out += "MTL counters: unavailable because receive graph is not configured.\n";
+            return out;
+        }
+
+        if (!mtl_graph_client_->running()) {
+            out += "MTL counters: unavailable because receive graph is configured but stopped.\n";
+            return out;
+        }
+
+        auto stats = mtl_graph_client_->stats();
+        if (!stats.has_value()) {
+            const std::string detail = mtl_graph_client_->last_error_message();
+
+            last_error_ = "MTL worker stats query failed: ";
+            last_error_ += st2110::to_string(stats.error());
+
+            if (!detail.empty()) {
+                last_error_ += "; ";
+                last_error_ += detail;
+            }
+
+            out += "MTL counters: unavailable because stats query failed.\n";
+            out += last_error_;
+            out += "\n";
+
+            /*
+             * stats() failure may invalidate the worker and clear the graph-client
+             * lease. Destroy the configured graph so proxy started_ state cannot
+             * remain stale after worker invalidation.
+             */
+            destroy_configured_graph_noexcept();
+
+            return out;
+        }
+
+        out += "\n";
+        out += format_mtl_worker_stats(*stats);
+
+        return out;
+    }
+#endif
 
     void start_receive_graph() {
         if (!ensure_configured_graph()) {
@@ -654,5 +950,7 @@ bool SourceRuntime::running() const noexcept { return impl_->running(); }
 bool SourceRuntime::configured() const noexcept { return impl_->configured(); }
 
 const std::string &SourceRuntime::last_error() const noexcept { return impl_->last_error(); }
+
+std::string SourceRuntime::debug_status() { return impl_->debug_status(); }
 
 } // namespace obs_st2110

@@ -37,6 +37,9 @@ inline constexpr const char *sourcePartialUnitPolicyDropValue = "drop";
 
 inline constexpr const char *sourceRuntimeStatusPropertyId = "st2110_runtime_status";
 
+inline constexpr const char *sourceRuntimeDebugCountersPropertyId = "st2110_runtime_debug_counters";
+inline constexpr const char *sourceRefreshDebugCountersButtonPropertyId = "st2110_refresh_debug_counters";
+
 inline constexpr const char *sourceStartReceiveButtonPropertyId = "st2110_start_receive";
 inline constexpr const char *sourceStopReceiveButtonPropertyId = "st2110_stop_receive";
 
