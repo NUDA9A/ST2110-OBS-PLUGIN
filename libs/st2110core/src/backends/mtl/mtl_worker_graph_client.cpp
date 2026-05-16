@@ -1087,6 +1087,13 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
         return std::unexpected(Error::InvalidBackendState);
     }
 
+    auto worker_health = check_worker_health(*impl_->worker_lease->control_channel);
+    if (!worker_health.has_value()) {
+        impl_->invalidate_worker_noexcept();
+        impl_->clear_worker_lease_noexcept();
+        return std::unexpected(worker_health.error());
+    }
+
     auto prepared_rings = prepare_media_rings(impl_->graph_id, impl_->video, impl_->audio);
     if (!prepared_rings.has_value()) {
         impl_->release_manager_graph_noexcept();
@@ -1118,13 +1125,6 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
         impl_->invalidate_worker_noexcept();
         impl_->clear_worker_lease_noexcept();
         return std::unexpected(registered_async_handler.error());
-    }
-
-    auto worker_health = check_worker_health(*impl_->worker_lease->control_channel);
-    if (!worker_health.has_value()) {
-        impl_->invalidate_worker_noexcept();
-        impl_->clear_worker_lease_noexcept();
-        return std::unexpected(worker_health.error());
     }
 
     impl_->async_event_handler_registered = true;
@@ -1226,6 +1226,17 @@ std::expected<MtlWorkerStatsEvent, Error> MtlWorkerGraphClient::stats() {
         return std::unexpected(Error::InvalidBackendState);
     }
 
+    auto worker_health = check_worker_health(*impl_->worker_lease->control_channel);
+    if (!worker_health.has_value()) {
+        impl_->running = false;
+        impl_->active_start_count = 0;
+        impl_->unregister_async_event_handler_noexcept();
+        impl_->async_event_state.reset();
+        impl_->invalidate_worker_noexcept();
+        impl_->clear_worker_lease_noexcept();
+        return std::unexpected(worker_health.error());
+    }
+
     auto request = make_stats_request();
     if (!request.has_value()) {
         return std::unexpected(request.error());
@@ -1258,17 +1269,6 @@ std::expected<MtlWorkerStatsEvent, Error> MtlWorkerGraphClient::stats() {
     MtlWorkerGraphClientAsyncStatsSnapshot async_snapshot{};
     if (impl_->async_event_state) {
         async_snapshot = impl_->async_event_state->snapshot_noexcept();
-    }
-
-    auto worker_health = check_worker_health(*impl_->worker_lease->control_channel);
-    if (!worker_health.has_value()) {
-        impl_->running = false;
-        impl_->active_start_count = 0;
-        impl_->unregister_async_event_handler_noexcept();
-        impl_->async_event_state.reset();
-        impl_->invalidate_worker_noexcept();
-        impl_->clear_worker_lease_noexcept();
-        return std::unexpected(worker_health.error());
     }
 
     return merge_async_stats(*stats, async_snapshot);

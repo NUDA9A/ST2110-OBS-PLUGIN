@@ -405,6 +405,21 @@ void fill_st20p_session_port(st20p_rx_ops &ops, const mtl_session_port session_p
     ops.port.udp_port[session_port] = session_port_cfg.udp_port;
 }
 
+int on_st20p_rx_event(void *priv, const enum st_event event, void *args) {
+    (void)args;
+
+    auto *health = static_cast<MtlWorkerHealthState *>(priv);
+    if (!health) {
+        return 0;
+    }
+
+    if (event == ST_EVENT_FATAL_ERROR) {
+        health->mark_unhealthy(st2110::Error::InvalidBackendState, "MTL ST20P RX session reported fatal event");
+    }
+
+    return 0;
+}
+
 [[nodiscard]] std::expected<st20p_rx_ops, st2110::Error> make_st20p_rx_ops(const st2110::MtlVideoStartConfig &cfg,
                                                                            MtlWorkerHealthState *health) noexcept {
     if (cfg.redundant.has_value() && !cfg.runtime.redundant_port.has_value()) {
@@ -474,21 +489,6 @@ void record_video_frame_mtl_metadata(MtlWorkerGraphStats &stats, const st_frame 
     stats.record_video_frame_packet_metadata(
         frame.pkts_total, frame.pkts_recv[MTL_SESSION_PORT_P], frame.pkts_recv[MTL_SESSION_PORT_R],
         frame.status == ST_FRAME_STATUS_RECONSTRUCTED, frame.status == ST_FRAME_STATUS_CORRUPTED);
-}
-
-int on_st20p_rx_event(void *priv, const enum st_event event, void *args) {
-    (void)args;
-
-    auto *health = static_cast<MtlWorkerHealthState *>(priv);
-    if (!health) {
-        return 0;
-    }
-
-    if (event == ST_EVENT_FATAL_ERROR) {
-        health->mark_unhealthy(st2110::Error::InvalidBackendState, "MTL ST20P RX session reported fatal event");
-    }
-
-    return 0;
 }
 
 } // namespace
