@@ -95,6 +95,11 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
                           "Worker shutdown was already requested");
     }
 
+    if (!refresh_worker_health_noexcept()) {
+        return make_error(request.request_id, first_graph_id(graphs_), worker_health_error_,
+                          worker_health_message_.c_str());
+    }
+
     if (runtime_) {
         if (runtime_->config() != request.runtime) {
             return make_error(request.request_id, first_graph_id(graphs_), st2110::Error::InvalidBackendState,
@@ -147,6 +152,10 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
     if (request.media_rings.empty() && !ancillary_file_descriptors.empty()) {
         return make_error(request.request_id, request.graph_id, st2110::Error::InvalidValue,
                           "StartSessions received ancillary fds without shared-memory ring descriptors");
+    }
+
+    if (!refresh_worker_health_noexcept()) {
+        return make_error(request.request_id, request.graph_id, worker_health_error_, worker_health_message_.c_str());
     }
 
     for (const auto &descriptor : request.media_rings) {
@@ -227,6 +236,9 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
 }
 
 st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWorkerStatsRequest &request) {
+    if (!refresh_worker_health_noexcept()) {
+        return make_error(request.request_id, request.graph_id, worker_health_error_, worker_health_message_.c_str());
+    }
     const auto found = graphs_.find(request.graph_id);
     const MtlWorkerGraphStatsSnapshot snapshot =
         found != graphs_.end() && found->second ? found->second->stats_snapshot() : MtlWorkerGraphStatsSnapshot{};
@@ -287,10 +299,12 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
 }
 
 st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWorkerHealthCheckRequest &request) {
+    const bool healthy = refresh_worker_health_noexcept();
+
     return st2110::MtlWorkerHealthEvent{
         .request_id = request.request_id,
-        .healthy = !shutdown_requested_,
-        .message = shutdown_requested_ ? "MTL worker shutdown requested" : "MTL worker healthy",
+        .healthy = healthy,
+        .message = healthy ? "MTL worker healthy" : worker_health_message_,
     };
 }
 
@@ -319,6 +333,45 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
 bool MtlWorkerProcessState::shutdown_requested() const noexcept { return shutdown_requested_; }
 
 bool MtlWorkerProcessState::sessions_running() const noexcept { return any_sessions_running(graphs_); }
+
+void MtlWorkerProcessState::mark_worker_unhealthy_noexcept(st2110::Error error, const char *message) noexcept {
+    if (worker_unhealthy_) {
+        return;
+    }
+
+    worker_unhealthy_ = true;
+    worker_health_error_ = error == st2110::Error::Ok ? st2110::Error::InvalidBackendState : error;
+    worker_health_message_ = message ? message : "MTL worker became unhealthy";
+}
+
+bool MtlWorkerProcessState::refresh_worker_health_noexcept() noexcept {
+    if (shutdown_requested_) {
+        mark_worker_unhealthy_noexcept(st2110::Error::OperationAborted, "MTL worker shutdown was requested");
+        return false;
+    }
+
+    if (runtime_ && !runtime_->handle()) {
+        mark_worker_unhealthy_noexcept(st2110::Error::InvalidBackendState, "MTL worker runtime handle is not live");
+        return false;
+    }
+
+    for (const auto &[graph_id, graph] : graphs_) {
+        (void)graph_id;
+
+        if (!graph) {
+            mark_worker_unhealthy_noexcept(st2110::Error::InvalidBackendState, "MTL worker owns a null receive graph");
+            return false;
+        }
+
+        if (!graph->healthy()) {
+            const std::string message = graph->health_message();
+            mark_worker_unhealthy_noexcept(graph->health_error(), message.c_str());
+            return false;
+        }
+    }
+
+    return !worker_unhealthy_;
+}
 
 st2110::MtlWorkerErrorEvent MtlWorkerProcessState::make_error(st2110::MtlWorkerRequestId request_id,
                                                               st2110::MtlWorkerGraphId graph_id, st2110::Error error,

@@ -268,6 +268,47 @@ resolve_graph_runtime_config(const std::optional<MtlVideoStartConfig> &video,
         event);
 }
 
+[[nodiscard]] std::expected<bool, Error> interpret_health_event(const MtlWorkerControlEvent &event,
+                                                                const MtlWorkerRequestId expected_request_id) {
+    return std::visit(
+        [expected_request_id](const auto &typed_event) -> std::expected<bool, Error> {
+            using Event = std::decay_t<decltype(typed_event)>;
+
+            if constexpr (std::is_same_v<Event, MtlWorkerHealthEvent>) {
+                if (typed_event.request_id != expected_request_id) {
+                    return std::unexpected(Error::InvalidBackendState);
+                }
+
+                return typed_event.healthy ? std::expected<bool, Error>{true}
+                                           : std::unexpected(Error::InvalidBackendState);
+            } else if constexpr (std::is_same_v<Event, MtlWorkerErrorEvent>) {
+                if (typed_event.request_id != expected_request_id) {
+                    return std::unexpected(Error::InvalidBackendState);
+                }
+
+                return std::unexpected(typed_event.error);
+            } else {
+                return std::unexpected(Error::InvalidBackendState);
+            }
+        },
+        event);
+}
+
+[[nodiscard]] std::expected<bool, Error> check_worker_health(IMtlWorkerControlChannel &channel) {
+    const MtlWorkerRequestId request_id = next_request_id();
+
+    auto event = channel.transact(MtlWorkerControlRequest{
+        MtlWorkerHealthCheckRequest{
+            .request_id = request_id,
+        },
+    });
+    if (!event.has_value()) {
+        return std::unexpected(event.error());
+    }
+
+    return interpret_health_event(*event, request_id);
+}
+
 [[nodiscard]] std::expected<MtlWorkerStatsEvent, Error>
 interpret_stats_event(const MtlWorkerControlEvent &event, const MtlWorkerRequestId expected_request_id,
                       const MtlWorkerGraphId expected_graph_id) {
@@ -1079,6 +1120,13 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
         return std::unexpected(registered_async_handler.error());
     }
 
+    auto worker_health = check_worker_health(*impl_->worker_lease->control_channel);
+    if (!worker_health.has_value()) {
+        impl_->invalidate_worker_noexcept();
+        impl_->clear_worker_lease_noexcept();
+        return std::unexpected(worker_health.error());
+    }
+
     impl_->async_event_handler_registered = true;
 
     const MtlWorkerRequestId request_id = request->request_id;
@@ -1097,7 +1145,13 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
     if (!started.has_value()) {
         impl_->unregister_async_event_handler_noexcept();
         impl_->async_event_state.reset();
-        impl_->release_manager_graph_noexcept();
+
+        if (is_backend_runtime_error(started.error())) {
+            impl_->invalidate_worker_noexcept();
+        } else {
+            impl_->release_manager_graph_noexcept();
+        }
+
         impl_->clear_worker_lease_noexcept();
         return std::unexpected(started.error());
     }
@@ -1204,6 +1258,17 @@ std::expected<MtlWorkerStatsEvent, Error> MtlWorkerGraphClient::stats() {
     MtlWorkerGraphClientAsyncStatsSnapshot async_snapshot{};
     if (impl_->async_event_state) {
         async_snapshot = impl_->async_event_state->snapshot_noexcept();
+    }
+
+    auto worker_health = check_worker_health(*impl_->worker_lease->control_channel);
+    if (!worker_health.has_value()) {
+        impl_->running = false;
+        impl_->active_start_count = 0;
+        impl_->unregister_async_event_handler_noexcept();
+        impl_->async_event_state.reset();
+        impl_->invalidate_worker_noexcept();
+        impl_->clear_worker_lease_noexcept();
+        return std::unexpected(worker_health.error());
     }
 
     return merge_async_stats(*stats, async_snapshot);

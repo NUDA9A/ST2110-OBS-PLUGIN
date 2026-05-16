@@ -1,14 +1,17 @@
 #include "mtl_video_rx_session.hpp"
 #include "mtl_worker_event_writer.hpp"
+#include "mtl_worker_health.hpp"
 
 #include <mtl/st20_api.h>
 #include <mtl/st_pipeline_api.h>
 #include <st2110/delivery/video/video_frame.hpp>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <span>
 #include <stop_token>
 #include <thread>
@@ -402,8 +405,8 @@ void fill_st20p_session_port(st20p_rx_ops &ops, const mtl_session_port session_p
     ops.port.udp_port[session_port] = session_port_cfg.udp_port;
 }
 
-[[nodiscard]] std::expected<st20p_rx_ops, st2110::Error>
-make_st20p_rx_ops(const st2110::MtlVideoStartConfig &cfg) noexcept {
+[[nodiscard]] std::expected<st20p_rx_ops, st2110::Error> make_st20p_rx_ops(const st2110::MtlVideoStartConfig &cfg,
+                                                                           MtlWorkerHealthState *health) noexcept {
     if (cfg.redundant.has_value() && !cfg.runtime.redundant_port.has_value()) {
         return std::unexpected(st2110::Error::InvalidValue);
     }
@@ -425,7 +428,8 @@ make_st20p_rx_ops(const st2110::MtlVideoStartConfig &cfg) noexcept {
 
     st20p_rx_ops ops{};
     ops.name = "st2110_mtl_worker_video_rx";
-    ops.priv = nullptr;
+    ops.priv = health;
+    ops.notify_event = on_st20p_rx_event;
 
     ops.port.num_port = cfg.redundant.has_value() ? 2 : 1;
 
@@ -472,6 +476,21 @@ void record_video_frame_mtl_metadata(MtlWorkerGraphStats &stats, const st_frame 
         frame.status == ST_FRAME_STATUS_RECONSTRUCTED, frame.status == ST_FRAME_STATUS_CORRUPTED);
 }
 
+int on_st20p_rx_event(void *priv, const enum st_event event, void *args) {
+    (void)args;
+
+    auto *health = static_cast<MtlWorkerHealthState *>(priv);
+    if (!health) {
+        return 0;
+    }
+
+    if (event == ST_EVENT_FATAL_ERROR) {
+        health->mark_unhealthy(st2110::Error::InvalidBackendState, "MTL ST20P RX session reported fatal event");
+    }
+
+    return 0;
+}
+
 } // namespace
 
 struct MtlVideoRxSession::Impl {
@@ -484,14 +503,17 @@ struct MtlVideoRxSession::Impl {
     st2110::MtlWorkerGraphId graph_id = 0;
     std::uint32_t next_slot_index = 0;
     std::uint64_t next_sequence = 1;
+    std::shared_ptr<MtlWorkerHealthState> health{};
+    std::atomic_bool receive_loop_active{false};
 
     std::jthread receive_thread{};
 
     explicit Impl(st2110::MtlWorkerGraphId graph, st2110::MtlVideoStartConfig session_cfg,
                   st20p_rx_handle session_handle, MtlWorkerGraphStats &graph_stats, MtlWorkerEventWriter &writer,
-                  st2110::MtlWorkerSharedMemoryRingMap *bound_media_ring)
+                  st2110::MtlWorkerSharedMemoryRingMap *bound_media_ring,
+                  std::shared_ptr<MtlWorkerHealthState> session_health)
         : cfg(std::move(session_cfg)), graph_id(graph), rx(session_handle), stats(&graph_stats), event_writer(&writer),
-          media_ring(bound_media_ring) {}
+          media_ring(bound_media_ring), health(std::move(session_health)) {}
 
     ~Impl() {
         stop_thread_noexcept();
@@ -507,9 +529,17 @@ struct MtlVideoRxSession::Impl {
             return std::unexpected(st2110::Error::InvalidBackendState);
         }
 
+        receive_loop_active.store(true, std::memory_order_release);
+
         try {
             receive_thread = std::jthread([this](std::stop_token stop_token) { receive_loop_noexcept(stop_token); });
         } catch (...) {
+            receive_loop_active.store(false, std::memory_order_release);
+
+            if (health) {
+                health->mark_unhealthy(st2110::Error::SystemFailure, "Failed to start MTL video receive thread");
+            }
+
             st20p_rx_wake_block(rx);
             return std::unexpected(st2110::Error::SystemFailure);
         }
@@ -539,27 +569,52 @@ struct MtlVideoRxSession::Impl {
     }
 
     void receive_loop_noexcept(std::stop_token stop_token) noexcept {
-        while (!stop_token.stop_requested()) {
-            st_frame *frame = st20p_rx_get_frame(rx);
-            if (!frame) {
-                continue;
-            }
+        try {
+            while (!stop_token.stop_requested()) {
+                st_frame *frame = st20p_rx_get_frame(rx);
+                if (!frame) {
+                    continue;
+                }
 
-            if (stats) {
-                stats->record_video_frame_received();
-                record_video_frame_mtl_metadata(*stats, *frame);
-            }
-
-            auto exported = export_video_frame_to_ring(media_ring, event_writer, graph_id, cfg, frame, next_slot_index,
-                                                       next_sequence);
-            if (!exported.has_value() || !*exported) {
                 if (stats) {
+                    stats->record_video_frame_received();
+                    record_video_frame_mtl_metadata(*stats, *frame);
+                }
+
+                auto exported = export_video_frame_to_ring(media_ring, event_writer, graph_id, cfg, frame,
+                                                           next_slot_index, next_sequence);
+                if (!exported.has_value()) {
+                    if (stats) {
+                        stats->record_video_frame_dropped();
+                    }
+
+                    if (health) {
+                        health->mark_unhealthy(exported.error(), "MTL video shared-memory/IPC export failed");
+                    }
+
+                    (void)st20p_rx_put_frame(rx, frame);
+                    break;
+                }
+
+                if (!*exported && stats) {
                     stats->record_video_frame_dropped();
                 }
-            }
 
-            st20p_rx_put_frame(rx, frame);
+                if (st20p_rx_put_frame(rx, frame) < 0) {
+                    if (health) {
+                        health->mark_unhealthy(st2110::Error::SystemFailure, "MTL video st20p_rx_put_frame failed");
+                    }
+
+                    break;
+                }
+            }
+        } catch (...) {
+            if (health) {
+                health->mark_unhealthy(st2110::Error::SystemFailure, "MTL video receive loop threw");
+            }
         }
+
+        receive_loop_active.store(false, std::memory_order_release);
     }
 };
 
@@ -576,7 +631,9 @@ MtlVideoRxSession::create(MtlRuntimeContext &runtime, st2110::MtlWorkerGraphId g
         return std::unexpected(valid_ring.error());
     }
 
-    auto ops = make_st20p_rx_ops(cfg);
+    auto health = std::make_shared<MtlWorkerHealthState>();
+
+    auto ops = make_st20p_rx_ops(cfg, health.get());
     if (!ops.has_value()) {
         return std::unexpected(ops.error());
     }
@@ -586,7 +643,8 @@ MtlVideoRxSession::create(MtlRuntimeContext &runtime, st2110::MtlWorkerGraphId g
         return std::unexpected(st2110::Error::SystemFailure);
     }
 
-    auto impl = std::make_unique<Impl>(graph_id, std::move(cfg), rx, stats, event_writer, media_ring);
+    auto impl =
+        std::make_unique<Impl>(graph_id, std::move(cfg), rx, stats, event_writer, media_ring, std::move(health));
     auto started = impl->start_thread();
     if (!started.has_value()) {
         return std::unexpected(started.error());
@@ -638,6 +696,43 @@ void MtlVideoRxSession::append_stats_snapshot(MtlWorkerGraphStatsSnapshot &snaps
     snapshot.video_session_frames_packets_missed = session_stats.stat_frames_pks_missed;
     snapshot.video_session_packets_wrong_length_dropped = session_stats.stat_pkts_wrong_len_dropped;
     snapshot.video_session_slot_get_frame_failures = session_stats.stat_slot_get_frame_fail;
+}
+
+bool MtlVideoRxSession::healthy() const noexcept {
+    return impl_ && impl_->rx && impl_->health && impl_->health->healthy() &&
+           impl_->receive_loop_active.load(std::memory_order_acquire);
+}
+
+st2110::Error MtlVideoRxSession::health_error() const noexcept {
+    if (!impl_ || !impl_->rx) {
+        return st2110::Error::InvalidBackendState;
+    }
+
+    if (!impl_->health) {
+        return st2110::Error::InvalidBackendState;
+    }
+
+    if (!impl_->receive_loop_active.load(std::memory_order_acquire)) {
+        return st2110::Error::InvalidBackendState;
+    }
+
+    return impl_->health->error();
+}
+
+std::string MtlVideoRxSession::health_message() const {
+    if (!impl_ || !impl_->rx) {
+        return "MTL video RX session has no native handle";
+    }
+
+    if (!impl_->health) {
+        return "MTL video RX session has no health state";
+    }
+
+    if (!impl_->receive_loop_active.load(std::memory_order_acquire)) {
+        return "MTL video receive loop is not active";
+    }
+
+    return impl_->health->message();
 }
 
 } // namespace st2110_mtl_rx_worker

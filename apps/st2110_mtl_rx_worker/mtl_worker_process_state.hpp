@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <span>
+#include <string>
 #include <unordered_map>
 
 namespace st2110_mtl_rx_worker {
@@ -49,6 +50,13 @@ class MtlWorkerProcessState final {
     [[nodiscard]] st2110::MtlWorkerErrorEvent make_error(st2110::MtlWorkerRequestId request_id,
                                                          st2110::MtlWorkerGraphId graph_id, st2110::Error error,
                                                          const char *message) const;
+
+    void mark_worker_unhealthy_noexcept(st2110::Error error, const char *message) noexcept;
+    [[nodiscard]] bool refresh_worker_health_noexcept() noexcept;
+
+    bool worker_unhealthy_ = false;
+    st2110::Error worker_health_error_ = st2110::Error::Ok;
+    std::string worker_health_message_ = "MTL worker healthy";
 
     MtlWorkerEventWriter *event_writer_ = nullptr;
     std::unique_ptr<MtlRuntimeContext> runtime_{};

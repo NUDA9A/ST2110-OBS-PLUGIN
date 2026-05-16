@@ -1,13 +1,16 @@
 #include "mtl_audio_rx_session.hpp"
 #include "mtl_worker_event_writer.hpp"
+#include "mtl_worker_health.hpp"
 
 #include <mtl/st30_api.h>
 #include <mtl/st30_pipeline_api.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <span>
 #include <stop_token>
 #include <thread>
@@ -304,14 +307,17 @@ struct MtlAudioRxSession::Impl {
     st2110::MtlWorkerGraphId graph_id = 0;
     std::uint32_t next_slot_index = 0;
     std::uint64_t next_sequence = 1;
+    std::shared_ptr<MtlWorkerHealthState> health{};
+    std::atomic_bool receive_loop_active{false};
 
     std::jthread receive_thread{};
 
     explicit Impl(st2110::MtlWorkerGraphId graph, st2110::MtlAudioStartConfig session_cfg,
                   st30p_rx_handle session_handle, MtlWorkerGraphStats &graph_stats, MtlWorkerEventWriter &writer,
-                  st2110::MtlWorkerSharedMemoryRingMap *bound_media_ring)
+                  st2110::MtlWorkerSharedMemoryRingMap *bound_media_ring,
+                  std::shared_ptr<MtlWorkerHealthState> session_health)
         : cfg(std::move(session_cfg)), graph_id(graph), rx(session_handle), stats(&graph_stats), event_writer(&writer),
-          media_ring(bound_media_ring) {}
+          media_ring(bound_media_ring), health(std::move(session_health)) {}
 
     ~Impl() {
         stop_thread_noexcept();
@@ -327,9 +333,17 @@ struct MtlAudioRxSession::Impl {
             return std::unexpected(st2110::Error::InvalidBackendState);
         }
 
+        receive_loop_active.store(true, std::memory_order_release);
+
         try {
             receive_thread = std::jthread([this](std::stop_token stop_token) { receive_loop_noexcept(stop_token); });
         } catch (...) {
+            receive_loop_active.store(false, std::memory_order_release);
+
+            if (health) {
+                health->mark_unhealthy(st2110::Error::SystemFailure, "Failed to start MTL audio receive thread");
+            }
+
             st30p_rx_wake_block(rx);
             return std::unexpected(st2110::Error::SystemFailure);
         }
@@ -359,27 +373,52 @@ struct MtlAudioRxSession::Impl {
     }
 
     void receive_loop_noexcept(std::stop_token stop_token) noexcept {
-        while (!stop_token.stop_requested()) {
-            st30_frame *frame = st30p_rx_get_frame(rx);
-            if (!frame) {
-                continue;
-            }
+        try {
+            while (!stop_token.stop_requested()) {
+                st30_frame *frame = st30p_rx_get_frame(rx);
+                if (!frame) {
+                    continue;
+                }
 
-            if (stats) {
-                stats->record_audio_block_received();
-                record_audio_block_mtl_metadata(*stats, *frame);
-            }
-
-            auto exported = export_audio_frame_to_ring(media_ring, event_writer, graph_id, cfg, frame, next_slot_index,
-                                                       next_sequence);
-            if (!exported.has_value() || !*exported) {
                 if (stats) {
+                    stats->record_audio_block_received();
+                    record_audio_block_mtl_metadata(*stats, *frame);
+                }
+
+                auto exported = export_audio_frame_to_ring(media_ring, event_writer, graph_id, cfg, frame,
+                                                           next_slot_index, next_sequence);
+                if (!exported.has_value()) {
+                    if (stats) {
+                        stats->record_audio_block_dropped();
+                    }
+
+                    if (health) {
+                        health->mark_unhealthy(exported.error(), "MTL audio shared-memory/IPC export failed");
+                    }
+
+                    (void)st30p_rx_put_frame(rx, frame);
+                    break;
+                }
+
+                if (!*exported && stats) {
                     stats->record_audio_block_dropped();
                 }
-            }
 
-            st30p_rx_put_frame(rx, frame);
+                if (st30p_rx_put_frame(rx, frame) < 0) {
+                    if (health) {
+                        health->mark_unhealthy(st2110::Error::SystemFailure, "MTL audio st30p_rx_put_frame failed");
+                    }
+
+                    break;
+                }
+            }
+        } catch (...) {
+            if (health) {
+                health->mark_unhealthy(st2110::Error::SystemFailure, "MTL audio receive loop threw");
+            }
         }
+
+        receive_loop_active.store(false, std::memory_order_release);
     }
 };
 
@@ -396,6 +435,8 @@ MtlAudioRxSession::create(MtlRuntimeContext &runtime, st2110::MtlWorkerGraphId g
         return std::unexpected(valid_ring.error());
     }
 
+    auto health = std::make_shared<MtlWorkerHealthState>();
+
     auto ops = make_st30p_rx_ops(cfg);
     if (!ops.has_value()) {
         return std::unexpected(ops.error());
@@ -406,7 +447,8 @@ MtlAudioRxSession::create(MtlRuntimeContext &runtime, st2110::MtlWorkerGraphId g
         return std::unexpected(st2110::Error::SystemFailure);
     }
 
-    auto impl = std::make_unique<Impl>(graph_id, std::move(cfg), rx, stats, event_writer, media_ring);
+    auto impl =
+        std::make_unique<Impl>(graph_id, std::move(cfg), rx, stats, event_writer, media_ring, std::move(health));
 
     auto started = impl->start_thread();
     if (!started.has_value()) {
@@ -458,6 +500,43 @@ void MtlAudioRxSession::append_stats_snapshot(MtlWorkerGraphStatsSnapshot &snaps
     snapshot.audio_session_packets_dropped = session_stats.stat_pkts_dropped;
     snapshot.audio_session_packets_length_mismatch_dropped = session_stats.stat_pkts_len_mismatch_dropped;
     snapshot.audio_session_slot_get_frame_failures = session_stats.stat_slot_get_frame_fail;
+}
+
+bool MtlAudioRxSession::healthy() const noexcept {
+    return impl_ && impl_->rx && impl_->health && impl_->health->healthy() &&
+           impl_->receive_loop_active.load(std::memory_order_acquire);
+}
+
+st2110::Error MtlAudioRxSession::health_error() const noexcept {
+    if (!impl_ || !impl_->rx) {
+        return st2110::Error::InvalidBackendState;
+    }
+
+    if (!impl_->health) {
+        return st2110::Error::InvalidBackendState;
+    }
+
+    if (!impl_->receive_loop_active.load(std::memory_order_acquire)) {
+        return st2110::Error::InvalidBackendState;
+    }
+
+    return impl_->health->error();
+}
+
+std::string MtlAudioRxSession::health_message() const {
+    if (!impl_ || !impl_->rx) {
+        return "MTL audio RX session has no native handle";
+    }
+
+    if (!impl_->health) {
+        return "MTL audio RX session has no health state";
+    }
+
+    if (!impl_->receive_loop_active.load(std::memory_order_acquire)) {
+        return "MTL audio receive loop is not active";
+    }
+
+    return impl_->health->message();
 }
 
 } // namespace st2110_mtl_rx_worker

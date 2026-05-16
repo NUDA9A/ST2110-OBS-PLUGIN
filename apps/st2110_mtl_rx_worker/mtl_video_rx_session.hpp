@@ -4,12 +4,13 @@
 #include "mtl_runtime_context.hpp"
 #include "mtl_worker_stats.hpp"
 
+#include <st2110/backends/mtl/mtl_worker_shared_memory_ring.hpp>
 #include <st2110/delivery/video/mtl_video_start_config.hpp>
 #include <st2110/foundation/error.hpp>
-#include <st2110/backends/mtl/mtl_worker_shared_memory_ring.hpp>
 
 #include <expected>
 #include <memory>
+#include <string>
 
 namespace st2110_mtl_rx_worker {
 class MtlWorkerEventWriter;
@@ -30,9 +31,9 @@ class MtlWorkerEventWriter;
 class MtlVideoRxSession final {
   public:
     static std::expected<std::unique_ptr<MtlVideoRxSession>, st2110::Error>
-create(MtlRuntimeContext &runtime, st2110::MtlWorkerGraphId graph_id, st2110::MtlVideoStartConfig cfg,
-       MtlWorkerGraphStats &stats, MtlWorkerEventWriter &event_writer,
-       st2110::MtlWorkerSharedMemoryRingMap *media_ring = nullptr);
+    create(MtlRuntimeContext &runtime, st2110::MtlWorkerGraphId graph_id, st2110::MtlVideoStartConfig cfg,
+           MtlWorkerGraphStats &stats, MtlWorkerEventWriter &event_writer,
+           st2110::MtlWorkerSharedMemoryRingMap *media_ring = nullptr);
 
     ~MtlVideoRxSession();
 
@@ -43,6 +44,10 @@ create(MtlRuntimeContext &runtime, st2110::MtlWorkerGraphId graph_id, st2110::Mt
     MtlVideoRxSession &operator=(MtlVideoRxSession &&) noexcept = delete;
 
     void wake_block() noexcept;
+
+    [[nodiscard]] bool healthy() const noexcept;
+    [[nodiscard]] st2110::Error health_error() const noexcept;
+    [[nodiscard]] std::string health_message() const;
 
     [[nodiscard]] const st2110::MtlVideoStartConfig &config() const noexcept;
     [[nodiscard]] const st2110::MtlWorkerSharedMemoryRingMap *media_ring() const noexcept;

@@ -240,4 +240,52 @@ MtlWorkerGraphStatsSnapshot MtlReceiveGraph::stats_snapshot() const noexcept {
     return snapshot;
 }
 
+bool MtlReceiveGraph::healthy() const noexcept {
+    if (!impl_ || !impl_->runtime || !impl_->runtime->handle()) {
+        return false;
+    }
+
+    if (impl_->cfg.video.has_value() && (!impl_->video || !impl_->video->healthy())) {
+        return false;
+    }
+
+    if (impl_->cfg.audio.has_value() && (!impl_->audio || !impl_->audio->healthy())) {
+        return false;
+    }
+
+    return true;
+}
+
+st2110::Error MtlReceiveGraph::health_error() const noexcept {
+    if (!impl_ || !impl_->runtime || !impl_->runtime->handle()) {
+        return st2110::Error::InvalidBackendState;
+    }
+
+    if (impl_->cfg.video.has_value() && (!impl_->video || !impl_->video->healthy())) {
+        return impl_->video ? impl_->video->health_error() : st2110::Error::InvalidBackendState;
+    }
+
+    if (impl_->cfg.audio.has_value() && (!impl_->audio || !impl_->audio->healthy())) {
+        return impl_->audio ? impl_->audio->health_error() : st2110::Error::InvalidBackendState;
+    }
+
+    return st2110::Error::Ok;
+}
+
+std::string MtlReceiveGraph::health_message() const {
+    if (!impl_ || !impl_->runtime || !impl_->runtime->handle()) {
+        return "MTL receive graph has no live runtime handle";
+    }
+
+    if (impl_->cfg.video.has_value() && (!impl_->video || !impl_->video->healthy())) {
+        return impl_->video ? impl_->video->health_message() : "MTL receive graph has no video session";
+    }
+
+    if (impl_->cfg.audio.has_value() && (!impl_->audio || !impl_->audio->healthy())) {
+        return impl_->audio ? impl_->audio->health_message() : "MTL receive graph has no audio session";
+    }
+
+    return "MTL receive graph healthy";
+}
+
 } // namespace st2110_mtl_rx_worker

@@ -13,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 
 namespace st2110_mtl_rx_worker {
 class MtlWorkerEventWriter;
@@ -28,8 +29,8 @@ using MtlReceiveGraphConfig = st2110::MtlWorkerStartSessionsRequest;
 class MtlReceiveGraph final {
   public:
     static std::expected<std::unique_ptr<MtlReceiveGraph>, st2110::Error>
-create(MtlRuntimeContext &runtime, MtlReceiveGraphConfig cfg, MtlWorkerEventWriter &event_writer,
-       std::span<const int> ancillary_file_descriptors = {});
+    create(MtlRuntimeContext &runtime, MtlReceiveGraphConfig cfg, MtlWorkerEventWriter &event_writer,
+           std::span<const int> ancillary_file_descriptors = {});
 
     ~MtlReceiveGraph();
 
@@ -50,6 +51,10 @@ create(MtlRuntimeContext &runtime, MtlReceiveGraphConfig cfg, MtlWorkerEventWrit
     [[nodiscard]] const MtlReceiveGraphConfig &config() const noexcept;
 
     [[nodiscard]] MtlWorkerGraphStatsSnapshot stats_snapshot() const noexcept;
+
+    [[nodiscard]] bool healthy() const noexcept;
+    [[nodiscard]] st2110::Error health_error() const noexcept;
+    [[nodiscard]] std::string health_message() const;
 
   private:
     struct Impl;
