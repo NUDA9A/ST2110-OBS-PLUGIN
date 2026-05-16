@@ -19,6 +19,7 @@ struct MtlWorkerGraphStatsSnapshot {
     std::uint64_t video_frame_packets_received_redundant = 0;
     std::uint64_t video_reconstructed_frames = 0;
     std::uint64_t video_corrupted_frames = 0;
+    std::uint64_t video_complete_frames = 0;
 
     bool video_session_stats_available = false;
     st2110::MtlWorkerRxPortStats video_session_primary{};
@@ -33,6 +34,8 @@ struct MtlWorkerGraphStatsSnapshot {
     std::uint64_t video_session_packets_wrong_length_dropped = 0;
     std::uint64_t video_session_slot_get_frame_failures = 0;
     std::uint64_t video_session_stats_query_failures = 0;
+
+    st2110::MtlWorkerSt20RxUserStats video_st20_rx{};
 
     std::uint64_t audio_block_bytes_received = 0;
     std::uint64_t audio_block_packets_total = 0;
@@ -77,7 +80,7 @@ class MtlWorkerGraphStats final {
     void record_audio_block_dropped() noexcept { audio_blocks_dropped_.fetch_add(1, std::memory_order_relaxed); }
 
     void record_video_frame_packet_metadata(std::uint32_t packets_total, std::uint32_t packets_primary,
-                                            std::uint32_t packets_redundant, bool reconstructed,
+                                            std::uint32_t packets_redundant, bool complete, bool reconstructed,
                                             bool corrupted) noexcept {
         video_frame_packets_total_.fetch_add(packets_total, std::memory_order_relaxed);
         video_frame_packets_received_primary_.fetch_add(packets_primary, std::memory_order_relaxed);
@@ -89,6 +92,10 @@ class MtlWorkerGraphStats final {
 
         if (corrupted) {
             video_corrupted_frames_.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        if (complete) {
+            video_complete_frames_.fetch_add(1, std::memory_order_relaxed);
         }
     }
 
@@ -114,6 +121,7 @@ class MtlWorkerGraphStats final {
                 video_frame_packets_received_redundant_.load(std::memory_order_relaxed),
             .video_reconstructed_frames = video_reconstructed_frames_.load(std::memory_order_relaxed),
             .video_corrupted_frames = video_corrupted_frames_.load(std::memory_order_relaxed),
+            .video_complete_frames = video_complete_frames_.load(std::memory_order_relaxed),
 
             .audio_block_bytes_received = audio_block_bytes_received_.load(std::memory_order_relaxed),
             .audio_block_packets_total = audio_block_packets_total_.load(std::memory_order_relaxed),
@@ -135,6 +143,7 @@ class MtlWorkerGraphStats final {
     std::atomic_uint64_t video_frame_packets_received_redundant_{0};
     std::atomic_uint64_t video_reconstructed_frames_{0};
     std::atomic_uint64_t video_corrupted_frames_{0};
+    std::atomic_uint64_t video_complete_frames_{0};
 
     std::atomic_uint64_t audio_block_bytes_received_{0};
     std::atomic_uint64_t audio_block_packets_total_{0};

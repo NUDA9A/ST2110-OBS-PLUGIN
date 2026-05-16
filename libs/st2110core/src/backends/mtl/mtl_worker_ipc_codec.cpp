@@ -189,6 +189,125 @@ std::expected<MtlWorkerRxPortStats, Error> read_rx_port_stats(Reader &reader) {
     };
 }
 
+void write_st20_rx_user_stats(Writer &writer, const MtlWorkerSt20RxUserStats &stats) {
+    write_rx_port_stats(writer, stats.primary);
+    write_rx_port_stats(writer, stats.redundant);
+
+    writer.u64(stats.stat_pkts_received);
+    writer.u64(stats.stat_pkts_out_of_order);
+    writer.u64(stats.stat_pkts_wrong_ssrc_dropped);
+    writer.u64(stats.stat_pkts_wrong_pt_dropped);
+
+    writer.u64(stats.stat_bytes_received);
+    writer.u64(stats.stat_slices_received);
+    writer.u64(stats.stat_pkts_idx_dropped);
+    writer.u64(stats.stat_pkts_offset_dropped);
+    writer.u64(stats.stat_frames_dropped);
+    writer.u64(stats.stat_pkts_idx_oo_bitmap);
+    writer.u64(stats.stat_frames_pks_missed);
+    writer.u64(stats.stat_pkts_rtp_ring_full);
+    writer.u64(stats.stat_pkts_no_slot);
+    writer.u64(stats.stat_pkts_redundant_dropped);
+    writer.u64(stats.stat_pkts_wrong_interlace_dropped);
+    writer.u64(stats.stat_pkts_wrong_len_dropped);
+    writer.u64(stats.stat_pkts_enqueue_fallback);
+    writer.u64(stats.stat_pkts_dma);
+    writer.u64(stats.stat_pkts_slice_fail);
+    writer.u64(stats.stat_pkts_slice_merged);
+    writer.u64(stats.stat_pkts_multi_segments_received);
+    writer.u64(stats.stat_pkts_not_bpm);
+    writer.u64(stats.stat_pkts_wrong_payload_hdr_split);
+    writer.u64(stats.stat_mismatch_hdr_split_frame);
+    writer.u64(stats.stat_pkts_copy_hdr_split);
+    writer.u64(stats.stat_vsync_mismatch);
+    writer.u64(stats.stat_slot_get_frame_fail);
+    writer.u64(stats.stat_slot_query_ext_fail);
+    writer.u64(stats.stat_pkts_simulate_loss);
+    writer.u64(stats.stat_pkts_user_meta);
+    writer.u64(stats.stat_pkts_user_meta_err);
+    writer.u64(stats.stat_pkts_retransmit);
+    writer.u64(stats.stat_interlace_first_field);
+    writer.u64(stats.stat_interlace_second_field);
+    writer.u64(stats.stat_st22_boxes);
+    writer.u64(stats.stat_burst_pkts_max);
+    writer.u64(stats.stat_burst_succ_cnt);
+    writer.u64(stats.stat_burst_pkts_sum);
+    writer.u64(stats.incomplete_frames_cnt);
+    writer.u64(stats.stat_pkts_wrong_kmod_dropped);
+}
+
+std::expected<MtlWorkerSt20RxUserStats, Error> read_st20_rx_user_stats(Reader &reader) {
+    MtlWorkerSt20RxUserStats stats{};
+
+    auto primary = read_rx_port_stats(reader);
+    if (!primary.has_value()) {
+        return std::unexpected(primary.error());
+    }
+
+    auto redundant = read_rx_port_stats(reader);
+    if (!redundant.has_value()) {
+        return std::unexpected(redundant.error());
+    }
+
+    stats.primary = *primary;
+    stats.redundant = *redundant;
+
+    auto read_u64 = [&reader](std::uint64_t &out) -> std::expected<bool, Error> {
+        auto value = reader.u64();
+        if (!value.has_value()) {
+            return std::unexpected(value.error());
+        }
+
+        out = *value;
+        return true;
+    };
+
+    if (!read_u64(stats.stat_pkts_received) ||
+        !read_u64(stats.stat_pkts_out_of_order) ||
+        !read_u64(stats.stat_pkts_wrong_ssrc_dropped) ||
+        !read_u64(stats.stat_pkts_wrong_pt_dropped) ||
+        !read_u64(stats.stat_bytes_received) ||
+        !read_u64(stats.stat_slices_received) ||
+        !read_u64(stats.stat_pkts_idx_dropped) ||
+        !read_u64(stats.stat_pkts_offset_dropped) ||
+        !read_u64(stats.stat_frames_dropped) ||
+        !read_u64(stats.stat_pkts_idx_oo_bitmap) ||
+        !read_u64(stats.stat_frames_pks_missed) ||
+        !read_u64(stats.stat_pkts_rtp_ring_full) ||
+        !read_u64(stats.stat_pkts_no_slot) ||
+        !read_u64(stats.stat_pkts_redundant_dropped) ||
+        !read_u64(stats.stat_pkts_wrong_interlace_dropped) ||
+        !read_u64(stats.stat_pkts_wrong_len_dropped) ||
+        !read_u64(stats.stat_pkts_enqueue_fallback) ||
+        !read_u64(stats.stat_pkts_dma) ||
+        !read_u64(stats.stat_pkts_slice_fail) ||
+        !read_u64(stats.stat_pkts_slice_merged) ||
+        !read_u64(stats.stat_pkts_multi_segments_received) ||
+        !read_u64(stats.stat_pkts_not_bpm) ||
+        !read_u64(stats.stat_pkts_wrong_payload_hdr_split) ||
+        !read_u64(stats.stat_mismatch_hdr_split_frame) ||
+        !read_u64(stats.stat_pkts_copy_hdr_split) ||
+        !read_u64(stats.stat_vsync_mismatch) ||
+        !read_u64(stats.stat_slot_get_frame_fail) ||
+        !read_u64(stats.stat_slot_query_ext_fail) ||
+        !read_u64(stats.stat_pkts_simulate_loss) ||
+        !read_u64(stats.stat_pkts_user_meta) ||
+        !read_u64(stats.stat_pkts_user_meta_err) ||
+        !read_u64(stats.stat_pkts_retransmit) ||
+        !read_u64(stats.stat_interlace_first_field) ||
+        !read_u64(stats.stat_interlace_second_field) ||
+        !read_u64(stats.stat_st22_boxes) ||
+        !read_u64(stats.stat_burst_pkts_max) ||
+        !read_u64(stats.stat_burst_succ_cnt) ||
+        !read_u64(stats.stat_burst_pkts_sum) ||
+        !read_u64(stats.incomplete_frames_cnt) ||
+        !read_u64(stats.stat_pkts_wrong_kmod_dropped)) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return stats;
+}
+
 void write_device_rx_port_stats(Writer &writer, const MtlWorkerDeviceRxPortStats &stats) {
     writer.u64(stats.rx_packets);
     writer.u64(stats.rx_bytes);
@@ -1229,6 +1348,7 @@ std::expected<std::vector<std::uint8_t>, Error> serialize_mtl_worker_control_eve
                 writer.u64(typed_event.video_frame_packets_received_redundant);
                 writer.u64(typed_event.video_reconstructed_frames);
                 writer.u64(typed_event.video_corrupted_frames);
+                writer.u64(typed_event.video_complete_frames);
 
                 writer.u8(typed_event.video_session_stats_available ? 1 : 0);
                 write_rx_port_stats(writer, typed_event.video_session_primary);
@@ -1242,6 +1362,7 @@ std::expected<std::vector<std::uint8_t>, Error> serialize_mtl_worker_control_eve
                 writer.u64(typed_event.video_session_frames_packets_missed);
                 writer.u64(typed_event.video_session_packets_wrong_length_dropped);
                 writer.u64(typed_event.video_session_slot_get_frame_failures);
+                write_st20_rx_user_stats(writer, typed_event.video_st20_rx);
                 writer.u64(typed_event.video_session_stats_query_failures);
 
                 writer.u64(typed_event.audio_block_bytes_received);
@@ -1483,6 +1604,11 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
             return std::unexpected(ok.error());
         }
 
+        ok = read_u64_field(reader, event.video_complete_frames);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
         ok = read_bool_field(reader, event.video_session_stats_available);
         if (!ok.has_value()) {
             return std::unexpected(ok.error());
@@ -1542,6 +1668,13 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
         if (!ok.has_value()) {
             return std::unexpected(ok.error());
         }
+
+        auto video_st20_rx = read_st20_rx_user_stats(reader);
+        if (!video_st20_rx.has_value()) {
+            return std::unexpected(video_st20_rx.error());
+        }
+
+        event.video_st20_rx = *video_st20_rx;
 
         ok = read_u64_field(reader, event.video_session_stats_query_failures);
         if (!ok.has_value()) {

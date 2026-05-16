@@ -508,6 +508,57 @@ int on_st20p_rx_event(void *priv, const enum st_event event, void *args) {
     return ops;
 }
 
+st2110::MtlWorkerSt20RxUserStats copy_st20_rx_user_stats(const st20_rx_user_stats &src) noexcept {
+    st2110::MtlWorkerSt20RxUserStats dst{};
+
+    copy_rx_port_stats(dst.primary, src.common.port[MTL_SESSION_PORT_P]);
+    copy_rx_port_stats(dst.redundant, src.common.port[MTL_SESSION_PORT_R]);
+
+    dst.stat_pkts_received = src.common.stat_pkts_received;
+    dst.stat_pkts_out_of_order = src.common.stat_pkts_out_of_order;
+    dst.stat_pkts_wrong_ssrc_dropped = src.common.stat_pkts_wrong_ssrc_dropped;
+    dst.stat_pkts_wrong_pt_dropped = src.common.stat_pkts_wrong_pt_dropped;
+
+    dst.stat_bytes_received = src.stat_bytes_received;
+    dst.stat_slices_received = src.stat_slices_received;
+    dst.stat_pkts_idx_dropped = src.stat_pkts_idx_dropped;
+    dst.stat_pkts_offset_dropped = src.stat_pkts_offset_dropped;
+    dst.stat_frames_dropped = src.stat_frames_dropped;
+    dst.stat_pkts_idx_oo_bitmap = src.stat_pkts_idx_oo_bitmap;
+    dst.stat_frames_pks_missed = src.stat_frames_pks_missed;
+    dst.stat_pkts_rtp_ring_full = src.stat_pkts_rtp_ring_full;
+    dst.stat_pkts_no_slot = src.stat_pkts_no_slot;
+    dst.stat_pkts_redundant_dropped = src.stat_pkts_redundant_dropped;
+    dst.stat_pkts_wrong_interlace_dropped = src.stat_pkts_wrong_interlace_dropped;
+    dst.stat_pkts_wrong_len_dropped = src.stat_pkts_wrong_len_dropped;
+    dst.stat_pkts_enqueue_fallback = src.stat_pkts_enqueue_fallback;
+    dst.stat_pkts_dma = src.stat_pkts_dma;
+    dst.stat_pkts_slice_fail = src.stat_pkts_slice_fail;
+    dst.stat_pkts_slice_merged = src.stat_pkts_slice_merged;
+    dst.stat_pkts_multi_segments_received = src.stat_pkts_multi_segments_received;
+    dst.stat_pkts_not_bpm = src.stat_pkts_not_bpm;
+    dst.stat_pkts_wrong_payload_hdr_split = src.stat_pkts_wrong_payload_hdr_split;
+    dst.stat_mismatch_hdr_split_frame = src.stat_mismatch_hdr_split_frame;
+    dst.stat_pkts_copy_hdr_split = src.stat_pkts_copy_hdr_split;
+    dst.stat_vsync_mismatch = src.stat_vsync_mismatch;
+    dst.stat_slot_get_frame_fail = src.stat_slot_get_frame_fail;
+    dst.stat_slot_query_ext_fail = src.stat_slot_query_ext_fail;
+    dst.stat_pkts_simulate_loss = src.stat_pkts_simulate_loss;
+    dst.stat_pkts_user_meta = src.stat_pkts_user_meta;
+    dst.stat_pkts_user_meta_err = src.stat_pkts_user_meta_err;
+    dst.stat_pkts_retransmit = src.stat_pkts_retransmit;
+    dst.stat_interlace_first_field = src.stat_interlace_first_field;
+    dst.stat_interlace_second_field = src.stat_interlace_second_field;
+    dst.stat_st22_boxes = src.stat_st22_boxes;
+    dst.stat_burst_pkts_max = src.stat_burst_pkts_max;
+    dst.stat_burst_succ_cnt = src.stat_burst_succ_cnt;
+    dst.stat_burst_pkts_sum = src.stat_burst_pkts_sum;
+    dst.incomplete_frames_cnt = src.incomplete_frames_cnt;
+    dst.stat_pkts_wrong_kmod_dropped = src.stat_pkts_wrong_kmod_dropped;
+
+    return dst;
+}
+
 void copy_rx_port_stats(st2110::MtlWorkerRxPortStats &dst, const st_rx_port_stats &src) noexcept {
     dst.packets = src.packets;
     dst.bytes = src.bytes;
@@ -520,7 +571,8 @@ void copy_rx_port_stats(st2110::MtlWorkerRxPortStats &dst, const st_rx_port_stat
 void record_video_frame_mtl_metadata(MtlWorkerGraphStats &stats, const st_frame &frame) noexcept {
     stats.record_video_frame_packet_metadata(
         frame.pkts_total, frame.pkts_recv[MTL_SESSION_PORT_P], frame.pkts_recv[MTL_SESSION_PORT_R],
-        frame.status == ST_FRAME_STATUS_RECONSTRUCTED, frame.status == ST_FRAME_STATUS_CORRUPTED);
+        frame.status == ST_FRAME_STATUS_COMPLETE, frame.status == ST_FRAME_STATUS_RECONSTRUCTED,
+        frame.status == ST_FRAME_STATUS_CORRUPTED);
 }
 
 } // namespace
@@ -710,24 +762,25 @@ void MtlVideoRxSession::append_stats_snapshot(MtlWorkerGraphStatsSnapshot &snaps
         return;
     }
 
+    snapshot.video_st20_rx = copy_st20_rx_user_stats(session_stats);
     snapshot.video_session_stats_available = true;
 
-    copy_rx_port_stats(snapshot.video_session_primary, session_stats.common.port[MTL_SESSION_PORT_P]);
+    snapshot.video_session_primary = snapshot.video_st20_rx.primary;
 
     if (impl_->cfg.redundant.has_value()) {
-        copy_rx_port_stats(snapshot.video_session_redundant, session_stats.common.port[MTL_SESSION_PORT_R]);
+        snapshot.video_session_redundant = snapshot.video_st20_rx.redundant;
     }
 
-    snapshot.video_session_packets_received = session_stats.common.stat_pkts_received;
-    snapshot.video_session_packets_out_of_order = session_stats.common.stat_pkts_out_of_order;
-    snapshot.video_session_packets_wrong_ssrc_dropped = session_stats.common.stat_pkts_wrong_ssrc_dropped;
-    snapshot.video_session_packets_wrong_payload_type_dropped = session_stats.common.stat_pkts_wrong_pt_dropped;
+    snapshot.video_session_packets_received = snapshot.video_st20_rx.stat_pkts_received;
+    snapshot.video_session_packets_out_of_order = snapshot.video_st20_rx.stat_pkts_out_of_order;
+    snapshot.video_session_packets_wrong_ssrc_dropped = snapshot.video_st20_rx.stat_pkts_wrong_ssrc_dropped;
+    snapshot.video_session_packets_wrong_payload_type_dropped = snapshot.video_st20_rx.stat_pkts_wrong_pt_dropped;
 
-    snapshot.video_session_bytes_received = session_stats.stat_bytes_received;
-    snapshot.video_session_frames_dropped = session_stats.stat_frames_dropped;
-    snapshot.video_session_frames_packets_missed = session_stats.stat_frames_pks_missed;
-    snapshot.video_session_packets_wrong_length_dropped = session_stats.stat_pkts_wrong_len_dropped;
-    snapshot.video_session_slot_get_frame_failures = session_stats.stat_slot_get_frame_fail;
+    snapshot.video_session_bytes_received = snapshot.video_st20_rx.stat_bytes_received;
+    snapshot.video_session_frames_dropped = snapshot.video_st20_rx.stat_frames_dropped;
+    snapshot.video_session_frames_packets_missed = snapshot.video_st20_rx.stat_frames_pks_missed;
+    snapshot.video_session_packets_wrong_length_dropped = snapshot.video_st20_rx.stat_pkts_wrong_len_dropped;
+    snapshot.video_session_slot_get_frame_failures = snapshot.video_st20_rx.stat_slot_get_frame_fail;
 }
 
 bool MtlVideoRxSession::healthy() const noexcept {

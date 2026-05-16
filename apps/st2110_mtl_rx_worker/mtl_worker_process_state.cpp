@@ -257,6 +257,9 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
         .video_frame_packets_received_redundant = snapshot.video_frame_packets_received_redundant,
         .video_reconstructed_frames = snapshot.video_reconstructed_frames,
         .video_corrupted_frames = snapshot.video_corrupted_frames,
+        .video_complete_frames = snapshot.video_complete_frames,
+
+        .video_st20_rx = snapshot.video_st20_rx,
 
         .video_session_stats_available = snapshot.video_session_stats_available,
         .video_session_primary = snapshot.video_session_primary,
