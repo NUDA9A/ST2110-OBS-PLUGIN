@@ -183,6 +183,22 @@ make_sink_config(const std::optional<st2110::VideoReceiveBootstrap> &video_boots
     return cfg;
 }
 
+[[nodiscard]] std::string backend_error_detail(const st2110::IRxBackend *backend) {
+#if ST2110_HAS_MTL_BACKEND
+    if (const auto *video = dynamic_cast<const st2110::MtlRxVideoBackendProxy *>(backend)) {
+        return video->last_error_message();
+    }
+
+    if (const auto *audio = dynamic_cast<const st2110::MtlRxAudioBackendProxy *>(backend)) {
+        return audio->last_error_message();
+    }
+#else
+    (void)backend;
+#endif
+
+    return {};
+}
+
 } // namespace
 
 class SourceRuntime::Impl {
@@ -241,6 +257,19 @@ class SourceRuntime::Impl {
 
     void set_error(const std::string &message, const st2110::Error error) {
         last_error_ = message + ": " + st2110::to_string(error);
+    }
+
+    void set_backend_error(const std::string &message,
+                       const st2110::IRxBackend *backend,
+                       const st2110::Error error) {
+        const std::string detail = backend_error_detail(backend);
+
+        if (!detail.empty()) {
+            last_error_ = message + ": " + st2110::to_string(error) + "; " + detail;
+            return;
+        }
+
+        set_error(message, error);
     }
 
     void start_receive_graph() {
@@ -407,7 +436,7 @@ class SourceRuntime::Impl {
             auto started = video_backend_->start(sink_.get());
             if (!started.has_value()) {
                 cleanup_started_sessions();
-                set_error("Video receive backend start failed", started.error());
+                set_backend_error("Video receive backend start failed", video_backend_.get(), started.error());
                 return false;
             }
 
@@ -422,7 +451,7 @@ class SourceRuntime::Impl {
             auto started = audio_backend_->start(sink_.get());
             if (!started.has_value()) {
                 cleanup_started_sessions();
-                set_error("Audio receive backend start failed", started.error());
+                set_backend_error("Audio receive backend start failed", audio_backend_.get(), started.error());
                 return false;
             }
 

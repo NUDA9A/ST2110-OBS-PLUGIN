@@ -11,19 +11,18 @@
 #include <expected>
 #include <memory>
 #include <optional>
+#include <string>
 
 namespace st2110 {
+struct MtlWorkerErrorDetail {
+    Error error = Error::Ok;
+    MtlWorkerRequestId request_id = 0;
+    MtlWorkerGraphId graph_id = 0;
 
-/*
- * OBS-process-side MTL worker graph client.
- *
- * This class is the future shared control client for one MTL receive graph.
- * Video and audio proxy backends should coordinate through one graph client
- * instead of independently controlling the worker.
- *
- * This class must not include MTL runtime headers and must not call MTL APIs.
- * Current skeleton does not implement process spawn, IPC, or shared memory.
- */
+    std::string message{};
+    bool worker_side = false;
+};
+
 class MtlWorkerGraphClient final {
   public:
     MtlWorkerGraphClient();
@@ -60,6 +59,9 @@ class MtlWorkerGraphClient final {
     [[nodiscard]] const std::optional<MtlAudioStartConfig> &audio_config() const noexcept;
 
     [[nodiscard]] IFrameSink *sink() const noexcept;
+
+    [[nodiscard]] std::optional<MtlWorkerErrorDetail> last_error_detail() const;
+    [[nodiscard]] std::string last_error_message() const;
 
   private:
     struct Impl;

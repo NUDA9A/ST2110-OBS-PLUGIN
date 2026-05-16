@@ -6,6 +6,8 @@
 #include <st2110/delivery/video/mtl_video_start_config.hpp>
 
 #include <memory>
+#include <optional>
+#include <string>
 
 namespace st2110 {
 
@@ -29,6 +31,9 @@ class MtlRxVideoBackendProxy final : public IRxBackend {
 
     RxBackendLifecycleResult start(IFrameSink *sink) override;
     RxBackendLifecycleResult stop() override;
+
+    [[nodiscard]] std::optional<MtlWorkerErrorDetail> last_error_detail() const;
+    [[nodiscard]] std::string last_error_message() const;
 
   private:
     MtlVideoStartConfig cfg_{};

@@ -4,6 +4,8 @@
 
 #include <expected>
 #include <utility>
+#include <optional>
+#include <string>
 
 namespace st2110 {
 
@@ -74,6 +76,14 @@ RxBackendLifecycleResult MtlRxAudioBackendProxy::stop() {
     started_ = false;
 
     return stopped;
+}
+
+std::optional<MtlWorkerErrorDetail> MtlRxAudioBackendProxy::last_error_detail() const {
+    return graph_client_ ? graph_client_->last_error_detail() : std::nullopt;
+}
+
+std::string MtlRxAudioBackendProxy::last_error_message() const {
+    return graph_client_ ? graph_client_->last_error_message() : std::string{};
 }
 
 } // namespace st2110
