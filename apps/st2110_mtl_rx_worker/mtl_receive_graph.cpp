@@ -106,11 +106,9 @@ struct MtlReceiveGraph::Impl {
     std::unique_ptr<MtlAudioRxSession> audio{};
 
     Impl(MtlRuntimeContext &runtime_context, MtlReceiveGraphConfig graph_cfg, MtlWorkerEventWriter &writer,
-     std::vector<st2110::MtlWorkerSharedMemoryRingMap> imported_media_rings)
-    : cfg(std::move(graph_cfg)),
-      runtime(&runtime_context),
-      event_writer(&writer),
-      media_rings(std::move(imported_media_rings)) {}
+         std::vector<st2110::MtlWorkerSharedMemoryRingMap> imported_media_rings)
+        : cfg(std::move(graph_cfg)), runtime(&runtime_context), event_writer(&writer),
+          media_rings(std::move(imported_media_rings)) {}
 };
 
 std::expected<std::unique_ptr<MtlReceiveGraph>, st2110::Error>
@@ -167,8 +165,8 @@ std::expected<bool, st2110::Error> MtlReceiveGraph::start_sessions() {
             return std::unexpected(st2110::Error::InvalidBackendState);
         }
 
-        auto video_session = MtlVideoRxSession::create(*impl_->runtime, impl_->cfg.graph_id, *impl_->cfg.video, impl_->stats,
-                                               *impl_->event_writer, *video_ring);
+        auto video_session = MtlVideoRxSession::create(*impl_->runtime, impl_->cfg.graph_id, *impl_->cfg.video,
+                                                       impl_->stats, *impl_->event_writer, *video_ring);
         if (!video_session.has_value()) {
             return std::unexpected(video_session.error());
         }
@@ -186,8 +184,8 @@ std::expected<bool, st2110::Error> MtlReceiveGraph::start_sessions() {
             return std::unexpected(st2110::Error::InvalidBackendState);
         }
 
-        auto audio_session = MtlAudioRxSession::create(*impl_->runtime, impl_->cfg.graph_id, *impl_->cfg.audio, impl_->stats,
-                                               *impl_->event_writer, *audio_ring);
+        auto audio_session = MtlAudioRxSession::create(*impl_->runtime, impl_->cfg.graph_id, *impl_->cfg.audio,
+                                                       impl_->stats, *impl_->event_writer, *audio_ring);
         if (!audio_session.has_value()) {
             return std::unexpected(audio_session.error());
         }
@@ -224,6 +222,22 @@ bool MtlReceiveGraph::sessions_running() const noexcept {
 
 const MtlReceiveGraphConfig &MtlReceiveGraph::config() const noexcept { return impl_->cfg; }
 
-MtlWorkerGraphStatsSnapshot MtlReceiveGraph::stats_snapshot() const noexcept { return impl_->stats.snapshot(); }
+MtlWorkerGraphStatsSnapshot MtlReceiveGraph::stats_snapshot() const noexcept {
+    auto snapshot = impl_->stats.snapshot();
+
+    if (impl_->video) {
+        impl_->video->append_stats_snapshot(snapshot);
+    }
+
+    if (impl_->audio) {
+        impl_->audio->append_stats_snapshot(snapshot);
+    }
+
+    if (impl_->runtime) {
+        impl_->runtime->append_stats_snapshot(snapshot);
+    }
+
+    return snapshot;
+}
 
 } // namespace st2110_mtl_rx_worker

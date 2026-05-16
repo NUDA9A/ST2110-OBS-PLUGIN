@@ -278,6 +278,20 @@ make_st30p_rx_ops(const st2110::MtlAudioStartConfig &cfg) noexcept {
     return ops;
 }
 
+void copy_rx_port_stats(st2110::MtlWorkerRxPortStats &dst, const st_rx_port_stats &src) noexcept {
+    dst.packets = src.packets;
+    dst.bytes = src.bytes;
+    dst.frames = src.frames;
+    dst.incomplete_frames = src.incomplete_frames;
+    dst.err_packets = src.err_packets;
+    dst.out_of_order_packets = src.out_of_order_packets;
+}
+
+void record_audio_block_mtl_metadata(MtlWorkerGraphStats &stats, const st30_frame &frame) noexcept {
+    stats.record_audio_block_packet_metadata(static_cast<std::uint64_t>(frame.data_size), frame.pkts_total,
+                                             frame.pkts_recv[MTL_SESSION_PORT_P], frame.pkts_recv[MTL_SESSION_PORT_R]);
+}
+
 } // namespace
 
 struct MtlAudioRxSession::Impl {
@@ -353,6 +367,7 @@ struct MtlAudioRxSession::Impl {
 
             if (stats) {
                 stats->record_audio_block_received();
+                record_audio_block_mtl_metadata(*stats, *frame);
             }
 
             auto exported = export_audio_frame_to_ring(media_ring, event_writer, graph_id, cfg, frame, next_slot_index,
@@ -366,6 +381,8 @@ struct MtlAudioRxSession::Impl {
             st30p_rx_put_frame(rx, frame);
         }
     }
+
+    void append_stats_snapshot(MtlWorkerGraphStatsSnapshot &snapshot) const noexcept;
 };
 
 std::expected<std::unique_ptr<MtlAudioRxSession>, st2110::Error>
@@ -414,5 +431,35 @@ void MtlAudioRxSession::wake_block() noexcept {
 const st2110::MtlAudioStartConfig &MtlAudioRxSession::config() const noexcept { return impl_->cfg; }
 
 const st2110::MtlWorkerSharedMemoryRingMap *MtlAudioRxSession::media_ring() const noexcept { return impl_->media_ring; }
+
+void MtlAudioRxSession::append_stats_snapshot(MtlWorkerGraphStatsSnapshot &snapshot) const noexcept {
+    if (!impl_->rx) {
+        return;
+    }
+
+    st30_rx_user_stats session_stats{};
+    if (st30p_rx_get_session_stats(impl_->rx, &session_stats) < 0) {
+        ++snapshot.audio_session_stats_query_failures;
+        return;
+    }
+
+    snapshot.audio_session_stats_available = true;
+
+    copy_rx_port_stats(snapshot.audio_session_primary, session_stats.common.port[MTL_SESSION_PORT_P]);
+
+    if (impl_->cfg.redundant.has_value()) {
+        copy_rx_port_stats(snapshot.audio_session_redundant, session_stats.common.port[MTL_SESSION_PORT_R]);
+    }
+
+    snapshot.audio_session_packets_received = session_stats.common.stat_pkts_received;
+    snapshot.audio_session_packets_out_of_order = session_stats.common.stat_pkts_out_of_order;
+    snapshot.audio_session_packets_wrong_ssrc_dropped = session_stats.common.stat_pkts_wrong_ssrc_dropped;
+    snapshot.audio_session_packets_wrong_payload_type_dropped = session_stats.common.stat_pkts_wrong_pt_dropped;
+
+    snapshot.audio_session_packets_redundant = session_stats.stat_pkts_redundant;
+    snapshot.audio_session_packets_dropped = session_stats.stat_pkts_dropped;
+    snapshot.audio_session_packets_length_mismatch_dropped = session_stats.stat_pkts_len_mismatch_dropped;
+    snapshot.audio_session_slot_get_frame_failures = session_stats.stat_slot_get_frame_fail;
+}
 
 } // namespace st2110_mtl_rx_worker

@@ -10,8 +10,8 @@
 namespace st2110_mtl_rx_worker {
 namespace {
 
-[[nodiscard]] st2110::MtlWorkerGraphId first_graph_id(
-    const std::unordered_map<st2110::MtlWorkerGraphId, std::unique_ptr<MtlReceiveGraph>> &graphs) noexcept {
+[[nodiscard]] st2110::MtlWorkerGraphId
+first_graph_id(const std::unordered_map<st2110::MtlWorkerGraphId, std::unique_ptr<MtlReceiveGraph>> &graphs) noexcept {
     return graphs.empty() ? 0 : graphs.begin()->first;
 }
 
@@ -234,10 +234,55 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
     return st2110::MtlWorkerStatsEvent{
         .request_id = request.request_id,
         .graph_id = request.graph_id,
+
         .video_frames_received = snapshot.video_frames_received,
         .audio_blocks_received = snapshot.audio_blocks_received,
         .video_frames_dropped = snapshot.video_frames_dropped,
         .audio_blocks_dropped = snapshot.audio_blocks_dropped,
+
+        .video_frame_packets_total = snapshot.video_frame_packets_total,
+        .video_frame_packets_received_primary = snapshot.video_frame_packets_received_primary,
+        .video_frame_packets_received_redundant = snapshot.video_frame_packets_received_redundant,
+        .video_reconstructed_frames = snapshot.video_reconstructed_frames,
+        .video_corrupted_frames = snapshot.video_corrupted_frames,
+
+        .video_session_stats_available = snapshot.video_session_stats_available,
+        .video_session_primary = snapshot.video_session_primary,
+        .video_session_redundant = snapshot.video_session_redundant,
+        .video_session_packets_received = snapshot.video_session_packets_received,
+        .video_session_packets_out_of_order = snapshot.video_session_packets_out_of_order,
+        .video_session_packets_wrong_ssrc_dropped = snapshot.video_session_packets_wrong_ssrc_dropped,
+        .video_session_packets_wrong_payload_type_dropped = snapshot.video_session_packets_wrong_payload_type_dropped,
+        .video_session_bytes_received = snapshot.video_session_bytes_received,
+        .video_session_frames_dropped = snapshot.video_session_frames_dropped,
+        .video_session_frames_packets_missed = snapshot.video_session_frames_packets_missed,
+        .video_session_packets_wrong_length_dropped = snapshot.video_session_packets_wrong_length_dropped,
+        .video_session_slot_get_frame_failures = snapshot.video_session_slot_get_frame_failures,
+        .video_session_stats_query_failures = snapshot.video_session_stats_query_failures,
+
+        .audio_block_bytes_received = snapshot.audio_block_bytes_received,
+        .audio_block_packets_total = snapshot.audio_block_packets_total,
+        .audio_block_packets_received_primary = snapshot.audio_block_packets_received_primary,
+        .audio_block_packets_received_redundant = snapshot.audio_block_packets_received_redundant,
+
+        .audio_session_stats_available = snapshot.audio_session_stats_available,
+        .audio_session_primary = snapshot.audio_session_primary,
+        .audio_session_redundant = snapshot.audio_session_redundant,
+        .audio_session_packets_received = snapshot.audio_session_packets_received,
+        .audio_session_packets_out_of_order = snapshot.audio_session_packets_out_of_order,
+        .audio_session_packets_wrong_ssrc_dropped = snapshot.audio_session_packets_wrong_ssrc_dropped,
+        .audio_session_packets_wrong_payload_type_dropped = snapshot.audio_session_packets_wrong_payload_type_dropped,
+        .audio_session_packets_redundant = snapshot.audio_session_packets_redundant,
+        .audio_session_packets_dropped = snapshot.audio_session_packets_dropped,
+        .audio_session_packets_length_mismatch_dropped = snapshot.audio_session_packets_length_mismatch_dropped,
+        .audio_session_slot_get_frame_failures = snapshot.audio_session_slot_get_frame_failures,
+        .audio_session_stats_query_failures = snapshot.audio_session_stats_query_failures,
+
+        .mtl_primary_port_stats_available = snapshot.mtl_primary_port_stats_available,
+        .mtl_primary_port = snapshot.mtl_primary_port,
+        .mtl_redundant_port_stats_available = snapshot.mtl_redundant_port_stats_available,
+        .mtl_redundant_port = snapshot.mtl_redundant_port,
+        .mtl_port_stats_query_failures = snapshot.mtl_port_stats_query_failures,
     };
 }
 

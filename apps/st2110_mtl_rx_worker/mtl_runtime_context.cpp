@@ -38,8 +38,7 @@ void fill_mtl_runtime_port(mtl_init_params &params, const enum mtl_port port_ind
     std::memcpy(params.sip_addr[port_index], port_cfg.sip_addr.data(), port_cfg.sip_addr.size());
 }
 
-[[nodiscard]] std::expected<mtl_init_params, st2110::Error>
-make_mtl_init_params(const st2110::MtlRuntimeConfig &cfg) {
+[[nodiscard]] std::expected<mtl_init_params, st2110::Error> make_mtl_init_params(const st2110::MtlRuntimeConfig &cfg) {
     mtl_init_params params{};
 
     params.num_ports = cfg.redundant_port.has_value() ? 2 : 1;
@@ -53,6 +52,14 @@ make_mtl_init_params(const st2110::MtlRuntimeConfig &cfg) {
     params.flags |= MTL_FLAG_DEV_AUTO_START_STOP;
 
     return params;
+}
+
+void copy_device_rx_port_stats(st2110::MtlWorkerDeviceRxPortStats &dst, const mtl_port_status &src) noexcept {
+    dst.rx_packets = src.rx_packets;
+    dst.rx_bytes = src.rx_bytes;
+    dst.rx_err_packets = src.rx_err_packets;
+    dst.rx_hw_dropped_packets = src.rx_hw_dropped_packets;
+    dst.rx_nombuf_packets = src.rx_nombuf_packets;
 }
 
 } // namespace
@@ -92,12 +99,33 @@ MtlRuntimeContext::MtlRuntimeContext(std::unique_ptr<Impl> impl) : impl_(std::mo
 
 MtlRuntimeContext::~MtlRuntimeContext() = default;
 
-const st2110::MtlRuntimeConfig &MtlRuntimeContext::config() const noexcept {
-    return impl_->cfg;
-}
+const st2110::MtlRuntimeConfig &MtlRuntimeContext::config() const noexcept { return impl_->cfg; }
 
-mtl_handle MtlRuntimeContext::handle() const noexcept {
-    return impl_->mt;
+mtl_handle MtlRuntimeContext::handle() const noexcept { return impl_->mt; }
+
+void MtlRuntimeContext::append_stats_snapshot(MtlWorkerGraphStatsSnapshot &snapshot) const noexcept {
+    if (!impl_->mt) {
+        ++snapshot.mtl_port_stats_query_failures;
+        return;
+    }
+
+    mtl_port_status primary{};
+    if (mtl_get_port_stats(impl_->mt, MTL_PORT_P, &primary) < 0) {
+        ++snapshot.mtl_port_stats_query_failures;
+    } else {
+        snapshot.mtl_primary_port_stats_available = true;
+        copy_device_rx_port_stats(snapshot.mtl_primary_port, primary);
+    }
+
+    if (impl_->cfg.redundant_port.has_value()) {
+        mtl_port_status redundant{};
+        if (mtl_get_port_stats(impl_->mt, MTL_PORT_R, &redundant) < 0) {
+            ++snapshot.mtl_port_stats_query_failures;
+        } else {
+            snapshot.mtl_redundant_port_stats_available = true;
+            copy_device_rx_port_stats(snapshot.mtl_redundant_port, redundant);
+        }
+    }
 }
 
 } // namespace st2110_mtl_rx_worker

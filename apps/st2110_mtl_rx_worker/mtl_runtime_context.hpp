@@ -4,6 +4,8 @@
 #include <st2110/backends/mtl/mtl_runtime_config.hpp>
 #include <st2110/foundation/error.hpp>
 
+#include "mtl_worker_stats.hpp"
+
 #include <mtl/mtl_api.h>
 
 #include <expected>
@@ -20,9 +22,8 @@ namespace st2110_mtl_rx_worker {
  * Public OBS/plugin/source code must not include this header.
  */
 class MtlRuntimeContext final {
-public:
-    static std::expected<std::unique_ptr<MtlRuntimeContext>, st2110::Error>
-    create(st2110::MtlRuntimeConfig cfg);
+  public:
+    static std::expected<std::unique_ptr<MtlRuntimeContext>, st2110::Error> create(st2110::MtlRuntimeConfig cfg);
 
     ~MtlRuntimeContext();
 
@@ -42,7 +43,9 @@ public:
      */
     [[nodiscard]] mtl_handle handle() const noexcept;
 
-private:
+    void append_stats_snapshot(MtlWorkerGraphStatsSnapshot &snapshot) const noexcept;
+
+  private:
     struct Impl;
 
     explicit MtlRuntimeContext(std::unique_ptr<Impl> impl);

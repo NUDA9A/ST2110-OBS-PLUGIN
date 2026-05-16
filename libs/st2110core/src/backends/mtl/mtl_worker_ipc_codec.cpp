@@ -14,7 +14,6 @@
 
 namespace st2110 {
 namespace {
-
 enum class MessageTag : std::uint8_t {
     ConfigHandshakeRequest = 1,
     StartSessionsRequest = 2,
@@ -158,6 +157,65 @@ class Reader {
     std::span<const std::uint8_t> bytes_{};
     std::size_t offset_ = 0;
 };
+
+void write_rx_port_stats(Writer &writer, const MtlWorkerRxPortStats &stats) {
+    writer.u64(stats.packets);
+    writer.u64(stats.bytes);
+    writer.u64(stats.frames);
+    writer.u64(stats.incomplete_frames);
+    writer.u64(stats.err_packets);
+    writer.u64(stats.out_of_order_packets);
+}
+
+std::expected<MtlWorkerRxPortStats, Error> read_rx_port_stats(Reader &reader) {
+    auto packets = reader.u64();
+    auto bytes = reader.u64();
+    auto frames = reader.u64();
+    auto incomplete_frames = reader.u64();
+    auto err_packets = reader.u64();
+    auto out_of_order_packets = reader.u64();
+
+    if (!packets || !bytes || !frames || !incomplete_frames || !err_packets || !out_of_order_packets) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return MtlWorkerRxPortStats{
+        .packets = *packets,
+        .bytes = *bytes,
+        .frames = *frames,
+        .incomplete_frames = *incomplete_frames,
+        .err_packets = *err_packets,
+        .out_of_order_packets = *out_of_order_packets,
+    };
+}
+
+void write_device_rx_port_stats(Writer &writer, const MtlWorkerDeviceRxPortStats &stats) {
+    writer.u64(stats.rx_packets);
+    writer.u64(stats.rx_bytes);
+    writer.u64(stats.rx_err_packets);
+    writer.u64(stats.rx_hw_dropped_packets);
+    writer.u64(stats.rx_nombuf_packets);
+}
+
+std::expected<MtlWorkerDeviceRxPortStats, Error> read_device_rx_port_stats(Reader &reader) {
+    auto rx_packets = reader.u64();
+    auto rx_bytes = reader.u64();
+    auto rx_err_packets = reader.u64();
+    auto rx_hw_dropped_packets = reader.u64();
+    auto rx_nombuf_packets = reader.u64();
+
+    if (!rx_packets || !rx_bytes || !rx_err_packets || !rx_hw_dropped_packets || !rx_nombuf_packets) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return MtlWorkerDeviceRxPortStats{
+        .rx_packets = *rx_packets,
+        .rx_bytes = *rx_bytes,
+        .rx_err_packets = *rx_err_packets,
+        .rx_hw_dropped_packets = *rx_hw_dropped_packets,
+        .rx_nombuf_packets = *rx_nombuf_packets,
+    };
+}
 
 void write_size_t_u64(Writer &writer, const std::size_t value) { writer.u64(static_cast<std::uint64_t>(value)); }
 
@@ -803,6 +861,47 @@ void write_audio_media_description(Writer &writer, const AudioMediaDescription &
     return true;
 }
 
+[[nodiscard]] std::expected<bool, Error> read_u64_field(Reader &reader, std::uint64_t &out) {
+    auto value = reader.u64();
+    if (!value.has_value()) {
+        return std::unexpected(value.error());
+    }
+
+    out = *value;
+    return true;
+}
+
+[[nodiscard]] std::expected<bool, Error> read_bool_field(Reader &reader, bool &out) {
+    auto value = read_bool_u8(reader);
+    if (!value.has_value()) {
+        return std::unexpected(value.error());
+    }
+
+    out = *value;
+    return true;
+}
+
+[[nodiscard]] std::expected<bool, Error> read_rx_port_stats_field(Reader &reader, MtlWorkerRxPortStats &out) {
+    auto value = read_rx_port_stats(reader);
+    if (!value.has_value()) {
+        return std::unexpected(value.error());
+    }
+
+    out = *value;
+    return true;
+}
+
+[[nodiscard]] std::expected<bool, Error> read_device_rx_port_stats_field(Reader &reader,
+                                                                         MtlWorkerDeviceRxPortStats &out) {
+    auto value = read_device_rx_port_stats(reader);
+    if (!value.has_value()) {
+        return std::unexpected(value.error());
+    }
+
+    out = *value;
+    return true;
+}
+
 } // namespace
 
 std::expected<std::vector<std::uint8_t>, Error>
@@ -1119,10 +1218,56 @@ std::expected<std::vector<std::uint8_t>, Error> serialize_mtl_worker_control_eve
                 writer.u8(static_cast<std::uint8_t>(MessageTag::StatsEvent));
                 writer.u64(typed_event.request_id);
                 writer.u64(typed_event.graph_id);
+
                 writer.u64(typed_event.video_frames_received);
                 writer.u64(typed_event.audio_blocks_received);
                 writer.u64(typed_event.video_frames_dropped);
                 writer.u64(typed_event.audio_blocks_dropped);
+
+                writer.u64(typed_event.video_frame_packets_total);
+                writer.u64(typed_event.video_frame_packets_received_primary);
+                writer.u64(typed_event.video_frame_packets_received_redundant);
+                writer.u64(typed_event.video_reconstructed_frames);
+                writer.u64(typed_event.video_corrupted_frames);
+
+                writer.u8(typed_event.video_session_stats_available ? 1 : 0);
+                write_rx_port_stats(writer, typed_event.video_session_primary);
+                write_rx_port_stats(writer, typed_event.video_session_redundant);
+                writer.u64(typed_event.video_session_packets_received);
+                writer.u64(typed_event.video_session_packets_out_of_order);
+                writer.u64(typed_event.video_session_packets_wrong_ssrc_dropped);
+                writer.u64(typed_event.video_session_packets_wrong_payload_type_dropped);
+                writer.u64(typed_event.video_session_bytes_received);
+                writer.u64(typed_event.video_session_frames_dropped);
+                writer.u64(typed_event.video_session_frames_packets_missed);
+                writer.u64(typed_event.video_session_packets_wrong_length_dropped);
+                writer.u64(typed_event.video_session_slot_get_frame_failures);
+                writer.u64(typed_event.video_session_stats_query_failures);
+
+                writer.u64(typed_event.audio_block_bytes_received);
+                writer.u64(typed_event.audio_block_packets_total);
+                writer.u64(typed_event.audio_block_packets_received_primary);
+                writer.u64(typed_event.audio_block_packets_received_redundant);
+
+                writer.u8(typed_event.audio_session_stats_available ? 1 : 0);
+                write_rx_port_stats(writer, typed_event.audio_session_primary);
+                write_rx_port_stats(writer, typed_event.audio_session_redundant);
+                writer.u64(typed_event.audio_session_packets_received);
+                writer.u64(typed_event.audio_session_packets_out_of_order);
+                writer.u64(typed_event.audio_session_packets_wrong_ssrc_dropped);
+                writer.u64(typed_event.audio_session_packets_wrong_payload_type_dropped);
+                writer.u64(typed_event.audio_session_packets_redundant);
+                writer.u64(typed_event.audio_session_packets_dropped);
+                writer.u64(typed_event.audio_session_packets_length_mismatch_dropped);
+                writer.u64(typed_event.audio_session_slot_get_frame_failures);
+                writer.u64(typed_event.audio_session_stats_query_failures);
+
+                writer.u8(typed_event.mtl_primary_port_stats_available ? 1 : 0);
+                write_device_rx_port_stats(writer, typed_event.mtl_primary_port);
+                writer.u8(typed_event.mtl_redundant_port_stats_available ? 1 : 0);
+                write_device_rx_port_stats(writer, typed_event.mtl_redundant_port);
+                writer.u64(typed_event.mtl_port_stats_query_failures);
+
                 writer.u64(typed_event.frame_ready_events);
                 writer.u64(typed_event.audio_block_ready_events);
                 writer.u64(typed_event.video_frames_delivered);
@@ -1281,30 +1426,281 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
     }
 
     case MessageTag::StatsEvent: {
-        auto request_id = reader.u64();
-        auto graph_id = reader.u64();
-        auto video_frames_received = reader.u64();
-        auto audio_blocks_received = reader.u64();
-        auto video_frames_dropped = reader.u64();
-        auto audio_blocks_dropped = reader.u64();
-        auto frame_ready_events = reader.u64();
-        auto audio_block_ready_events = reader.u64();
-        auto video_frames_delivered = reader.u64();
-        auto audio_blocks_delivered = reader.u64();
-        auto released_slots = reader.u64();
-        auto malformed_ready_events = reader.u64();
-        auto stale_ready_events = reader.u64();
-        auto delivery_failures = reader.u64();
-        auto release_failures = reader.u64();
-        auto ignored_events = reader.u64();
+        MtlWorkerStatsEvent event{};
 
-        if (!stale_ready_events.has_value() || !request_id.has_value() || !graph_id.has_value() ||
-            !video_frames_received.has_value() || !audio_blocks_received.has_value() ||
-            !video_frames_dropped.has_value() || !audio_blocks_dropped.has_value() || !frame_ready_events.has_value() ||
-            !audio_block_ready_events.has_value() || !video_frames_delivered.has_value() ||
-            !audio_blocks_delivered.has_value() || !released_slots.has_value() || !malformed_ready_events.has_value() ||
-            !delivery_failures.has_value() || !release_failures.has_value() || !ignored_events.has_value()) {
-            return std::unexpected(Error::InvalidValue);
+        auto ok = read_u64_field(reader, event.request_id);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.graph_id);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_frames_received);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_blocks_received);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_frames_dropped);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_blocks_dropped);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_frame_packets_total);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_frame_packets_received_primary);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_frame_packets_received_redundant);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_reconstructed_frames);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_corrupted_frames);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_bool_field(reader, event.video_session_stats_available);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_rx_port_stats_field(reader, event.video_session_primary);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_rx_port_stats_field(reader, event.video_session_redundant);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_session_packets_received);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_session_packets_out_of_order);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_session_packets_wrong_ssrc_dropped);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_session_packets_wrong_payload_type_dropped);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_session_bytes_received);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_session_frames_dropped);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_session_frames_packets_missed);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_session_packets_wrong_length_dropped);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_session_slot_get_frame_failures);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_session_stats_query_failures);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_block_bytes_received);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_block_packets_total);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_block_packets_received_primary);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_block_packets_received_redundant);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_bool_field(reader, event.audio_session_stats_available);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_rx_port_stats_field(reader, event.audio_session_primary);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_rx_port_stats_field(reader, event.audio_session_redundant);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_session_packets_received);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_session_packets_out_of_order);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_session_packets_wrong_ssrc_dropped);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_session_packets_wrong_payload_type_dropped);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_session_packets_redundant);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_session_packets_dropped);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_session_packets_length_mismatch_dropped);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_session_slot_get_frame_failures);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_session_stats_query_failures);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_bool_field(reader, event.mtl_primary_port_stats_available);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_device_rx_port_stats_field(reader, event.mtl_primary_port);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_bool_field(reader, event.mtl_redundant_port_stats_available);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_device_rx_port_stats_field(reader, event.mtl_redundant_port);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.mtl_port_stats_query_failures);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.frame_ready_events);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_block_ready_events);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.video_frames_delivered);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.audio_blocks_delivered);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.released_slots);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.malformed_ready_events);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.stale_ready_events);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.delivery_failures);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.release_failures);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
+        ok = read_u64_field(reader, event.ignored_events);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
         }
 
         auto consumed = ensure_consumed(reader);
@@ -1312,26 +1708,7 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
             return std::unexpected(consumed.error());
         }
 
-        return MtlWorkerControlEvent{
-            MtlWorkerStatsEvent{
-                .request_id = *request_id,
-                .graph_id = *graph_id,
-                .video_frames_received = *video_frames_received,
-                .audio_blocks_received = *audio_blocks_received,
-                .video_frames_dropped = *video_frames_dropped,
-                .audio_blocks_dropped = *audio_blocks_dropped,
-                .frame_ready_events = *frame_ready_events,
-                .audio_block_ready_events = *audio_block_ready_events,
-                .video_frames_delivered = *video_frames_delivered,
-                .audio_blocks_delivered = *audio_blocks_delivered,
-                .released_slots = *released_slots,
-                .malformed_ready_events = *malformed_ready_events,
-                .stale_ready_events = *stale_ready_events,
-                .delivery_failures = *delivery_failures,
-                .release_failures = *release_failures,
-                .ignored_events = *ignored_events,
-            },
-        };
+        return MtlWorkerControlEvent{event};
     }
 
     case MessageTag::FrameReadyEvent: {
