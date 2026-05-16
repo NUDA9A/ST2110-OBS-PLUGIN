@@ -423,10 +423,7 @@ struct MtlWorkerGraphClientAsyncState {
     MtlWorkerGraphClientAsyncState(MtlWorkerGraphId graph, std::optional<MtlVideoStartConfig> video,
                                    std::optional<MtlAudioStartConfig> audio, IFrameSink *attached_sink,
                                    std::vector<MtlWorkerSharedMemoryRingOwner> ring_owners)
-        : graph_id(graph),
-          video_config(std::move(video)),
-          audio_config(std::move(audio)),
-          sink(attached_sink),
+        : graph_id(graph), video_config(std::move(video)), audio_config(std::move(audio)), sink(attached_sink),
           media_ring_owners(std::move(ring_owners)) {}
 
     MtlWorkerGraphId graph_id = 0;
@@ -443,6 +440,7 @@ struct MtlWorkerGraphClientAsyncState {
     std::uint64_t frame_ready_events = 0;
     std::uint64_t audio_block_ready_events = 0;
     std::uint64_t video_frames_delivered = 0;
+    std::uint64_t audio_blocks_delivered = 0;
     std::uint64_t released_slots = 0;
     std::uint64_t malformed_ready_events = 0;
     std::uint64_t delivery_failures = 0;
@@ -470,8 +468,7 @@ struct MtlWorkerGraphClientAsyncState {
     }
 
     [[nodiscard]] MtlWorkerSharedMemoryRingOwner *
-    find_ring_owner_no_lock(const MtlWorkerMediaKind media_kind,
-                            const MtlWorkerSharedMemoryRingId ring_id) noexcept {
+    find_ring_owner_no_lock(const MtlWorkerMediaKind media_kind, const MtlWorkerSharedMemoryRingId ring_id) noexcept {
         for (auto &owner : media_ring_owners) {
             if (!owner.valid()) {
                 continue;
@@ -584,14 +581,160 @@ struct MtlWorkerGraphClientAsyncState {
 
             std::memcpy(frame.data(), payload->data(), frame.size_bytes());
 
-            sink->on_video_frame(
-                std::move(frame),
-                FrameTimingMetadata{
-                    .rtp_timestamp = event.rtp_timestamp,
-                    .receive_timestamp_ns = event.receive_timestamp_ns,
-                });
+            sink->on_video_frame(std::move(frame), FrameTimingMetadata{
+                                                       .rtp_timestamp = event.rtp_timestamp,
+                                                       .receive_timestamp_ns = event.receive_timestamp_ns,
+                                                   });
 
             ++video_frames_delivered;
+        } catch (...) {
+            ++delivery_failures;
+        }
+    }
+
+    [[nodiscard]] static std::expected<std::size_t, Error>
+    audio_bytes_per_sample(const MtlAudioPcmFormat format) noexcept {
+        switch (format) {
+        case MtlAudioPcmFormat::Pcm16:
+            return 2;
+        case MtlAudioPcmFormat::Pcm24:
+            return 3;
+        }
+
+        return std::unexpected(Error::Unsupported);
+    }
+
+    [[nodiscard]] static std::uint8_t byte_to_u8(const std::byte value) noexcept {
+        return static_cast<std::uint8_t>(value);
+    }
+
+    [[nodiscard]] static std::int32_t pcm16be_to_s32(const std::byte *src) noexcept {
+        const std::uint16_t raw = static_cast<std::uint16_t>((static_cast<std::uint16_t>(byte_to_u8(src[0])) << 8) |
+                                                             static_cast<std::uint16_t>(byte_to_u8(src[1])));
+
+        const auto signed_16 = static_cast<std::int16_t>(raw);
+
+        /*
+         * Convert to left-aligned S32. Use multiplication rather than shifting a
+         * negative signed value.
+         */
+        return static_cast<std::int32_t>(signed_16) * 65536;
+    }
+
+    [[nodiscard]] static std::int32_t pcm24be_to_s32(const std::byte *src) noexcept {
+        std::uint32_t raw = (static_cast<std::uint32_t>(byte_to_u8(src[0])) << 16) |
+                            (static_cast<std::uint32_t>(byte_to_u8(src[1])) << 8) |
+                            static_cast<std::uint32_t>(byte_to_u8(src[2]));
+
+        if ((raw & 0x0080'0000u) != 0) {
+            raw |= 0xFF00'0000u;
+        }
+
+        const auto signed_24 = static_cast<std::int32_t>(raw);
+
+        /*
+         * Convert to left-aligned S32. PCM24 full scale maps into the high 24 bits.
+         */
+        return signed_24 * 256;
+    }
+
+    [[nodiscard]] bool convert_interleaved_pcm_to_s32_no_lock(std::span<const std::byte> payload,
+                                                              const MtlAudioPcmFormat format,
+                                                              AudioBuffer &out) noexcept {
+        auto bytes_per_sample = audio_bytes_per_sample(format);
+        if (!bytes_per_sample.has_value()) {
+            ++delivery_failures;
+            return false;
+        }
+
+        const std::uint64_t expected_samples =
+            static_cast<std::uint64_t>(out.samples_per_channel()) * static_cast<std::uint64_t>(out.channel_count());
+
+        if (expected_samples > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+            ++malformed_ready_events;
+            return false;
+        }
+
+        const auto sample_count = static_cast<std::size_t>(expected_samples);
+        const std::uint64_t expected_bytes = expected_samples * static_cast<std::uint64_t>(*bytes_per_sample);
+
+        if (expected_bytes > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max()) ||
+            payload.size() != static_cast<std::size_t>(expected_bytes) || out.total_sample_count() != sample_count) {
+            ++malformed_ready_events;
+            return false;
+        }
+
+        auto *dst = out.samples();
+
+        for (std::size_t i = 0; i < sample_count; ++i) {
+            const std::byte *src = payload.data() + i * *bytes_per_sample;
+
+            switch (format) {
+            case MtlAudioPcmFormat::Pcm16:
+                dst[i] = pcm16be_to_s32(src);
+                break;
+            case MtlAudioPcmFormat::Pcm24:
+                dst[i] = pcm24be_to_s32(src);
+                break;
+            }
+        }
+
+        return true;
+    }
+
+    void deliver_audio_block_no_lock(MtlWorkerSharedMemoryRingMap &ring, const std::uint32_t slot_index,
+                                     const MtlWorkerAudioBlockReadyEvent &event) noexcept {
+        if (!sink || !audio_config.has_value()) {
+            return;
+        }
+
+        if (event.sample_rate_hz == 0 || event.channels == 0 || event.samples_per_channel == 0 ||
+            event.payload_size == 0) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        if (event.channels > static_cast<std::uint32_t>(std::numeric_limits<std::uint16_t>::max())) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        if (event.sample_rate_hz != audio_config->media.sampling_rate_hz ||
+            event.channels != audio_config->media.channel_count) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        auto payload = ring.slot_payload(slot_index);
+        if (!payload.has_value()) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        if (event.payload_size > payload->size()) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        try {
+            AudioBuffer buffer{
+                event.sample_rate_hz,
+                static_cast<std::uint16_t>(event.channels),
+                event.samples_per_channel,
+            };
+
+            const auto active_payload = std::span<const std::byte>{payload->data(), event.payload_size};
+
+            if (!convert_interleaved_pcm_to_s32_no_lock(active_payload, audio_config->pcm_format, buffer)) {
+                return;
+            }
+
+            sink->on_audio_frame(std::move(buffer), FrameTimingMetadata{
+                                                        .rtp_timestamp = event.rtp_timestamp,
+                                                        .receive_timestamp_ns = event.receive_timestamp_ns,
+                                                    });
+
+            ++audio_blocks_delivered;
         } catch (...) {
             ++delivery_failures;
         }
@@ -648,16 +791,11 @@ struct MtlWorkerGraphClientAsyncState {
             return;
         }
 
-        (void)validate_ready_payload_no_lock(ring, slot_index, event.payload_size);
+        const bool valid_payload = validate_ready_payload_no_lock(ring, slot_index, event.payload_size);
+        if (valid_payload) {
+            deliver_audio_block_no_lock(ring, slot_index, event);
+        }
 
-        /*
-         * Audio delivery is intentionally not implemented here.
-         *
-         * The shared-memory payload is raw PCM16/PCM24 from the worker, while
-         * the project sink contract wants AudioBuffer with interleaved S32.
-         * That conversion should be added as a separate MTL audio delivery
-         * component.
-         */
         auto released = ring.release_read_slot(slot_index);
         if (!released.has_value()) {
             ++release_failures;
@@ -816,11 +954,10 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
     request->media_rings = prepared_rings->descriptors;
 
     impl_->async_event_state = std::make_shared<MtlWorkerGraphClientAsyncState>(
-    impl_->graph_id, impl_->video, impl_->audio, impl_->sink, std::move(prepared_rings->owners));
+        impl_->graph_id, impl_->video, impl_->audio, impl_->sink, std::move(prepared_rings->owners));
 
     auto registered_async_handler = impl_->worker_lease->control_channel->register_async_event_handler(
-        impl_->graph_id,
-        [state = impl_->async_event_state](MtlWorkerControlEventEnvelope envelope) {
+        impl_->graph_id, [state = impl_->async_event_state](MtlWorkerControlEventEnvelope envelope) {
             if (state) {
                 state->handle_event_noexcept(std::move(envelope));
             }
