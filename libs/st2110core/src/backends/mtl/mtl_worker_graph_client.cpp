@@ -11,6 +11,8 @@
 #include <utility>
 #include <variant>
 #include <vector>
+#include <memory>
+#include <mutex>
 
 namespace st2110 {
 namespace {
@@ -414,6 +416,60 @@ interpret_stats_event(const MtlWorkerControlEvent &event, const MtlWorkerRequest
 
 } // namespace
 
+struct MtlWorkerGraphClientAsyncState {
+    explicit MtlWorkerGraphClientAsyncState(MtlWorkerGraphId graph) noexcept : graph_id(graph) {}
+
+    MtlWorkerGraphId graph_id = 0;
+
+    std::mutex mutex{};
+    bool active = true;
+
+    std::uint64_t frame_ready_events = 0;
+    std::uint64_t audio_block_ready_events = 0;
+    std::uint64_t ignored_events = 0;
+
+    void deactivate_noexcept() noexcept {
+        try {
+            std::lock_guard lock(mutex);
+            active = false;
+        } catch (...) {
+        }
+    }
+
+    void handle_event_noexcept(MtlWorkerControlEventEnvelope envelope) noexcept {
+        try {
+            std::lock_guard lock(mutex);
+
+            if (!active) {
+                return;
+            }
+
+            std::visit(
+                [this](const auto &typed_event) noexcept {
+                    using Event = std::decay_t<decltype(typed_event)>;
+
+                    if constexpr (std::is_same_v<Event, MtlWorkerFrameReadyEvent>) {
+                        if (typed_event.graph_id == graph_id) {
+                            ++frame_ready_events;
+                        } else {
+                            ++ignored_events;
+                        }
+                    } else if constexpr (std::is_same_v<Event, MtlWorkerAudioBlockReadyEvent>) {
+                        if (typed_event.graph_id == graph_id) {
+                            ++audio_block_ready_events;
+                        } else {
+                            ++ignored_events;
+                        }
+                    } else {
+                        ++ignored_events;
+                    }
+                },
+                envelope.event);
+        } catch (...) {
+        }
+    }
+};
+
 struct MtlWorkerGraphClient::Impl {
     MtlWorkerGraphId graph_id = next_graph_id();
 
@@ -425,8 +481,22 @@ struct MtlWorkerGraphClient::Impl {
     std::vector<MtlWorkerSharedMemoryRingOwner> media_ring_owners{};
 
     std::optional<MtlWorkerManager::WorkerLease> worker_lease{};
+    std::shared_ptr<MtlWorkerGraphClientAsyncState> async_event_state{};
+    bool async_event_handler_registered = false;
     bool running = false;
     std::uint32_t active_start_count = 0;
+
+    void unregister_async_event_handler_noexcept() noexcept {
+        if (async_event_state) {
+            async_event_state->deactivate_noexcept();
+        }
+
+        if (async_event_handler_registered && worker_lease.has_value() && worker_lease->control_channel) {
+            worker_lease->control_channel->unregister_async_event_handler_noexcept(graph_id);
+        }
+
+        async_event_handler_registered = false;
+    }
 };
 
 MtlWorkerGraphClient::MtlWorkerGraphClient() : impl_(std::make_unique<Impl>()) {}
@@ -519,17 +589,39 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
 
     request->media_rings = prepared_rings->descriptors;
 
+    impl_->async_event_state = std::make_shared<MtlWorkerGraphClientAsyncState>(impl_->graph_id);
+
+    auto registered_async_handler = impl_->worker_lease->control_channel->register_async_event_handler(
+        impl_->graph_id,
+        [state = impl_->async_event_state](MtlWorkerControlEventEnvelope envelope) {
+            if (state) {
+                state->handle_event_noexcept(std::move(envelope));
+            }
+        });
+
+    if (!registered_async_handler.has_value()) {
+        impl_->async_event_state.reset();
+        impl_->worker_lease.reset();
+        return std::unexpected(registered_async_handler.error());
+    }
+
+    impl_->async_event_handler_registered = true;
+
     const MtlWorkerRequestId request_id = request->request_id;
 
     auto envelope = impl_->worker_lease->control_channel->transact_with_fds(MtlWorkerControlRequest{*request},
                                                                             prepared_rings->file_descriptors);
     if (!envelope.has_value()) {
+        impl_->unregister_async_event_handler_noexcept();
+        impl_->async_event_state.reset();
         impl_->worker_lease.reset();
         return std::unexpected(envelope.error());
     }
 
     auto started = interpret_start_sessions_event(envelope->event, request_id, impl_->graph_id);
     if (!started.has_value()) {
+        impl_->unregister_async_event_handler_noexcept();
+        impl_->async_event_state.reset();
         impl_->worker_lease.reset();
         return std::unexpected(started.error());
     }
@@ -543,6 +635,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
 std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     if (!impl_->running) {
         impl_->active_start_count = 0;
+        impl_->unregister_async_event_handler_noexcept();
+        impl_->async_event_state.reset();
         impl_->media_ring_owners.clear();
         return true;
     }
@@ -555,6 +649,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     if (!impl_->worker_lease.has_value() || !impl_->worker_lease->control_channel) {
         impl_->running = false;
         impl_->active_start_count = 0;
+        impl_->unregister_async_event_handler_noexcept();
+        impl_->async_event_state.reset();
         impl_->media_ring_owners.clear();
         impl_->worker_lease.reset();
         return std::unexpected(Error::InvalidBackendState);
@@ -567,6 +663,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     if (!event.has_value()) {
         impl_->running = false;
         impl_->active_start_count = 0;
+        impl_->unregister_async_event_handler_noexcept();
+        impl_->async_event_state.reset();
         impl_->media_ring_owners.clear();
         impl_->worker_lease.reset();
         return std::unexpected(event.error());
@@ -576,6 +674,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     if (!stopped.has_value()) {
         impl_->running = false;
         impl_->active_start_count = 0;
+        impl_->unregister_async_event_handler_noexcept();
+        impl_->async_event_state.reset();
         impl_->media_ring_owners.clear();
         impl_->worker_lease.reset();
         return std::unexpected(stopped.error());
@@ -583,6 +683,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
 
     impl_->running = false;
     impl_->active_start_count = 0;
+    impl_->unregister_async_event_handler_noexcept();
+    impl_->async_event_state.reset();
     impl_->media_ring_owners.clear();
 
     return true;

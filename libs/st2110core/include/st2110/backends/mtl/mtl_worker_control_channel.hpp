@@ -6,6 +6,7 @@
 #include <st2110/foundation/error.hpp>
 
 #include <expected>
+#include <functional>
 #include <memory>
 #include <span>
 #include <utility>
@@ -37,6 +38,18 @@ struct MtlWorkerControlEventEnvelope {
 
     [[nodiscard]] std::vector<int> release_file_descriptors() noexcept { return ipc_frame.release_file_descriptors(); }
 };
+
+/*
+ * Callback for asynchronous worker events that are not responses to a transact()
+ * request.
+ *
+ * Current async event types:
+ * - MtlWorkerFrameReadyEvent;
+ * - MtlWorkerAudioBlockReadyEvent.
+ *
+ * The envelope is move-only because it owns any received ancillary descriptors.
+ */
+using MtlWorkerAsyncEventHandler = std::function<void(MtlWorkerControlEventEnvelope)>;
 
 /*
  * OBS-process-side control channel to an MTL worker process.
@@ -72,6 +85,17 @@ class IMtlWorkerControlChannel {
      */
     [[nodiscard]] virtual std::expected<MtlWorkerControlEventEnvelope, Error>
     transact_with_fds(const MtlWorkerControlRequest &request, std::span<const int> file_descriptors) = 0;
+
+    /*
+     * Registers graph-scoped async event routing.
+     *
+     * The handler is called from the control-channel reader thread. It must not
+     * block for long-running media processing.
+     */
+    [[nodiscard]] virtual std::expected<bool, Error>
+    register_async_event_handler(MtlWorkerGraphId graph_id, MtlWorkerAsyncEventHandler handler) = 0;
+
+    virtual void unregister_async_event_handler_noexcept(MtlWorkerGraphId graph_id) noexcept = 0;
 
   protected:
     IMtlWorkerControlChannel() = default;

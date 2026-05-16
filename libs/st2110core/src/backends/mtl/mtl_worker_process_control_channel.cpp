@@ -74,6 +74,21 @@ void terminate_process_noexcept(pid_t &pid) noexcept {
         event);
 }
 
+[[nodiscard]] MtlWorkerGraphId graph_id_from_async_event(const MtlWorkerControlEvent &event) noexcept {
+    return std::visit(
+        [](const auto &typed_event) noexcept -> MtlWorkerGraphId {
+            using Event = std::decay_t<decltype(typed_event)>;
+
+            if constexpr (std::is_same_v<Event, MtlWorkerFrameReadyEvent> ||
+                          std::is_same_v<Event, MtlWorkerAudioBlockReadyEvent>) {
+                return typed_event.graph_id;
+            } else {
+                return 0;
+            }
+        },
+        event);
+}
+
 } // namespace
 
 struct MtlWorkerProcessControlChannel::Impl {
@@ -89,6 +104,7 @@ struct MtlWorkerProcessControlChannel::Impl {
     std::condition_variable state_cv{};
 
     std::unordered_map<MtlWorkerRequestId, MtlWorkerControlEventEnvelope> completed_responses{};
+    std::unordered_map<MtlWorkerGraphId, MtlWorkerAsyncEventHandler> async_event_handlers{};
 
     bool reader_failed = false;
     Error reader_error = Error::Ok;
@@ -183,17 +199,7 @@ struct MtlWorkerProcessControlChannel::Impl {
             MtlWorkerControlEventEnvelope envelope{std::move(*event), std::move(*frame)};
 
             if (request_id == 0) {
-                /*
-                 * Future async media/event route:
-                 *
-                 * - FrameReady
-                 * - AudioBlockReady
-                 * - worker health notifications not tied to transact()
-                 *
-                 * For now, control-plane transact() responses are the only
-                 * consumed events. Any descriptors attached to an unhandled async
-                 * event are closed by envelope destruction here.
-                 */
+                dispatch_async_event_noexcept(std::move(envelope));
                 continue;
             }
 
@@ -203,6 +209,45 @@ struct MtlWorkerProcessControlChannel::Impl {
             }
 
             state_cv.notify_all();
+        }
+    }
+
+    void dispatch_async_event_noexcept(MtlWorkerControlEventEnvelope envelope) noexcept {
+        const MtlWorkerGraphId graph_id = graph_id_from_async_event(envelope.event);
+        if (graph_id == 0) {
+            return;
+        }
+
+        MtlWorkerAsyncEventHandler handler{};
+
+        {
+            std::lock_guard lock(state_mutex);
+
+            if (shutdown_requested) {
+                return;
+            }
+
+            auto found = async_event_handlers.find(graph_id);
+            if (found == async_event_handlers.end()) {
+                return;
+            }
+
+            handler = found->second;
+        }
+
+        if (!handler) {
+            return;
+        }
+
+        try {
+            handler(std::move(envelope));
+        } catch (...) {
+            /*
+             * The reader thread must remain alive even if a graph-level async event
+             * handler fails. Future higher-level delivery code should convert
+             * handler-side failures into graph-local stats/errors instead of
+             * throwing through this boundary.
+             */
         }
     }
 
@@ -263,6 +308,7 @@ struct MtlWorkerProcessControlChannel::Impl {
         {
             std::lock_guard lock(state_mutex);
             completed_responses.clear();
+            async_event_handlers.clear();
             reader_failed = true;
             reader_error = Error::OperationAborted;
         }
@@ -305,6 +351,38 @@ MtlWorkerProcessControlChannel::transact_with_fds(const MtlWorkerControlRequest 
     }
 
     return impl_->wait_for_response(request_id);
+}
+
+std::expected<bool, Error>
+MtlWorkerProcessControlChannel::register_async_event_handler(MtlWorkerGraphId graph_id,
+                                                             MtlWorkerAsyncEventHandler handler) {
+    if (graph_id == 0 || !handler) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    std::lock_guard lock(impl_->state_mutex);
+
+    if (impl_->shutdown_requested) {
+        return std::unexpected(Error::OperationAborted);
+    }
+
+    impl_->async_event_handlers.insert_or_assign(graph_id, std::move(handler));
+    return true;
+}
+
+void MtlWorkerProcessControlChannel::unregister_async_event_handler_noexcept(MtlWorkerGraphId graph_id) noexcept {
+    if (graph_id == 0) {
+        return;
+    }
+
+    try {
+        std::lock_guard lock(impl_->state_mutex);
+        impl_->async_event_handlers.erase(graph_id);
+    } catch (...) {
+        /*
+         * noexcept boundary.
+         */
+    }
 }
 
 void MtlWorkerProcessControlChannel::shutdown_noexcept() noexcept { impl_->shutdown_noexcept(); }
