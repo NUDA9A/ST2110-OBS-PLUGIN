@@ -6,9 +6,11 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -418,21 +420,32 @@ interpret_stats_event(const MtlWorkerControlEvent &event, const MtlWorkerRequest
 } // namespace
 
 struct MtlWorkerGraphClientAsyncState {
-    MtlWorkerGraphClientAsyncState(MtlWorkerGraphId graph,
-                                   std::vector<MtlWorkerSharedMemoryRingOwner> ring_owners) noexcept
-        : graph_id(graph), media_ring_owners(std::move(ring_owners)) {}
+    MtlWorkerGraphClientAsyncState(MtlWorkerGraphId graph, std::optional<MtlVideoStartConfig> video,
+                                   std::optional<MtlAudioStartConfig> audio, IFrameSink *attached_sink,
+                                   std::vector<MtlWorkerSharedMemoryRingOwner> ring_owners)
+        : graph_id(graph),
+          video_config(std::move(video)),
+          audio_config(std::move(audio)),
+          sink(attached_sink),
+          media_ring_owners(std::move(ring_owners)) {}
 
     MtlWorkerGraphId graph_id = 0;
 
     std::mutex mutex{};
     bool active = true;
 
+    std::optional<MtlVideoStartConfig> video_config{};
+    std::optional<MtlAudioStartConfig> audio_config{};
+    IFrameSink *sink = nullptr;
+
     std::vector<MtlWorkerSharedMemoryRingOwner> media_ring_owners{};
 
     std::uint64_t frame_ready_events = 0;
     std::uint64_t audio_block_ready_events = 0;
+    std::uint64_t video_frames_delivered = 0;
     std::uint64_t released_slots = 0;
     std::uint64_t malformed_ready_events = 0;
+    std::uint64_t delivery_failures = 0;
     std::uint64_t release_failures = 0;
     std::uint64_t ignored_events = 0;
 
@@ -440,6 +453,18 @@ struct MtlWorkerGraphClientAsyncState {
         try {
             std::lock_guard lock(mutex);
             active = false;
+            sink = nullptr;
+        } catch (...) {
+        }
+    }
+
+    void detach_sink_noexcept(IFrameSink *detached_sink) noexcept {
+        try {
+            std::lock_guard lock(mutex);
+
+            if (!detached_sink || sink == detached_sink) {
+                sink = nullptr;
+            }
         } catch (...) {
         }
     }
@@ -461,45 +486,49 @@ struct MtlWorkerGraphClientAsyncState {
         return nullptr;
     }
 
-    template <typename ReadyEvent>
-    void consume_ready_slot_noexcept(const ReadyEvent &event, const MtlWorkerMediaKind media_kind,
-                                     std::uint64_t &event_counter) noexcept {
-        if (event.graph_id != graph_id) {
+    [[nodiscard]] bool validate_common_ready_event_no_lock(const MtlWorkerGraphId event_graph_id,
+                                                           const MtlWorkerSlotId event_slot_id) noexcept {
+        if (event_graph_id != graph_id) {
             ++ignored_events;
-            return;
+            return false;
         }
 
-        if (event.slot_id > static_cast<MtlWorkerSlotId>(std::numeric_limits<std::uint32_t>::max())) {
+        if (event_slot_id > static_cast<MtlWorkerSlotId>(std::numeric_limits<std::uint32_t>::max())) {
             ++malformed_ready_events;
-            return;
+            return false;
         }
 
-        auto *owner = find_ring_owner_no_lock(media_kind, event.ring_id);
-        if (!owner) {
-            ++ignored_events;
-            return;
-        }
+        return true;
+    }
 
-        auto &ring = owner->ring_map();
+    [[nodiscard]] bool begin_ready_slot_no_lock(MtlWorkerSharedMemoryRingMap &ring, const MtlWorkerSlotId slot_id,
+                                                std::uint32_t &out_slot_index) noexcept {
         const auto &descriptor = ring.descriptor();
-        const auto slot_index = static_cast<std::uint32_t>(event.slot_id);
+        const auto slot_index = static_cast<std::uint32_t>(slot_id);
 
         if (slot_index >= descriptor.slot_count) {
             ++malformed_ready_events;
-            return;
+            return false;
         }
 
         auto began = ring.begin_read_slot(slot_index);
         if (!began.has_value()) {
             ++release_failures;
-            return;
+            return false;
         }
 
         if (!*began) {
             ++ignored_events;
-            return;
+            return false;
         }
 
+        out_slot_index = slot_index;
+        return true;
+    }
+
+    [[nodiscard]] bool validate_ready_payload_no_lock(MtlWorkerSharedMemoryRingMap &ring,
+                                                      const std::uint32_t slot_index,
+                                                      const std::size_t event_payload_size) noexcept {
         bool malformed = false;
 
         auto header = ring.slot_header(slot_index);
@@ -512,18 +541,122 @@ struct MtlWorkerGraphClientAsyncState {
             malformed = true;
         }
 
-        if (payload.has_value() && event.payload_size > payload->size()) {
+        if (payload.has_value() && event_payload_size > payload->size()) {
             malformed = true;
         }
 
-        if (header.has_value() && static_cast<std::uint64_t>(event.payload_size) > (*header)->payload_size) {
+        if (header.has_value() && static_cast<std::uint64_t>(event_payload_size) > (*header)->payload_size) {
             malformed = true;
         }
+
+        if (malformed) {
+            ++malformed_ready_events;
+            return false;
+        }
+
+        return true;
+    }
+
+    void deliver_video_frame_no_lock(MtlWorkerSharedMemoryRingMap &ring, const std::uint32_t slot_index,
+                                     const MtlWorkerFrameReadyEvent &event) noexcept {
+        if (!sink || !video_config.has_value()) {
+            return;
+        }
+
+        if (event.width == 0 || event.height == 0 || event.payload_size == 0) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        auto payload = ring.slot_payload(slot_index);
+        if (!payload.has_value()) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        try {
+            VideoFrame frame{event.width, event.height, video_config->output_format};
+
+            if (frame.size_bytes() != event.payload_size || frame.size_bytes() > payload->size()) {
+                ++malformed_ready_events;
+                return;
+            }
+
+            std::memcpy(frame.data(), payload->data(), frame.size_bytes());
+
+            sink->on_video_frame(
+                std::move(frame),
+                FrameTimingMetadata{
+                    .rtp_timestamp = event.rtp_timestamp,
+                    .receive_timestamp_ns = event.receive_timestamp_ns,
+                });
+
+            ++video_frames_delivered;
+        } catch (...) {
+            ++delivery_failures;
+        }
+    }
+
+    void consume_video_ready_slot_noexcept(const MtlWorkerFrameReadyEvent &event) noexcept {
+        if (!validate_common_ready_event_no_lock(event.graph_id, event.slot_id)) {
+            return;
+        }
+
+        auto *owner = find_ring_owner_no_lock(MtlWorkerMediaKind::Video, event.ring_id);
+        if (!owner) {
+            ++ignored_events;
+            return;
+        }
+
+        auto &ring = owner->ring_map();
+
+        std::uint32_t slot_index = 0;
+        if (!begin_ready_slot_no_lock(ring, event.slot_id, slot_index)) {
+            return;
+        }
+
+        const bool valid_payload = validate_ready_payload_no_lock(ring, slot_index, event.payload_size);
+        if (valid_payload) {
+            deliver_video_frame_no_lock(ring, slot_index, event);
+        }
+
+        auto released = ring.release_read_slot(slot_index);
+        if (!released.has_value()) {
+            ++release_failures;
+            return;
+        }
+
+        ++frame_ready_events;
+        ++released_slots;
+    }
+
+    void consume_audio_ready_slot_noexcept(const MtlWorkerAudioBlockReadyEvent &event) noexcept {
+        if (!validate_common_ready_event_no_lock(event.graph_id, event.slot_id)) {
+            return;
+        }
+
+        auto *owner = find_ring_owner_no_lock(MtlWorkerMediaKind::Audio, event.ring_id);
+        if (!owner) {
+            ++ignored_events;
+            return;
+        }
+
+        auto &ring = owner->ring_map();
+
+        std::uint32_t slot_index = 0;
+        if (!begin_ready_slot_no_lock(ring, event.slot_id, slot_index)) {
+            return;
+        }
+
+        (void)validate_ready_payload_no_lock(ring, slot_index, event.payload_size);
 
         /*
-         * No sink delivery yet. This component only proves that OBS can consume
-         * the ready-slot notification and release the shared-memory slot back to
-         * the worker.
+         * Audio delivery is intentionally not implemented here.
+         *
+         * The shared-memory payload is raw PCM16/PCM24 from the worker, while
+         * the project sink contract wants AudioBuffer with interleaved S32.
+         * That conversion should be added as a separate MTL audio delivery
+         * component.
          */
         auto released = ring.release_read_slot(slot_index);
         if (!released.has_value()) {
@@ -531,12 +664,7 @@ struct MtlWorkerGraphClientAsyncState {
             return;
         }
 
-        if (malformed) {
-            ++malformed_ready_events;
-            return;
-        }
-
-        ++event_counter;
+        ++audio_block_ready_events;
         ++released_slots;
     }
 
@@ -553,10 +681,9 @@ struct MtlWorkerGraphClientAsyncState {
                     using Event = std::decay_t<decltype(typed_event)>;
 
                     if constexpr (std::is_same_v<Event, MtlWorkerFrameReadyEvent>) {
-                        consume_ready_slot_noexcept(typed_event, MtlWorkerMediaKind::Video, frame_ready_events);
+                        consume_video_ready_slot_noexcept(typed_event);
                     } else if constexpr (std::is_same_v<Event, MtlWorkerAudioBlockReadyEvent>) {
-                        consume_ready_slot_noexcept(typed_event, MtlWorkerMediaKind::Audio,
-                                                    audio_block_ready_events);
+                        consume_audio_ready_slot_noexcept(typed_event);
                     } else {
                         ++ignored_events;
                     }
@@ -638,6 +765,10 @@ std::expected<bool, Error> MtlWorkerGraphClient::attach_sink(IFrameSink *sink) {
 }
 
 void MtlWorkerGraphClient::detach_sink_noexcept(IFrameSink *sink) noexcept {
+    if (impl_->async_event_state) {
+        impl_->async_event_state->detach_sink_noexcept(sink);
+    }
+
     if (!sink || impl_->sink == sink) {
         impl_->sink = nullptr;
     }
@@ -684,8 +815,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
 
     request->media_rings = prepared_rings->descriptors;
 
-    impl_->async_event_state =
-    std::make_shared<MtlWorkerGraphClientAsyncState>(impl_->graph_id, std::move(prepared_rings->owners));
+    impl_->async_event_state = std::make_shared<MtlWorkerGraphClientAsyncState>(
+    impl_->graph_id, impl_->video, impl_->audio, impl_->sink, std::move(prepared_rings->owners));
 
     auto registered_async_handler = impl_->worker_lease->control_channel->register_async_event_handler(
         impl_->graph_id,
