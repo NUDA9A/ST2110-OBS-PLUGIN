@@ -167,8 +167,8 @@ std::expected<bool, st2110::Error> MtlReceiveGraph::start_sessions() {
             return std::unexpected(st2110::Error::InvalidBackendState);
         }
 
-        auto video_session =
-            MtlVideoRxSession::create(*impl_->runtime, *impl_->cfg.video, impl_->stats, *impl_->event_writer, *video_ring);
+        auto video_session = MtlVideoRxSession::create(*impl_->runtime, impl_->cfg.graph_id, *impl_->cfg.video, impl_->stats,
+                                               *impl_->event_writer, *video_ring);
         if (!video_session.has_value()) {
             return std::unexpected(video_session.error());
         }
@@ -186,8 +186,8 @@ std::expected<bool, st2110::Error> MtlReceiveGraph::start_sessions() {
             return std::unexpected(st2110::Error::InvalidBackendState);
         }
 
-        auto audio_session =
-            MtlAudioRxSession::create(*impl_->runtime, *impl_->cfg.audio, impl_->stats, *impl_->event_writer, *audio_ring);
+        auto audio_session = MtlAudioRxSession::create(*impl_->runtime, impl_->cfg.graph_id, *impl_->cfg.audio, impl_->stats,
+                                               *impl_->event_writer, *audio_ring);
         if (!audio_session.has_value()) {
             return std::unexpected(audio_session.error());
         }

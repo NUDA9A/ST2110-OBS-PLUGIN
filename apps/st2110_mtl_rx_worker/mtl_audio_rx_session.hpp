@@ -31,8 +31,9 @@ class MtlWorkerEventWriter;
 class MtlAudioRxSession final {
   public:
     static std::expected<std::unique_ptr<MtlAudioRxSession>, st2110::Error>
-create(MtlRuntimeContext &runtime, st2110::MtlAudioStartConfig cfg, MtlWorkerGraphStats &stats,
-       MtlWorkerEventWriter &event_writer, st2110::MtlWorkerSharedMemoryRingMap *media_ring = nullptr);
+create(MtlRuntimeContext &runtime, st2110::MtlWorkerGraphId graph_id, st2110::MtlAudioStartConfig cfg,
+       MtlWorkerGraphStats &stats, MtlWorkerEventWriter &event_writer,
+       st2110::MtlWorkerSharedMemoryRingMap *media_ring = nullptr);
 
     ~MtlAudioRxSession();
 
