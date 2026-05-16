@@ -35,6 +35,8 @@ class IReorderBuffer {
 
     [[nodiscard]] virtual bool flush_missing_once() = 0;
 
+    [[nodiscard]] virtual bool flush_after_n_packets(std::uint32_t threshold_packets) = 0;
+
     virtual void reset() = 0;
 
     [[nodiscard]] virtual ReorderBufferStats stats() const = 0;

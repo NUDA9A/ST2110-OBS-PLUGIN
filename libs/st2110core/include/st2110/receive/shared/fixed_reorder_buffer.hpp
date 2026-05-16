@@ -148,6 +148,31 @@ template <bool is_video_ = false> class FixedWindowReorderBuffer final : public 
         return true;
     }
 
+    [[nodiscard]] bool flush_after_n_packets(const std::uint32_t threshold_packets) override {
+        if (!initialized_ || packets_.empty()) {
+            return false;
+        }
+
+        const std::uint32_t effective_threshold = threshold_packets == 0 ? 1 : threshold_packets;
+
+        if (packets_.size() < static_cast<std::size_t>(effective_threshold)) {
+            return false;
+        }
+
+        bool has_expected_seq = false;
+        if constexpr (is_video_) {
+            has_expected_seq = packets_.contains(next_expected_seq_);
+        } else {
+            has_expected_seq = packets_.contains(next_expected_audio_seq_);
+        }
+
+        if (has_expected_seq) {
+            return false;
+        }
+
+        return flush_missing_once();
+    }
+
   private:
     [[nodiscard]] Error push_audio(std::unique_ptr<StoredPacket> packet) {
         const auto seq = static_cast<std::uint16_t>(packet->reorder_sequence());

@@ -19,6 +19,22 @@ inline constexpr const char *sourceBackendMtlValue = "mtl";
 inline constexpr const char *sourcePlayoutDelayMsPropertyId = "st2110_playout_delay_ms";
 inline constexpr const char *sourceReorderWindowPacketsPropertyId = "st2110_reorder_window_packets";
 
+inline constexpr const char *sourceReorderGapPolicyPropertyId = "st2110_reorder_gap_policy";
+inline constexpr const char *sourceFlushAfterNPacketsPropertyId = "st2110_flush_after_n_packets";
+inline constexpr const char *sourcePartialUnitPolicyPropertyId = "st2110_partial_unit_policy";
+
+inline constexpr const char *sourceReorderGapPolicyWaitForMissingValue = "wait_for_missing";
+inline constexpr const char *sourceReorderGapPolicyFlushGapOnceValue = "flush_gap_once";
+inline constexpr const char *sourceReorderGapPolicyFlushAlwaysValue = "flush_always";
+inline constexpr const char *sourceReorderGapPolicyFlushAfterTimeoutValue = "flush_after_timeout";
+inline constexpr const char *sourceReorderGapPolicyDropFrameOnGapValue = "drop_frame_on_gap";
+inline constexpr const char *sourceReorderGapPolicyFlushOnMarkerBoundaryValue = "flush_on_marker_boundary";
+inline constexpr const char *sourceReorderGapPolicyTopologyAwareWaitValue = "topology_aware_wait";
+inline constexpr const char *sourceReorderGapPolicyFlushAfterNPacketsValue = "flush_after_n_packets";
+
+inline constexpr const char *sourcePartialUnitPolicyEmitWithFlagValue = "emit_with_flag";
+inline constexpr const char *sourcePartialUnitPolicyDropValue = "drop";
+
 inline constexpr const char *sourceRuntimeStatusPropertyId = "st2110_runtime_status";
 
 inline constexpr const char *sourceStartReceiveButtonPropertyId = "st2110_start_receive";
