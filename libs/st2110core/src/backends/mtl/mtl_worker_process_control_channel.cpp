@@ -4,12 +4,13 @@
 
 #include <csignal>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include <sys/time.h>
 
 #include <cerrno>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <string>
@@ -18,7 +19,6 @@
 #include <unordered_map>
 #include <utility>
 #include <variant>
-#include <chrono>
 
 namespace st2110 {
 namespace {
@@ -59,8 +59,8 @@ inline constexpr auto mtlWorkerKillGraceTimeout = 2s;
         request);
 }
 
-[[nodiscard]] std::expected<bool, Error> configure_socket_send_timeout(const int fd,
-                                                                        const std::chrono::milliseconds timeout) noexcept {
+[[nodiscard]] std::expected<bool, Error>
+configure_socket_send_timeout(const int fd, const std::chrono::milliseconds timeout) noexcept {
     if (fd < 0 || timeout.count() <= 0) {
         return std::unexpected(Error::InvalidValue);
     }
@@ -129,12 +129,12 @@ void terminate_process_noexcept(pid_t &pid) noexcept {
 
     (void)::kill(pid, SIGTERM);
 
-    if (!wait_process_exit_noexcept(pid, std::chrono::duration_cast<std::chrono::milliseconds>(
-                                             mtlWorkerTerminateGraceTimeout))) {
+    if (!wait_process_exit_noexcept(
+            pid, std::chrono::duration_cast<std::chrono::milliseconds>(mtlWorkerTerminateGraceTimeout))) {
         (void)::kill(pid, SIGKILL);
-        (void)wait_process_exit_noexcept(pid, std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                  mtlWorkerKillGraceTimeout));
-                                             }
+        (void)wait_process_exit_noexcept(
+            pid, std::chrono::duration_cast<std::chrono::milliseconds>(mtlWorkerKillGraceTimeout));
+    }
 
     /*
      * Do not block indefinitely here. If the child is stuck in an uninterruptible
@@ -266,8 +266,7 @@ struct MtlWorkerProcessControlChannel::Impl {
         worker_control_fd = control_socket[0];
 
         auto send_timeout = configure_socket_send_timeout(
-    worker_control_fd,
-    std::chrono::duration_cast<std::chrono::milliseconds>(mtlWorkerSocketSendTimeout));
+            worker_control_fd, std::chrono::duration_cast<std::chrono::milliseconds>(mtlWorkerSocketSendTimeout));
         if (!send_timeout.has_value()) {
             shutdown_fd_noexcept(worker_control_fd);
             terminate_process_noexcept(worker_pid);
@@ -388,7 +387,7 @@ struct MtlWorkerProcessControlChannel::Impl {
     }
 
     [[nodiscard]] std::expected<MtlWorkerControlEventEnvelope, Error>
-wait_for_response(const MtlWorkerRequestId request_id, const std::chrono::milliseconds timeout) {
+    wait_for_response(const MtlWorkerRequestId request_id, const std::chrono::milliseconds timeout) {
         if (timeout.count() <= 0) {
             return std::unexpected(Error::InvalidValue);
         }
