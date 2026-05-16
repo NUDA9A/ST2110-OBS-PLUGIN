@@ -549,7 +549,9 @@ struct MtlWorkerGraphClientAsyncState {
     }
 
     [[nodiscard]] bool begin_ready_slot_no_lock(MtlWorkerSharedMemoryRingMap &ring, const MtlWorkerSlotId slot_id,
-                                                std::uint32_t &out_slot_index) noexcept {
+                                            const std::uint64_t event_sequence,
+                                            const std::size_t event_payload_size,
+                                            std::uint32_t &out_slot_index) noexcept {
         const auto &descriptor = ring.descriptor();
         const auto slot_index = static_cast<std::uint32_t>(slot_id);
 
@@ -558,19 +560,29 @@ struct MtlWorkerGraphClientAsyncState {
             return false;
         }
 
-        auto began = ring.begin_read_slot(slot_index);
+        auto began = ring.begin_read_slot_if_matches(slot_index, event_sequence,
+                                                     static_cast<std::uint64_t>(event_payload_size));
         if (!began.has_value()) {
             ++release_failures;
             return false;
         }
 
-        if (!*began) {
+        switch (*began) {
+        case MtlWorkerSharedMemoryBeginReadResult::Acquired:
+            out_slot_index = slot_index;
+            return true;
+
+        case MtlWorkerSharedMemoryBeginReadResult::Stale:
+            ++stale_ready_events;
+            return false;
+
+        case MtlWorkerSharedMemoryBeginReadResult::NotReady:
             ++ignored_events;
             return false;
         }
 
-        out_slot_index = slot_index;
-        return true;
+        ++ignored_events;
+        return false;
     }
 
     [[nodiscard]] bool validate_ready_payload_no_lock(MtlWorkerSharedMemoryRingMap &ring,
@@ -817,7 +829,7 @@ struct MtlWorkerGraphClientAsyncState {
         auto &ring = owner->ring_map();
 
         std::uint32_t slot_index = 0;
-        if (!begin_ready_slot_no_lock(ring, event.slot_id, slot_index)) {
+        if (!begin_ready_slot_no_lock(ring, event.slot_id, event.sequence, event.payload_size, slot_index)) {
             return;
         }
 
@@ -850,7 +862,7 @@ struct MtlWorkerGraphClientAsyncState {
         auto &ring = owner->ring_map();
 
         std::uint32_t slot_index = 0;
-        if (!begin_ready_slot_no_lock(ring, event.slot_id, slot_index)) {
+        if (!begin_ready_slot_no_lock(ring, event.slot_id, event.sequence, event.payload_size, slot_index)) {
             return;
         }
 

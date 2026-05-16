@@ -418,6 +418,53 @@ std::expected<bool, Error> MtlWorkerSharedMemoryRingMap::begin_read_slot(const s
                                              std::memory_order_acq_rel, std::memory_order_acquire);
 }
 
+std::expected<MtlWorkerSharedMemoryBeginReadResult, Error>
+MtlWorkerSharedMemoryRingMap::begin_read_slot_if_matches(const std::uint32_t slot_index,
+                                                         const std::uint64_t expected_sequence,
+                                                         const std::uint64_t expected_payload_size) noexcept {
+    auto header = slot_header(slot_index);
+    if (!header.has_value()) {
+        return std::unexpected(header.error());
+    }
+
+    std::atomic_ref<std::uint32_t> state_ref((*header)->state);
+
+    const std::uint32_t loaded_state = state_ref.load(std::memory_order_acquire);
+    if (!valid_slot_state_value(loaded_state)) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    if (static_cast<MtlWorkerSharedMemorySlotState>(loaded_state) != MtlWorkerSharedMemorySlotState::Ready) {
+        return MtlWorkerSharedMemoryBeginReadResult::NotReady;
+    }
+
+    if ((*header)->sequence != expected_sequence || (*header)->payload_size != expected_payload_size) {
+        return MtlWorkerSharedMemoryBeginReadResult::Stale;
+    }
+
+    std::uint32_t expected = static_cast<std::uint32_t>(MtlWorkerSharedMemorySlotState::Ready);
+    if (!state_ref.compare_exchange_strong(expected,
+                                           static_cast<std::uint32_t>(MtlWorkerSharedMemorySlotState::Reading),
+                                           std::memory_order_acq_rel, std::memory_order_acquire)) {
+        if (!valid_slot_state_value(expected)) {
+            return std::unexpected(Error::InvalidValue);
+        }
+
+        return MtlWorkerSharedMemoryBeginReadResult::NotReady;
+    }
+
+    /*
+     * After the successful Ready -> Reading transition, the worker cannot reuse
+     * this slot until OBS releases it. Re-check the fields to guard against
+     * corrupted shared memory.
+     */
+    if ((*header)->sequence != expected_sequence || (*header)->payload_size != expected_payload_size) {
+        return std::unexpected(Error::InvalidValue);
+    }
+
+    return MtlWorkerSharedMemoryBeginReadResult::Acquired;
+}
+
 std::expected<bool, Error> MtlWorkerSharedMemoryRingMap::release_read_slot(const std::uint32_t slot_index) noexcept {
     auto header = slot_header(slot_index);
     if (!header.has_value()) {

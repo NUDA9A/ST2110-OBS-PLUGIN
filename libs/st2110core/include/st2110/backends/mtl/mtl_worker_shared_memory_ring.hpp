@@ -40,6 +40,12 @@ enum class MtlWorkerSharedMemorySlotFlags : std::uint32_t {
     Partial = 1u << 0,
 };
 
+enum class MtlWorkerSharedMemoryBeginReadResult : std::uint32_t {
+    Acquired = 0,
+    NotReady = 1,
+    Stale = 2,
+};
+
 /*
  * Fixed slot header stored at the beginning of every slot.
  *
@@ -110,6 +116,10 @@ class MtlWorkerSharedMemoryRingMap final {
     [[nodiscard]] std::expected<bool, Error> abort_write_slot(std::uint32_t slot_index) noexcept;
 
     [[nodiscard]] std::expected<bool, Error> begin_read_slot(std::uint32_t slot_index) noexcept;
+
+    [[nodiscard]] std::expected<MtlWorkerSharedMemoryBeginReadResult, Error>
+begin_read_slot_if_matches(std::uint32_t slot_index, std::uint64_t expected_sequence,
+                           std::uint64_t expected_payload_size) noexcept;
 
     [[nodiscard]] std::expected<bool, Error> release_read_slot(std::uint32_t slot_index) noexcept;
 
