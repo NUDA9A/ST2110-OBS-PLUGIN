@@ -5,9 +5,9 @@
 #include <obs_st2110/sdp_media_selection.hpp>
 #include <obs_st2110/sdp_parser_dispatch.hpp>
 
+#include <st2110/backends/mtl/mtl_worker_graph_client.hpp>
 #include <st2110/backends/socket/socket_rx_audio_backend.hpp>
 #include <st2110/backends/socket/socket_rx_video_backend.hpp>
-#include <st2110/backends/mtl/mtl_worker_graph_client.hpp>
 #include <st2110/contracts/backend/backend.hpp>
 #include <st2110/delivery/audio/socket_audio_start_config.hpp>
 #include <st2110/delivery/synchronized_frame_sink.hpp>
@@ -259,9 +259,7 @@ class SourceRuntime::Impl {
         last_error_ = message + ": " + st2110::to_string(error);
     }
 
-    void set_backend_error(const std::string &message,
-                       const st2110::IRxBackend *backend,
-                       const st2110::Error error) {
+    void set_backend_error(const std::string &message, const st2110::IRxBackend *backend, const st2110::Error error) {
         const std::string detail = backend_error_detail(backend);
 
         if (!detail.empty()) {

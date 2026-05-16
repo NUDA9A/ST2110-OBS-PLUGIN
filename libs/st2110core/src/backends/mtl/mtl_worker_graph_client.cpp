@@ -233,8 +233,7 @@ resolve_graph_runtime_config(const std::optional<MtlVideoStartConfig> &video,
     return message;
 }
 
-[[nodiscard]] MtlWorkerErrorDetail make_worker_error_detail(const MtlWorkerErrorEvent &event,
-                                                            const char *operation) {
+[[nodiscard]] MtlWorkerErrorDetail make_worker_error_detail(const MtlWorkerErrorEvent &event, const char *operation) {
     return MtlWorkerErrorDetail{
         .error = event.error,
         .request_id = event.request_id,
@@ -244,10 +243,8 @@ resolve_graph_runtime_config(const std::optional<MtlVideoStartConfig> &video,
     };
 }
 
-[[nodiscard]] MtlWorkerErrorDetail make_worker_health_detail(const MtlWorkerHealthEvent &event,
-                                                             const Error error,
-                                                             const MtlWorkerGraphId graph_id,
-                                                             const char *operation) {
+[[nodiscard]] MtlWorkerErrorDetail make_worker_health_detail(const MtlWorkerHealthEvent &event, const Error error,
+                                                             const MtlWorkerGraphId graph_id, const char *operation) {
     return MtlWorkerErrorDetail{
         .error = error,
         .request_id = event.request_id,
@@ -257,10 +254,8 @@ resolve_graph_runtime_config(const std::optional<MtlVideoStartConfig> &video,
     };
 }
 
-[[nodiscard]] MtlWorkerErrorDetail make_local_error_detail(const Error error,
-                                                           const MtlWorkerRequestId request_id,
-                                                           const MtlWorkerGraphId graph_id,
-                                                           const char *operation,
+[[nodiscard]] MtlWorkerErrorDetail make_local_error_detail(const Error error, const MtlWorkerRequestId request_id,
+                                                           const MtlWorkerGraphId graph_id, const char *operation,
                                                            const char *detail) {
     return MtlWorkerErrorDetail{
         .error = error,
@@ -271,11 +266,10 @@ resolve_graph_runtime_config(const std::optional<MtlVideoStartConfig> &video,
     };
 }
 
-[[nodiscard]] std::expected<bool, Error>
-interpret_start_sessions_event(const MtlWorkerControlEvent &event,
-                               const MtlWorkerRequestId expected_request_id,
-                               const MtlWorkerGraphId expected_graph_id,
-                               std::optional<MtlWorkerErrorDetail> *detail) {
+[[nodiscard]] std::expected<bool, Error> interpret_start_sessions_event(const MtlWorkerControlEvent &event,
+                                                                        const MtlWorkerRequestId expected_request_id,
+                                                                        const MtlWorkerGraphId expected_graph_id,
+                                                                        std::optional<MtlWorkerErrorDetail> *detail) {
     return std::visit(
         [expected_request_id, expected_graph_id, detail](const auto &typed_event) -> std::expected<bool, Error> {
             using Event = std::decay_t<decltype(typed_event)>;
@@ -283,9 +277,9 @@ interpret_start_sessions_event(const MtlWorkerControlEvent &event,
             if constexpr (std::is_same_v<Event, MtlWorkerStartedEvent>) {
                 if (typed_event.request_id != expected_request_id || typed_event.graph_id != expected_graph_id) {
                     if (detail) {
-                        *detail = make_local_error_detail(Error::InvalidBackendState, expected_request_id,
-                                                          expected_graph_id, "StartSessions",
-                                                          "worker returned StartedEvent with unexpected request_id or graph_id");
+                        *detail = make_local_error_detail(
+                            Error::InvalidBackendState, expected_request_id, expected_graph_id, "StartSessions",
+                            "worker returned StartedEvent with unexpected request_id or graph_id");
                     }
 
                     return std::unexpected(Error::InvalidBackendState);
@@ -310,9 +304,9 @@ interpret_start_sessions_event(const MtlWorkerControlEvent &event,
                 return std::unexpected(typed_event.error);
             } else {
                 if (detail) {
-                    *detail = make_local_error_detail(Error::InvalidBackendState, expected_request_id,
-                                                      expected_graph_id, "StartSessions",
-                                                      "worker returned an unexpected event type");
+                    *detail =
+                        make_local_error_detail(Error::InvalidBackendState, expected_request_id, expected_graph_id,
+                                                "StartSessions", "worker returned an unexpected event type");
                 }
 
                 return std::unexpected(Error::InvalidBackendState);
@@ -321,11 +315,10 @@ interpret_start_sessions_event(const MtlWorkerControlEvent &event,
         event);
 }
 
-[[nodiscard]] std::expected<bool, Error>
-interpret_stop_sessions_event(const MtlWorkerControlEvent &event,
-                              const MtlWorkerRequestId expected_request_id,
-                              const MtlWorkerGraphId expected_graph_id,
-                              std::optional<MtlWorkerErrorDetail> *detail) {
+[[nodiscard]] std::expected<bool, Error> interpret_stop_sessions_event(const MtlWorkerControlEvent &event,
+                                                                       const MtlWorkerRequestId expected_request_id,
+                                                                       const MtlWorkerGraphId expected_graph_id,
+                                                                       std::optional<MtlWorkerErrorDetail> *detail) {
     return std::visit(
         [expected_request_id, expected_graph_id, detail](const auto &typed_event) -> std::expected<bool, Error> {
             using Event = std::decay_t<decltype(typed_event)>;
@@ -333,9 +326,9 @@ interpret_stop_sessions_event(const MtlWorkerControlEvent &event,
             if constexpr (std::is_same_v<Event, MtlWorkerStoppedEvent>) {
                 if (typed_event.request_id != expected_request_id || typed_event.graph_id != expected_graph_id) {
                     if (detail) {
-                        *detail = make_local_error_detail(Error::InvalidBackendState, expected_request_id,
-                                                          expected_graph_id, "StopSessions",
-                                                          "worker returned StoppedEvent with unexpected request_id or graph_id");
+                        *detail = make_local_error_detail(
+                            Error::InvalidBackendState, expected_request_id, expected_graph_id, "StopSessions",
+                            "worker returned StoppedEvent with unexpected request_id or graph_id");
                     }
 
                     return std::unexpected(Error::InvalidBackendState);
@@ -360,9 +353,9 @@ interpret_stop_sessions_event(const MtlWorkerControlEvent &event,
                 return std::unexpected(typed_event.error);
             } else {
                 if (detail) {
-                    *detail = make_local_error_detail(Error::InvalidBackendState, expected_request_id,
-                                                      expected_graph_id, "StopSessions",
-                                                      "worker returned an unexpected event type");
+                    *detail =
+                        make_local_error_detail(Error::InvalidBackendState, expected_request_id, expected_graph_id,
+                                                "StopSessions", "worker returned an unexpected event type");
                 }
 
                 return std::unexpected(Error::InvalidBackendState);
@@ -371,10 +364,9 @@ interpret_stop_sessions_event(const MtlWorkerControlEvent &event,
         event);
 }
 
-[[nodiscard]] std::expected<bool, Error>
-interpret_health_event(const MtlWorkerControlEvent &event,
-                       const MtlWorkerRequestId expected_request_id,
-                       std::optional<MtlWorkerErrorDetail> *detail) {
+[[nodiscard]] std::expected<bool, Error> interpret_health_event(const MtlWorkerControlEvent &event,
+                                                                const MtlWorkerRequestId expected_request_id,
+                                                                std::optional<MtlWorkerErrorDetail> *detail) {
     return std::visit(
         [expected_request_id, detail](const auto &typed_event) -> std::expected<bool, Error> {
             using Event = std::decay_t<decltype(typed_event)>;
@@ -382,9 +374,9 @@ interpret_health_event(const MtlWorkerControlEvent &event,
             if constexpr (std::is_same_v<Event, MtlWorkerHealthEvent>) {
                 if (typed_event.request_id != expected_request_id) {
                     if (detail) {
-                        *detail = make_local_error_detail(Error::InvalidBackendState, expected_request_id, 0,
-                                                          "HealthCheck",
-                                                          "worker returned HealthEvent for a different request_id");
+                        *detail =
+                            make_local_error_detail(Error::InvalidBackendState, expected_request_id, 0, "HealthCheck",
+                                                    "worker returned HealthEvent for a different request_id");
                     }
 
                     return std::unexpected(Error::InvalidBackendState);
@@ -402,9 +394,9 @@ interpret_health_event(const MtlWorkerControlEvent &event,
             } else if constexpr (std::is_same_v<Event, MtlWorkerErrorEvent>) {
                 if (typed_event.request_id != expected_request_id) {
                     if (detail) {
-                        *detail = make_local_error_detail(Error::InvalidBackendState, expected_request_id, 0,
-                                                          "HealthCheck",
-                                                          "worker returned ErrorEvent for a different request_id");
+                        *detail =
+                            make_local_error_detail(Error::InvalidBackendState, expected_request_id, 0, "HealthCheck",
+                                                    "worker returned ErrorEvent for a different request_id");
                     }
 
                     return std::unexpected(Error::InvalidBackendState);
@@ -417,8 +409,8 @@ interpret_health_event(const MtlWorkerControlEvent &event,
                 return std::unexpected(typed_event.error);
             } else {
                 if (detail) {
-                    *detail = make_local_error_detail(Error::InvalidBackendState, expected_request_id, 0,
-                                                      "HealthCheck", "worker returned an unexpected event type");
+                    *detail = make_local_error_detail(Error::InvalidBackendState, expected_request_id, 0, "HealthCheck",
+                                                      "worker returned an unexpected event type");
                 }
 
                 return std::unexpected(Error::InvalidBackendState);
@@ -427,9 +419,8 @@ interpret_health_event(const MtlWorkerControlEvent &event,
         event);
 }
 
-[[nodiscard]] std::expected<bool, Error>
-check_worker_health(IMtlWorkerControlChannel &channel,
-                    std::optional<MtlWorkerErrorDetail> *detail) {
+[[nodiscard]] std::expected<bool, Error> check_worker_health(IMtlWorkerControlChannel &channel,
+                                                             std::optional<MtlWorkerErrorDetail> *detail) {
     const MtlWorkerRequestId request_id = next_request_id();
 
     auto event = channel.transact(MtlWorkerControlRequest{
@@ -450,21 +441,19 @@ check_worker_health(IMtlWorkerControlChannel &channel,
 }
 
 [[nodiscard]] std::expected<MtlWorkerStatsEvent, Error>
-interpret_stats_event(const MtlWorkerControlEvent &event,
-                      const MtlWorkerRequestId expected_request_id,
-                      const MtlWorkerGraphId expected_graph_id,
-                      std::optional<MtlWorkerErrorDetail> *detail) {
+interpret_stats_event(const MtlWorkerControlEvent &event, const MtlWorkerRequestId expected_request_id,
+                      const MtlWorkerGraphId expected_graph_id, std::optional<MtlWorkerErrorDetail> *detail) {
     return std::visit(
-        [expected_request_id, expected_graph_id, detail](
-            const auto &typed_event) -> std::expected<MtlWorkerStatsEvent, Error> {
+        [expected_request_id, expected_graph_id,
+         detail](const auto &typed_event) -> std::expected<MtlWorkerStatsEvent, Error> {
             using Event = std::decay_t<decltype(typed_event)>;
 
             if constexpr (std::is_same_v<Event, MtlWorkerStatsEvent>) {
                 if (typed_event.request_id != expected_request_id || typed_event.graph_id != expected_graph_id) {
                     if (detail) {
-                        *detail = make_local_error_detail(Error::InvalidBackendState, expected_request_id,
-                                                          expected_graph_id, "Stats",
-                                                          "worker returned StatsEvent with unexpected request_id or graph_id");
+                        *detail = make_local_error_detail(
+                            Error::InvalidBackendState, expected_request_id, expected_graph_id, "Stats",
+                            "worker returned StatsEvent with unexpected request_id or graph_id");
                     }
 
                     return std::unexpected(Error::InvalidBackendState);
@@ -474,9 +463,9 @@ interpret_stats_event(const MtlWorkerControlEvent &event,
             } else if constexpr (std::is_same_v<Event, MtlWorkerErrorEvent>) {
                 if (typed_event.request_id != expected_request_id) {
                     if (detail) {
-                        *detail = make_local_error_detail(Error::InvalidBackendState, expected_request_id,
-                                                          expected_graph_id, "Stats",
-                                                          "worker returned ErrorEvent for a different request_id");
+                        *detail =
+                            make_local_error_detail(Error::InvalidBackendState, expected_request_id, expected_graph_id,
+                                                    "Stats", "worker returned ErrorEvent for a different request_id");
                     }
 
                     return std::unexpected(Error::InvalidBackendState);
@@ -489,9 +478,9 @@ interpret_stats_event(const MtlWorkerControlEvent &event,
                 return std::unexpected(typed_event.error);
             } else {
                 if (detail) {
-                    *detail = make_local_error_detail(Error::InvalidBackendState, expected_request_id,
-                                                      expected_graph_id, "Stats",
-                                                      "worker returned an unexpected event type");
+                    *detail =
+                        make_local_error_detail(Error::InvalidBackendState, expected_request_id, expected_graph_id,
+                                                "Stats", "worker returned an unexpected event type");
                 }
 
                 return std::unexpected(Error::InvalidBackendState);
@@ -1207,9 +1196,7 @@ struct MtlWorkerGraphClient::Impl {
         }
     }
 
-    void record_local_error(const Error error,
-                            const MtlWorkerRequestId request_id,
-                            const char *operation,
+    void record_local_error(const Error error, const MtlWorkerRequestId request_id, const char *operation,
                             const char *detail) {
         last_error_detail = make_local_error_detail(error, request_id, graph_id, operation, detail);
     }
@@ -1606,9 +1593,7 @@ const std::optional<MtlAudioStartConfig> &MtlWorkerGraphClient::audio_config() c
 
 IFrameSink *MtlWorkerGraphClient::sink() const noexcept { return impl_->sink; }
 
-std::optional<MtlWorkerErrorDetail> MtlWorkerGraphClient::last_error_detail() const {
-    return impl_->last_error_detail;
-}
+std::optional<MtlWorkerErrorDetail> MtlWorkerGraphClient::last_error_detail() const { return impl_->last_error_detail; }
 
 std::string MtlWorkerGraphClient::last_error_message() const {
     if (!impl_->last_error_detail.has_value()) {

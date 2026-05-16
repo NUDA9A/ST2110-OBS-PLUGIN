@@ -3,9 +3,9 @@
 #include <st2110/foundation/error.hpp>
 
 #include <expected>
-#include <utility>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace st2110 {
 
