@@ -26,3 +26,13 @@ if(UNIX AND NOT APPLE)
 endif()
 
 target_compile_features(st2110_mtl_rx_worker PRIVATE cxx_std_23)
+
+include(GNUInstallDirs)
+
+if(ST2110_MTL_RX_WORKER_INSTALL_DIR)
+    install(TARGETS st2110_mtl_rx_worker
+            RUNTIME DESTINATION "${ST2110_MTL_RX_WORKER_INSTALL_DIR}")
+else()
+    install(TARGETS st2110_mtl_rx_worker
+            RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+endif()

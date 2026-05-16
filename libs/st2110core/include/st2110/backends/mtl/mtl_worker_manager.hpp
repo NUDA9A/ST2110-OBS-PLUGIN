@@ -9,6 +9,7 @@
 #include <expected>
 #include <filesystem>
 #include <memory>
+#include <string>
 
 namespace st2110 {
 
@@ -54,6 +55,7 @@ class MtlWorkerManager final {
 
     void shutdown_all_workers_noexcept() noexcept;
     [[nodiscard]] const std::filesystem::path &worker_executable_path() const noexcept;
+    [[nodiscard]] std::string last_error_message() const;
 
   private:
     struct Impl;

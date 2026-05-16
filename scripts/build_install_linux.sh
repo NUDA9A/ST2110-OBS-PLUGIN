@@ -15,8 +15,10 @@ FORCE_REBUILD_DPDK=0
 FORCE_REBUILD_MTL=0
 
 BUILD_PLUGIN=1
+BUILD_MTL_RX_WORKER=1
 BUILD_SEND_APP=1
 INSTALL_PLUGIN=1
+INSTALL_MTL_RX_WORKER=1
 INSTALL_SEND_APP=1
 MTL_DEV_KERNEL_SOCKET=0
 
@@ -300,7 +302,9 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-plugin)
             BUILD_PLUGIN=0
+            BUILD_MTL_RX_WORKER=0
             INSTALL_PLUGIN=0
+            INSTALL_MTL_RX_WORKER=0
             shift
             ;;
         --no-send-app)
@@ -760,6 +764,30 @@ find_ndi_include_dir() {
 find_ndi_runtime_dir() {
     local candidates=()
 
+    local inferred_sdk_roots=()
+
+    if [[ -n "${NDI_INCLUDE_DIR:-}" ]]; then
+        inferred_sdk_roots+=("$(cd "${NDI_INCLUDE_DIR}/.." 2>/dev/null && pwd || true)")
+    fi
+
+    if [[ -n "$NDI_INCLUDE_DIR_ARG" ]]; then
+        inferred_sdk_roots+=("$(cd "${NDI_INCLUDE_DIR_ARG}/.." 2>/dev/null && pwd || true)")
+    fi
+
+    for root in "${inferred_sdk_roots[@]}"; do
+        if [[ -z "$root" ]]; then
+            continue
+        fi
+
+        candidates+=(
+            "${root}/lib"
+            "${root}/lib/x86_64-linux-gnu"
+            "${root}/bin/x86_64-linux-gnu"
+            "${root}/Lib/x86_64-linux-gnu"
+            "${root}/Bin/x86_64-linux-gnu"
+        )
+    done
+
     if [[ -n "$NDI_RUNTIME_DIR_ARG" ]]; then
         candidates+=("$NDI_RUNTIME_DIR_ARG")
     fi
@@ -856,11 +884,16 @@ Install MTL manually or provide --mtl-pkg-config-dir."
 
 configure_and_build_project() {
     local build_plugin_flag="OFF"
+    local build_worker_flag="OFF"
+    local worker_install_dir="${OBS_PLUGIN_DIR}/bin/64bit"
     local build_send_app_flag="OFF"
     local mtl_dev_kernel_socket_flag="OFF"
 
     if [[ "$BUILD_PLUGIN" -eq 1 ]]; then
         build_plugin_flag="ON"
+        build_worker_flag="ON"
+        BUILD_MTL_RX_WORKER=1
+        INSTALL_MTL_RX_WORKER=1
     fi
 
     if [[ "$BUILD_SEND_APP" -eq 1 ]]; then
@@ -875,13 +908,20 @@ configure_and_build_project() {
     run cmake -S "$REPO_DIR" -B "$BUILD_DIR" -G Ninja \
         -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
         -DST2110_BUILD_OBS_PLUGIN="$build_plugin_flag" \
+        -DST2110_BUILD_MTL_RX_WORKER="$build_worker_flag" \
         -DST2110_BUILD_MTL_SEND_TEST_APP="$build_send_app_flag" \
-        -DST2110_MTL_DEV_KERNEL_SOCKET="$mtl_dev_kernel_socket_flag"
+        -DST2110_MTL_DEV_KERNEL_SOCKET="$mtl_dev_kernel_socket_flag" \
+        -DST2110_OBS_PLUGIN_INSTALL_DIR="$OBS_PLUGIN_DIR" \
+        -DST2110_MTL_RX_WORKER_INSTALL_DIR="$worker_install_dir"
 
     local targets=()
 
     if [[ "$BUILD_PLUGIN" -eq 1 ]]; then
         targets+=("st2110_obs")
+    fi
+
+    if [[ "$BUILD_MTL_RX_WORKER" -eq 1 ]]; then
+        targets+=("st2110_mtl_rx_worker")
     fi
 
     if [[ "$BUILD_SEND_APP" -eq 1 ]]; then
@@ -894,6 +934,26 @@ configure_and_build_project() {
 
     log "Building project targets: ${targets[*]}"
     run cmake --build "$BUILD_DIR" --target "${targets[@]}" -j "$JOBS"
+}
+
+check_runtime_deps() {
+    local binary="$1"
+    local label="$2"
+
+    if ! have_cmd ldd; then
+        warn "ldd is not available; cannot verify runtime dependencies for ${label}"
+        return
+    fi
+
+    local missing=""
+    missing="$(ldd "$binary" 2>/dev/null | awk '/not found/ {print}' || true)"
+
+    if [[ -n "$missing" ]]; then
+        die "${label} has unresolved runtime libraries:
+${missing}
+
+Run sudo ldconfig after installing MTL/DPDK, or fix the dynamic linker path before starting OBS."
+    fi
 }
 
 install_project_outputs() {
@@ -911,6 +971,21 @@ install_project_outputs() {
 
         log "Installed OBS plugin:"
         log "  ${plugin_bin_dir}/st2110_obs.so"
+
+        if [[ "$INSTALL_MTL_RX_WORKER" -eq 1 ]]; then
+            local worker_bin=""
+
+            worker_bin="$(find "$BUILD_DIR" -type f -name 'st2110_mtl_rx_worker' -perm -111 | head -n 1 || true)"
+            if [[ -z "$worker_bin" ]]; then
+                die "Built worker st2110_mtl_rx_worker was not found under ${BUILD_DIR}"
+            fi
+
+            run install -m 755 "$worker_bin" "${plugin_bin_dir}/st2110_mtl_rx_worker"
+            check_runtime_deps "${plugin_bin_dir}/st2110_mtl_rx_worker" "Installed MTL RX worker"
+
+            log "Installed MTL RX worker:"
+            log "  ${plugin_bin_dir}/st2110_mtl_rx_worker"
+        fi
     fi
 
     if [[ "$INSTALL_SEND_APP" -eq 1 ]]; then
@@ -953,6 +1028,8 @@ Environment used:
 
 Installed:
   OBS plugin dir: ${OBS_PLUGIN_DIR}
+  OBS plugin binary dir: ${OBS_PLUGIN_DIR}/bin/64bit
+  MTL RX worker: ${OBS_PLUGIN_DIR}/bin/64bit/st2110_mtl_rx_worker
   sender app dir: ${APP_INSTALL_DIR}
 
 Important:

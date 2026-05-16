@@ -224,6 +224,14 @@ struct MtlWorkerProcessControlChannel::Impl {
 
         int control_socket[2] = {-1, -1};
 
+        if (worker_executable_path.has_parent_path()) {
+            std::error_code ec;
+            if (!std::filesystem::is_regular_file(worker_executable_path, ec) ||
+                ::access(worker_executable_path.c_str(), X_OK) != 0) {
+                return std::unexpected(Error::InvalidBackendState);
+            }
+        }
+
         if (::socketpair(AF_UNIX, SOCK_STREAM, 0, control_socket) != 0) {
             return std::unexpected(Error::SystemFailure);
         }

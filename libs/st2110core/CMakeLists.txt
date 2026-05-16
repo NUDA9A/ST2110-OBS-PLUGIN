@@ -50,4 +50,9 @@ target_compile_features(st2110core PUBLIC cxx_std_23)
 target_compile_definitions(st2110core PUBLIC
         ST2110_HAS_MTL_BACKEND=$<BOOL:${ST2110_HAS_MTL_BACKEND}>
         ST2110_MTL_DEV_KERNEL_SOCKET=$<BOOL:${ST2110_MTL_DEV_KERNEL_SOCKET}>
+        ST2110_MTL_RX_WORKER_INSTALL_DIR="${ST2110_MTL_RX_WORKER_INSTALL_DIR}"
 )
+
+if(ST2110_HAS_MTL_BACKEND AND UNIX AND NOT APPLE)
+    target_link_libraries(st2110core PUBLIC dl)
+endif()

@@ -1310,6 +1310,11 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
 
     auto lease = default_mtl_worker_manager().acquire_or_spawn_compatible_worker_for_graph(*runtime, impl_->graph_id);
     if (!lease.has_value()) {
+        const std::string manager_detail = default_mtl_worker_manager().last_error_message();
+        impl_->record_local_error(lease.error(), 0, "AcquireMtlWorker",
+                                  manager_detail.empty()
+                                      ? "worker manager failed to acquire or spawn a compatible worker"
+                                      : manager_detail.c_str());
         return std::unexpected(lease.error());
     }
 

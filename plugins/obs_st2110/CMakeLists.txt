@@ -59,3 +59,8 @@ set_target_properties(st2110_obs PROPERTIES
         PREFIX ""
         OUTPUT_NAME "st2110_obs"
 )
+
+if(ST2110_OBS_PLUGIN_INSTALL_DIR)
+    install(TARGETS st2110_obs
+            LIBRARY DESTINATION "${ST2110_OBS_PLUGIN_INSTALL_DIR}/bin/64bit")
+endif()
