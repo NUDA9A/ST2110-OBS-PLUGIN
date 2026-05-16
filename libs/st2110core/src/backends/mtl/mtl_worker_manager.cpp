@@ -3,9 +3,11 @@
 #include <st2110/backends/mtl/mtl_worker_process_control_channel.hpp>
 
 #include <atomic>
+#include <mutex>
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace st2110 {
 
@@ -56,10 +58,13 @@ void shutdown_worker_lease_noexcept(const MtlWorkerManager::WorkerLease &lease) 
     } catch (...) {
         /*
          * shutdown_all_workers_noexcept() must remain noexcept.
-         * Process-control implementations may later throw from lower-level IPC
-         * wrappers; shutdown must still continue local cleanup.
          */
     }
+}
+
+[[nodiscard]] bool worker_matches_runtime(const MtlWorkerManager::WorkerLease &lease,
+                                          const MtlRuntimeConfig &runtime) noexcept {
+    return lease.control_channel && lease.runtime == runtime;
 }
 
 } // namespace
@@ -67,9 +72,9 @@ void shutdown_worker_lease_noexcept(const MtlWorkerManager::WorkerLease &lease) 
 struct MtlWorkerManager::Impl {
     std::filesystem::path worker_executable_path = "st2110_mtl_rx_worker";
 
+    std::mutex mutex{};
     std::uint64_t next_worker_id = 1;
-    bool has_cached_worker = false;
-    WorkerLease cached_worker{};
+    std::vector<WorkerLease> workers{};
 };
 
 MtlWorkerManager::MtlWorkerManager() : impl_(std::make_unique<Impl>()) {}
@@ -81,20 +86,12 @@ MtlWorkerManager::~MtlWorkerManager() { shutdown_all_workers_noexcept(); }
 
 std::expected<MtlWorkerManager::WorkerLease, Error>
 MtlWorkerManager::acquire_or_spawn_compatible_worker(const MtlRuntimeConfig &runtime) {
-    if (impl_->has_cached_worker && impl_->cached_worker.runtime == runtime) {
-        return impl_->cached_worker;
-    }
+    std::lock_guard lock(impl_->mutex);
 
-    if (impl_->has_cached_worker) {
-        /*
-         * Current skeleton has a single cached logical worker.
-         *
-         * Future implementation point:
-         * - send ShutdownWorker to the incompatible old worker;
-         * - wait/reap process;
-         * - then spawn/connect a new compatible worker.
-         */
-        shutdown_all_workers_noexcept();
+    for (const WorkerLease &worker : impl_->workers) {
+        if (worker_matches_runtime(worker, runtime)) {
+            return worker;
+        }
     }
 
     auto control_channel = create_mtl_worker_process_control_channel(impl_->worker_executable_path);
@@ -119,23 +116,31 @@ MtlWorkerManager::acquire_or_spawn_compatible_worker(const MtlRuntimeConfig &run
         return std::unexpected(accepted.error());
     }
 
-    impl_->cached_worker = WorkerLease{
+    WorkerLease worker{
         .worker_id = impl_->next_worker_id++,
         .runtime = runtime,
         .control_channel = std::move(control_channel),
     };
-    impl_->has_cached_worker = true;
 
-    return impl_->cached_worker;
+    impl_->workers.push_back(worker);
+    return worker;
 }
 
+
 void MtlWorkerManager::shutdown_all_workers_noexcept() noexcept {
-    if (impl_->has_cached_worker) {
-        shutdown_worker_lease_noexcept(impl_->cached_worker);
+    std::vector<WorkerLease> workers_to_shutdown{};
+
+    try {
+        std::lock_guard lock(impl_->mutex);
+        workers_to_shutdown = std::move(impl_->workers);
+        impl_->workers.clear();
+    } catch (...) {
+        return;
     }
 
-    impl_->has_cached_worker = false;
-    impl_->cached_worker = WorkerLease{};
+    for (const WorkerLease &worker : workers_to_shutdown) {
+        shutdown_worker_lease_noexcept(worker);
+    }
 }
 
 MtlWorkerManager &default_mtl_worker_manager() {

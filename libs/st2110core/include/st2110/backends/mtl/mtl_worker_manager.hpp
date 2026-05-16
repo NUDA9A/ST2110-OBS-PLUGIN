@@ -16,10 +16,11 @@ namespace st2110 {
  * OBS-process-side MTL worker manager.
  *
  * This class must not include MTL runtime headers and must not call MTL APIs.
- * It is responsible for supervising/acquiring a compatible MTL worker process.
+ * It is responsible for supervising/acquiring compatible MTL worker processes.
  *
- * Current skeleton does not spawn a process yet. It only fixes the OBS-side
- * ownership/API boundary for future process supervision and IPC.
+ * Workers are cached by derived MtlRuntimeConfig. Multiple receive graphs with
+ * the same compatible runtime config reuse the same worker process/control
+ * channel; incompatible runtime configs get separate workers.
  */
 class MtlWorkerManager final {
   public:
