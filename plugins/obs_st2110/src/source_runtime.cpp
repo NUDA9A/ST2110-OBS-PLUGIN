@@ -199,6 +199,34 @@ make_sink_config(const std::optional<st2110::VideoReceiveBootstrap> &video_boots
     return {};
 }
 
+#if ST2110_HAS_MTL_BACKEND
+[[nodiscard]] std::expected<std::optional<st2110::MtlRuntimeConfig>, st2110::Error>
+resolve_configured_mtl_runtime_key(const std::shared_ptr<st2110::MtlWorkerGraphClient> &graph_client) {
+    if (!graph_client) {
+        return std::optional<st2110::MtlRuntimeConfig>{};
+    }
+
+    const auto &video = graph_client->video_config();
+    const auto &audio = graph_client->audio_config();
+
+    if (!video.has_value() && !audio.has_value()) {
+        return std::unexpected(st2110::Error::InvalidBackendState);
+    }
+
+    if (video.has_value()) {
+        st2110::MtlRuntimeConfig runtime = video->runtime;
+
+        if (audio.has_value() && audio->runtime != runtime) {
+            return std::unexpected(st2110::Error::InvalidValue);
+        }
+
+        return std::optional<st2110::MtlRuntimeConfig>{std::move(runtime)};
+    }
+
+    return std::optional<st2110::MtlRuntimeConfig>{audio->runtime};
+}
+#endif
+
 } // namespace
 
 class SourceRuntime::Impl {
@@ -210,14 +238,31 @@ class SourceRuntime::Impl {
     void update(SourceConfig config) {
         const bool graph_relevant_changed = graph_relevant_config_changed(config, config_);
 
-        if (graph_relevant_changed) {
-            destroy_receive_graph_noexcept();
+        if (!graph_relevant_changed) {
+            config_ = std::move(config);
+            return;
         }
 
-        config_ = std::move(config);
+        if (!receive_requested_) {
+            destroy_receive_graph_noexcept();
+            config_ = std::move(config);
+            return;
+        }
 
-        if (receive_requested_ && graph_relevant_changed) {
-            start_receive_graph();
+        auto staged_graph = build_configured_graph(config);
+        if (!staged_graph.has_value()) {
+            destroy_receive_graph_noexcept();
+            config_ = std::move(config);
+            return;
+        }
+
+        destroy_configured_graph_noexcept();
+
+        config_ = std::move(config);
+        commit_configured_graph(std::move(*staged_graph));
+
+        if (!start_active_sessions()) {
+            destroy_configured_graph_noexcept();
         }
     }
 
@@ -242,16 +287,43 @@ class SourceRuntime::Impl {
     [[nodiscard]] const std::string &last_error() const noexcept { return last_error_; }
 
   private:
+    struct ConfiguredReceiveGraph {
+        std::unique_ptr<ObsSynchronizedFrameSink> sink{};
+
+        std::shared_ptr<st2110::MtlWorkerGraphClient> mtl_graph_client{};
+        std::optional<st2110::MtlRuntimeConfig> mtl_runtime{};
+
+        std::unique_ptr<st2110::IRxBackend> video_backend{};
+        std::unique_ptr<st2110::IRxBackend> audio_backend{};
+
+        std::string description{};
+
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+    };
+
     [[nodiscard]] static bool graph_relevant_config_changed(const SourceConfig &next, const SourceConfig &current) {
         return next.selected_source != current.selected_source || next.receive_settings != current.receive_settings ||
                next.playout_delay_ns != current.playout_delay_ns;
     }
 
     [[nodiscard]] bool configured_graph_exists() const noexcept {
-        return static_cast<bool>(sink_) || static_cast<bool>(video_backend_) || static_cast<bool>(audio_backend_);
+        return static_cast<bool>(sink_) && (static_cast<bool>(video_backend_) || static_cast<bool>(audio_backend_));
     }
 
     [[nodiscard]] bool active_sessions_running() const noexcept { return active_sessions_running_; }
+
+    [[nodiscard]] bool mtl_graph_client_running() const noexcept {
+#if ST2110_HAS_MTL_BACKEND
+        return mtl_graph_client_ && mtl_graph_client_->running();
+#else
+        return false;
+#endif
+    }
+
+    [[nodiscard]] bool sessions_may_be_running() const noexcept {
+        return active_sessions_running_ || mtl_graph_client_running();
+    }
 
     void set_error(const std::string &message) { last_error_ = message; }
 
@@ -285,34 +357,37 @@ class SourceRuntime::Impl {
             return true;
         }
 
-        last_error_.clear();
-        configured_graph_description_.clear();
-
-        if (!has_provider_selected_sdp(config_)) {
-            /*
-             * Correct idle state:
-             *
-             * The source is active, but no provider-selected sender exists yet.
-             * Do not create fake SDP, fake sink, or fake backends.
-             */
+        auto staged_graph = build_configured_graph(config_);
+        if (!staged_graph.has_value()) {
             return false;
         }
 
-        auto media_set = resolve_selected_source_media_set(*config_.selected_source);
+        commit_configured_graph(std::move(*staged_graph));
+        return true;
+    }
+
+    [[nodiscard]] std::optional<ConfiguredReceiveGraph> build_configured_graph(const SourceConfig &config) {
+        last_error_.clear();
+
+        if (!has_provider_selected_sdp(config)) {
+            return std::nullopt;
+        }
+
+        auto media_set = resolve_selected_source_media_set(*config.selected_source);
         if (!media_set.has_value()) {
             set_error("Selected provider SDP media selection failed", media_set.error());
-            return false;
+            return std::nullopt;
         }
 
         auto parsed_streams = parse_selected_source_streams(*media_set);
         if (!parsed_streams.has_value()) {
             set_error("Selected provider SDP parser dispatch failed", parsed_streams.error());
-            return false;
+            return std::nullopt;
         }
 
         if (parsed_streams->empty()) {
             set_error("Selected provider SDP parser dispatch produced an empty stream set");
-            return false;
+            return std::nullopt;
         }
 
         std::optional<st2110::VideoReceiveBootstrap> video_bootstrap{};
@@ -327,7 +402,7 @@ class SourceRuntime::Impl {
         std::shared_ptr<st2110::MtlWorkerGraphClient> mtl_graph_client{};
 
 #if ST2110_HAS_MTL_BACKEND
-        if (config_.receive_settings.backend_kind == st2110::ReceiveBackendKind::Mtl) {
+        if (config.receive_settings.backend_kind == st2110::ReceiveBackendKind::Mtl) {
             mtl_graph_client = std::make_shared<st2110::MtlWorkerGraphClient>();
         }
 #endif
@@ -339,7 +414,7 @@ class SourceRuntime::Impl {
                 auto local = st2110::auto_select_receive_local_policy(video_bootstrap->receive_bootstrap);
                 if (!local.has_value()) {
                     set_error("Video receive local policy selection failed", local.error());
-                    return false;
+                    return std::nullopt;
                 }
 
                 video_request = st2110::ReceiveStartRequest{
@@ -347,10 +422,10 @@ class SourceRuntime::Impl {
                     .local = std::move(*local),
                 };
 
-                auto backend = make_video_backend(*video_request, config_.receive_settings, mtl_graph_client);
+                auto backend = make_video_backend(*video_request, config.receive_settings, mtl_graph_client);
                 if (!backend.has_value()) {
                     set_error("Video receive backend construction failed", backend.error());
-                    return false;
+                    return std::nullopt;
                 }
 
                 staged_video_backend = std::move(*backend);
@@ -362,7 +437,7 @@ class SourceRuntime::Impl {
                 auto local = st2110::auto_select_receive_local_policy(audio_bootstrap->receive_bootstrap);
                 if (!local.has_value()) {
                     set_error("Audio receive local policy selection failed", local.error());
-                    return false;
+                    return std::nullopt;
                 }
 
                 audio_request = st2110::ReceiveStartRequest{
@@ -370,34 +445,63 @@ class SourceRuntime::Impl {
                     .local = std::move(*local),
                 };
 
-                auto backend = make_audio_backend(*audio_request, config_.receive_settings, mtl_graph_client);
+                auto backend = make_audio_backend(*audio_request, config.receive_settings, mtl_graph_client);
                 if (!backend.has_value()) {
                     set_error("Audio receive backend construction failed", backend.error());
-                    return false;
+                    return std::nullopt;
                 }
 
                 staged_audio_backend = std::move(*backend);
             }
         } catch (const std::exception &ex) {
             set_error(std::string("Receive graph construction failed: ") + ex.what());
-            return false;
+            return std::nullopt;
         } catch (...) {
             set_error("Receive graph construction failed with an unknown exception");
-            return false;
+            return std::nullopt;
         }
 
+        std::optional<st2110::MtlRuntimeConfig> staged_mtl_runtime{};
+
+#if ST2110_HAS_MTL_BACKEND
+        if (mtl_graph_client) {
+            auto runtime_key = resolve_configured_mtl_runtime_key(mtl_graph_client);
+            if (!runtime_key.has_value()) {
+                set_error("MTL receive graph runtime-key resolution failed", runtime_key.error());
+                return std::nullopt;
+            }
+
+            staged_mtl_runtime = std::move(*runtime_key);
+        }
+#endif
+
         auto staged_sink = std::make_unique<ObsSynchronizedFrameSink>(
-            source_, make_sink_config(video_bootstrap, audio_bootstrap, config_.playout_delay_ns));
+            source_, make_sink_config(video_bootstrap, audio_bootstrap, config.playout_delay_ns));
 
-        width_ = video_bootstrap.has_value() ? video_bootstrap->stream.media.width : 0;
-        height_ = video_bootstrap.has_value() ? video_bootstrap->stream.media.height : 0;
+        return ConfiguredReceiveGraph{
+            .sink = std::move(staged_sink),
+            .mtl_graph_client = std::move(mtl_graph_client),
+            .mtl_runtime = std::move(staged_mtl_runtime),
+            .video_backend = std::move(staged_video_backend),
+            .audio_backend = std::move(staged_audio_backend),
+            .description = describe_parsed_stream_composition(*parsed_streams),
+            .width = video_bootstrap.has_value() ? video_bootstrap->stream.media.width : 0,
+            .height = video_bootstrap.has_value() ? video_bootstrap->stream.media.height : 0,
+        };
+    }
 
-        sink_ = std::move(staged_sink);
-        video_backend_ = std::move(staged_video_backend);
-        audio_backend_ = std::move(staged_audio_backend);
-        configured_graph_description_ = describe_parsed_stream_composition(*parsed_streams);
+    void commit_configured_graph(ConfiguredReceiveGraph graph) {
+        active_sessions_running_ = false;
 
-        return true;
+        sink_ = std::move(graph.sink);
+        mtl_graph_client_ = std::move(graph.mtl_graph_client);
+        configured_mtl_runtime_ = std::move(graph.mtl_runtime);
+        video_backend_ = std::move(graph.video_backend);
+        audio_backend_ = std::move(graph.audio_backend);
+
+        configured_graph_description_ = std::move(graph.description);
+        width_ = graph.width;
+        height_ = graph.height;
     }
 
     [[nodiscard]] bool start_active_sessions() {
@@ -405,16 +509,25 @@ class SourceRuntime::Impl {
             return true;
         }
 
-        if (!configured_graph_exists()) {
-            set_error("Cannot start receive sessions without a configured graph");
+        if (!sink_) {
+            set_error("Cannot start receive sessions without a configured sink");
             return false;
         }
+
+        if (!video_backend_ && !audio_backend_) {
+            set_error("Cannot start receive sessions without configured media backends");
+            return false;
+        }
+
+        active_sessions_running_ = false;
 
         if (sink_) {
             sink_->start();
         }
 
         const auto cleanup_started_sessions = [this]() noexcept {
+            active_sessions_running_ = false;
+
             if (video_backend_) {
                 (void)video_backend_->stop();
             }
@@ -426,8 +539,6 @@ class SourceRuntime::Impl {
             if (sink_) {
                 sink_->stop();
             }
-
-            active_sessions_running_ = false;
         };
 
         if (video_backend_) {
@@ -467,9 +578,11 @@ class SourceRuntime::Impl {
     }
 
     void stop_active_sessions_noexcept() noexcept {
-        if (!active_sessions_running()) {
+        if (!sessions_may_be_running()) {
             return;
         }
+
+        active_sessions_running_ = false;
 
         if (video_backend_) {
             (void)video_backend_->stop();
@@ -482,13 +595,15 @@ class SourceRuntime::Impl {
         if (sink_) {
             sink_->stop();
         }
-
-        active_sessions_running_ = false;
     }
 
     void destroy_configured_graph_noexcept() noexcept {
+        stop_active_sessions_noexcept();
+
         video_backend_.reset();
         audio_backend_.reset();
+        mtl_graph_client_.reset();
+        configured_mtl_runtime_.reset();
         sink_.reset();
 
         width_ = 0;
@@ -497,10 +612,7 @@ class SourceRuntime::Impl {
         active_sessions_running_ = false;
     }
 
-    void destroy_receive_graph_noexcept() noexcept {
-        stop_active_sessions_noexcept();
-        destroy_configured_graph_noexcept();
-    }
+    void destroy_receive_graph_noexcept() noexcept { destroy_configured_graph_noexcept(); }
 
     obs_source_t *source_ = nullptr;
 
@@ -514,6 +626,10 @@ class SourceRuntime::Impl {
     std::string configured_graph_description_{};
 
     std::unique_ptr<ObsSynchronizedFrameSink> sink_{};
+
+    std::shared_ptr<st2110::MtlWorkerGraphClient> mtl_graph_client_{};
+    std::optional<st2110::MtlRuntimeConfig> configured_mtl_runtime_{};
+
     std::unique_ptr<st2110::IRxBackend> video_backend_{};
     std::unique_ptr<st2110::IRxBackend> audio_backend_{};
     bool active_sessions_running_ = false;

@@ -33,11 +33,6 @@ RxBackendLifecycleResult MtlRxAudioBackendProxy::start(IFrameSink *sink) {
 
     sink_ = sink;
 
-    /*
-     * This starts the graph-level MTL worker client, not an independent audio
-     * worker session. The graph client is expected to contain the optional
-     * video/audio configs before start() is called.
-     */
     auto started = graph_client_->start();
     if (!started.has_value()) {
         if (!graph_client_->running()) {
@@ -48,8 +43,17 @@ RxBackendLifecycleResult MtlRxAudioBackendProxy::start(IFrameSink *sink) {
         return std::unexpected(started.error());
     }
 
+    if (!*started) {
+        if (!graph_client_->running()) {
+            graph_client_->detach_sink_noexcept(sink_);
+        }
+
+        sink_ = nullptr;
+        return false;
+    }
+
     started_ = true;
-    return started;
+    return true;
 }
 
 RxBackendLifecycleResult MtlRxAudioBackendProxy::stop() {

@@ -1201,6 +1201,26 @@ struct MtlWorkerGraphClient::Impl {
         last_error_detail = make_local_error_detail(error, request_id, graph_id, operation, detail);
     }
 
+    void clear_started_graph_state_noexcept() noexcept {
+        running = false;
+        active_start_count = 0;
+
+        unregister_async_event_handler_noexcept();
+        async_event_state.reset();
+    }
+
+    void release_graph_and_clear_lease_noexcept() noexcept {
+        clear_started_graph_state_noexcept();
+        release_manager_graph_noexcept();
+        clear_worker_lease_noexcept();
+    }
+
+    void invalidate_worker_and_clear_lease_noexcept() noexcept {
+        clear_started_graph_state_noexcept();
+        invalidate_worker_noexcept();
+        clear_worker_lease_noexcept();
+    }
+
     void unregister_async_event_handler_noexcept() noexcept {
         if (async_event_state) {
             async_event_state->deactivate_noexcept();
@@ -1300,11 +1320,14 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
     }
 
     if (!impl_->sink) {
+        impl_->record_local_error(Error::InvalidBackendState, 0, "Start", "sink is not attached");
         return std::unexpected(Error::InvalidBackendState);
     }
 
     auto runtime = resolve_graph_runtime_config(impl_->video, impl_->audio);
     if (!runtime.has_value()) {
+        impl_->record_local_error(runtime.error(), 0, "ResolveGraphRuntimeConfig",
+                                  "invalid or incompatible MTL graph runtime config");
         return std::unexpected(runtime.error());
     }
 
@@ -1322,8 +1345,9 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
     impl_->manager_graph_registered = true;
 
     if (!impl_->worker_lease->control_channel) {
-        impl_->release_manager_graph_noexcept();
-        impl_->clear_worker_lease_noexcept();
+        impl_->record_local_error(Error::InvalidBackendState, 0, "AcquireMtlWorker",
+                                  "worker lease has no control channel");
+        impl_->release_graph_and_clear_lease_noexcept();
         return std::unexpected(Error::InvalidBackendState);
     }
 
@@ -1331,22 +1355,23 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
     auto worker_health = check_worker_health(*impl_->worker_lease->control_channel, &health_detail);
     if (!worker_health.has_value()) {
         impl_->record_error_detail(std::move(health_detail));
-        impl_->invalidate_worker_noexcept();
-        impl_->clear_worker_lease_noexcept();
+        impl_->invalidate_worker_and_clear_lease_noexcept();
         return std::unexpected(worker_health.error());
     }
 
     auto prepared_rings = prepare_media_rings(impl_->graph_id, impl_->video, impl_->audio);
     if (!prepared_rings.has_value()) {
-        impl_->release_manager_graph_noexcept();
-        impl_->clear_worker_lease_noexcept();
+        impl_->record_local_error(prepared_rings.error(), 0, "PrepareMediaRings",
+                                  "failed to prepare graph shared-memory rings");
+        impl_->release_graph_and_clear_lease_noexcept();
         return std::unexpected(prepared_rings.error());
     }
 
     auto request = make_start_sessions_request();
     if (!request.has_value()) {
-        impl_->release_manager_graph_noexcept();
-        impl_->clear_worker_lease_noexcept();
+        impl_->record_local_error(request.error(), 0, "MakeStartSessionsRequest",
+                                  "failed to construct StartSessions request");
+        impl_->release_graph_and_clear_lease_noexcept();
         return std::unexpected(request.error());
     }
 
@@ -1363,9 +1388,9 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
         });
 
     if (!registered_async_handler.has_value()) {
-        impl_->async_event_state.reset();
-        impl_->invalidate_worker_noexcept();
-        impl_->clear_worker_lease_noexcept();
+        impl_->record_local_error(registered_async_handler.error(), 0, "RegisterAsyncEventHandler",
+                                  "failed to register worker async event handler");
+        impl_->invalidate_worker_and_clear_lease_noexcept();
         return std::unexpected(registered_async_handler.error());
     }
 
@@ -1378,10 +1403,7 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
     if (!envelope.has_value()) {
         impl_->record_local_error(envelope.error(), request_id, "StartSessions", "IPC transaction failed");
 
-        impl_->unregister_async_event_handler_noexcept();
-        impl_->async_event_state.reset();
-        impl_->invalidate_worker_noexcept();
-        impl_->clear_worker_lease_noexcept();
+        impl_->invalidate_worker_and_clear_lease_noexcept();
         return std::unexpected(envelope.error());
     }
 
@@ -1390,16 +1412,12 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
     if (!started.has_value()) {
         impl_->record_error_detail(std::move(start_detail));
 
-        impl_->unregister_async_event_handler_noexcept();
-        impl_->async_event_state.reset();
-
         if (is_backend_runtime_error(started.error())) {
-            impl_->invalidate_worker_noexcept();
+            impl_->invalidate_worker_and_clear_lease_noexcept();
         } else {
-            impl_->release_manager_graph_noexcept();
+            impl_->release_graph_and_clear_lease_noexcept();
         }
 
-        impl_->clear_worker_lease_noexcept();
         return std::unexpected(started.error());
     }
 
@@ -1411,11 +1429,7 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
 
 std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     if (!impl_->running) {
-        impl_->active_start_count = 0;
-        impl_->unregister_async_event_handler_noexcept();
-        impl_->async_event_state.reset();
-        impl_->release_manager_graph_noexcept();
-        impl_->clear_worker_lease_noexcept();
+        impl_->release_graph_and_clear_lease_noexcept();
         return true;
     }
 
@@ -1425,12 +1439,9 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     }
 
     if (!impl_->worker_lease.has_value() || !impl_->worker_lease->control_channel) {
-        impl_->running = false;
-        impl_->active_start_count = 0;
-        impl_->unregister_async_event_handler_noexcept();
-        impl_->async_event_state.reset();
-        impl_->release_manager_graph_noexcept();
-        impl_->clear_worker_lease_noexcept();
+        impl_->record_local_error(Error::InvalidBackendState, 0, "StopSessions",
+                                  "worker lease or control channel is missing");
+        impl_->release_graph_and_clear_lease_noexcept();
         return std::unexpected(Error::InvalidBackendState);
     }
 
@@ -1441,12 +1452,7 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     if (!event.has_value()) {
         impl_->record_local_error(event.error(), request_id, "StopSessions", "IPC transaction failed");
 
-        impl_->running = false;
-        impl_->active_start_count = 0;
-        impl_->unregister_async_event_handler_noexcept();
-        impl_->async_event_state.reset();
-        impl_->invalidate_worker_noexcept();
-        impl_->clear_worker_lease_noexcept();
+        impl_->invalidate_worker_and_clear_lease_noexcept();
         return std::unexpected(event.error());
     }
 
@@ -1455,22 +1461,11 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     if (!stopped.has_value()) {
         impl_->record_error_detail(std::move(stop_detail));
 
-        impl_->running = false;
-        impl_->active_start_count = 0;
-        impl_->unregister_async_event_handler_noexcept();
-        impl_->async_event_state.reset();
-        impl_->invalidate_worker_noexcept();
-        impl_->clear_worker_lease_noexcept();
+        impl_->invalidate_worker_and_clear_lease_noexcept();
         return std::unexpected(stopped.error());
     }
 
-    impl_->running = false;
-    impl_->active_start_count = 0;
-    impl_->unregister_async_event_handler_noexcept();
-    impl_->async_event_state.reset();
-    impl_->release_manager_graph_noexcept();
-    impl_->clear_worker_lease_noexcept();
-
+    impl_->release_graph_and_clear_lease_noexcept();
     impl_->clear_last_error_detail_noexcept();
 
     return true;
@@ -1486,17 +1481,14 @@ std::expected<MtlWorkerStatsEvent, Error> MtlWorkerGraphClient::stats() {
     if (!worker_health.has_value()) {
         impl_->record_error_detail(std::move(health_detail));
 
-        impl_->running = false;
-        impl_->active_start_count = 0;
-        impl_->unregister_async_event_handler_noexcept();
-        impl_->async_event_state.reset();
-        impl_->invalidate_worker_noexcept();
-        impl_->clear_worker_lease_noexcept();
+        impl_->invalidate_worker_and_clear_lease_noexcept();
         return std::unexpected(worker_health.error());
     }
 
     auto request = make_stats_request();
     if (!request.has_value()) {
+        impl_->record_local_error(request.error(), 0, "MakeStatsRequest", "failed to construct Stats request");
+        impl_->release_graph_and_clear_lease_noexcept();
         return std::unexpected(request.error());
     }
 
@@ -1506,12 +1498,7 @@ std::expected<MtlWorkerStatsEvent, Error> MtlWorkerGraphClient::stats() {
     if (!event.has_value()) {
         impl_->record_local_error(event.error(), request_id, "Stats", "IPC transaction failed");
 
-        impl_->running = false;
-        impl_->active_start_count = 0;
-        impl_->unregister_async_event_handler_noexcept();
-        impl_->async_event_state.reset();
-        impl_->invalidate_worker_noexcept();
-        impl_->clear_worker_lease_noexcept();
+        impl_->invalidate_worker_and_clear_lease_noexcept();
         return std::unexpected(event.error());
     }
 
@@ -1520,12 +1507,7 @@ std::expected<MtlWorkerStatsEvent, Error> MtlWorkerGraphClient::stats() {
     if (!stats.has_value()) {
         impl_->record_error_detail(std::move(stats_detail));
 
-        impl_->running = false;
-        impl_->active_start_count = 0;
-        impl_->unregister_async_event_handler_noexcept();
-        impl_->async_event_state.reset();
-        impl_->invalidate_worker_noexcept();
-        impl_->clear_worker_lease_noexcept();
+        impl_->invalidate_worker_and_clear_lease_noexcept();
         return std::unexpected(stats.error());
     }
 
