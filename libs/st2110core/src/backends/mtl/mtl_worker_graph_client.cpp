@@ -4,15 +4,16 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
-#include <memory>
-#include <mutex>
 
 namespace st2110 {
 namespace {
@@ -417,15 +418,22 @@ interpret_stats_event(const MtlWorkerControlEvent &event, const MtlWorkerRequest
 } // namespace
 
 struct MtlWorkerGraphClientAsyncState {
-    explicit MtlWorkerGraphClientAsyncState(MtlWorkerGraphId graph) noexcept : graph_id(graph) {}
+    MtlWorkerGraphClientAsyncState(MtlWorkerGraphId graph,
+                                   std::vector<MtlWorkerSharedMemoryRingOwner> ring_owners) noexcept
+        : graph_id(graph), media_ring_owners(std::move(ring_owners)) {}
 
     MtlWorkerGraphId graph_id = 0;
 
     std::mutex mutex{};
     bool active = true;
 
+    std::vector<MtlWorkerSharedMemoryRingOwner> media_ring_owners{};
+
     std::uint64_t frame_ready_events = 0;
     std::uint64_t audio_block_ready_events = 0;
+    std::uint64_t released_slots = 0;
+    std::uint64_t malformed_ready_events = 0;
+    std::uint64_t release_failures = 0;
     std::uint64_t ignored_events = 0;
 
     void deactivate_noexcept() noexcept {
@@ -434,6 +442,102 @@ struct MtlWorkerGraphClientAsyncState {
             active = false;
         } catch (...) {
         }
+    }
+
+    [[nodiscard]] MtlWorkerSharedMemoryRingOwner *
+    find_ring_owner_no_lock(const MtlWorkerMediaKind media_kind,
+                            const MtlWorkerSharedMemoryRingId ring_id) noexcept {
+        for (auto &owner : media_ring_owners) {
+            if (!owner.valid()) {
+                continue;
+            }
+
+            const auto &descriptor = owner.descriptor();
+            if (descriptor.media_kind == media_kind && descriptor.ring_id == ring_id) {
+                return &owner;
+            }
+        }
+
+        return nullptr;
+    }
+
+    template <typename ReadyEvent>
+    void consume_ready_slot_noexcept(const ReadyEvent &event, const MtlWorkerMediaKind media_kind,
+                                     std::uint64_t &event_counter) noexcept {
+        if (event.graph_id != graph_id) {
+            ++ignored_events;
+            return;
+        }
+
+        if (event.slot_id > static_cast<MtlWorkerSlotId>(std::numeric_limits<std::uint32_t>::max())) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        auto *owner = find_ring_owner_no_lock(media_kind, event.ring_id);
+        if (!owner) {
+            ++ignored_events;
+            return;
+        }
+
+        auto &ring = owner->ring_map();
+        const auto &descriptor = ring.descriptor();
+        const auto slot_index = static_cast<std::uint32_t>(event.slot_id);
+
+        if (slot_index >= descriptor.slot_count) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        auto began = ring.begin_read_slot(slot_index);
+        if (!began.has_value()) {
+            ++release_failures;
+            return;
+        }
+
+        if (!*began) {
+            ++ignored_events;
+            return;
+        }
+
+        bool malformed = false;
+
+        auto header = ring.slot_header(slot_index);
+        if (!header.has_value()) {
+            malformed = true;
+        }
+
+        auto payload = ring.slot_payload(slot_index);
+        if (!payload.has_value()) {
+            malformed = true;
+        }
+
+        if (payload.has_value() && event.payload_size > payload->size()) {
+            malformed = true;
+        }
+
+        if (header.has_value() && static_cast<std::uint64_t>(event.payload_size) > (*header)->payload_size) {
+            malformed = true;
+        }
+
+        /*
+         * No sink delivery yet. This component only proves that OBS can consume
+         * the ready-slot notification and release the shared-memory slot back to
+         * the worker.
+         */
+        auto released = ring.release_read_slot(slot_index);
+        if (!released.has_value()) {
+            ++release_failures;
+            return;
+        }
+
+        if (malformed) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        ++event_counter;
+        ++released_slots;
     }
 
     void handle_event_noexcept(MtlWorkerControlEventEnvelope envelope) noexcept {
@@ -449,17 +553,10 @@ struct MtlWorkerGraphClientAsyncState {
                     using Event = std::decay_t<decltype(typed_event)>;
 
                     if constexpr (std::is_same_v<Event, MtlWorkerFrameReadyEvent>) {
-                        if (typed_event.graph_id == graph_id) {
-                            ++frame_ready_events;
-                        } else {
-                            ++ignored_events;
-                        }
+                        consume_ready_slot_noexcept(typed_event, MtlWorkerMediaKind::Video, frame_ready_events);
                     } else if constexpr (std::is_same_v<Event, MtlWorkerAudioBlockReadyEvent>) {
-                        if (typed_event.graph_id == graph_id) {
-                            ++audio_block_ready_events;
-                        } else {
-                            ++ignored_events;
-                        }
+                        consume_ready_slot_noexcept(typed_event, MtlWorkerMediaKind::Audio,
+                                                    audio_block_ready_events);
                     } else {
                         ++ignored_events;
                     }
@@ -477,8 +574,6 @@ struct MtlWorkerGraphClient::Impl {
     std::optional<MtlAudioStartConfig> audio{};
 
     IFrameSink *sink = nullptr;
-
-    std::vector<MtlWorkerSharedMemoryRingOwner> media_ring_owners{};
 
     std::optional<MtlWorkerManager::WorkerLease> worker_lease{};
     std::shared_ptr<MtlWorkerGraphClientAsyncState> async_event_state{};
@@ -589,7 +684,8 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
 
     request->media_rings = prepared_rings->descriptors;
 
-    impl_->async_event_state = std::make_shared<MtlWorkerGraphClientAsyncState>(impl_->graph_id);
+    impl_->async_event_state =
+    std::make_shared<MtlWorkerGraphClientAsyncState>(impl_->graph_id, std::move(prepared_rings->owners));
 
     auto registered_async_handler = impl_->worker_lease->control_channel->register_async_event_handler(
         impl_->graph_id,
@@ -626,7 +722,6 @@ std::expected<bool, Error> MtlWorkerGraphClient::start() {
         return std::unexpected(started.error());
     }
 
-    impl_->media_ring_owners = std::move(prepared_rings->owners);
     impl_->running = true;
     impl_->active_start_count = 1;
     return true;
@@ -637,7 +732,6 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
         impl_->active_start_count = 0;
         impl_->unregister_async_event_handler_noexcept();
         impl_->async_event_state.reset();
-        impl_->media_ring_owners.clear();
         return true;
     }
 
@@ -651,7 +745,6 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
         impl_->active_start_count = 0;
         impl_->unregister_async_event_handler_noexcept();
         impl_->async_event_state.reset();
-        impl_->media_ring_owners.clear();
         impl_->worker_lease.reset();
         return std::unexpected(Error::InvalidBackendState);
     }
@@ -665,7 +758,6 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
         impl_->active_start_count = 0;
         impl_->unregister_async_event_handler_noexcept();
         impl_->async_event_state.reset();
-        impl_->media_ring_owners.clear();
         impl_->worker_lease.reset();
         return std::unexpected(event.error());
     }
@@ -676,7 +768,6 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
         impl_->active_start_count = 0;
         impl_->unregister_async_event_handler_noexcept();
         impl_->async_event_state.reset();
-        impl_->media_ring_owners.clear();
         impl_->worker_lease.reset();
         return std::unexpected(stopped.error());
     }
@@ -685,7 +776,6 @@ std::expected<bool, Error> MtlWorkerGraphClient::stop() {
     impl_->active_start_count = 0;
     impl_->unregister_async_event_handler_noexcept();
     impl_->async_event_state.reset();
-    impl_->media_ring_owners.clear();
 
     return true;
 }
