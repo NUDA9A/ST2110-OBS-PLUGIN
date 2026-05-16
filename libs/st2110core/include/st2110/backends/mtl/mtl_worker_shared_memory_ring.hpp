@@ -40,6 +40,16 @@ enum class MtlWorkerSharedMemorySlotFlags : std::uint32_t {
     Partial = 1u << 0,
 };
 
+enum class MtlWorkerVideoFieldFlags : std::uint32_t {
+    None = 0,
+    Interlaced = 1u << 0,
+    SecondField = 1u << 1,
+};
+
+inline constexpr std::uint32_t mtlWorkerVideoFieldFlagsMask =
+    static_cast<std::uint32_t>(MtlWorkerVideoFieldFlags::Interlaced) |
+    static_cast<std::uint32_t>(MtlWorkerVideoFieldFlags::SecondField);
+
 enum class MtlWorkerSharedMemoryBeginReadResult : std::uint32_t {
     Acquired = 0,
     NotReady = 1,
@@ -69,6 +79,9 @@ struct MtlWorkerSharedMemorySlotMediaMetadata {
 
     std::uint32_t plane_count = 0;
     std::uint32_t reserved0 = 0;
+
+    std::uint32_t video_scan_mode = 0;
+    std::uint32_t video_field_flags = 0;
 
     std::uint64_t plane_offset_bytes[mtlWorkerSharedMemoryMaxPlanes]{};
     std::uint64_t plane_size_bytes[mtlWorkerSharedMemoryMaxPlanes]{};

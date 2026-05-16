@@ -348,6 +348,45 @@ struct MtlWorkerGraphClientAsyncStatsSnapshot {
     std::uint64_t ignored_events = 0;
 };
 
+[[nodiscard]] std::expected<VideoScanMode, Error> decode_video_scan_mode(const std::uint32_t raw) noexcept {
+    switch (static_cast<VideoScanMode>(raw)) {
+    case VideoScanMode::Progressive:
+        return VideoScanMode::Progressive;
+    case VideoScanMode::Interlaced:
+        return VideoScanMode::Interlaced;
+    case VideoScanMode::PsF:
+        return VideoScanMode::PsF;
+    }
+
+    return std::unexpected(Error::InvalidValue);
+}
+
+[[nodiscard]] bool video_field_flag_set(const std::uint32_t flags, const MtlWorkerVideoFieldFlags flag) noexcept {
+    return (flags & static_cast<std::uint32_t>(flag)) != 0;
+}
+
+[[nodiscard]] bool video_scan_field_metadata_is_consistent(const VideoScanMode scan_mode,
+                                                           const std::uint32_t field_flags) noexcept {
+    if ((field_flags & ~mtlWorkerVideoFieldFlagsMask) != 0) {
+        return false;
+    }
+
+    const bool interlaced = video_field_flag_set(field_flags, MtlWorkerVideoFieldFlags::Interlaced);
+    const bool second_field = video_field_flag_set(field_flags, MtlWorkerVideoFieldFlags::SecondField);
+
+    switch (scan_mode) {
+    case VideoScanMode::Progressive:
+        return !interlaced && !second_field;
+
+    case VideoScanMode::Interlaced:
+    case VideoScanMode::PsF:
+        return interlaced;
+
+    default:
+        return false;
+    }
+}
+
 [[nodiscard]] MtlWorkerStatsEvent
 merge_async_stats(MtlWorkerStatsEvent stats, const MtlWorkerGraphClientAsyncStatsSnapshot &async_stats) noexcept {
     stats.frame_ready_events = async_stats.frame_ready_events;
@@ -583,6 +622,22 @@ struct MtlWorkerGraphClientAsyncState {
             return;
         }
 
+        auto scan_mode = decode_video_scan_mode(media.video_scan_mode);
+        if (!scan_mode.has_value()) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        if (*scan_mode != video_config->scan_mode) {
+            ++malformed_ready_events;
+            return;
+        }
+
+        if (!video_scan_field_metadata_is_consistent(*scan_mode, media.video_field_flags)) {
+            ++malformed_ready_events;
+            return;
+        }
+
         auto payload = ring.slot_payload(slot_index);
         if (!payload.has_value()) {
             ++malformed_ready_events;
@@ -685,9 +740,14 @@ struct MtlWorkerGraphClientAsyncState {
                 }
             }
 
+            const bool second_field =
+                video_field_flag_set(media.video_field_flags, MtlWorkerVideoFieldFlags::SecondField);
+
             sink->on_video_frame(std::move(frame), FrameTimingMetadata{
                                                        .rtp_timestamp = media.rtp_timestamp,
                                                        .receive_timestamp_ns = media.receive_timestamp_ns,
+                                                       .video_scan_mode = *scan_mode,
+                                                       .video_second_field = second_field,
                                                    });
 
             ++video_frames_delivered;

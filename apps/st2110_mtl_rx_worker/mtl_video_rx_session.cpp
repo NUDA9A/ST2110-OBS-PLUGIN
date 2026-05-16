@@ -139,6 +139,31 @@ map_mtl_video_output_format(const st2110::PixelFormat fmt) noexcept {
     return std::unexpected(st2110::Error::Unsupported);
 }
 
+[[nodiscard]] std::expected<std::uint32_t, st2110::Error> make_video_field_flags(const st2110::MtlVideoStartConfig &cfg,
+                                                                                 const st_frame &frame) noexcept {
+    const bool expected_interlaced = cfg.scan_mode != st2110::VideoScanMode::Progressive;
+
+    if (frame.interlaced != expected_interlaced) {
+        return std::unexpected(st2110::Error::InvalidValue);
+    }
+
+    if (!frame.interlaced && frame.second_field) {
+        return std::unexpected(st2110::Error::InvalidValue);
+    }
+
+    std::uint32_t flags = 0;
+
+    if (frame.interlaced) {
+        flags |= static_cast<std::uint32_t>(st2110::MtlWorkerVideoFieldFlags::Interlaced);
+    }
+
+    if (frame.second_field) {
+        flags |= static_cast<std::uint32_t>(st2110::MtlWorkerVideoFieldFlags::SecondField);
+    }
+
+    return flags;
+}
+
 [[nodiscard]] bool mtl_interlaced_flag(const st2110::VideoScanMode scan_mode) noexcept {
     switch (scan_mode) {
     case st2110::VideoScanMode::Progressive:
@@ -244,6 +269,11 @@ copy_video_frame_planes_to_payload(std::span<std::byte> payload, const st2110::M
         return std::unexpected(st2110::Error::InvalidValue);
     }
 
+    auto video_field_flags = make_video_field_flags(cfg, *frame);
+    if (!video_field_flags.has_value()) {
+        return std::unexpected(video_field_flags.error());
+    }
+
     st2110::VideoFrame layout{frame->width, frame->height, cfg.output_format};
 
     if (layout.plane_count() == 0 || layout.plane_count() > st2110::mtlWorkerSharedMemoryMaxPlanes) {
@@ -262,6 +292,8 @@ copy_video_frame_planes_to_payload(std::span<std::byte> payload, const st2110::M
         .receive_timestamp_ns = static_cast<st2110::TimestampNs>(frame->receive_timestamp),
         .plane_count = static_cast<std::uint32_t>(layout.plane_count()),
         .reserved0 = 0,
+        .video_scan_mode = static_cast<std::uint32_t>(cfg.scan_mode),
+        .video_field_flags = *video_field_flags,
         .plane_offset_bytes = {0, 0, 0, 0},
         .plane_size_bytes = {0, 0, 0, 0},
         .plane_line_size_bytes = {0, 0, 0, 0},

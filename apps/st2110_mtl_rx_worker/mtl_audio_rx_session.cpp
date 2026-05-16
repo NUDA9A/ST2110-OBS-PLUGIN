@@ -175,6 +175,8 @@ export_audio_frame_to_ring(st2110::MtlWorkerSharedMemoryRingMap *ring, MtlWorker
         .receive_timestamp_ns = static_cast<st2110::TimestampNs>(frame->receive_timestamp),
         .plane_count = 1,
         .reserved0 = 0,
+        .video_scan_mode = 0,
+        .video_field_flags = 0,
         .plane_offset_bytes = {0, 0, 0, 0},
         .plane_size_bytes = {payload_size, 0, 0, 0},
         .plane_line_size_bytes = {payload_size, 0, 0, 0},

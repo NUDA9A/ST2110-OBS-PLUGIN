@@ -47,7 +47,7 @@ using MtlWorkerGraphId = std::uint64_t;
 using MtlWorkerSlotId = std::uint64_t;
 using MtlWorkerSharedMemoryRingId = std::uint64_t;
 
-inline constexpr std::uint32_t mtlWorkerSharedMemoryRingLayoutVersion = 2;
+inline constexpr std::uint32_t mtlWorkerSharedMemoryRingLayoutVersion = 3;
 inline constexpr std::size_t defaultMtlWorkerMaxSharedMemoryRingDescriptors = 16;
 
 enum class MtlWorkerMediaKind : std::uint32_t {
@@ -186,48 +186,48 @@ struct MtlWorkerStatsEvent {
     std::uint64_t audio_blocks_dropped = 0;
 
     std::uint64_t video_frame_packets_total = 0;
-std::uint64_t video_frame_packets_received_primary = 0;
-std::uint64_t video_frame_packets_received_redundant = 0;
-std::uint64_t video_reconstructed_frames = 0;
-std::uint64_t video_corrupted_frames = 0;
+    std::uint64_t video_frame_packets_received_primary = 0;
+    std::uint64_t video_frame_packets_received_redundant = 0;
+    std::uint64_t video_reconstructed_frames = 0;
+    std::uint64_t video_corrupted_frames = 0;
 
-bool video_session_stats_available = false;
-MtlWorkerRxPortStats video_session_primary{};
-MtlWorkerRxPortStats video_session_redundant{};
-std::uint64_t video_session_packets_received = 0;
-std::uint64_t video_session_packets_out_of_order = 0;
-std::uint64_t video_session_packets_wrong_ssrc_dropped = 0;
-std::uint64_t video_session_packets_wrong_payload_type_dropped = 0;
-std::uint64_t video_session_bytes_received = 0;
-std::uint64_t video_session_frames_dropped = 0;
-std::uint64_t video_session_frames_packets_missed = 0;
-std::uint64_t video_session_packets_wrong_length_dropped = 0;
-std::uint64_t video_session_slot_get_frame_failures = 0;
-std::uint64_t video_session_stats_query_failures = 0;
+    bool video_session_stats_available = false;
+    MtlWorkerRxPortStats video_session_primary{};
+    MtlWorkerRxPortStats video_session_redundant{};
+    std::uint64_t video_session_packets_received = 0;
+    std::uint64_t video_session_packets_out_of_order = 0;
+    std::uint64_t video_session_packets_wrong_ssrc_dropped = 0;
+    std::uint64_t video_session_packets_wrong_payload_type_dropped = 0;
+    std::uint64_t video_session_bytes_received = 0;
+    std::uint64_t video_session_frames_dropped = 0;
+    std::uint64_t video_session_frames_packets_missed = 0;
+    std::uint64_t video_session_packets_wrong_length_dropped = 0;
+    std::uint64_t video_session_slot_get_frame_failures = 0;
+    std::uint64_t video_session_stats_query_failures = 0;
 
-std::uint64_t audio_block_bytes_received = 0;
-std::uint64_t audio_block_packets_total = 0;
-std::uint64_t audio_block_packets_received_primary = 0;
-std::uint64_t audio_block_packets_received_redundant = 0;
+    std::uint64_t audio_block_bytes_received = 0;
+    std::uint64_t audio_block_packets_total = 0;
+    std::uint64_t audio_block_packets_received_primary = 0;
+    std::uint64_t audio_block_packets_received_redundant = 0;
 
-bool audio_session_stats_available = false;
-MtlWorkerRxPortStats audio_session_primary{};
-MtlWorkerRxPortStats audio_session_redundant{};
-std::uint64_t audio_session_packets_received = 0;
-std::uint64_t audio_session_packets_out_of_order = 0;
-std::uint64_t audio_session_packets_wrong_ssrc_dropped = 0;
-std::uint64_t audio_session_packets_wrong_payload_type_dropped = 0;
-std::uint64_t audio_session_packets_redundant = 0;
-std::uint64_t audio_session_packets_dropped = 0;
-std::uint64_t audio_session_packets_length_mismatch_dropped = 0;
-std::uint64_t audio_session_slot_get_frame_failures = 0;
-std::uint64_t audio_session_stats_query_failures = 0;
+    bool audio_session_stats_available = false;
+    MtlWorkerRxPortStats audio_session_primary{};
+    MtlWorkerRxPortStats audio_session_redundant{};
+    std::uint64_t audio_session_packets_received = 0;
+    std::uint64_t audio_session_packets_out_of_order = 0;
+    std::uint64_t audio_session_packets_wrong_ssrc_dropped = 0;
+    std::uint64_t audio_session_packets_wrong_payload_type_dropped = 0;
+    std::uint64_t audio_session_packets_redundant = 0;
+    std::uint64_t audio_session_packets_dropped = 0;
+    std::uint64_t audio_session_packets_length_mismatch_dropped = 0;
+    std::uint64_t audio_session_slot_get_frame_failures = 0;
+    std::uint64_t audio_session_stats_query_failures = 0;
 
-bool mtl_primary_port_stats_available = false;
-MtlWorkerDeviceRxPortStats mtl_primary_port{};
-bool mtl_redundant_port_stats_available = false;
-MtlWorkerDeviceRxPortStats mtl_redundant_port{};
-std::uint64_t mtl_port_stats_query_failures = 0;
+    bool mtl_primary_port_stats_available = false;
+    MtlWorkerDeviceRxPortStats mtl_primary_port{};
+    bool mtl_redundant_port_stats_available = false;
+    MtlWorkerDeviceRxPortStats mtl_redundant_port{};
+    std::uint64_t mtl_port_stats_query_failures = 0;
 
     /*
      * OBS-process-side async/data-plane counters.

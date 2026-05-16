@@ -5,6 +5,7 @@
 #include "st2110/delivery/video/video_frame.hpp"
 #include "st2110/foundation/error.hpp"
 #include "st2110/ingress/shared/packet_parse_stats.hpp"
+#include "st2110/model/video/video_media_types.hpp"
 #include "st2110/receive/shared/reorder_stats.hpp"
 #include "st2110/receive/video/depacketizer_stats.hpp"
 #include <st2110/foundation/timestamp.hpp>
@@ -36,6 +37,9 @@ struct BackendStats {
 struct FrameTimingMetadata {
     std::uint32_t rtp_timestamp = 0;
     TimestampNs receive_timestamp_ns = 0;
+
+    VideoScanMode video_scan_mode = VideoScanMode::Progressive;
+    bool video_second_field = false;
 };
 
 class IFrameSink {
