@@ -1362,8 +1362,8 @@ std::expected<std::vector<std::uint8_t>, Error> serialize_mtl_worker_control_eve
                 writer.u64(typed_event.video_session_frames_packets_missed);
                 writer.u64(typed_event.video_session_packets_wrong_length_dropped);
                 writer.u64(typed_event.video_session_slot_get_frame_failures);
-                write_st20_rx_user_stats(writer, typed_event.video_st20_rx);
                 writer.u64(typed_event.video_session_stats_query_failures);
+                write_st20_rx_user_stats(writer, typed_event.video_st20_rx);
 
                 writer.u64(typed_event.audio_block_bytes_received);
                 writer.u64(typed_event.audio_block_packets_total);
@@ -1669,17 +1669,17 @@ deserialize_mtl_worker_control_event(std::span<const std::uint8_t> payload) {
             return std::unexpected(ok.error());
         }
 
+        ok = read_u64_field(reader, event.video_session_stats_query_failures);
+        if (!ok.has_value()) {
+            return std::unexpected(ok.error());
+        }
+
         auto video_st20_rx = read_st20_rx_user_stats(reader);
         if (!video_st20_rx.has_value()) {
             return std::unexpected(video_st20_rx.error());
         }
 
         event.video_st20_rx = *video_st20_rx;
-
-        ok = read_u64_field(reader, event.video_session_stats_query_failures);
-        if (!ok.has_value()) {
-            return std::unexpected(ok.error());
-        }
 
         ok = read_u64_field(reader, event.audio_block_bytes_received);
         if (!ok.has_value()) {

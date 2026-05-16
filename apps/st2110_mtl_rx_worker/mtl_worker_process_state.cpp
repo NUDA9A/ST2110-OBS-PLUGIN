@@ -259,8 +259,6 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
         .video_corrupted_frames = snapshot.video_corrupted_frames,
         .video_complete_frames = snapshot.video_complete_frames,
 
-        .video_st20_rx = snapshot.video_st20_rx,
-
         .video_session_stats_available = snapshot.video_session_stats_available,
         .video_session_primary = snapshot.video_session_primary,
         .video_session_redundant = snapshot.video_session_redundant,
@@ -274,6 +272,8 @@ st2110::MtlWorkerControlEvent MtlWorkerProcessState::handle(const st2110::MtlWor
         .video_session_packets_wrong_length_dropped = snapshot.video_session_packets_wrong_length_dropped,
         .video_session_slot_get_frame_failures = snapshot.video_session_slot_get_frame_failures,
         .video_session_stats_query_failures = snapshot.video_session_stats_query_failures,
+
+        .video_st20_rx = snapshot.video_st20_rx,
 
         .audio_block_bytes_received = snapshot.audio_block_bytes_received,
         .audio_block_packets_total = snapshot.audio_block_packets_total,

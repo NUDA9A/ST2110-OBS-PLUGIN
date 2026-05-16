@@ -508,6 +508,15 @@ int on_st20p_rx_event(void *priv, const enum st_event event, void *args) {
     return ops;
 }
 
+void copy_rx_port_stats(st2110::MtlWorkerRxPortStats &dst, const st_rx_port_stats &src) noexcept {
+    dst.packets = src.packets;
+    dst.bytes = src.bytes;
+    dst.frames = src.frames;
+    dst.incomplete_frames = src.incomplete_frames;
+    dst.err_packets = src.err_packets;
+    dst.out_of_order_packets = src.out_of_order_packets;
+}
+
 st2110::MtlWorkerSt20RxUserStats copy_st20_rx_user_stats(const st20_rx_user_stats &src) noexcept {
     st2110::MtlWorkerSt20RxUserStats dst{};
 
@@ -557,15 +566,6 @@ st2110::MtlWorkerSt20RxUserStats copy_st20_rx_user_stats(const st20_rx_user_stat
     dst.stat_pkts_wrong_kmod_dropped = src.stat_pkts_wrong_kmod_dropped;
 
     return dst;
-}
-
-void copy_rx_port_stats(st2110::MtlWorkerRxPortStats &dst, const st_rx_port_stats &src) noexcept {
-    dst.packets = src.packets;
-    dst.bytes = src.bytes;
-    dst.frames = src.frames;
-    dst.incomplete_frames = src.incomplete_frames;
-    dst.err_packets = src.err_packets;
-    dst.out_of_order_packets = src.out_of_order_packets;
 }
 
 void record_video_frame_mtl_metadata(MtlWorkerGraphStats &stats, const st_frame &frame) noexcept {
