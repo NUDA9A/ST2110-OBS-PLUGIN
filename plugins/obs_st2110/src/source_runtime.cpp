@@ -175,14 +175,30 @@ make_sink_config(const std::optional<st2110::VideoReceiveBootstrap> &video_boots
     cfg.max_queued_video_frames = tuning.max_queued_video_frames;
     cfg.max_queued_audio_blocks = tuning.max_queued_audio_blocks;
 
+    const bool av_sync_domain = video_bootstrap.has_value() && audio_bootstrap.has_value();
+
     if (video_bootstrap.has_value()) {
         cfg.video_timestamp_mapper.rtp_clock_rate =
             video_bootstrap->stream.receive_signaled_stream.timing.rtp_clock_rate;
+
+        if (av_sync_domain) {
+            cfg.video_timestamp_mapper.initial_anchor_mode = st2110::RtpTimestampInitialAnchorMode::ConfiguredReference;
+            cfg.video_timestamp_mapper.anchor_rtp_timestamp =
+                video_bootstrap->stream.receive_signaled_stream.timing.media_clock.direct->rtp_clock_offset;
+            cfg.video_timestamp_mapper.anchor_timestamp_ns = 0;
+        }
     }
 
     if (audio_bootstrap.has_value()) {
         cfg.audio_timestamp_mapper.rtp_clock_rate =
             audio_bootstrap->stream.receive_signaled_stream.timing.rtp_clock_rate;
+
+        if (av_sync_domain) {
+            cfg.audio_timestamp_mapper.initial_anchor_mode = st2110::RtpTimestampInitialAnchorMode::ConfiguredReference;
+            cfg.audio_timestamp_mapper.anchor_rtp_timestamp =
+                audio_bootstrap->stream.receive_signaled_stream.timing.media_clock.direct->rtp_clock_offset;
+            cfg.audio_timestamp_mapper.anchor_timestamp_ns = 0;
+        }
     }
 
     return cfg;
