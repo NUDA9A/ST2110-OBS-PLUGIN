@@ -17,6 +17,7 @@
 #include <st2110/receive/audio/audio_receive_bootstrap.hpp>
 #include <st2110/receive/shared/receive_start_request.hpp>
 #include <st2110/receive/video/video_receive_bootstrap.hpp>
+#include <st2110/foundation/rtp_timestamp_anchor_policy.hpp>
 
 #if ST2110_HAS_MTL_BACKEND
 #include <st2110/backends/mtl/mtl_rx_audio_backend_proxy.hpp>
