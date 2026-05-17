@@ -49,7 +49,7 @@ inline SocketAudioStartConfig project_receive_start_request_to_socket_audio_star
     const auto &bootstrap = std::get<AudioReceiveBootstrap>(request.media);
 
     res.topology = bootstrap.receive_bootstrap.topology;
-    res.reorder_buffer_config = settings.reorder_buffer_config;
+    res.reorder_buffer_config = make_default_reorder_buffer_config(settings.reorder_tolerance_policy);
     res.stream = make_socket_audio_stream_config(bootstrap);
     res.legs = make_socket_media_leg_configs(bootstrap.receive_bootstrap, request.local);
 

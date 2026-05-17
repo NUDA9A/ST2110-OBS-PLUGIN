@@ -88,33 +88,6 @@ struct St2110Source {
     return st2110::ReceiveBackendKind::Socket;
 }
 
-[[nodiscard]] st2110::TimestampNs read_playout_delay_ns(obs_data_t *settings) {
-    const long long delay_ms = obs_data_get_int(settings, obs_st2110::sourcePlayoutDelayMsPropertyId);
-    if (delay_ms <= 0) {
-        return 0;
-    }
-
-    return static_cast<st2110::TimestampNs>(delay_ms) * 1'000'000ULL;
-}
-
-[[nodiscard]] std::uint32_t read_reorder_window_packets(obs_data_t *settings) {
-    const long long value = obs_data_get_int(settings, obs_st2110::sourceReorderWindowPacketsPropertyId);
-    if (value <= 0) {
-        return st2110::defaultReorderWindowPackets;
-    }
-
-    return static_cast<std::uint32_t>(value);
-}
-
-[[nodiscard]] std::uint32_t read_flush_after_n_packets(obs_data_t *settings) {
-    const long long value = obs_data_get_int(settings, obs_st2110::sourceFlushAfterNPacketsPropertyId);
-    if (value <= 0) {
-        return st2110::defaultFlushAfterNPackets;
-    }
-
-    return static_cast<std::uint32_t>(value);
-}
-
 [[nodiscard]] st2110::ReceiveReorderGapPolicy read_reorder_gap_policy(obs_data_t *settings) {
     const char *policy_text = obs_data_get_string(settings, obs_st2110::sourceReorderGapPolicyPropertyId);
     const std::string_view policy = policy_text ? std::string_view(policy_text) : std::string_view{};
@@ -177,11 +150,8 @@ struct St2110Source {
     }
 
     config.receive_settings.backend_kind = read_receive_backend_kind(settings);
-    config.receive_settings.reorder_buffer_config.window_size_packets = read_reorder_window_packets(settings);
-    config.receive_settings.reorder_buffer_config.reorder_tolerance_policy = read_reorder_gap_policy(settings);
-    config.receive_settings.reorder_buffer_config.flush_after_n_packets = read_flush_after_n_packets(settings);
+    config.receive_settings.reorder_tolerance_policy = read_reorder_gap_policy(settings);
     config.receive_settings.partial_unit_policy = read_partial_unit_policy(settings);
-    config.playout_delay_ns = read_playout_delay_ns(settings);
 
     return config;
 }
@@ -295,11 +265,6 @@ obs_properties_t *st2110_source_get_properties(void *data) {
     obs_property_list_add_string(backend_list, "MTL", obs_st2110::sourceBackendMtlValue);
 #endif
 
-    obs_properties_add_int(properties, obs_st2110::sourcePlayoutDelayMsPropertyId, "Playout delay (ms)", 0, 5000, 1);
-
-    obs_properties_add_int(properties, obs_st2110::sourceReorderWindowPacketsPropertyId,
-                           "Socket reorder window packets", 1, 4096, 1);
-
     obs_property_t *reorder_policy_list =
         obs_properties_add_list(properties, obs_st2110::sourceReorderGapPolicyPropertyId, "Receive reorder gap policy",
                                 OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
@@ -321,9 +286,6 @@ obs_properties_t *st2110_source_get_properties(void *data) {
     obs_property_list_add_string(reorder_policy_list, "Flush after N packets",
                                  obs_st2110::sourceReorderGapPolicyFlushAfterNPacketsValue);
 
-    obs_properties_add_int(properties, obs_st2110::sourceFlushAfterNPacketsPropertyId, "Flush after N packets", 1, 4096,
-                           1);
-
     obs_property_t *partial_policy_list =
         obs_properties_add_list(properties, obs_st2110::sourcePartialUnitPolicyPropertyId, "Partial unit policy",
                                 OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_STRING);
@@ -339,13 +301,8 @@ obs_properties_t *st2110_source_get_properties(void *data) {
 void st2110_source_get_defaults(obs_data_t *settings) {
     obs_data_set_default_string(settings, obs_st2110::sourceSelectionPropertyId, "");
     obs_data_set_default_string(settings, obs_st2110::sourceBackendPropertyId, obs_st2110::sourceBackendSocketValue);
-    obs_data_set_default_int(settings, obs_st2110::sourcePlayoutDelayMsPropertyId, 0);
-    obs_data_set_default_int(settings, obs_st2110::sourceReorderWindowPacketsPropertyId,
-                             st2110::defaultReorderWindowPackets);
     obs_data_set_default_string(settings, obs_st2110::sourceReorderGapPolicyPropertyId,
                                 obs_st2110::sourceReorderGapPolicyWaitForMissingValue);
-    obs_data_set_default_int(settings, obs_st2110::sourceFlushAfterNPacketsPropertyId,
-                             st2110::defaultFlushAfterNPackets);
     obs_data_set_default_string(settings, obs_st2110::sourcePartialUnitPolicyPropertyId,
                                 obs_st2110::sourcePartialUnitPolicyEmitWithFlagValue);
 }

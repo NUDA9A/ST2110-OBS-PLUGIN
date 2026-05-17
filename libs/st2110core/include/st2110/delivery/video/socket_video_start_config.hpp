@@ -40,7 +40,7 @@ inline SocketVideoStartConfig project_receive_start_request_to_socket_video_star
     const auto &bootstrap = std::get<VideoReceiveBootstrap>(request.media);
 
     res.topology = bootstrap.receive_bootstrap.topology;
-    res.reorder_buffer_config = settings.reorder_buffer_config;
+    res.reorder_buffer_config = make_default_reorder_buffer_config(settings.reorder_tolerance_policy);
     res.stream = make_socket_video_stream_config(bootstrap);
     res.video_receive_pipeline_config =
         make_video_receive_pipeline_config(res.stream.scan_mode, res.stream.media, settings.partial_unit_policy);

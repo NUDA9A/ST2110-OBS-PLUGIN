@@ -11,7 +11,7 @@ enum class ReceiveBackendKind {
 };
 
 struct Settings {
-    ReorderBufferConfig reorder_buffer_config{};
+    ReceiveReorderGapPolicy reorder_tolerance_policy = ReceiveReorderGapPolicy::WaitForMissing;
     PartialUnitPolicy partial_unit_policy = PartialUnitPolicy::EmitWithFlag;
     ReceiveBackendKind backend_kind = ReceiveBackendKind::Socket;
 

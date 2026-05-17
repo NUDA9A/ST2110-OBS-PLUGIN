@@ -163,12 +163,10 @@ make_audio_backend(const st2110::ReceiveStartRequest &request, const st2110::Set
 
 [[nodiscard]] st2110::SynchronizedFrameSinkConfig
 make_sink_config(const std::optional<st2110::VideoReceiveBootstrap> &video_bootstrap,
-                 const std::optional<st2110::AudioReceiveBootstrap> &audio_bootstrap,
-                 const st2110::TimestampNs playout_delay_ns) {
+                 const std::optional<st2110::AudioReceiveBootstrap> &audio_bootstrap) {
     st2110::SynchronizedFrameSinkConfig cfg{};
     cfg.enable_video = video_bootstrap.has_value();
     cfg.enable_audio = audio_bootstrap.has_value();
-    cfg.playout_delay_ns = playout_delay_ns;
 
     if (video_bootstrap.has_value()) {
         cfg.video_timestamp_mapper.rtp_clock_rate =
@@ -523,8 +521,7 @@ class SourceRuntime::Impl {
     };
 
     [[nodiscard]] static bool graph_relevant_config_changed(const SourceConfig &next, const SourceConfig &current) {
-        return next.selected_source != current.selected_source || next.receive_settings != current.receive_settings ||
-               next.playout_delay_ns != current.playout_delay_ns;
+        return next.selected_source != current.selected_source || next.receive_settings != current.receive_settings;
     }
 
     [[nodiscard]] bool configured_graph_exists() const noexcept {
@@ -818,8 +815,8 @@ class SourceRuntime::Impl {
         }
 #endif
 
-        auto staged_sink = std::make_unique<ObsSynchronizedFrameSink>(
-            source_, make_sink_config(video_bootstrap, audio_bootstrap, config.playout_delay_ns));
+        auto staged_sink =
+            std::make_unique<ObsSynchronizedFrameSink>(source_, make_sink_config(video_bootstrap, audio_bootstrap));
 
         return ConfiguredReceiveGraph{
             .sink = std::move(staged_sink),

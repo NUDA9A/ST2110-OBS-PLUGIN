@@ -16,11 +16,7 @@ inline constexpr const char *sourceBackendPropertyId = "st2110_receive_backend";
 inline constexpr const char *sourceBackendSocketValue = "socket";
 inline constexpr const char *sourceBackendMtlValue = "mtl";
 
-inline constexpr const char *sourcePlayoutDelayMsPropertyId = "st2110_playout_delay_ms";
-inline constexpr const char *sourceReorderWindowPacketsPropertyId = "st2110_reorder_window_packets";
-
 inline constexpr const char *sourceReorderGapPolicyPropertyId = "st2110_reorder_gap_policy";
-inline constexpr const char *sourceFlushAfterNPacketsPropertyId = "st2110_flush_after_n_packets";
 inline constexpr const char *sourcePartialUnitPolicyPropertyId = "st2110_partial_unit_policy";
 
 inline constexpr const char *sourceReorderGapPolicyWaitForMissingValue = "wait_for_missing";
