@@ -39,7 +39,7 @@ NDI_INCLUDE_DIR_ARG="${NDI_INCLUDE_DIR:-}"
 NDI_RUNTIME_DIR_ARG="${NDI_RUNTIME_DIR_V6:-}"
 
 MTL_REPO_URL="https://github.com/OpenVisualCloud/Media-Transport-Library.git"
-MTL_REF=""
+MTL_REF="v26.01"
 MTL_SOURCE_DIR=""
 
 DPDK_REPO_URL="https://github.com/DPDK/dpdk.git"
