@@ -869,14 +869,18 @@ check_ndi() {
 check_mtl_available() {
     configure_pkg_config_paths
 
-    if pkg-config --exists mtl; then
+    if pkg-config --exists mtl && [[ "$FORCE_REBUILD_MTL" -eq 0 ]]; then
         log "MTL pkg-config: $(pkg-config --modversion mtl 2>/dev/null || echo found)"
         return
     fi
 
     if [[ "$INSTALL_MTL" -eq 0 ]]; then
-        die "MTL pkg-config package 'mtl' was not found and --no-install-mtl is set.
-Install MTL manually or provide --mtl-pkg-config-dir."
+        die "MTL pkg-config package 'mtl' was not found, or MTL rebuild was requested, but --no-install-mtl is set.
+Install MTL manually, remove --no-install-mtl, or provide --mtl-pkg-config-dir."
+    fi
+
+    if pkg-config --exists mtl && [[ "$FORCE_REBUILD_MTL" -eq 1 ]]; then
+        log "Forcing MTL rebuild despite existing pkg-config package: $(pkg-config --modversion mtl 2>/dev/null || echo found)"
     fi
 
     build_and_install_mtl
