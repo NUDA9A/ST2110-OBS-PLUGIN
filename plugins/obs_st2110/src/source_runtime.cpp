@@ -14,10 +14,10 @@
 #include <st2110/delivery/synchronized_playout_tuning.hpp>
 #include <st2110/delivery/video/socket_video_start_config.hpp>
 #include <st2110/foundation/error.hpp>
+#include <st2110/foundation/rtp_timestamp_anchor_policy.hpp>
 #include <st2110/receive/audio/audio_receive_bootstrap.hpp>
 #include <st2110/receive/shared/receive_start_request.hpp>
 #include <st2110/receive/video/video_receive_bootstrap.hpp>
-#include <st2110/foundation/rtp_timestamp_anchor_policy.hpp>
 
 #if ST2110_HAS_MTL_BACKEND
 #include <st2110/backends/mtl/mtl_rx_audio_backend_proxy.hpp>
@@ -478,31 +478,22 @@ class SourceRuntime::Impl {
     void update(SourceConfig config) {
         const bool graph_relevant_changed = graph_relevant_config_changed(config, config_);
 
+        config_ = std::move(config);
+
         if (!graph_relevant_changed) {
-            config_ = std::move(config);
-            return;
-        }
+            if (receive_requested_ && !configured_graph_exists()) {
+                start_receive_graph();
+            }
 
-        if (!receive_requested_) {
-            destroy_receive_graph_noexcept();
-            config_ = std::move(config);
-            return;
-        }
-
-        auto staged_graph = build_configured_graph(config);
-        if (!staged_graph.has_value()) {
-            destroy_receive_graph_noexcept();
-            config_ = std::move(config);
             return;
         }
 
         destroy_configured_graph_noexcept();
 
-        config_ = std::move(config);
-        commit_configured_graph(std::move(*staged_graph));
-
-        if (!start_active_sessions()) {
-            destroy_configured_graph_noexcept();
+        if (receive_requested_) {
+            start_receive_graph();
+        } else {
+            last_error_.clear();
         }
     }
 
@@ -734,6 +725,7 @@ class SourceRuntime::Impl {
         last_error_.clear();
 
         if (!has_provider_selected_sdp(config)) {
+            set_error("Cannot build receive graph: no selected source with SDP is available");
             return std::nullopt;
         }
 

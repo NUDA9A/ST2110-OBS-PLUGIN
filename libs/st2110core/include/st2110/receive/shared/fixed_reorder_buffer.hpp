@@ -173,7 +173,154 @@ template <bool is_video_ = false> class FixedWindowReorderBuffer final : public 
         return flush_missing_once();
     }
 
+    [[nodiscard]] bool flush_missing_until_marker_boundary() override {
+        if (!initialized_ || packets_.empty()) {
+            return false;
+        }
+
+        if (has_next_expected_packet()) {
+            return false;
+        }
+
+        if (!has_marker_boundary_packet()) {
+            return false;
+        }
+
+        return flush_missing_once();
+    }
+
   private:
+    [[nodiscard]] bool has_next_expected_packet() const {
+        if constexpr (is_video_) {
+            return packets_.contains(next_expected_seq_);
+        } else {
+            return packets_.contains(next_expected_audio_seq_);
+        }
+    }
+
+    [[nodiscard]] bool has_marker_boundary_packet() const {
+        for (const auto &[seq, packet] : packets_) {
+            (void)seq;
+
+            if (packet && packet->rtp_.marker) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    [[nodiscard]] std::optional<std::uint32_t>
+    find_video_recovery_expected_for_incoming(const std::uint32_t incoming_seq) const {
+        std::optional<std::uint32_t> best{};
+        std::uint32_t best_distance_from_current = 0;
+
+        for (const auto &[candidate_seq, packet] : packets_) {
+            (void)packet;
+
+            const std::uint32_t candidate_from_current = candidate_seq - next_expected_seq_;
+            if (candidate_from_current > 0x7FFFFFFFu) {
+                continue; // already late relative to current expected seq
+            }
+
+            const std::uint32_t incoming_from_candidate = incoming_seq - candidate_seq;
+            if (incoming_from_candidate > 0x7FFFFFFFu) {
+                continue; // candidate is after incoming seq
+            }
+
+            if (incoming_from_candidate >= window_size_) {
+                continue; // incoming still would not fit
+            }
+
+            if (!best.has_value() || candidate_from_current < best_distance_from_current) {
+                best = candidate_seq;
+                best_distance_from_current = candidate_from_current;
+            }
+        }
+
+        return best;
+    }
+
+    [[nodiscard]] std::optional<std::uint16_t>
+    find_audio_recovery_expected_for_incoming(const std::uint16_t incoming_seq) const {
+        std::optional<std::uint16_t> best{};
+        std::uint16_t best_distance_from_current = 0;
+
+        for (const auto &[candidate_seq_u32, packet] : packets_) {
+            (void)packet;
+
+            const auto candidate_seq = static_cast<std::uint16_t>(candidate_seq_u32);
+
+            const std::uint16_t candidate_from_current = candidate_seq - next_expected_audio_seq_;
+            if (candidate_from_current > 0x8000u) {
+                continue; // already late relative to current expected seq
+            }
+
+            const std::uint16_t incoming_from_candidate = incoming_seq - candidate_seq;
+            if (incoming_from_candidate > 0x8000u) {
+                continue; // candidate is after incoming seq
+            }
+
+            if (incoming_from_candidate >= window_size_) {
+                continue; // incoming still would not fit
+            }
+
+            if (!best.has_value() || candidate_from_current < best_distance_from_current) {
+                best = candidate_seq;
+                best_distance_from_current = candidate_from_current;
+            }
+        }
+
+        return best;
+    }
+
+    void erase_packets_outside_video_window() {
+        for (auto it = packets_.begin(); it != packets_.end();) {
+            const std::uint32_t dist = it->first - next_expected_seq_;
+
+            if (dist > 0x7FFFFFFFu || dist >= window_size_) {
+                it = packets_.erase(it);
+                continue;
+            }
+
+            ++it;
+        }
+    }
+
+    void erase_packets_outside_audio_window() {
+        for (auto it = packets_.begin(); it != packets_.end();) {
+            const auto seq = static_cast<std::uint16_t>(it->first);
+            const std::uint16_t dist = seq - next_expected_audio_seq_;
+
+            if (dist > 0x8000u || dist >= window_size_) {
+                it = packets_.erase(it);
+                continue;
+            }
+
+            ++it;
+        }
+    }
+
+    void advance_video_expected_to(const std::uint32_t new_expected_seq) {
+        const std::uint32_t skipped = new_expected_seq - next_expected_seq_;
+        stats_.missing_seq_flushed += skipped;
+
+        next_expected_seq_ = new_expected_seq;
+        missing_head_accounted_ = false;
+
+        erase_packets_outside_video_window();
+    }
+
+    void advance_audio_expected_to(const std::uint16_t new_expected_seq) {
+        const std::uint16_t skipped = new_expected_seq - next_expected_audio_seq_;
+        stats_.missing_seq_flushed += skipped;
+
+        next_expected_audio_seq_ = new_expected_seq;
+        missing_head_accounted_ = false;
+
+        erase_packets_outside_audio_window();
+    }
+
     [[nodiscard]] Error push_audio(std::unique_ptr<StoredPacket> packet) {
         const auto seq = static_cast<std::uint16_t>(packet->reorder_sequence());
 
@@ -187,24 +334,30 @@ template <bool is_video_ = false> class FixedWindowReorderBuffer final : public 
         std::uint16_t dist = seq - next_expected_audio_seq_;
 
         if (dist >= window_size_) {
-            if (dist > 0x8000) {
+            if (dist > 0x8000u) {
                 ++stats_.late_packets;
                 return Error::InvalidValue;
             }
 
             /*
-             * Forward out-of-window means the missing head cannot be recovered
-             * inside the configured reorder window. Resynchronize to the current
-             * packet instead of permanently poisoning the buffer.
+             * Forward out-of-window means the current missing head cannot be
+             * recovered within the configured reorder window.
+             *
+             * Preserve buffered packets when possible; only resync directly to the
+             * incoming packet if no buffered sequence can make it fit.
              */
             ++stats_.out_of_window;
-            stats_.missing_seq_flushed += dist;
 
-            packets_.clear();
-            next_expected_audio_seq_ = seq;
-            missing_head_accounted_ = false;
+            if (auto recovery_expected = find_audio_recovery_expected_for_incoming(seq)) {
+                advance_audio_expected_to(*recovery_expected);
+            } else {
+                advance_audio_expected_to(seq);
+            }
 
-            dist = 0;
+            dist = seq - next_expected_audio_seq_;
+            if (dist >= window_size_ || dist > 0x8000u) {
+                return Error::InvalidValue;
+            }
         }
 
         if (packets_.contains(seq)) {
@@ -237,18 +390,25 @@ template <bool is_video_ = false> class FixedWindowReorderBuffer final : public 
             }
 
             /*
-             * Forward out-of-window means the missing head cannot be recovered
-             * inside the configured reorder window. Resynchronize to the current
-             * packet instead of rejecting all following packets as out-of-window.
+             * Forward out-of-window means the current missing head cannot be
+             * recovered within the configured reorder window.
+             *
+             * Prefer advancing to the oldest buffered packet that makes the incoming
+             * packet fit. This preserves already buffered useful packets instead of
+             * clearing the entire buffer.
              */
             ++stats_.out_of_window;
-            stats_.missing_seq_flushed += dist;
 
-            packets_.clear();
-            next_expected_seq_ = seq;
-            missing_head_accounted_ = false;
+            if (auto recovery_expected = find_video_recovery_expected_for_incoming(seq)) {
+                advance_video_expected_to(*recovery_expected);
+            } else {
+                advance_video_expected_to(seq);
+            }
 
-            dist = 0;
+            dist = seq - next_expected_seq_;
+            if (dist >= window_size_ || dist > 0x7FFFFFFFu) {
+                return Error::InvalidValue;
+            }
         }
 
         if (packets_.contains(seq)) {

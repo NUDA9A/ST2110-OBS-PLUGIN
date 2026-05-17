@@ -310,6 +310,9 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
         case ReceiveReorderGapPolicy::FlushAfterNPackets:
             gap_flush_used = reorder_buffer_->flush_after_n_packets(reorder_buffer_config_.flush_after_n_packets);
             return;
+        case ReceiveReorderGapPolicy::FlushOnMarkerBoundary:
+            gap_flush_used = reorder_buffer_->flush_missing_until_marker_boundary();
+            return;
         default:
             throw std::runtime_error("Such reorder policy is not implemented yet");
         }
@@ -325,7 +328,8 @@ class SocketRxSingleMediaBackendBase : public virtual IRxBackend {
             }
 
             const bool allow_multiple_gap_flushes =
-                reorder_tolerance_policy_ == ReceiveReorderGapPolicy::FlushAfterNPackets;
+                reorder_tolerance_policy_ == ReceiveReorderGapPolicy::FlushAfterNPackets ||
+                reorder_tolerance_policy_ == ReceiveReorderGapPolicy::FlushOnMarkerBoundary;
 
             if (gap_flush_used && !allow_multiple_gap_flushes) {
                 return;

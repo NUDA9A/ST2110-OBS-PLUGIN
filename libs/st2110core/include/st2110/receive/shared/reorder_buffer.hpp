@@ -2,8 +2,8 @@
 #define ST2110_OBS_PLUGIN_REORDER_BUFFER_HPP
 
 #include <cstdint>
-#include <vector>
 #include <memory>
+#include <vector>
 
 #include <st2110/foundation/error.hpp>
 #include <st2110/foundation/timestamp.hpp>
@@ -36,6 +36,7 @@ class IReorderBuffer {
     [[nodiscard]] virtual bool flush_missing_once() = 0;
 
     [[nodiscard]] virtual bool flush_after_n_packets(std::uint32_t threshold_packets) = 0;
+    [[nodiscard]] virtual bool flush_missing_until_marker_boundary() = 0;
 
     virtual void reset() = 0;
 

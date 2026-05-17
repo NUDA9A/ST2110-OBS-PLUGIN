@@ -7,6 +7,7 @@
 #include <st2110/receive/shared/receive_reorder_tolerance_policy.hpp>
 #include <st2110/receive/video/video_receive_bootstrap.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -183,8 +184,9 @@ derive_socket_video_reorder_buffer_config(const VideoReceiveBootstrap &bootstrap
                                           const ReceiveReorderGapPolicy reorder_tolerance_policy) noexcept {
     const std::uint32_t window_size_packets = derive_socket_video_reorder_window_packets(bootstrap);
 
-    return ReorderBufferConfig {
-        .window_size_packets = window_size_packets, .reorder_tolerance_policy = reorder_tolerance_policy,
+    return ReorderBufferConfig{
+        .window_size_packets = window_size_packets,
+        .reorder_tolerance_policy = reorder_tolerance_policy,
         .flush_after_n_packets = std::max<std::uint32_t>(1, window_size_packets / 4),
     };
 }
@@ -194,8 +196,14 @@ derive_socket_audio_reorder_buffer_config(const AudioReceiveBootstrap &bootstrap
                                           const ReceiveReorderGapPolicy reorder_tolerance_policy) noexcept {
     const std::uint32_t window_size_packets = derive_socket_audio_reorder_window_packets(bootstrap);
 
-    return ReorderBufferConfig {
-        .window_size_packets = window_size_packets, .reorder_tolerance_policy = reorder_tolerance_policy,
+    const ReceiveReorderGapPolicy effective_policy =
+        reorder_tolerance_policy == ReceiveReorderGapPolicy::FlushOnMarkerBoundary
+            ? ReceiveReorderGapPolicy::FlushAfterNPackets
+            : reorder_tolerance_policy;
+
+    return ReorderBufferConfig{
+        .window_size_packets = window_size_packets,
+        .reorder_tolerance_policy = effective_policy,
         .flush_after_n_packets = std::max<std::uint32_t>(1, window_size_packets / 4),
     };
 }
