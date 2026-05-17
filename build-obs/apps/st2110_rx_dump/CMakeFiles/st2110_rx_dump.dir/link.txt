@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/st2110_rx_dump.dir/main.cpp.o -o st2110_rx_dump  ../../libs/st2110core/libst2110core.a

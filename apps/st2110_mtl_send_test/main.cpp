@@ -40,6 +40,7 @@ using Clock = std::chrono::steady_clock;
 enum class VideoMode {
     P1080_60,
     P720_30,
+    P360_30,
 };
 
 enum class DuplicateMode {
@@ -319,6 +320,15 @@ struct AppConfig {
             .fps_den = 1,
             .mtl_fps = ST_FPS_P30,
         };
+
+    case VideoMode::P360_30:
+        return VideoModeSpec{
+            .width = 640,
+            .height = 360,
+            .fps_num = 30,
+            .fps_den = 1,
+            .mtl_fps = ST_FPS_P30,
+        };
     }
 
     return {};
@@ -341,7 +351,11 @@ struct AppConfig {
         return VideoMode::P720_30;
     }
 
-    throw std::runtime_error("Unsupported --video-mode. Supported values: 1080p60, 720p30");
+    if (value == "360p" || value == "360p30" || value == "640x360p30") {
+        return VideoMode::P360_30;
+    }
+
+    throw std::runtime_error("Unsupported --video-mode. Supported values: 1080p60, 720p30, 360p, 360p30");
 }
 
 [[nodiscard]] mtl_pmd_type parse_pmd(std::string_view value) {
@@ -574,7 +588,8 @@ void print_help() {
               << "  --media av                     Video + audio, default\n\n"
               << "Video modes:\n"
               << "  --video-mode 1080p60           1920x1080 60fps UYVY, default\n"
-              << "  --video-mode 720p30            1280x720 30fps UYVY\n\n"
+              << "  --video-mode 720p30            1280x720 30fps UYVY\n"
+              << "  --video-mode 360p              640x360 30fps UYVY\n\n"
               << "Primary leg:\n"
               << "  --port-name VALUE              MTL port, e.g. 0000:af:01.0 or kernel:eth0\n"
               << "  --local-ip IP                  Local sender/source IP used in SDP and MTL\n"

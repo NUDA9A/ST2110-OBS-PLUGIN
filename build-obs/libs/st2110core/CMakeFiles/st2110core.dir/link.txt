@@ -1,2 +1,0 @@
-/usr/bin/ar qc libst2110core.a CMakeFiles/st2110core.dir/src/stub.cpp.o CMakeFiles/st2110core.dir/src/backends/socket/socket_rx_single_media_backend_base.cpp.o
-/usr/bin/ranlib libst2110core.a

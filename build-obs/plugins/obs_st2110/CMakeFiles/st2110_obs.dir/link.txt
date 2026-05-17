@@ -1,1 +1,0 @@
-/usr/bin/c++ -fPIC -shared  -o st2110_obs.so "CMakeFiles/st2110_obs.dir/src/plugin-main.cpp.o" "CMakeFiles/st2110_obs.dir/src/st2110-source.cpp.o" "CMakeFiles/st2110_obs.dir/src/obs-synchronized-frame-sink.cpp.o"  ../../libs/st2110core/libst2110core.a /usr/lib/x86_64-linux-gnu/libobs.so.30
