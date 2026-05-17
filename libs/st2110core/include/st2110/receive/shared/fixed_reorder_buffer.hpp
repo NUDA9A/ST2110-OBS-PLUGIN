@@ -176,26 +176,42 @@ template <bool is_video_ = false> class FixedWindowReorderBuffer final : public 
   private:
     [[nodiscard]] Error push_audio(std::unique_ptr<StoredPacket> packet) {
         const auto seq = static_cast<std::uint16_t>(packet->reorder_sequence());
+
         if (!initialized_) {
             initialized_ = true;
             next_expected_audio_seq_ = seq;
         }
 
         ++stats_.packets_pushed;
-        const std::uint16_t dist = seq - next_expected_audio_seq_;
+
+        std::uint16_t dist = seq - next_expected_audio_seq_;
+
         if (dist >= window_size_) {
             if (dist > 0x8000) {
                 ++stats_.late_packets;
-            } else {
-                ++stats_.out_of_window;
+                return Error::InvalidValue;
             }
-            return Error::InvalidValue;
+
+            /*
+             * Forward out-of-window means the missing head cannot be recovered
+             * inside the configured reorder window. Resynchronize to the current
+             * packet instead of permanently poisoning the buffer.
+             */
+            ++stats_.out_of_window;
+            stats_.missing_seq_flushed += dist;
+
+            packets_.clear();
+            next_expected_audio_seq_ = seq;
+            missing_head_accounted_ = false;
+
+            dist = 0;
         }
 
         if (packets_.contains(seq)) {
             ++stats_.duplicates;
             return Error::InvalidValue;
         }
+
         packets_.emplace(seq, std::move(packet));
         ++stats_.packets_stored;
 
@@ -204,26 +220,42 @@ template <bool is_video_ = false> class FixedWindowReorderBuffer final : public 
 
     [[nodiscard]] Error push_video(std::unique_ptr<StoredPacket> packet) {
         const auto seq = packet->reorder_sequence();
+
         if (!initialized_) {
             initialized_ = true;
             next_expected_seq_ = seq;
         }
 
         ++stats_.packets_pushed;
-        const auto dist = seq - next_expected_seq_;
+
+        std::uint32_t dist = seq - next_expected_seq_;
+
         if (dist >= window_size_) {
             if (dist > 0x7FFFFFFFu) {
                 ++stats_.late_packets;
-            } else {
-                ++stats_.out_of_window;
+                return Error::InvalidValue;
             }
-            return Error::InvalidValue;
+
+            /*
+             * Forward out-of-window means the missing head cannot be recovered
+             * inside the configured reorder window. Resynchronize to the current
+             * packet instead of rejecting all following packets as out-of-window.
+             */
+            ++stats_.out_of_window;
+            stats_.missing_seq_flushed += dist;
+
+            packets_.clear();
+            next_expected_seq_ = seq;
+            missing_head_accounted_ = false;
+
+            dist = 0;
         }
 
         if (packets_.contains(seq)) {
             ++stats_.duplicates;
             return Error::InvalidValue;
         }
+
         packets_.emplace(seq, std::move(packet));
         ++stats_.packets_stored;
 

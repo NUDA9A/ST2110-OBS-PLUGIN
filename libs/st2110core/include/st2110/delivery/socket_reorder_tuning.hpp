@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 namespace st2110 {
 
@@ -185,7 +186,7 @@ derive_socket_video_reorder_buffer_config(const VideoReceiveBootstrap &bootstrap
     return ReorderBufferConfig{
         .window_size_packets = window_size_packets,
         .reorder_tolerance_policy = reorder_tolerance_policy,
-        .flush_after_n_packets = window_size_packets - 1,
+        .flush_after_n_packets = std::max<std::uint32_t>(1, window_size_packets / 4);,
     };
 }
 
@@ -197,7 +198,7 @@ derive_socket_audio_reorder_buffer_config(const AudioReceiveBootstrap &bootstrap
     return ReorderBufferConfig{
         .window_size_packets = window_size_packets,
         .reorder_tolerance_policy = reorder_tolerance_policy,
-        .flush_after_n_packets = window_size_packets - 1,
+        .flush_after_n_packets = std::max<std::uint32_t>(1, window_size_packets / 4);,
     };
 }
 
