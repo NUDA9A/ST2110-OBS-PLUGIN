@@ -2,6 +2,7 @@
 #define ST2110_OBS_SOCKET_AUDIO_START_CONFIG_HPP
 
 #include <st2110/contracts/settings.hpp>
+#include <st2110/delivery/socket_reorder_tuning.hpp>
 #include <st2110/delivery/socket_start_config.hpp>
 #include <st2110/model/audio/audio_signaling.hpp>
 #include <st2110/receive/audio/audio_receive_bootstrap.hpp>
@@ -49,7 +50,7 @@ inline SocketAudioStartConfig project_receive_start_request_to_socket_audio_star
     const auto &bootstrap = std::get<AudioReceiveBootstrap>(request.media);
 
     res.topology = bootstrap.receive_bootstrap.topology;
-    res.reorder_buffer_config = make_default_reorder_buffer_config(settings.reorder_tolerance_policy);
+    res.reorder_buffer_config = derive_socket_audio_reorder_buffer_config(bootstrap, settings.reorder_tolerance_policy);
     res.stream = make_socket_audio_stream_config(bootstrap);
     res.legs = make_socket_media_leg_configs(bootstrap.receive_bootstrap, request.local);
 

@@ -11,6 +11,7 @@
 #include <st2110/contracts/backend/backend.hpp>
 #include <st2110/delivery/audio/socket_audio_start_config.hpp>
 #include <st2110/delivery/synchronized_frame_sink.hpp>
+#include <st2110/delivery/synchronized_playout_tuning.hpp>
 #include <st2110/delivery/video/socket_video_start_config.hpp>
 #include <st2110/foundation/error.hpp>
 #include <st2110/receive/audio/audio_receive_bootstrap.hpp>
@@ -164,9 +165,15 @@ make_audio_backend(const st2110::ReceiveStartRequest &request, const st2110::Set
 [[nodiscard]] st2110::SynchronizedFrameSinkConfig
 make_sink_config(const std::optional<st2110::VideoReceiveBootstrap> &video_bootstrap,
                  const std::optional<st2110::AudioReceiveBootstrap> &audio_bootstrap) {
+    const st2110::SynchronizedPlayoutTuning tuning =
+        st2110::derive_synchronized_playout_tuning(video_bootstrap, audio_bootstrap);
+
     st2110::SynchronizedFrameSinkConfig cfg{};
     cfg.enable_video = video_bootstrap.has_value();
     cfg.enable_audio = audio_bootstrap.has_value();
+    cfg.playout_delay_ns = tuning.playout_delay_ns;
+    cfg.max_queued_video_frames = tuning.max_queued_video_frames;
+    cfg.max_queued_audio_blocks = tuning.max_queued_audio_blocks;
 
     if (video_bootstrap.has_value()) {
         cfg.video_timestamp_mapper.rtp_clock_rate =

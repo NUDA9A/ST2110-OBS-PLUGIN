@@ -3,6 +3,7 @@
 
 #include <st2110/contracts/settings.hpp>
 #include <st2110/contracts/video/video_receive_pipeline_config.hpp>
+#include <st2110/delivery/socket_reorder_tuning.hpp>
 #include <st2110/delivery/socket_start_config.hpp>
 #include <st2110/receive/shared/receive_start_request.hpp>
 #include <st2110/receive/video/video_receive_bootstrap.hpp>
@@ -40,7 +41,7 @@ inline SocketVideoStartConfig project_receive_start_request_to_socket_video_star
     const auto &bootstrap = std::get<VideoReceiveBootstrap>(request.media);
 
     res.topology = bootstrap.receive_bootstrap.topology;
-    res.reorder_buffer_config = make_default_reorder_buffer_config(settings.reorder_tolerance_policy);
+    res.reorder_buffer_config = derive_socket_video_reorder_buffer_config(bootstrap, settings.reorder_tolerance_policy);
     res.stream = make_socket_video_stream_config(bootstrap);
     res.video_receive_pipeline_config =
         make_video_receive_pipeline_config(res.stream.scan_mode, res.stream.media, settings.partial_unit_policy);
