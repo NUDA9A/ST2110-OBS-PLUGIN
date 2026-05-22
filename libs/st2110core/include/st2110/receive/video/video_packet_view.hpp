@@ -2,8 +2,8 @@
 #define ST2110_OBS_VIDEO_PACKET_VIEW_HPP
 
 #include <st2110/foundation/bytes.hpp>
-#include <st2110/ingress/shared/st2110_20.hpp>
 #include <st2110/ingress/shared/packet_view.hpp>
+#include <st2110/ingress/shared/st2110_20.hpp>
 
 namespace st2110 {
 inline constexpr std::size_t maxPacketSrdSegments = 3;
@@ -20,11 +20,9 @@ struct VideoPacketView final : PacketView {
     ByteSpan trailing_padding{};
 
     [[nodiscard]] std::unique_ptr<StoredPacket> store() const override;
-    [[nodiscard]] std::uint32_t reorder_sequence() const override {
-        return extended_seq;
-    }
+    [[nodiscard]] std::uint32_t reorder_sequence() const override { return extended_seq; }
 };
 
-}
+} // namespace st2110
 
 #endif // ST2110_OBS_VIDEO_PACKET_VIEW_HPP

@@ -170,7 +170,8 @@ struct VideoMediaDescription {
     return Error::Ok;
 }
 
-[[nodiscard]] inline Error validate_video_media_description_dimensions(std::uint32_t width, std::uint32_t height) {
+[[nodiscard]] inline Error validate_video_media_description_dimensions(const std::uint32_t width,
+                                                                       const std::uint32_t height) {
     constexpr std::uint32_t max_signaled_video_dimension = 32767;
 
     if (width == 0 || height == 0) {
@@ -195,7 +196,7 @@ struct VideoMediaDescription {
     }
 }
 
-[[nodiscard]] inline bool video_bit_depth_is_integer(const VideoBitDepth &depth, std::uint8_t bits) {
+[[nodiscard]] inline bool video_bit_depth_is_integer(const VideoBitDepth &depth, const std::uint8_t bits) {
     return depth.bits == bits && !depth.floating_point;
 }
 
@@ -321,7 +322,7 @@ validate_video_tcs_depth_combination(const std::optional<VideoTransferCharacteri
 }
 
 [[nodiscard]] inline Error validate_video_media_description_cross_field_constraints(const VideoMediaDescription &media,
-                                                                                    VideoScanMode scan_mode) {
+                                                                                    const VideoScanMode scan_mode) {
     if (const Error err = validate_video_media_description_structure(media); err != Error::Ok) {
         return err;
     }

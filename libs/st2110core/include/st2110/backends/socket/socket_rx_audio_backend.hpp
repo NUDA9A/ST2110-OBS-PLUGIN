@@ -1,9 +1,8 @@
 #ifndef ST2110_OBS_SOCKET_RX_AUDIO_BACKEND_HPP
 #define ST2110_OBS_SOCKET_RX_AUDIO_BACKEND_HPP
 
-#include "platform/socket_runtime.hpp"
-#include "socket_rx_single_media_backend_base.hpp"
-
+#include <st2110/backends/socket/platform/socket_runtime.hpp>
+#include <st2110/backends/socket/socket_rx_single_media_backend_base.hpp>
 #include <st2110/contracts/backend/backend.hpp>
 #include <st2110/delivery/audio/socket_audio_start_config.hpp>
 #include <st2110/foundation/bytes.hpp>

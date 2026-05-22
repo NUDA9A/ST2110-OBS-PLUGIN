@@ -1,10 +1,10 @@
 #ifndef ST2110_OBS_PLUGIN_AUDIO_PACKET_HPP
 #define ST2110_OBS_PLUGIN_AUDIO_PACKET_HPP
 
-#include "st2110/foundation/bytes.hpp"
-#include "st2110/foundation/error.hpp"
-#include "st2110/ingress/shared/packet_view.hpp"
-#include "st2110/model/audio/audio_signaling.hpp"
+#include <st2110/foundation/bytes.hpp>
+#include <st2110/foundation/error.hpp>
+#include <st2110/ingress/shared/packet_view.hpp>
+#include <st2110/model/audio/audio_signaling.hpp>
 
 #include <cstddef>
 #include <cstdint>

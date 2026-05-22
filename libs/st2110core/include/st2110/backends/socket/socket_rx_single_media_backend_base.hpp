@@ -1,10 +1,10 @@
 #ifndef ST2110_OBS_SOCKET_RX_SINGLE_MEDIA_BACKEND_BASE_HPP
 #define ST2110_OBS_SOCKET_RX_SINGLE_MEDIA_BACKEND_BASE_HPP
 
-#include "platform/socket_runtime.hpp"
-#include "st2110/contracts/backend/backend.hpp"
-#include "st2110/foundation/bytes.hpp"
-#include "st2110/ingress/shared/packet_parse.hpp"
+#include <st2110/backends/socket/platform/socket_runtime.hpp>
+#include <st2110/contracts/backend/backend.hpp>
+#include <st2110/foundation/bytes.hpp>
+#include <st2110/ingress/shared/packet_parse.hpp>
 #include <st2110/receive/shared/receive_reorder_tolerance_policy.hpp>
 #include <st2110/receive/shared/reorder_buffer.hpp>
 

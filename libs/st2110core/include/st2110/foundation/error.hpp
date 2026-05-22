@@ -15,7 +15,7 @@ enum class Error {
     OperationAborted,
 };
 
-inline const char *to_string(Error error) {
+inline const char *to_string(const Error error) {
     switch (error) {
     case Error::BufferTooSmall:
         return "ERROR: Buffer too small!";
@@ -42,7 +42,7 @@ inline const char *to_string(Error error) {
     }
 }
 
-inline bool is_backend_runtime_error(Error error) noexcept {
+inline bool is_backend_runtime_error(const Error error) noexcept {
     switch (error) {
     case Error::InvalidBackendState:
     case Error::SystemFailure:

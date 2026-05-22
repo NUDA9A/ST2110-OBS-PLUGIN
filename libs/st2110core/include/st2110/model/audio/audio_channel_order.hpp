@@ -28,14 +28,14 @@ enum class AudioChannelGroupKind {
 struct AudioChannelOrderGroup {
     AudioChannelGroupKind kind = AudioChannelGroupKind::Other;
     std::string symbol{};
-    uint16_t channel_count = 0;
+    std::uint16_t channel_count = 0;
 };
 
 struct AudioChannelOrder {
     AudioChannelOrderConvention convention = AudioChannelOrderConvention::Unspecified;
     std::optional<std::string> raw_value{};
     std::vector<AudioChannelOrderGroup> groups{};
-    uint16_t declared_channel_count = 0;
+    std::uint16_t declared_channel_count = 0;
 };
 
 [[nodiscard]] inline Error validate_audio_channel_order_group(const AudioChannelOrderGroup &group) {
@@ -106,13 +106,13 @@ struct AudioChannelOrder {
             return Error::InvalidValue;
         }
 
-        uint32_t total_declared = 0;
+        std::uint32_t total_declared = 0;
         for (const auto &group : channel_order.groups) {
             if (const Error err = validate_audio_channel_order_group(group); err != Error::Ok) {
                 return err;
             }
 
-            total_declared += static_cast<uint32_t>(group.channel_count);
+            total_declared += static_cast<std::uint32_t>(group.channel_count);
             if (total_declared > 65535U) {
                 return Error::InvalidValue;
             }
@@ -143,7 +143,7 @@ struct AudioChannelOrder {
 }
 
 [[nodiscard]] inline Error validate_audio_channel_order_against_channel_count(const AudioChannelOrder &channel_order,
-                                                                              uint16_t channel_count) {
+                                                                              const std::uint16_t channel_count) {
     if (channel_count == 0) {
         return Error::InvalidValue;
     }

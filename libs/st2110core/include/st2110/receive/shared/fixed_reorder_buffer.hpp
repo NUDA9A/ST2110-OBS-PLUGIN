@@ -1,8 +1,8 @@
 #ifndef ST2110_OBS_PLUGIN_FIXED_REORDER_BUFFER_HPP
 #define ST2110_OBS_PLUGIN_FIXED_REORDER_BUFFER_HPP
 
-#include "reorder_buffer.hpp"
 #include <st2110/receive/audio/audio_packet.hpp>
+#include <st2110/receive/shared/reorder_buffer.hpp>
 #include <st2110/receive/video/video_packet_view.hpp>
 
 #include <cstdint>
@@ -429,7 +429,6 @@ template <bool is_video_ = false> class FixedWindowReorderBuffer final : public 
     ReorderBufferStats stats_{};
     bool initialized_ = false;
     bool missing_head_accounted_ = false;
-    // bool is_video_ = false;
 };
 
 inline std::unique_ptr<StoredPacket> AudioPacketView::store() const {

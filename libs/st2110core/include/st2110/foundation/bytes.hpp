@@ -5,7 +5,7 @@
 #include <span>
 
 namespace st2110 {
-using ByteSpan = std::span<const uint8_t>;
+using ByteSpan = std::span<const std::uint8_t>;
 }
 
 #endif // ST2110_OBS_PLUGIN_BYTES_HPP

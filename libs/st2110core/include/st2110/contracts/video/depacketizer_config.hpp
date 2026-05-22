@@ -1,9 +1,9 @@
 #ifndef ST2110_OBS_DEPACKETIZER_CONFIG_HPP
 #define ST2110_OBS_DEPACKETIZER_CONFIG_HPP
 
+#include <st2110/contracts/video/partial_unit_policy.hpp>
 #include <st2110/delivery/video/pixel_format.hpp>
 #include <st2110/model/video/video_media_types.hpp>
-#include <st2110/contracts/video/partial_unit_policy.hpp>
 
 namespace st2110 {
 enum class VideoAssemblyUnitKind { Frame, Field, Segment };
@@ -46,9 +46,15 @@ struct DepacketizerConfig {
     return {};
 }
 
-[[nodiscard]] inline DepacketizerConfig make_depacketizer_config(const VideoScanMode mode, const PixelFormat format, const std::uint32_t width, const std::uint32_t height, const PartialUnitPolicy policy) {
+[[nodiscard]] inline DepacketizerConfig make_depacketizer_config(const VideoScanMode mode, const PixelFormat format,
+                                                                 const std::uint32_t width, const std::uint32_t height,
+                                                                 const PartialUnitPolicy policy) {
     return DepacketizerConfig{.video_receive_completion_policy = video_receive_completion_policy(mode),
-                              .scan_mode = mode, .format = format, .width = width, .height = height, .policy = policy};
+                              .scan_mode = mode,
+                              .format = format,
+                              .width = width,
+                              .height = height,
+                              .policy = policy};
 }
 
 } // namespace st2110

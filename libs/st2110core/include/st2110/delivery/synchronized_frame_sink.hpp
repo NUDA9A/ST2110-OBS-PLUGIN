@@ -239,8 +239,7 @@ class SynchronizedFrameSink : public IFrameSink {
         return std::chrono::nanoseconds(static_cast<Rep>(clamped));
     }
 
-    template <typename Queue, typename Item>
-    static void insert_sorted_by_media_timestamp(Queue &queue, Item &&item) {
+    template <typename Queue, typename Item> static void insert_sorted_by_media_timestamp(Queue &queue, Item &&item) {
         auto it = queue.begin();
 
         while (it != queue.end() && it->media_timestamp_ns <= item.media_timestamp_ns) {
@@ -281,15 +280,18 @@ class SynchronizedFrameSink : public IFrameSink {
         }
 
         if (video_queue_.empty()) {
-            return PendingItem{.kind = PendingKind::Audio, .media_timestamp_ns = audio_queue_.front().media_timestamp_ns};
+            return PendingItem{.kind = PendingKind::Audio,
+                               .media_timestamp_ns = audio_queue_.front().media_timestamp_ns};
         }
 
         if (audio_queue_.empty()) {
-            return PendingItem{.kind = PendingKind::Video, .media_timestamp_ns = video_queue_.front().media_timestamp_ns};
+            return PendingItem{.kind = PendingKind::Video,
+                               .media_timestamp_ns = video_queue_.front().media_timestamp_ns};
         }
 
         if (video_queue_.front().media_timestamp_ns <= audio_queue_.front().media_timestamp_ns) {
-            return PendingItem{.kind = PendingKind::Video, .media_timestamp_ns = video_queue_.front().media_timestamp_ns};
+            return PendingItem{.kind = PendingKind::Video,
+                               .media_timestamp_ns = video_queue_.front().media_timestamp_ns};
         }
 
         return PendingItem{.kind = PendingKind::Audio, .media_timestamp_ns = audio_queue_.front().media_timestamp_ns};

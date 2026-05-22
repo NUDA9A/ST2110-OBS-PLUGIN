@@ -13,19 +13,6 @@
 
 namespace st2110 {
 
-/*
- * Shared-memory media ring layout.
- *
- * This header contains no MTL API types. It defines the process-shared slot
- * layout and a small RAII mmap wrapper used by both sides of the future MTL
- * media data plane.
- *
- * Ownership model:
- * - fd ownership is outside this object;
- * - this object owns only the mmap mapping;
- * - slot payload ownership is coordinated through slot state transitions.
- */
-
 inline constexpr std::uint32_t mtlWorkerSharedMemorySlotMagic = 0x4D544C53; // 'MTLS'
 
 enum class MtlWorkerSharedMemorySlotState : std::uint32_t {

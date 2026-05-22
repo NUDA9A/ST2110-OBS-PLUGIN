@@ -7,17 +7,17 @@ struct obs_source;
 typedef struct obs_source obs_source_t;
 
 class ObsSynchronizedFrameSink final : public st2110::SynchronizedFrameSink {
-public:
+  public:
     ObsSynchronizedFrameSink(obs_source_t *source, const st2110::SynchronizedFrameSinkConfig &cfg);
 
-protected:
+  protected:
     void deliver_video_frame_to_obs(st2110::VideoFrame &&frame, st2110::FrameTimingMetadata timing,
                                     st2110::TimestampNs media_timestamp_ns) override;
 
     void deliver_audio_block_to_obs(st2110::AudioBuffer &&block, st2110::FrameTimingMetadata timing,
                                     st2110::TimestampNs media_timestamp_ns) override;
 
-private:
+  private:
     obs_source_t *source_ = nullptr;
 };
 

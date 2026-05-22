@@ -5,6 +5,8 @@
 #include <st2110/contracts/video/video_unit_reconstructor_config.hpp>
 #include <st2110/model/video/video_media_types.hpp>
 
+#include <stdexcept>
+
 namespace st2110 {
 struct VideoReceivePipelineConfig {
     DepacketizerConfig depacketizer{};

@@ -1,10 +1,10 @@
 #ifndef ST2110_OBS_PLUGIN_RTP_TIMESTAMP_MAPPER_HPP
 #define ST2110_OBS_PLUGIN_RTP_TIMESTAMP_MAPPER_HPP
 
+#include <st2110/contracts/rtp_timestamp_mapper_config.hpp>
 #include <st2110/foundation/error.hpp>
 #include <st2110/foundation/rtp_timestamp_anchor_policy.hpp>
 #include <st2110/foundation/timestamp.hpp>
-#include <st2110/contracts/rtp_timestamp_mapper_config.hpp>
 
 #include <cstdint>
 #include <expected>
@@ -12,7 +12,7 @@
 
 namespace st2110 {
 [[nodiscard]] inline std::expected<std::uint64_t, Error> checked_rtp_timestamp_add_u64(const std::uint64_t a,
-                                                                                        const std::uint64_t b) {
+                                                                                       const std::uint64_t b) {
     if (a > std::numeric_limits<std::uint64_t>::max() - b) {
         return std::unexpected(Error::InvalidValue);
     }
@@ -21,7 +21,7 @@ namespace st2110 {
 }
 
 [[nodiscard]] inline std::expected<std::uint64_t, Error> checked_rtp_timestamp_mul_u64(const std::uint64_t a,
-                                                                                        const std::uint64_t b) {
+                                                                                       const std::uint64_t b) {
     if (a != 0 && b > std::numeric_limits<std::uint64_t>::max() / a) {
         return std::unexpected(Error::InvalidValue);
     }
@@ -30,7 +30,7 @@ namespace st2110 {
 }
 
 [[nodiscard]] inline std::expected<std::uint32_t, Error> forward_rtp_timestamp_delta(const std::uint32_t previous,
-                                                                                      const std::uint32_t current) {
+                                                                                     const std::uint32_t current) {
     const std::uint32_t raw_delta = current - previous;
 
     if (raw_delta >= rtpTimestampAmbiguousForwardDelta) {

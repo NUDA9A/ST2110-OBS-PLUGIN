@@ -262,46 +262,26 @@ std::expected<MtlWorkerSt20RxUserStats, Error> read_st20_rx_user_stats(Reader &r
         return true;
     };
 
-    if (!read_u64(stats.stat_pkts_received) ||
-        !read_u64(stats.stat_pkts_out_of_order) ||
-        !read_u64(stats.stat_pkts_wrong_ssrc_dropped) ||
-        !read_u64(stats.stat_pkts_wrong_pt_dropped) ||
-        !read_u64(stats.stat_bytes_received) ||
-        !read_u64(stats.stat_slices_received) ||
-        !read_u64(stats.stat_pkts_idx_dropped) ||
-        !read_u64(stats.stat_pkts_offset_dropped) ||
-        !read_u64(stats.stat_frames_dropped) ||
-        !read_u64(stats.stat_pkts_idx_oo_bitmap) ||
-        !read_u64(stats.stat_frames_pks_missed) ||
-        !read_u64(stats.stat_pkts_rtp_ring_full) ||
-        !read_u64(stats.stat_pkts_no_slot) ||
-        !read_u64(stats.stat_pkts_redundant_dropped) ||
-        !read_u64(stats.stat_pkts_wrong_interlace_dropped) ||
-        !read_u64(stats.stat_pkts_wrong_len_dropped) ||
-        !read_u64(stats.stat_pkts_enqueue_fallback) ||
-        !read_u64(stats.stat_pkts_dma) ||
-        !read_u64(stats.stat_pkts_slice_fail) ||
-        !read_u64(stats.stat_pkts_slice_merged) ||
-        !read_u64(stats.stat_pkts_multi_segments_received) ||
-        !read_u64(stats.stat_pkts_not_bpm) ||
-        !read_u64(stats.stat_pkts_wrong_payload_hdr_split) ||
-        !read_u64(stats.stat_mismatch_hdr_split_frame) ||
-        !read_u64(stats.stat_pkts_copy_hdr_split) ||
-        !read_u64(stats.stat_vsync_mismatch) ||
-        !read_u64(stats.stat_slot_get_frame_fail) ||
-        !read_u64(stats.stat_slot_query_ext_fail) ||
-        !read_u64(stats.stat_pkts_simulate_loss) ||
-        !read_u64(stats.stat_pkts_user_meta) ||
-        !read_u64(stats.stat_pkts_user_meta_err) ||
-        !read_u64(stats.stat_pkts_retransmit) ||
-        !read_u64(stats.stat_interlace_first_field) ||
-        !read_u64(stats.stat_interlace_second_field) ||
-        !read_u64(stats.stat_st22_boxes) ||
-        !read_u64(stats.stat_burst_pkts_max) ||
-        !read_u64(stats.stat_burst_succ_cnt) ||
-        !read_u64(stats.stat_burst_pkts_sum) ||
-        !read_u64(stats.incomplete_frames_cnt) ||
-        !read_u64(stats.stat_pkts_wrong_kmod_dropped)) {
+    if (!read_u64(stats.stat_pkts_received) || !read_u64(stats.stat_pkts_out_of_order) ||
+        !read_u64(stats.stat_pkts_wrong_ssrc_dropped) || !read_u64(stats.stat_pkts_wrong_pt_dropped) ||
+        !read_u64(stats.stat_bytes_received) || !read_u64(stats.stat_slices_received) ||
+        !read_u64(stats.stat_pkts_idx_dropped) || !read_u64(stats.stat_pkts_offset_dropped) ||
+        !read_u64(stats.stat_frames_dropped) || !read_u64(stats.stat_pkts_idx_oo_bitmap) ||
+        !read_u64(stats.stat_frames_pks_missed) || !read_u64(stats.stat_pkts_rtp_ring_full) ||
+        !read_u64(stats.stat_pkts_no_slot) || !read_u64(stats.stat_pkts_redundant_dropped) ||
+        !read_u64(stats.stat_pkts_wrong_interlace_dropped) || !read_u64(stats.stat_pkts_wrong_len_dropped) ||
+        !read_u64(stats.stat_pkts_enqueue_fallback) || !read_u64(stats.stat_pkts_dma) ||
+        !read_u64(stats.stat_pkts_slice_fail) || !read_u64(stats.stat_pkts_slice_merged) ||
+        !read_u64(stats.stat_pkts_multi_segments_received) || !read_u64(stats.stat_pkts_not_bpm) ||
+        !read_u64(stats.stat_pkts_wrong_payload_hdr_split) || !read_u64(stats.stat_mismatch_hdr_split_frame) ||
+        !read_u64(stats.stat_pkts_copy_hdr_split) || !read_u64(stats.stat_vsync_mismatch) ||
+        !read_u64(stats.stat_slot_get_frame_fail) || !read_u64(stats.stat_slot_query_ext_fail) ||
+        !read_u64(stats.stat_pkts_simulate_loss) || !read_u64(stats.stat_pkts_user_meta) ||
+        !read_u64(stats.stat_pkts_user_meta_err) || !read_u64(stats.stat_pkts_retransmit) ||
+        !read_u64(stats.stat_interlace_first_field) || !read_u64(stats.stat_interlace_second_field) ||
+        !read_u64(stats.stat_st22_boxes) || !read_u64(stats.stat_burst_pkts_max) ||
+        !read_u64(stats.stat_burst_succ_cnt) || !read_u64(stats.stat_burst_pkts_sum) ||
+        !read_u64(stats.incomplete_frames_cnt) || !read_u64(stats.stat_pkts_wrong_kmod_dropped)) {
         return std::unexpected(Error::InvalidValue);
     }
 

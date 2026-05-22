@@ -1,7 +1,6 @@
 #ifndef ST2110_OBS_PLUGIN_PACKET_VIEW_HPP
 #define ST2110_OBS_PLUGIN_PACKET_VIEW_HPP
 
-#include <cstddef>
 #include <cstdint>
 
 #include <st2110/foundation/bytes.hpp>

@@ -11,13 +11,9 @@ namespace {
 obs_source_info st2110_source_info{};
 } // namespace
 
-MODULE_EXPORT const char *obs_module_name() {
-    return obs_st2110::pluginName;
-}
+MODULE_EXPORT const char *obs_module_name() { return obs_st2110::pluginName; }
 
-MODULE_EXPORT const char *obs_module_description() {
-    return obs_st2110::pluginDescription;
-}
+MODULE_EXPORT const char *obs_module_description() { return obs_st2110::pluginDescription; }
 
 bool obs_module_load() {
     st2110_source_info = create_st2110_source_info();

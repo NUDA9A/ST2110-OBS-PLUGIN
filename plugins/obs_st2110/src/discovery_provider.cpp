@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <optional>
@@ -14,7 +15,6 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-#include <cstdlib>
 
 #ifndef ST2110_HAS_NDI_DISCOVERY
 #define ST2110_HAS_NDI_DISCOVERY 0
@@ -46,13 +46,13 @@ class NullDiscoveryProvider final : public IDiscoveryProvider {
 using Clock = std::chrono::steady_clock;
 
 [[nodiscard]] std::string trim_copy(std::string_view value) {
-    while (!value.empty() && (value.front() == ' ' || value.front() == '\t' || value.front() == '\r' ||
-                              value.front() == '\n')) {
+    while (!value.empty() &&
+           (value.front() == ' ' || value.front() == '\t' || value.front() == '\r' || value.front() == '\n')) {
         value.remove_prefix(1);
     }
 
-    while (!value.empty() && (value.back() == ' ' || value.back() == '\t' || value.back() == '\r' ||
-                              value.back() == '\n')) {
+    while (!value.empty() &&
+           (value.back() == ' ' || value.back() == '\t' || value.back() == '\r' || value.back() == '\n')) {
         value.remove_suffix(1);
     }
 
@@ -172,7 +172,7 @@ void collect_sdp_metadata_elements(std::vector<ProviderSdpObject> &out, std::str
 }
 
 [[nodiscard]] std::vector<ProviderSdpObject> extract_st2110_sdp_objects(std::string_view metadata,
-                                                                         std::string_view ndi_source_name) {
+                                                                        std::string_view ndi_source_name) {
     std::vector<ProviderSdpObject> result{};
 
     collect_sdp_metadata_elements(result, metadata, ndi_source_name, "st2110_sdp", std::nullopt);
@@ -331,9 +331,8 @@ class NdiDiscoveryProvider final : public IDiscoveryProvider {
 
         ndi->find_destroy(finder);
 
-        std::sort(result.begin(), result.end(), [](const auto &lhs, const auto &rhs) {
-            return lhs.display_name < rhs.display_name;
-        });
+        std::sort(result.begin(), result.end(),
+                  [](const auto &lhs, const auto &rhs) { return lhs.display_name < rhs.display_name; });
 
         return result;
     }

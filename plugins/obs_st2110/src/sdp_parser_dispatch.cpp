@@ -17,8 +17,7 @@ parse_selected_source_streams(const SelectedSourceMediaSet &media_set) {
     ParsedSelectedSourceStreams out{};
 
     if (media_set.video.has_value()) {
-        auto parsed_video =
-            st2110::parse_video_stream_signaling(media_set.video->provider_object.raw_sdp);
+        auto parsed_video = st2110::parse_video_stream_signaling(media_set.video->provider_object.raw_sdp);
 
         if (!parsed_video.has_value()) {
             return std::unexpected(parsed_video.error());
@@ -28,8 +27,7 @@ parse_selected_source_streams(const SelectedSourceMediaSet &media_set) {
     }
 
     if (media_set.audio.has_value()) {
-        auto parsed_audio =
-            st2110::parse_audio_stream_signaling(media_set.audio->provider_object.raw_sdp);
+        auto parsed_audio = st2110::parse_audio_stream_signaling(media_set.audio->provider_object.raw_sdp);
 
         if (!parsed_audio.has_value()) {
             return std::unexpected(parsed_audio.error());

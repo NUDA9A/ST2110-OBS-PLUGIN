@@ -1,8 +1,7 @@
 #ifndef ST2110_OBS_PLUGIN_PACKET_PARSE_STATS_HPP
 #define ST2110_OBS_PLUGIN_PACKET_PARSE_STATS_HPP
 
-#include "st2110/foundation/error.hpp"
-#include "st2110/foundation/stats.hpp"
+#include <st2110/foundation/error.hpp>
 
 #include <cstdint>
 
@@ -28,6 +27,16 @@ struct ParserStats {
     uint64_t buffer_too_small = 0;
     uint64_t other_error = 0;
 };
+
+inline void record_result_counter(std::uint64_t &total, std::uint64_t &ok, std::uint64_t &failed,
+                                  const bool success) noexcept {
+    ++total;
+    if (success) {
+        ++ok;
+    } else {
+        ++failed;
+    }
+}
 
 inline void record_parse_result(ParserStats &stats, Error err) {
     record_result_counter(stats.packets_total, stats.packets_ok, stats.packets_failed, err == Error::Ok);

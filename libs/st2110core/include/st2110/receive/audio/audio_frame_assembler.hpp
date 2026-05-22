@@ -1,9 +1,9 @@
 #ifndef ST2110_OBS_PLUGIN_AUDIO_FRAME_ASSEMBLER_HPP
 #define ST2110_OBS_PLUGIN_AUDIO_FRAME_ASSEMBLER_HPP
 
-#include "audio_packet.hpp"
-#include "st2110/delivery/audio/audio_frame.hpp"
-#include "st2110/foundation/bytes.hpp"
+#include <st2110/delivery/audio/audio_frame.hpp>
+#include <st2110/foundation/bytes.hpp>
+#include <st2110/receive/audio/audio_packet.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -31,7 +31,7 @@ struct AudioFrameAssemblerStats {
         const std::uint32_t raw =
             (static_cast<std::uint32_t>(sample_bytes[0]) << 8U) | static_cast<std::uint32_t>(sample_bytes[1]);
 
-        std::int32_t value = static_cast<std::int32_t>(raw);
+        auto value = static_cast<std::int32_t>(raw);
         if ((raw & 0x8000U) != 0) {
             value -= 0x10000;
         }
@@ -44,7 +44,7 @@ struct AudioFrameAssemblerStats {
                                   (static_cast<std::uint32_t>(sample_bytes[1]) << 8U) |
                                   static_cast<std::uint32_t>(sample_bytes[2]);
 
-        std::int32_t value = static_cast<std::int32_t>(raw);
+        auto value = static_cast<std::int32_t>(raw);
         if ((raw & 0x800000U) != 0) {
             value -= 0x1000000;
         }

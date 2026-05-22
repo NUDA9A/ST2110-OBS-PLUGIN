@@ -27,15 +27,13 @@ enum class TimestampMode { Samp, New, Pres };
 enum class ReferenceClockKind { LocalMac, Ptp, Other };
 
 struct PtpReferenceClock {
-    // IEEE1588 clock identity from ts-refclk:ptp=...
-    // representation format can stay implementation-chosen for now
-    std::array<uint8_t, 8> clock_identity{};
-    uint16_t domain_number = 0;
+    std::array<std::uint8_t, 8> clock_identity{};
+    std::uint16_t domain_number = 0;
     bool traceable = false;
 };
 
 struct LocalMacReferenceClock {
-    std::array<uint8_t, 6> mac{};
+    std::array<std::uint8_t, 6> mac{};
 };
 
 struct ReferenceClock {

@@ -21,9 +21,9 @@ enum class AudioPcmBitDepth {
 struct AudioMediaDescription {
     AudioPcmEncoding pcm_encoding = AudioPcmEncoding::LinearPcm;
     AudioPcmBitDepth pcm_bit_depth = AudioPcmBitDepth::Bits24;
-    uint32_t sampling_rate_hz = 0;
-    uint32_t packet_time_us = 0;
-    uint16_t channel_count = 0;
+    std::uint32_t sampling_rate_hz = 0;
+    std::uint32_t packet_time_us = 0;
+    std::uint16_t channel_count = 0;
 };
 
 struct AudioStreamSignaling {
@@ -34,7 +34,7 @@ struct AudioStreamSignaling {
     StreamTransportSignaling transport{};
 };
 
-[[nodiscard]] inline Error validate_audio_sampling_rate_st2110_scope(uint32_t sampling_rate_hz) {
+[[nodiscard]] inline Error validate_audio_sampling_rate_st2110_scope(const std::uint32_t sampling_rate_hz) {
     switch (sampling_rate_hz) {
     case 0:
         return Error::InvalidValue;
@@ -47,7 +47,7 @@ struct AudioStreamSignaling {
     }
 }
 
-[[nodiscard]] inline Error validate_audio_packet_time_st2110_scope(uint32_t packet_time_us) {
+[[nodiscard]] inline Error validate_audio_packet_time_st2110_scope(const std::uint32_t packet_time_us) {
     switch (packet_time_us) {
     case 0:
         return Error::InvalidValue;
@@ -59,7 +59,7 @@ struct AudioStreamSignaling {
     }
 }
 
-[[nodiscard]] inline Error validate_audio_channel_count_st2110_scope(uint16_t channel_count) {
+[[nodiscard]] inline Error validate_audio_channel_count_st2110_scope(const std::uint16_t channel_count) {
     if (channel_count < 1) {
         return Error::InvalidValue;
     }
@@ -71,28 +71,29 @@ struct AudioStreamSignaling {
     return Error::Ok;
 }
 
-[[nodiscard]] inline std::expected<uint32_t, Error> derive_audio_samples_per_packet(uint32_t sampling_rate_hz,
-                                                                                    uint32_t packet_time_us) {
+[[nodiscard]] inline std::expected<std::uint32_t, Error>
+derive_audio_samples_per_packet(const std::uint32_t sampling_rate_hz, const std::uint32_t packet_time_us) {
     if (sampling_rate_hz == 0 || packet_time_us == 0) {
         return std::unexpected(Error::InvalidValue);
     }
 
-    const uint64_t product = static_cast<uint64_t>(sampling_rate_hz) * static_cast<uint64_t>(packet_time_us);
+    const std::uint64_t product =
+        static_cast<std::uint64_t>(sampling_rate_hz) * static_cast<std::uint64_t>(packet_time_us);
 
     if (product % 1000000ULL != 0) {
         return std::unexpected(Error::InvalidValue);
     }
 
-    const uint64_t samples_per_packet = product / 1000000ULL;
+    const std::uint64_t samples_per_packet = product / 1000000ULL;
 
-    if (samples_per_packet == 0 || samples_per_packet > std::numeric_limits<uint32_t>::max()) {
+    if (samples_per_packet == 0 || samples_per_packet > std::numeric_limits<std::uint32_t>::max()) {
         return std::unexpected(Error::InvalidValue);
     }
 
-    return static_cast<uint32_t>(samples_per_packet);
+    return static_cast<std::uint32_t>(samples_per_packet);
 }
 
-[[nodiscard]] inline std::expected<uint32_t, Error>
+[[nodiscard]] inline std::expected<std::uint32_t, Error>
 audio_samples_per_packet_from_media_description(const AudioMediaDescription &media) {
     return derive_audio_samples_per_packet(media.sampling_rate_hz, media.packet_time_us);
 }

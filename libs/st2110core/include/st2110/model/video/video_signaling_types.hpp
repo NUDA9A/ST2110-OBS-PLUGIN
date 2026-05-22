@@ -21,12 +21,13 @@ struct VideoStreamSignaling {
     StreamTransportSignaling transport{};
 
     VideoSenderType sender_type = VideoSenderType::Narrow;
-    std::optional<uint32_t> troff_us{};
-    std::optional<uint32_t> cmax{};
+    std::optional<std::uint32_t> troff_us{};
+    std::optional<std::uint32_t> cmax{};
 };
 
-inline Error validate_video_sender_signaling(VideoSenderType sender_type, const std::optional<uint32_t> &troff_us,
-                                             const std::optional<uint32_t> &cmax) {
+inline Error validate_video_sender_signaling(const VideoSenderType sender_type,
+                                             const std::optional<std::uint32_t> &troff_us,
+                                             const std::optional<std::uint32_t> &cmax) {
     (void)sender_type;
 
     if (troff_us.has_value() && *troff_us == 0) {
@@ -41,7 +42,7 @@ inline Error validate_video_sender_signaling(VideoSenderType sender_type, const 
 }
 
 inline Error validate_video_max_udp_datagram_bytes(const std::optional<std::size_t> &max_udp_datagram_bytes,
-                                                   VideoPackingMode packing_mode) {
+                                                   const VideoPackingMode packing_mode) {
     const std::size_t effective_max_udp = max_udp_datagram_bytes.value_or(1460);
 
     if (packing_mode == VideoPackingMode::Bpm) {

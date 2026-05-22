@@ -1,7 +1,7 @@
 #ifndef ST2110_OBS_PLUGIN_SOCKET_STUB_RX_PORT_HPP
 #define ST2110_OBS_PLUGIN_SOCKET_STUB_RX_PORT_HPP
 
-#include "socket_runtime.hpp"
+#include <st2110/backends/socket/platform/socket_runtime.hpp>
 
 #include <memory>
 #include <optional>

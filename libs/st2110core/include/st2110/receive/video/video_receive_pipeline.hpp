@@ -1,9 +1,9 @@
 #ifndef ST2110_OBS_PLUGIN_VIDEO_RECEIVE_PIPELINE_HPP
 #define ST2110_OBS_PLUGIN_VIDEO_RECEIVE_PIPELINE_HPP
 
+#include <st2110/contracts/video/video_receive_pipeline_config.hpp>
 #include <st2110/receive/video/depacketizer.hpp>
 #include <st2110/receive/video/video_unit_reconstructor.hpp>
-#include <st2110/contracts/video/video_receive_pipeline_config.hpp>
 
 #include <memory>
 #include <vector>

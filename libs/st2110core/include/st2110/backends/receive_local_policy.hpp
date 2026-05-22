@@ -5,12 +5,12 @@
 #include <st2110/receive/shared/receive_bootstrap.hpp>
 
 #include <charconv>
-#include <expected>
-#include <string>
-#include <vector>
 #include <cstdint>
-#include <string_view>
+#include <expected>
 #include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 
 namespace st2110 {
 enum class SocketAddressFamily {
@@ -228,8 +228,7 @@ determine_receive_remote_leg_family(const ReceiveRemoteLeg &leg) {
 }
 
 [[nodiscard]] inline std::expected<std::string, Error>
-determine_receive_remote_leg_route_lookup_target_ip(const ReceiveRemoteLeg &leg,
-                                                    const SocketAddressFamily family) {
+determine_receive_remote_leg_route_lookup_target_ip(const ReceiveRemoteLeg &leg, const SocketAddressFamily family) {
     if (!leg.source_filter.source_addresses.empty()) {
         const std::string &source_ip = leg.source_filter.source_addresses.front();
         if (!is_valid_address(source_ip, family)) {

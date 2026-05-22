@@ -1,9 +1,8 @@
 #ifndef ST2110_OBS_PLUGIN_SOCKET_RUNTIME_HPP
 #define ST2110_OBS_PLUGIN_SOCKET_RUNTIME_HPP
 
-#include "st2110/foundation/error.hpp"
-#include "st2110/ingress/shared/packet_parse.hpp"
 #include <st2110/backends/receive_local_policy.hpp>
+#include <st2110/foundation/error.hpp>
 #include <st2110/foundation/timestamp.hpp>
 
 #include <cstddef>

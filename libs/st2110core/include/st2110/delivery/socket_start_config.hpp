@@ -50,9 +50,8 @@ make_socket_source_filter(const SourceFilterSignaling &source_filter, const Sock
                                                                        const ReceiveLocalLegPolicy &local_leg) {
     const auto socket_source_filter = make_socket_source_filter(remote_leg.source_filter, local_leg.family);
 
-    const auto open_config = build_socket_rx_open_config(remote_leg.udp_port, local_leg.local_ip,
-                                                         remote_leg.destination.destination_address,
-                                                         socket_source_filter);
+    const auto open_config = build_socket_rx_open_config(
+        remote_leg.udp_port, local_leg.local_ip, remote_leg.destination.destination_address, socket_source_filter);
     if (!open_config) {
         throw std::runtime_error("Can not build socket open config");
     }

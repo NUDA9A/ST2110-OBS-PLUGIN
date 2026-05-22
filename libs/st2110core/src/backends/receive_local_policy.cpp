@@ -7,8 +7,8 @@
 #include <utility>
 
 #if (__linux__)
-#include <array>
 #include <arpa/inet.h>
+#include <array>
 #include <ifaddrs.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -76,8 +76,8 @@ struct ScopedIfAddrs {
     return std::unexpected(Error::InvalidValue);
 }
 
-[[nodiscard]] std::optional<std::string>
-find_interface_name_for_local_ip(SocketAddressFamily family, const std::string &local_ip) {
+[[nodiscard]] std::optional<std::string> find_interface_name_for_local_ip(SocketAddressFamily family,
+                                                                          const std::string &local_ip) {
     ifaddrs *interfaces = nullptr;
     if (::getifaddrs(&interfaces) != 0) {
         return std::nullopt;

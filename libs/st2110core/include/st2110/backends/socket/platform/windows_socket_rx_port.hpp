@@ -1,7 +1,3 @@
-//
-// Created by nuda9a on 5/7/26.
-//
-
 #ifndef ST2110_OBS_WINDOWS_SOCKET_RX_PORT_HPP
 #define ST2110_OBS_WINDOWS_SOCKET_RX_PORT_HPP
 

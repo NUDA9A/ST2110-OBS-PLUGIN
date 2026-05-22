@@ -17,13 +17,12 @@ struct DiscoveredSourceListItem {
 };
 
 class IDiscoveryProvider {
-public:
+  public:
     virtual ~IDiscoveryProvider() = default;
 
     [[nodiscard]] virtual std::vector<DiscoveredSourceListItem> list_sources() = 0;
 
-    [[nodiscard]] virtual std::optional<SelectedDiscoveredSource>
-    resolve_source(std::string_view selection_key) = 0;
+    [[nodiscard]] virtual std::optional<SelectedDiscoveredSource> resolve_source(std::string_view selection_key) = 0;
 };
 
 [[nodiscard]] std::unique_ptr<IDiscoveryProvider> create_discovery_provider();

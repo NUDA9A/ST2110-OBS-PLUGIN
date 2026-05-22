@@ -9,23 +9,6 @@
 #include <span>
 
 namespace st2110_mtl_rx_worker {
-
-/*
- * Worker-process-local serialized IPC event writer.
- *
- * This is the single write boundary for worker -> OBS control/event frames.
- *
- * Current users:
- * - synchronous command responses from main.cpp.
- *
- * Future users:
- * - video receive thread FrameReady events;
- * - audio receive thread AudioBlockReady events;
- * - worker health/error notifications.
- *
- * This class does not own MTL runtime state and does not know shared-memory
- * payload layout. It only serializes typed events and writes framed IPC bytes.
- */
 class MtlWorkerEventWriter final {
   public:
     explicit MtlWorkerEventWriter(int fd) noexcept;

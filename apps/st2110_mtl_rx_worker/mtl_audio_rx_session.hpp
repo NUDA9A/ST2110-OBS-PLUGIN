@@ -14,21 +14,7 @@
 
 namespace st2110_mtl_rx_worker {
 class MtlWorkerEventWriter;
-/*
- * Worker-process-local MTL ST30P audio RX session.
- *
- * Owns st30p_rx_handle lifetime only.
- * Does not own mtl_handle.
- * Does not know OBS sinks.
- *
- * Current implementation starts a worker-local receive thread that drains MTL
- * audio frames and returns them to MTL. Shared-memory export and
- * AudioBlockReady IPC notifications are intentionally not implemented in this
- * step.
- *
- * The owning worker graph must destroy video/audio sessions before destroying
- * the MtlRuntimeContext they were created against.
- */
+
 class MtlAudioRxSession final {
   public:
     static std::expected<std::unique_ptr<MtlAudioRxSession>, st2110::Error>

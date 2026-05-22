@@ -1,7 +1,7 @@
 #ifndef ST2110_OBS_PLUGIN_AUDIO_FRAME_HPP
 #define ST2110_OBS_PLUGIN_AUDIO_FRAME_HPP
 
-#include "st2110/foundation/timestamp.hpp"
+#include <st2110/foundation/timestamp.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -11,9 +11,9 @@
 
 namespace st2110 {
 struct AudioFrameView {
-    uint32_t sampling_rate_hz = 0;
-    uint16_t channel_count = 0;
-    uint32_t samples_per_channel = 0;
+    std::uint32_t sampling_rate_hz = 0;
+    std::uint16_t channel_count = 0;
+    std::uint32_t samples_per_channel = 0;
 
     const std::int32_t *samples = nullptr;
     std::size_t total_sample_count = 0;
